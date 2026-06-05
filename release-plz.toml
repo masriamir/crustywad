@@ -1,0 +1,16 @@
+[workspace]
+release = true
+publish = false
+changelog_update = true
+allow_dirty = false
+semver_check = false
+
+[[package]]
+name = "crustywad"
+release = true
+publish = false
+
+[[package]]
+name = "crustywad-cli"
+release = true
+publish = false
