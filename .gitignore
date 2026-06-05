@@ -1,0 +1,46 @@
+# Compiled output / build artifacts
+/target/
+**/target/
+
+# Cargo.lock is intentionally COMMITTED: this workspace ships a binary (CLI).
+# (Do not ignore Cargo.lock.)
+
+# Backup files from rustfmt / editors
+**/*.rs.bk
+*.orig
+
+# MSVC debug info (Windows)
+*.pdb
+
+# Coverage output (cargo-llvm-cov / grcov)
+*.profraw
+*.profdata
+/lcov.info
+/coverage/
+
+# Fuzzing (cargo-fuzz)
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
+# Downloaded FreeDoom WAD fixtures (fetched locally & in CI, never committed)
+/tests/fixtures/freedoom/
+/crates/crustywad/tests/fixtures/freedoom/
+
+# Benchmark output
+/criterion/
+
+# Environment / local overrides
+.env
+.env.local
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
