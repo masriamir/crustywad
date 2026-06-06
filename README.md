@@ -1,6 +1,7 @@
 # crustywad
 
 [![CI](https://github.com/masriamir/crustywad/actions/workflows/ci.yml/badge.svg)](https://github.com/masriamir/crustywad/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/masriamir/crustywad/actions/workflows/codeql.yml/badge.svg)](https://github.com/masriamir/crustywad/actions/workflows/codeql.yml)
 [![Coverage](https://codecov.io/gh/masriamir/crustywad/graph/badge.svg)](https://codecov.io/gh/masriamir/crustywad)
 [![docs.rs](https://img.shields.io/badge/docs.rs-pending-blue)](https://docs.rs/crustywad)
 [![crates.io](https://img.shields.io/badge/crates.io-pending-inactive)](https://crates.io/crates/crustywad)
@@ -14,6 +15,11 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 ## Status
 
 `crustywad` currently provides a safe, documented foundation for reading WAD headers and lump directories, plus typed map-record scaffolding for the classic Doom map lumps.
+
+Integration tests for each layer live in `crates/crustywad/tests/`:
+- `wad_reader.rs` — WAD header and directory parsing
+- `map_records.rs` — typed map-record decoding (`Thing`, `Linedef`, `Sector`, etc.)
+- `freedoom.rs` — optional tests against real FreeDoom WAD fixtures
 
 ## Workspace layout
 
@@ -68,6 +74,23 @@ just ci
 ```
 
 `just cov` uses `cargo-llvm-cov`, and the Codecov upload in CI may require a `CODECOV_TOKEN` repository secret depending on repository visibility and Codecov settings.
+
+### FreeDoom fixtures
+
+Optional integration tests parse real FreeDoom WAD files. The FreeDoom version to download is configurable:
+
+```bash
+# Default version (v0.13.0)
+just fetch-fixtures
+
+# Override via argument
+just fetch-fixtures version=v0.14.0
+
+# Override via environment variable
+FREEDOOM_VERSION=v0.14.0 just fetch-fixtures
+```
+
+Set `CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom` when running tests locally to enable the optional fixture coverage.
 
 ## MSRV
 

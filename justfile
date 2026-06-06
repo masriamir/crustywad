@@ -20,8 +20,9 @@ cov:
 deny:
     cargo deny check
 
-fetch-fixtures:
-    python tests/fixtures/fetch_freedoom.py
+# Download FreeDoom fixtures. Override the release with e.g. `just fetch-fixtures version=v0.14.0`.
+fetch-fixtures version="":
+    python tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
 
 fuzz:
     @echo "Fuzz targets are planned for a later milestone; see docs/design.md."
