@@ -21,7 +21,7 @@ mmap = ["crustywad/mmap"]
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-crustywad = { path = "../crustywad", version = "0.1.0" }
+crustywad = { path = "../crustywad" }
 
 [lints]
 workspace = true

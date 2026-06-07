@@ -9,11 +9,12 @@ use crustywad::Wad;
 
 let mut bytes = Vec::new();
 bytes.extend_from_slice(b"IWAD");
-bytes.extend_from_slice(&1_i32.to_le_bytes());
-bytes.extend_from_slice(&12_i32.to_le_bytes());
-bytes.extend_from_slice(&0_i32.to_le_bytes());
-bytes.extend_from_slice(&0_i32.to_le_bytes());
-bytes.extend_from_slice(b"TEST\0\0\0\0");
+bytes.extend_from_slice(&1_i32.to_le_bytes());   // numlumps = 1
+bytes.extend_from_slice(&16_i32.to_le_bytes());  // infotableofs = 16 (after lump data)
+bytes.extend_from_slice(&[1, 2, 3, 4]);           // lump data at offset 12
+bytes.extend_from_slice(&12_i32.to_le_bytes());  // directory: filepos = 12
+bytes.extend_from_slice(&4_i32.to_le_bytes());   // directory: size = 4
+bytes.extend_from_slice(b"TEST\0\0\0\0");         // directory: name
 
 let wad = Wad::from_bytes(bytes)?;
 assert_eq!(wad.kind(), crustywad::WadKind::Iwad);
