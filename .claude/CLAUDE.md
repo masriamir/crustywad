@@ -144,7 +144,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 | Feature | Default | Purpose |
 |---|---|---|
-| `mmap` | no | Read-only `memmap2`-backed file loading; the mapping is held for the `Wad`'s lifetime (zero heap copy) |
+| `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
 | `freedoom-tests` | no | Enables optional integration tests against local FreeDoom fixture WADs |
 
 ## Commit conventions

@@ -31,6 +31,7 @@ pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
 
+use std::fs;
 use std::io::Cursor;
 use std::ops::Deref;
 use std::path::Path;
@@ -233,10 +234,10 @@ impl Wad {
 
     /// Reads a WAD from a file path using strict parsing.
     ///
-    /// When the `mmap` feature is enabled the file is memory-mapped read-only
-    /// and the mapping is held for the lifetime of the returned [`Wad`] — no
-    /// heap copy is made. Truncating or modifying the file from another process
-    /// while the [`Wad`] is alive is unsupported and may cause a `SIGBUS`.
+    /// The file is read into memory in full. For large WADs where only a
+    /// subset of lumps will be accessed, consider
+    /// [`from_path_mapped`][Wad::from_path_mapped] (requires the `mmap`
+    /// feature).
     ///
     /// # Errors
     ///
@@ -248,10 +249,10 @@ impl Wad {
 
     /// Reads a WAD from a file path using explicit parse options.
     ///
-    /// When the `mmap` feature is enabled the file is memory-mapped read-only
-    /// and the mapping is held for the lifetime of the returned [`Wad`] — no
-    /// heap copy is made. Truncating or modifying the file from another process
-    /// while the [`Wad`] is alive is unsupported and may cause a `SIGBUS`.
+    /// The file is read into memory in full. For large WADs where only a
+    /// subset of lumps will be accessed, consider
+    /// [`from_path_mapped_with_options`][Wad::from_path_mapped_with_options]
+    /// (requires the `mmap` feature).
     ///
     /// # Errors
     ///
@@ -262,24 +263,65 @@ impl Wad {
         options: ParseOptions,
     ) -> Result<Self, ParseError> {
         let path = path.as_ref();
-
-        #[cfg(feature = "mmap")]
-        let data = WadData::Mapped(mmap::open(path)?);
-
-        #[cfg(not(feature = "mmap"))]
-        let data = {
-            use std::fs;
-            WadData::Owned(fs::read(path).map_err(|source| ParseError::Io {
-                path: path.display().to_string(),
-                source,
-            })?)
-        };
-
-        let (header, lumps, warnings) = parse_bytes(&data, options)?;
+        let bytes = fs::read(path).map_err(|source| ParseError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+        let (header, lumps, warnings) = parse_bytes(&bytes, options)?;
         Ok(Self {
             header,
             lumps,
-            bytes: data,
+            bytes: WadData::Owned(bytes),
+            warnings,
+        })
+    }
+
+    /// Reads a WAD from a file path using memory-mapped I/O and strict
+    /// parsing.
+    ///
+    /// The file is mapped read-only and the mapping is held for the lifetime
+    /// of the returned [`Wad`] — no heap copy is made on load. This is more
+    /// efficient than [`from_path`][Wad::from_path] for large WADs where only
+    /// a subset of lumps will be accessed.
+    ///
+    /// **Warning:** truncating or modifying the file from another process
+    /// while the [`Wad`] is alive is unsupported. On Unix this causes a
+    /// `SIGBUS`; on Windows the mapping prevents truncation but concurrent
+    /// writes may produce inconsistent data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError`] if the file cannot be opened, mapped, or parsed.
+    #[cfg(feature = "mmap")]
+    pub fn from_path_mapped(path: impl AsRef<Path>) -> Result<Self, ParseError> {
+        Self::from_path_mapped_with_options(path, ParseOptions::default())
+    }
+
+    /// Reads a WAD from a file path using memory-mapped I/O and explicit
+    /// parse options.
+    ///
+    /// The file is mapped read-only and the mapping is held for the lifetime
+    /// of the returned [`Wad`] — no heap copy is made on load.
+    ///
+    /// **Warning:** truncating or modifying the file from another process
+    /// while the [`Wad`] is alive is unsupported. On Unix this causes a
+    /// `SIGBUS`; on Windows the mapping prevents truncation but concurrent
+    /// writes may produce inconsistent data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError`] if the file cannot be opened, mapped, or parsed.
+    #[cfg(feature = "mmap")]
+    pub fn from_path_mapped_with_options(
+        path: impl AsRef<Path>,
+        options: ParseOptions,
+    ) -> Result<Self, ParseError> {
+        let mapped = mmap::open(path.as_ref())?;
+        let (header, lumps, warnings) = parse_bytes(&mapped, options)?;
+        Ok(Self {
+            header,
+            lumps,
+            bytes: WadData::Mapped(mapped),
             warnings,
         })
     }

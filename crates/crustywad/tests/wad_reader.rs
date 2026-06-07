@@ -17,6 +17,18 @@ fn loads_from_path() {
     assert_eq!(wad.lump_bytes(0), Some(&[1, 2, 3, 4][..]));
 }
 
+#[cfg(feature = "mmap")]
+#[test]
+fn loads_from_path_mapped() {
+    let bytes = common::build_wad(*b"IWAD", &[("DEMO1", &[1, 2, 3, 4])]);
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), bytes).expect("wad should be written");
+
+    let wad = Wad::from_path_mapped(file.path()).expect("wad should load via mmap");
+    assert_eq!(wad.kind(), WadKind::Iwad);
+    assert_eq!(wad.lump_bytes(0), Some(&[1, 2, 3, 4][..]));
+}
+
 #[test]
 fn finds_lumps_by_name() {
     let lumps = [("TITLEPIC", &[9, 9][..]), ("PLAYPAL", &[3][..])];

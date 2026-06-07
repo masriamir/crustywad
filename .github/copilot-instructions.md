@@ -131,7 +131,7 @@ cargo doc --workspace --all-features --no-deps
 
 | Feature | Default | Purpose |
 |---|---|---|
-| `mmap` | no | Read-only `memmap2`-backed file loading; the mapping is held for the `Wad`'s lifetime (zero heap copy on `from_path`) |
+| `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
 | `freedoom-tests` | no | Enables optional FreeDoom integration tests |
 
 ## Commit conventions
