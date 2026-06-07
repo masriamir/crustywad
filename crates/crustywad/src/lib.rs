@@ -98,7 +98,10 @@ impl ParseOptions {
 pub struct WadHeader {
     /// The WAD file kind.
     pub kind: WadKind,
-    /// The declared number of lump directory entries.
+    /// The number of lump directory entries successfully parsed.
+    ///
+    /// In lenient mode this may be less than what the file header declares when
+    /// the directory extends beyond the available bytes.
     pub num_lumps: usize,
     /// The byte offset of the lump directory.
     pub info_table_offset: usize,
@@ -160,12 +163,15 @@ struct RawDirectoryEntry {
 impl Wad {
     /// Parses a WAD from an owned or borrowed in-memory byte buffer.
     ///
+    /// Accepts any type that can be converted into a `Vec<u8>` — including
+    /// `Vec<u8>` (moved without copying), `&[u8]`, and fixed-size byte arrays.
+    ///
     /// # Errors
     ///
     /// Returns [`ParseError`] when the buffer does not contain a valid WAD
     /// according to the default strict parsing rules.
-    pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self, ParseError> {
-        Self::from_bytes_with_options(bytes.as_ref().to_vec(), ParseOptions::default())
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Result<Self, ParseError> {
+        Self::from_bytes_with_options(bytes.into(), ParseOptions::default())
     }
 
     /// Parses a WAD from an in-memory byte buffer using explicit parse options.
@@ -202,20 +208,10 @@ impl Wad {
             },
         };
 
-        let num_lumps = coerce_i32(
-            raw.numlumps,
-            "numlumps",
-            len,
-            options.strictness,
-            &mut warnings,
-        )?;
-        let info_table_offset = coerce_i32(
-            raw.infotableofs,
-            "infotableofs",
-            len,
-            options.strictness,
-            &mut warnings,
-        )?;
+        let num_lumps =
+            coerce_i32(raw.numlumps, "numlumps", options.strictness, &mut warnings)?;
+        let info_table_offset =
+            coerce_i32(raw.infotableofs, "infotableofs", options.strictness, &mut warnings)?;
 
         let dir_span = checked_mul(
             num_lumps,
@@ -355,9 +351,23 @@ impl Wad {
     }
 
     /// Returns the raw bytes for the provided lump metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `lump` does not belong to this [`Wad`] — for example if it was
+    /// cloned from a different, larger WAD whose lump range falls outside this
+    /// buffer.
     #[must_use]
     pub fn lump_data(&self, lump: &Lump) -> &[u8] {
-        &self.bytes[lump.filepos..lump.filepos + lump.size]
+        let end = lump.filepos + lump.size;
+        assert!(
+            end <= self.bytes.len(),
+            "lump range {}..{} is out of bounds for a buffer of length {}",
+            lump.filepos,
+            end,
+            self.bytes.len()
+        );
+        &self.bytes[lump.filepos..end]
     }
 
     /// Returns any non-fatal warnings produced during lenient parsing.
@@ -376,7 +386,6 @@ impl Wad {
 fn coerce_i32(
     value: i32,
     field: &'static str,
-    len: usize,
     strictness: Strictness,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<usize, ParseError> {
@@ -390,28 +399,7 @@ fn coerce_i32(
         };
     }
 
-    let coerced = usize::try_from(value).map_err(|_| ParseError::Overflow { field })?;
-    if coerced > len && field == "infotableofs" {
-        match strictness {
-            Strictness::Strict => Err(ParseError::OutOfBounds {
-                field,
-                offset: coerced,
-                size: 0,
-                len,
-            }),
-            Strictness::Lenient => {
-                warnings.push(ParseWarning::OutOfBounds {
-                    field,
-                    offset: coerced,
-                    size: 0,
-                    len,
-                });
-                Ok(coerced)
-            }
-        }
-    } else {
-        Ok(coerced)
-    }
+    usize::try_from(value).map_err(|_| ParseError::Overflow { field })
 }
 
 fn checked_mul(
@@ -445,14 +433,14 @@ fn validate_entry(
     strictness: Strictness,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<Lump, ParseError> {
-    let filepos = coerce_i32(raw_entry.filepos, "filepos", len, strictness, warnings)?;
-    let size = coerce_i32(raw_entry.size, "size", len, strictness, warnings)?;
+    let filepos = coerce_i32(raw_entry.filepos, "filepos", strictness, warnings)?;
+    let size = coerce_i32(raw_entry.size, "size", strictness, warnings)?;
     let name = decode_name(index, raw_entry.name, strictness, warnings)?;
 
     let end = filepos.checked_add(size).ok_or(ParseError::Overflow {
         field: "lump range",
     })?;
-    let max_end = if filepos < directory_offset {
+    let max_end = if filepos <= directory_offset {
         directory_offset.min(len)
     } else {
         len

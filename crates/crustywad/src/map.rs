@@ -4,7 +4,7 @@
 //! milestone will assemble them into a richer `Map` graph once the crate has stable
 //! building blocks for the raw lump data.
 
-use std::io::{Cursor, Seek};
+use std::io::Cursor;
 
 use binrw::{BinRead, BinReaderExt};
 use thiserror::Error;
@@ -107,8 +107,9 @@ pub struct Seg {
     pub linedef: u16,
     /// Direction flag.
     pub direction: u16,
-    /// Offset along the linedef.
-    pub offset: u16,
+    /// Offset along the linedef in map units (signed; negative when the seg
+    /// starts before the linedef's start vertex).
+    pub offset: i16,
 }
 
 /// An SSECTORS record.
@@ -189,25 +190,35 @@ pub enum MapParseError {
 ///
 /// # Errors
 ///
-/// Returns [`MapParseError`] if `binrw` cannot decode the requested record type
-/// from the supplied bytes.
+/// Returns [`MapParseError::TrailingBytes`] if the byte slice length is not an
+/// exact multiple of `size_of::<T>()`, and [`MapParseError::Binrw`] if
+/// `binrw` cannot decode a record.
 pub fn parse_records<T>(bytes: &[u8]) -> Result<Vec<T>, MapParseError>
 where
     T: for<'a> BinRead<Args<'a> = ()>,
 {
+    let record_size = std::mem::size_of::<T>();
+    if record_size == 0 {
+        // ZST records have no binary representation. An empty buffer produces
+        // zero records; any non-empty buffer has unresolvable trailing bytes.
+        return if bytes.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(MapParseError::TrailingBytes { offset: 0 })
+        };
+    }
+    if bytes.len() % record_size != 0 {
+        return Err(MapParseError::TrailingBytes {
+            offset: (bytes.len() / record_size * record_size) as u64,
+        });
+    }
+
     let mut cursor = Cursor::new(bytes);
-    let mut records = Vec::new();
-    let bytes_len = u64::try_from(bytes.len())
-        .map_err(|_| MapParseError::TrailingBytes { offset: u64::MAX })?;
+    let mut records = Vec::with_capacity(bytes.len() / record_size);
+    let bytes_len = bytes.len() as u64;
 
     while cursor.position() < bytes_len {
         records.push(cursor.read_le()?);
-    }
-
-    if cursor.position() != bytes_len {
-        return Err(MapParseError::TrailingBytes {
-            offset: cursor.stream_position().unwrap_or(0),
-        });
     }
 
     Ok(records)

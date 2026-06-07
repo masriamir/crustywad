@@ -47,7 +47,7 @@ fn main() -> Result<()> {
             println!("kind: {:?}", wad.kind());
             println!("lumps: {}", wad.lump_count());
             for warning in wad.warnings() {
-                eprintln!("warning: {warning:?}");
+                eprintln!("warning: {warning}");
             }
         }
         Command::List { path } => {
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
                 );
             }
             for warning in wad.warnings() {
-                eprintln!("warning: {warning:?}");
+                eprintln!("warning: {warning}");
             }
         }
     }

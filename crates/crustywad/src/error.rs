@@ -67,11 +67,13 @@ pub enum ParseError {
 }
 
 /// Non-fatal warnings reported by lenient parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ParseWarning {
     /// The header magic was not recognized.
+    #[error("unrecognized WAD magic `{0}`")]
     InvalidMagic(String),
-    /// A signed header or directory field was negative and was clamped.
+    /// A signed header or directory field was negative and was clamped to zero.
+    #[error("negative value {value} for `{field}`; clamped to 0")]
     NegativeValue {
         /// The field name.
         field: &'static str,
@@ -79,6 +81,7 @@ pub enum ParseWarning {
         value: i32,
     },
     /// A directory or lump range exceeded the available bytes and was truncated.
+    #[error("{field} points outside the WAD buffer (offset {offset}, size {size}, len {len}); truncated")]
     OutOfBounds {
         /// The logical field being validated.
         field: &'static str,
@@ -90,11 +93,13 @@ pub enum ParseWarning {
         len: usize,
     },
     /// A lump name contained non-ASCII bytes and was decoded lossily.
+    #[error("lump `{index}` has a non-ASCII name; decoded lossily")]
     NonAsciiName {
         /// The zero-based lump index.
         index: usize,
     },
     /// A validation calculation overflowed and was saturated.
+    #[error("numeric overflow while validating `{field}`; saturated")]
     Overflow {
         /// The field name.
         field: &'static str,
