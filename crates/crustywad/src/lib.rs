@@ -440,9 +440,16 @@ fn validate_entry(
     let size = coerce_i32(raw_entry.size, "size", strictness, warnings)?;
     let name = decode_name(index, raw_entry.name, strictness, warnings)?;
 
-    let end = filepos.checked_add(size).ok_or(ParseError::Overflow {
-        field: "lump range",
-    })?;
+    let end = match filepos.checked_add(size) {
+        Some(end) => end,
+        None => match strictness {
+            Strictness::Strict => return Err(ParseError::Overflow { field: "lump range" }),
+            Strictness::Lenient => {
+                warnings.push(ParseWarning::Overflow { field: "lump range" });
+                usize::MAX
+            }
+        },
+    };
     let max_end = if filepos <= directory_offset {
         directory_offset.min(len)
     } else {

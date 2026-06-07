@@ -76,7 +76,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 ### Error handling
 
 - All errors in the library crate use `thiserror`-derived enums: `ParseError` and `MapParseError`.
-- `ParseWarning` collects non-fatal issues in lenient mode; it currently derives `Debug` only (no `Display` — a known gap to address).
+- `ParseWarning` collects non-fatal issues in lenient mode; it derives `thiserror::Error` and implements `Display` with human-readable messages.
 - `anyhow` is permitted only in `crustywad-cli`.
 - Every public fallible function must have a `# Errors` doc section.
 
