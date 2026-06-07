@@ -1,0 +1,193 @@
+# CLAUDE.md
+
+## Project overview
+
+`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is dual-licensed under MIT OR Apache-2.0.
+
+**Current milestone (1):** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, and a small CLI binary for dogfooding.
+
+## Workspace layout
+
+```
+crates/
+  crustywad/           # Core library crate
+    src/
+      lib.rs           # Public API — Wad, WadKind, WadHeader, Lump, ParseOptions, Strictness
+      error.rs         # ParseError (thiserror) and ParseWarning types
+      map.rs           # Typed map-record structs and parse_records<T>
+      mmap.rs          # Placeholder for memory-mapped I/O (feature = "mmap")
+    tests/
+      common/mod.rs    # Shared WAD-building helpers (build_wad, lump_map)
+      wad_reader.rs    # Integration tests for the main WAD reader API
+      map_records.rs   # Integration tests for typed map-record parsing
+      freedoom.rs      # Optional FreeDoom fixture tests (feature = "freedoom-tests")
+  crustywad-cli/       # CLI binary crate (`cwad`)
+    src/main.rs        # `info` and `list` subcommands via clap
+docs/
+  design.md            # Goals, data model, read pipeline, feature plan
+  adr/                 # Architecture decision records
+tests/
+  fixtures/
+    fetch_freedoom.py  # Downloads FreeDoom WAD fixtures from GitHub releases
+    README.md          # Fixture documentation and FreeDoom license info
+.github/
+  codeql/codeql-config.yml   # Advanced CodeQL query config (security-extended + quality)
+  workflows/ci.yml            # Main CI pipeline
+  workflows/codeql.yml        # CodeQL security analysis
+  workflows/release-plz.yml  # Automated release PR workflow
+```
+
+## Development workflow
+
+Install [just](https://github.com/casey/just), then:
+
+| Recipe | Command |
+|---|---|
+| Build | `just build` |
+| Test | `just test` |
+| Lint (fmt + clippy) | `just lint` |
+| Auto-format | `just fmt` |
+| Docs | `just doc` |
+| Coverage | `just cov` (requires `cargo-llvm-cov`) |
+| Dependency audit | `just deny` (requires `cargo-deny`) |
+| Fetch FreeDoom fixtures | `just fetch-fixtures` |
+| Full CI check | `just ci` |
+
+Exact CI commands:
+
+```bash
+cargo build --workspace --all-features
+cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+cargo doc --workspace --all-features --no-deps
+```
+
+FreeDoom fixture tests require both the feature flag and the env var:
+
+```bash
+just fetch-fixtures                         # default version
+just fetch-fixtures version=v0.14.0        # specific version
+CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-features
+```
+
+## Code conventions
+
+### Error handling
+
+- All errors in the library crate use `thiserror`-derived enums: `ParseError` and `MapParseError`.
+- `ParseWarning` collects non-fatal issues in lenient mode; it currently derives `Debug` only (no `Display` — a known gap to address).
+- `anyhow` is permitted only in `crustywad-cli`.
+- Every public fallible function must have a `# Errors` doc section.
+
+### Documentation
+
+- `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
+- Use `//!` for module-level docs, `///` for item-level docs.
+- Include `# Errors` in doc comments for fallible functions, `# Panics` where relevant.
+- Crate-level docs live in `lib.rs` as `#![doc = r#"..."]` (inner attribute — note the `!`).
+
+### Safety
+
+- `#![forbid(unsafe_code)]` is set in the core library crate. No unsafe code is permitted.
+- The `mmap` feature is a reserved placeholder; `mmap.rs` currently falls back to `fs::read`.
+
+### Lints
+
+- `clippy::all` and `clippy::pedantic` are enabled workspace-wide. All warnings are errors in CI.
+- New code must compile with zero warnings locally before pushing.
+
+### Naming
+
+- Doom WAD concepts follow the unofficial spec: `Lump`, `WadKind`, `WadHeader`, `ParseOptions`.
+- Map-record types use singular Rust names matching the lump: `Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`.
+- `snake_case` for items, `UPPER_SNAKE_CASE` for constants.
+
+### Strictness model
+
+- `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient }`.
+- Strict mode returns the first `ParseError` encountered.
+- Lenient mode attempts best-effort recovery and collects `ParseWarning` values.
+- Every new validation must honour both modes.
+
+
+## Testing practices
+
+### Unit vs integration tests
+
+- **Unit tests** (private helpers only): `#[cfg(test)] mod tests {}` inside the source file.
+- **Integration tests** (all public API): `crates/crustywad/tests/`, one file per concern.
+- `common/mod.rs` contains shared WAD-building helpers; add shared test utilities there.
+
+### FreeDoom fixture tests
+
+- Live in `tests/freedoom.rs`, gated by `#[cfg(feature = "freedoom-tests")]`.
+- Fixtures are gitignored — never commit WAD blobs.
+- Tests skip gracefully when `CRUSTYWAD_FREEDOOM_DIR` is not set.
+
+### Property-based tests
+
+- Use `proptest` for parser invariants; place in the same file as the regular tests they complement.
+- `wad_reader.rs` has an existing proptest for empty-WAD parsing.
+
+## Adding a new lump type
+
+1. Add a `binrw`-derived struct to `crates/crustywad/src/map.rs` with full doc comments on every field.
+2. Ensure the struct uses `#[br(little)]` and implements `BinRead` with `Args<'a> = ()`.
+3. Check the Doom WAD spec for correct field types (signed vs unsigned matters — see known issue #1 above).
+4. Add integration tests in `crates/crustywad/tests/map_records.rs` with a hand-crafted byte sequence and at least one field assertion per field.
+5. Add a proptest if the type has meaningful invariants.
+6. Update `README.md` if the new type is user-visible.
+7. Run `just lint` and `just doc` before committing.
+
+## Feature flags
+
+| Feature | Default | Purpose |
+|---|---|---|
+| `mmap` | no | Placeholder for future memory-mapped I/O; currently falls back to `fs::read` |
+| `freedoom-tests` | no | Enables optional integration tests against local FreeDoom fixture WADs |
+
+## Commit conventions
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+| Prefix | When |
+|---|---|
+| `feat:` | new functionality |
+| `fix:` | bug fixes |
+| `docs:` | documentation only |
+| `test:` | test-only changes |
+| `refactor:` | no behavior change |
+| `chore:` | build, tooling |
+| `ci:` | CI workflow changes |
+
+Scope is encouraged: `feat(map):`, `fix(cli):`, etc.
+
+The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
+
+## CI pipeline
+
+The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:
+
+| Job | What it checks |
+|---|---|
+| `fmt` | `cargo fmt --all --check` |
+| `clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
+| `test` | test matrix on ubuntu, macos, windows (fetches FreeDoom fixtures) |
+| `msrv` | build + test on Rust 1.85.0 |
+| `docs` | `cargo doc` with `RUSTDOCFLAGS=-D warnings` |
+| `coverage` | `cargo llvm-cov` + Codecov upload |
+| `security-deny` | `cargo deny check` |
+
+CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `security-extended` and `security-and-quality` query suites.
+
+`release-plz` (`.github/workflows/release-plz.yml`) creates release PRs on push to `main`. Publishing to crates.io is intentionally disabled until credentials and release policy are ready.
+
+## Roadmap
+
+1. ✅ Directory reading and map-record scaffolding (this PR)
+2. 🔜 Map lump parsing (full graph assembly)
+3. Graphics
+4. Textures
+5. Audio
+6. Write support
