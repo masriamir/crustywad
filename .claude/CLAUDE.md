@@ -15,7 +15,7 @@ crates/
       lib.rs           # Public API — Wad, WadKind, WadHeader, Lump, ParseOptions, Strictness
       error.rs         # ParseError (thiserror) and ParseWarning types
       map.rs           # Typed map-record structs and parse_records<T>
-      mmap.rs          # Placeholder for memory-mapped I/O (feature = "mmap")
+      mmap.rs          # Read-only memmap2-backed file loading (feature = "mmap")
     tests/
       common/mod.rs    # Shared WAD-building helpers (build_wad, lump_map)
       wad_reader.rs    # Integration tests for the main WAD reader API
@@ -29,7 +29,7 @@ docs/
 tests/
   fixtures/
     fetch_freedoom.py  # Downloads FreeDoom WAD fixtures from GitHub releases
-    README.md          # Fixture documentation and FreeDoom license info
+    README.md          # Fixture documentation and version configuration
 .github/
   codeql/codeql-config.yml   # Advanced CodeQL query config (security-extended + quality)
   workflows/ci.yml            # Main CI pipeline

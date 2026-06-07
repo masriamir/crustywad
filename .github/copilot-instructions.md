@@ -26,7 +26,6 @@ crates/
       wad_reader.rs    # Integration tests for the main WAD reader API
   crustywad-cli/       # CLI binary crate (`cwad`)
     src/main.rs
-crates/                # Workspace root (see Cargo.toml for member list)
 docs/                  # Design doc, ADRs
 tests/
   fixtures/
@@ -132,7 +131,7 @@ cargo doc --workspace --all-features --no-deps
 
 | Feature | Default | Purpose |
 |---|---|---|
-| `mmap` | no | Reserved placeholder for memory-mapped file loading |
+| `mmap` | no | Read-only `memmap2`-backed file loading; the mapping is held for the `Wad`'s lifetime (zero heap copy on `from_path`) |
 | `freedoom-tests` | no | Enables optional FreeDoom integration tests |
 
 ## Commit conventions
