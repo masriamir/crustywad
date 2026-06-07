@@ -37,12 +37,12 @@ pub struct Thing {
     pub x: i16,
     /// Y coordinate in map units.
     pub y: i16,
-    /// Facing angle.
-    pub angle: i16,
+    /// Facing angle in degrees (0–359, clockwise from east).
+    pub angle: u16,
     /// Editor number / thing type.
-    pub type_id: i16,
+    pub type_id: u16,
     /// Doom thing flags.
-    pub flags: i16,
+    pub flags: u16,
 }
 
 /// A LINEDEFS record.

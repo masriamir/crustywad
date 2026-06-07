@@ -440,6 +440,10 @@ fn parse_bytes(
         info_table_offset,
     };
 
+    let directory_end = info_table_offset
+        .saturating_add(lump_count.saturating_mul(16))
+        .min(len);
+
     let mut directory_cursor = Cursor::new(&bytes[info_table_offset.min(len)..]);
     let mut lumps = Vec::with_capacity(lump_count);
     for index in 0..lump_count {
@@ -451,6 +455,7 @@ fn parse_bytes(
             raw_entry,
             len,
             info_table_offset,
+            directory_end,
             options.strictness,
             &mut warnings,
         )?);
@@ -506,6 +511,7 @@ fn validate_entry(
     raw_entry: RawDirectoryEntry,
     len: usize,
     directory_offset: usize,
+    directory_end: usize,
     strictness: Strictness,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<Lump, ParseError> {
@@ -529,7 +535,10 @@ fn validate_entry(
             }
         },
     };
-    let max_end = if filepos <= directory_offset {
+    // Lump data must not overlap the directory region. Any filepos before
+    // directory_end is capped at directory_offset; filepos at or after
+    // directory_end may extend freely to end-of-file.
+    let max_end = if filepos < directory_end {
         directory_offset.min(len)
     } else {
         len
