@@ -21,10 +21,11 @@ pub(crate) fn open(path: &Path) -> Result<Mmap, ParseError> {
         path: path.display().to_string(),
         source,
     })?;
-    // SAFETY: `map` requires the file not be truncated while the Mmap lives —
-    // truncation by another process would cause a SIGBUS on access. The file is
-    // opened read-only (preventing truncation by this process), and the Mmap is
-    // stored in the owning Wad so it lives at least as long as any slice from it.
+    // SAFETY: `map` requires the file not be truncated while the Mmap is alive;
+    // truncation by any process would cause a SIGBUS on access. Opening read-only
+    // prevents *this process* from truncating it. Concurrent truncation or
+    // modification by another process is not mitigated and is documented as
+    // unsupported in the public API (`Wad::from_path`).
     unsafe { MmapOptions::new().map(&file) }.map_err(|source| ParseError::Io {
         path: path.display().to_string(),
         source,

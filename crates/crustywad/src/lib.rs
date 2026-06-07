@@ -233,9 +233,10 @@ impl Wad {
 
     /// Reads a WAD from a file path using strict parsing.
     ///
-    /// When the `mmap` feature is enabled the file is memory-mapped and the
-    /// mapping is held for the lifetime of the returned [`Wad`] — no heap copy
-    /// of the file contents is made.
+    /// When the `mmap` feature is enabled the file is memory-mapped read-only
+    /// and the mapping is held for the lifetime of the returned [`Wad`] — no
+    /// heap copy is made. Truncating or modifying the file from another process
+    /// while the [`Wad`] is alive is unsupported and may cause a `SIGBUS`.
     ///
     /// # Errors
     ///
@@ -247,9 +248,10 @@ impl Wad {
 
     /// Reads a WAD from a file path using explicit parse options.
     ///
-    /// When the `mmap` feature is enabled the file is memory-mapped and the
-    /// mapping is held for the lifetime of the returned [`Wad`] — no heap copy
-    /// of the file contents is made.
+    /// When the `mmap` feature is enabled the file is memory-mapped read-only
+    /// and the mapping is held for the lifetime of the returned [`Wad`] — no
+    /// heap copy is made. Truncating or modifying the file from another process
+    /// while the [`Wad`] is alive is unsupported and may cause a `SIGBUS`.
     ///
     /// # Errors
     ///
