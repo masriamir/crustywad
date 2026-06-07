@@ -14,7 +14,7 @@
 
 ## Data model
 
-A WAD contains a 12-byte header followed by a directory of 16-byte lump entries. `crustywad` models the file as owned bytes plus validated metadata for the parsed header and lump directory.
+A WAD contains a 12-byte header, lump data blobs, and a directory of 16-byte lump entries. The header stores the byte offset at which the directory begins; in practice the directory sits after all lump data at the end of the file. `crustywad` models the file as owned bytes plus validated metadata for the parsed header and lump directory.
 
 ## Read pipeline
 

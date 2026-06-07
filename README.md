@@ -57,7 +57,7 @@ cargo run -p crustywad-cli -- list path/to/file.wad
 
 | Feature | Default | Description |
 | --- | --- | --- |
-| `mmap` | no | Enables the placeholder file-loading module that is reserved for a future memory-mapped implementation. |
+| `mmap` | no | Enables memory-mapped file loading via `memmap2`. The file is mapped read-only and held for the `Wad`'s lifetime — no heap copy is made. |
 | `freedoom-tests` | no | Enables optional integration tests that inspect locally downloaded FreeDoom fixtures. |
 
 ## Development
