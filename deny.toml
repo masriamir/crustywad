@@ -8,7 +8,6 @@ ignore = []
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
-highlights = "all"
 
 [licenses]
 version = 2
