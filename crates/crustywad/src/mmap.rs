@@ -1,17 +1,26 @@
-//! Placeholder support for the future `mmap` feature.
-//!
-//! The current implementation deliberately falls back to ordinary file reads so the
-//! public feature flag and module wiring can stabilize before any memory-mapped I/O
-//! is introduced.
+//! Memory-mapped I/O backend for the `mmap` feature.
+#![allow(unsafe_code)]
 
-use std::fs;
+use std::fs::File;
 use std::path::Path;
+
+use memmap2::{Mmap, MmapOptions};
 
 use crate::ParseError;
 
-/// Reads a file into memory while the real memory-mapped backend is still pending.
-pub(crate) fn read(path: &Path) -> Result<Vec<u8>, ParseError> {
-    fs::read(path).map_err(|source| ParseError::Io {
+/// Opens `path` as a read-only memory-mapped file.
+///
+/// # Errors
+///
+/// Returns [`ParseError::Io`] if the file cannot be opened or mapped.
+pub(crate) fn open(path: &Path) -> Result<Mmap, ParseError> {
+    let file = File::open(path).map_err(|source| ParseError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    // SAFETY: the Mmap is held for the lifetime of the owning Wad; we never
+    // modify or truncate the file while the mapping is live.
+    unsafe { MmapOptions::new().map(&file) }.map_err(|source| ParseError::Io {
         path: path.display().to_string(),
         source,
     })

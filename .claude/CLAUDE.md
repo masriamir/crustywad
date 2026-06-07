@@ -89,8 +89,8 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 ### Safety
 
-- `#![forbid(unsafe_code)]` is set in the core library crate. No unsafe code is permitted.
-- The `mmap` feature is a reserved placeholder; `mmap.rs` currently falls back to `fs::read`.
+- `#![deny(unsafe_code)]` is set in the core library crate. Unsafe code is permitted only in `mmap.rs` (behind `#![allow(unsafe_code)]`) and only to call `memmap2::MmapOptions::map`.
+- All parsing and validation code is free of unsafe.
 
 ### Lints
 
@@ -144,7 +144,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 | Feature | Default | Purpose |
 |---|---|---|
-| `mmap` | no | Placeholder for future memory-mapped I/O; currently falls back to `fs::read` |
+| `mmap` | no | Read-only `memmap2`-backed file loading; the mapping is held for the `Wad`'s lifetime (zero heap copy) |
 | `freedoom-tests` | no | Enables optional integration tests against local FreeDoom fixture WADs |
 
 ## Commit conventions
@@ -173,7 +173,7 @@ The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:
 |---|---|
 | `fmt` | `cargo fmt --all --check` |
 | `clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
-| `test` | test matrix on ubuntu, macos, windows (fetches FreeDoom fixtures) |
+| `test` | `cargo test --workspace --all-features` on ubuntu, macos, windows (no fixtures fetched; freedoom-tests are skipped unless `CRUSTYWAD_FREEDOOM_DIR` is set) |
 | `msrv` | build + test on Rust 1.85.0 |
 | `docs` | `cargo doc` with `RUSTDOCFLAGS=-D warnings` |
 | `coverage` | `cargo llvm-cov` + Codecov upload |

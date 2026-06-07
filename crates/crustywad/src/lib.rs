@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![doc = r#"
 `crustywad` is a small Rust library for safe Doom WAD parsing.
 
@@ -31,12 +31,13 @@ pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
 
-#[cfg(not(feature = "mmap"))]
-use std::fs;
 use std::io::Cursor;
+use std::ops::Deref;
 use std::path::Path;
 
 use binrw::{BinRead, BinReaderExt};
+#[cfg(feature = "mmap")]
+use memmap2::Mmap;
 
 pub use error::{ParseError, ParseWarning};
 
@@ -135,13 +136,49 @@ impl Lump {
     }
 }
 
+#[derive(Debug)]
+enum WadData {
+    Owned(Vec<u8>),
+    #[cfg(feature = "mmap")]
+    Mapped(Mmap),
+}
+
+impl WadData {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            WadData::Owned(v) => v,
+            #[cfg(feature = "mmap")]
+            WadData::Mapped(m) => m,
+        }
+    }
+}
+
+impl Deref for WadData {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
 /// An owned Doom WAD loaded into memory.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Wad {
     header: WadHeader,
     lumps: Vec<Lump>,
-    bytes: Vec<u8>,
+    bytes: WadData,
     warnings: Vec<ParseWarning>,
+}
+
+impl Clone for Wad {
+    fn clone(&self) -> Self {
+        Self {
+            header: self.header,
+            lumps: self.lumps.clone(),
+            bytes: WadData::Owned(self.bytes.to_vec()),
+            warnings: self.warnings.clone(),
+        }
+    }
 }
 
 #[derive(Debug, BinRead)]
@@ -185,101 +222,20 @@ impl Wad {
         options: ParseOptions,
     ) -> Result<Self, ParseError> {
         let bytes = bytes.into();
-        let mut cursor = Cursor::new(bytes.as_slice());
-        let raw = cursor.read_le::<RawHeader>().map_err(ParseError::Header)?;
-        let len = bytes.len();
-        let mut warnings = Vec::new();
-
-        let kind = match &raw.magic {
-            b"IWAD" => WadKind::Iwad,
-            b"PWAD" => WadKind::Pwad,
-            magic => match options.strictness {
-                Strictness::Strict => {
-                    return Err(ParseError::InvalidMagic {
-                        magic: String::from_utf8_lossy(magic.as_slice()).into_owned(),
-                    });
-                }
-                Strictness::Lenient => {
-                    warnings.push(ParseWarning::InvalidMagic(
-                        String::from_utf8_lossy(magic.as_slice()).into_owned(),
-                    ));
-                    WadKind::Unknown(*magic)
-                }
-            },
-        };
-
-        let num_lumps = coerce_i32(raw.numlumps, "numlumps", options.strictness, &mut warnings)?;
-        let info_table_offset = coerce_i32(
-            raw.infotableofs,
-            "infotableofs",
-            options.strictness,
-            &mut warnings,
-        )?;
-
-        let dir_span = checked_mul(
-            num_lumps,
-            16,
-            "directory length",
-            options.strictness,
-            &mut warnings,
-        )?;
-        let available_entries = available_entries(len, info_table_offset);
-        let lump_count =
-            if info_table_offset > len || info_table_offset.saturating_add(dir_span) > len {
-                match options.strictness {
-                    Strictness::Strict => {
-                        return Err(ParseError::OutOfBounds {
-                            field: "directory",
-                            offset: info_table_offset,
-                            size: dir_span,
-                            len,
-                        });
-                    }
-                    Strictness::Lenient => {
-                        warnings.push(ParseWarning::OutOfBounds {
-                            field: "directory",
-                            offset: info_table_offset,
-                            size: dir_span,
-                            len,
-                        });
-                        num_lumps.min(available_entries)
-                    }
-                }
-            } else {
-                num_lumps
-            };
-
-        let header = WadHeader {
-            kind,
-            num_lumps: lump_count,
-            info_table_offset,
-        };
-
-        let mut directory_cursor = Cursor::new(&bytes[info_table_offset.min(len)..]);
-        let mut lumps = Vec::with_capacity(lump_count);
-        for index in 0..lump_count {
-            let raw_entry = directory_cursor
-                .read_le::<RawDirectoryEntry>()
-                .map_err(|source| ParseError::Directory { index, source })?;
-            lumps.push(validate_entry(
-                index,
-                raw_entry,
-                len,
-                info_table_offset,
-                options.strictness,
-                &mut warnings,
-            )?);
-        }
-
+        let (header, lumps, warnings) = parse_bytes(&bytes, options)?;
         Ok(Self {
             header,
             lumps,
-            bytes,
+            bytes: WadData::Owned(bytes),
             warnings,
         })
     }
 
     /// Reads a WAD from a file path using strict parsing.
+    ///
+    /// When the `mmap` feature is enabled the file is memory-mapped and the
+    /// mapping is held for the lifetime of the returned [`Wad`] — no heap copy
+    /// of the file contents is made.
     ///
     /// # Errors
     ///
@@ -291,6 +247,10 @@ impl Wad {
 
     /// Reads a WAD from a file path using explicit parse options.
     ///
+    /// When the `mmap` feature is enabled the file is memory-mapped and the
+    /// mapping is held for the lifetime of the returned [`Wad`] — no heap copy
+    /// of the file contents is made.
+    ///
     /// # Errors
     ///
     /// Returns [`ParseError`] if the file cannot be read or the WAD fails
@@ -300,14 +260,26 @@ impl Wad {
         options: ParseOptions,
     ) -> Result<Self, ParseError> {
         let path = path.as_ref();
+
         #[cfg(feature = "mmap")]
-        let bytes = mmap::read(path)?;
+        let data = WadData::Mapped(mmap::open(path)?);
+
         #[cfg(not(feature = "mmap"))]
-        let bytes = fs::read(path).map_err(|source| ParseError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-        Self::from_bytes_with_options(bytes, options)
+        let data = {
+            use std::fs;
+            WadData::Owned(fs::read(path).map_err(|source| ParseError::Io {
+                path: path.display().to_string(),
+                source,
+            })?)
+        };
+
+        let (header, lumps, warnings) = parse_bytes(&data, options)?;
+        Ok(Self {
+            header,
+            lumps,
+            bytes: data,
+            warnings,
+        })
     }
 
     /// Returns the WAD kind.
@@ -380,10 +352,111 @@ impl Wad {
     }
 
     /// Returns the owned bytes backing the WAD.
+    ///
+    /// When the `mmap` feature is enabled and the WAD was loaded from a file,
+    /// this copies the mapped bytes into a new heap allocation and releases the
+    /// mapping.
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes
+        match self.bytes {
+            WadData::Owned(v) => v,
+            #[cfg(feature = "mmap")]
+            WadData::Mapped(m) => m.to_vec(),
+        }
     }
+}
+
+fn parse_bytes(
+    bytes: &[u8],
+    options: ParseOptions,
+) -> Result<(WadHeader, Vec<Lump>, Vec<ParseWarning>), ParseError> {
+    let mut cursor = Cursor::new(bytes);
+    let raw = cursor.read_le::<RawHeader>().map_err(ParseError::Header)?;
+    let len = bytes.len();
+    let mut warnings = Vec::new();
+
+    let kind = match &raw.magic {
+        b"IWAD" => WadKind::Iwad,
+        b"PWAD" => WadKind::Pwad,
+        magic => match options.strictness {
+            Strictness::Strict => {
+                return Err(ParseError::InvalidMagic {
+                    magic: String::from_utf8_lossy(magic.as_slice()).into_owned(),
+                });
+            }
+            Strictness::Lenient => {
+                warnings.push(ParseWarning::InvalidMagic(
+                    String::from_utf8_lossy(magic.as_slice()).into_owned(),
+                ));
+                WadKind::Unknown(*magic)
+            }
+        },
+    };
+
+    let num_lumps = coerce_i32(raw.numlumps, "numlumps", options.strictness, &mut warnings)?;
+    let info_table_offset = coerce_i32(
+        raw.infotableofs,
+        "infotableofs",
+        options.strictness,
+        &mut warnings,
+    )?;
+
+    let dir_span = checked_mul(
+        num_lumps,
+        16,
+        "directory length",
+        options.strictness,
+        &mut warnings,
+    )?;
+    let available_entries = available_entries(len, info_table_offset);
+    let lump_count = if info_table_offset > len || info_table_offset.saturating_add(dir_span) > len
+    {
+        match options.strictness {
+            Strictness::Strict => {
+                return Err(ParseError::OutOfBounds {
+                    field: "directory",
+                    offset: info_table_offset,
+                    size: dir_span,
+                    len,
+                });
+            }
+            Strictness::Lenient => {
+                warnings.push(ParseWarning::OutOfBounds {
+                    field: "directory",
+                    offset: info_table_offset,
+                    size: dir_span,
+                    len,
+                });
+                num_lumps.min(available_entries)
+            }
+        }
+    } else {
+        num_lumps
+    };
+
+    let header = WadHeader {
+        kind,
+        num_lumps: lump_count,
+        info_table_offset,
+    };
+
+    let mut directory_cursor = Cursor::new(&bytes[info_table_offset.min(len)..]);
+    let mut lumps = Vec::with_capacity(lump_count);
+    for index in 0..lump_count {
+        let raw_entry = directory_cursor
+            .read_le::<RawDirectoryEntry>()
+            .map_err(|source| ParseError::Directory { index, source })?;
+        lumps.push(validate_entry(
+            index,
+            raw_entry,
+            len,
+            info_table_offset,
+            options.strictness,
+            &mut warnings,
+        )?);
+    }
+
+    Ok((header, lumps, warnings))
 }
 
 fn coerce_i32(
