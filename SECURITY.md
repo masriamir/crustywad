@@ -10,4 +10,4 @@ Please use GitHub Security Advisories or a private maintainer contact path inste
 
 ## Security posture
 
-The core library forbids `unsafe` code and aims to treat malformed WAD data as untrusted input.
+The core library restricts `unsafe` code to the optional `mmap` module (behind the `mmap` feature flag) and aims to treat malformed WAD data as untrusted input. All parsing and validation logic is free of `unsafe`.

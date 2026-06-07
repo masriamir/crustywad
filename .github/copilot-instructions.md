@@ -81,8 +81,8 @@ cargo doc --workspace --all-features --no-deps
 - Include `# Panics` sections if a function can panic.
 
 ### Safety
-- `#![forbid(unsafe_code)]` is set in the core library crate.
-- No unsafe code is permitted in `crustywad`. The `mmap` feature is reserved for a future milestone.
+- `#![deny(unsafe_code)]` is set in the core library crate.
+- Unsafe code is permitted only in `mmap.rs` (behind `#![allow(unsafe_code)]`), solely to call `memmap2::MmapOptions::map`. All parsing and validation logic must remain free of `unsafe`.
 
 ### Lints
 - All Clippy warnings from `clippy::all` and `clippy::pedantic` are enabled workspace-wide.
@@ -172,4 +172,4 @@ The current milestone (1) covers WAD directory reading and map-record scaffoldin
 5. Audio
 6. Write support
 
-When implementing future milestones, keep the `#![forbid(unsafe_code)]` restriction in place and ensure every public item remains documented.
+When implementing future milestones, keep `unsafe` code confined to `mmap.rs` and ensure every public item remains documented.

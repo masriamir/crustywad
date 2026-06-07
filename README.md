@@ -90,7 +90,7 @@ just fetch-fixtures version=v0.14.0
 FREEDOOM_VERSION=v0.14.0 just fetch-fixtures
 ```
 
-Set `CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom` when running tests locally to enable the optional fixture coverage.
+Enable the optional fixture coverage by passing `--features freedoom-tests` (or `--all-features`) **and** setting `CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom` when running tests locally.
 
 ## MSRV
 
