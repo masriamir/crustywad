@@ -443,9 +443,15 @@ fn validate_entry(
     let end = match filepos.checked_add(size) {
         Some(end) => end,
         None => match strictness {
-            Strictness::Strict => return Err(ParseError::Overflow { field: "lump range" }),
+            Strictness::Strict => {
+                return Err(ParseError::Overflow {
+                    field: "lump range",
+                });
+            }
             Strictness::Lenient => {
-                warnings.push(ParseWarning::Overflow { field: "lump range" });
+                warnings.push(ParseWarning::Overflow {
+                    field: "lump range",
+                });
                 usize::MAX
             }
         },
