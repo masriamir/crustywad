@@ -134,7 +134,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 1. Add a `binrw`-derived struct to `crates/crustywad/src/map.rs` with full doc comments on every field.
 2. Ensure the struct uses `#[br(little)]` and implements `BinRead` with `Args<'a> = ()`.
-3. Check the Doom WAD spec for correct field types (signed vs unsigned matters — see known issue #1 above).
+3. Check the Doom WAD spec for correct field types (signed vs unsigned matters — e.g., `Thing.angle` is `u16`, coords are `i16`).
 4. Add integration tests in `crates/crustywad/tests/map_records.rs` with a hand-crafted byte sequence and at least one field assertion per field.
 5. Add a proptest if the type has meaningful invariants.
 6. Update `README.md` if the new type is user-visible.
