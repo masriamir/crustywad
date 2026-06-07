@@ -13,6 +13,22 @@ fn parses_things() {
 }
 
 #[test]
+fn thing_all_fields_including_large_unsigned() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&(-100_i16).to_le_bytes()); // x
+    bytes.extend_from_slice(&200_i16.to_le_bytes()); // y
+    bytes.extend_from_slice(&0x8000_u16.to_le_bytes()); // angle — would read as −32768 under the old i16 type
+    bytes.extend_from_slice(&3004_u16.to_le_bytes()); // type_id
+    bytes.extend_from_slice(&0x001F_u16.to_le_bytes()); // flags
+    let records = parse_records::<Thing>(&bytes).expect("thing should parse");
+    assert_eq!(records[0].x, -100);
+    assert_eq!(records[0].y, 200);
+    assert_eq!(records[0].angle, 0x8000);
+    assert_eq!(records[0].type_id, 3004);
+    assert_eq!(records[0].flags, 0x001F);
+}
+
+#[test]
 fn parses_linedefs() {
     let bytes = [1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 255, 255];
     let records = parse_records::<Linedef>(&bytes).expect("linedef should parse");

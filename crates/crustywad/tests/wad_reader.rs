@@ -107,6 +107,74 @@ fn parse_options_default_to_strict() {
     assert_eq!(ParseOptions::default().strictness, Strictness::Strict);
 }
 
+#[test]
+fn strict_mode_rejects_lump_inside_directory() {
+    let mut wad = common::build_wad(*b"IWAD", &[("TEST", &[1, 2, 3])]);
+    // Directory starts at byte 15. Set filepos to 17 — inside the directory region [15, 31).
+    wad[15..19].copy_from_slice(&17_i32.to_le_bytes());
+    let err = Wad::from_bytes(wad).expect_err("lump pointing into directory should fail");
+    assert!(matches!(
+        err,
+        ParseError::OutOfBounds {
+            field: "lump data",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn lenient_mode_clamps_lump_inside_directory() {
+    let mut wad = common::build_wad(*b"IWAD", &[("TEST", &[1, 2, 3])]);
+    wad[15..19].copy_from_slice(&17_i32.to_le_bytes());
+    let parsed = Wad::from_bytes_with_options(wad, ParseOptions::lenient())
+        .expect("lenient parse should succeed");
+    assert!(parsed.warnings().iter().any(|w| matches!(
+        w,
+        ParseWarning::OutOfBounds {
+            field: "lump data",
+            ..
+        }
+    )));
+    assert_eq!(parsed.lump_bytes(0), Some(&[][..]));
+}
+
+#[test]
+fn strict_mode_rejects_negative_lump_filepos() {
+    let mut wad = common::build_wad(*b"IWAD", &[("TEST", &[1, 2, 3])]);
+    wad[15..19].copy_from_slice(&(-1_i32).to_le_bytes());
+    let err = Wad::from_bytes(wad).expect_err("negative filepos should fail");
+    assert!(matches!(
+        err,
+        ParseError::NegativeValue {
+            field: "filepos",
+            value: -1
+        }
+    ));
+}
+
+#[test]
+fn lenient_mode_recovers_negative_lump_size() {
+    let mut wad = common::build_wad(*b"IWAD", &[("TEST", &[1, 2, 3])]);
+    wad[19..23].copy_from_slice(&(-10_i32).to_le_bytes());
+    let parsed = Wad::from_bytes_with_options(wad, ParseOptions::lenient())
+        .expect("lenient parse should succeed");
+    assert!(parsed.warnings().iter().any(|w| matches!(
+        w,
+        ParseWarning::NegativeValue {
+            field: "size",
+            value: -10
+        }
+    )));
+    assert_eq!(parsed.lump_bytes(0), Some(&[][..]));
+}
+
+#[test]
+fn into_bytes_round_trips() {
+    let original = common::build_wad(*b"IWAD", &[("FLAT", &[0xAA, 0xBB])]);
+    let wad = Wad::from_bytes(original.clone()).expect("wad should parse");
+    assert_eq!(wad.into_bytes(), original);
+}
+
 proptest! {
     #[test]
     fn strict_parser_handles_generated_empty_wads(kind in prop_oneof![Just(*b"IWAD"), Just(*b"PWAD")]) {
