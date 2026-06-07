@@ -208,10 +208,13 @@ impl Wad {
             },
         };
 
-        let num_lumps =
-            coerce_i32(raw.numlumps, "numlumps", options.strictness, &mut warnings)?;
-        let info_table_offset =
-            coerce_i32(raw.infotableofs, "infotableofs", options.strictness, &mut warnings)?;
+        let num_lumps = coerce_i32(raw.numlumps, "numlumps", options.strictness, &mut warnings)?;
+        let info_table_offset = coerce_i32(
+            raw.infotableofs,
+            "infotableofs",
+            options.strictness,
+            &mut warnings,
+        )?;
 
         let dir_span = checked_mul(
             num_lumps,

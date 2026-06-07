@@ -93,7 +93,10 @@ fn parse_records_rejects_trailing_bytes() {
     // 11 bytes for a 10-byte Thing record leaves 1 trailing byte
     let bytes = [1, 0, 2, 0, 90, 0, 4, 0, 5, 0, 99];
     let err = parse_records::<Thing>(&bytes).expect_err("trailing byte should fail");
-    assert!(matches!(err, crustywad::map::MapParseError::TrailingBytes { offset: 10 }));
+    assert!(matches!(
+        err,
+        crustywad::map::MapParseError::TrailingBytes { offset: 10 }
+    ));
 }
 
 #[test]

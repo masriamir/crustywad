@@ -55,8 +55,7 @@ fn parses_basic_wad() {
 
 #[test]
 fn strict_mode_rejects_bad_magic() {
-    let err =
-        Wad::from_bytes(common::build_wad(*b"NOPE", &[])).expect_err("magic should fail");
+    let err = Wad::from_bytes(common::build_wad(*b"NOPE", &[])).expect_err("magic should fail");
     assert!(matches!(err, ParseError::InvalidMagic { .. }));
 }
 

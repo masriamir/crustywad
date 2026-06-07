@@ -81,7 +81,9 @@ pub enum ParseWarning {
         value: i32,
     },
     /// A directory or lump range exceeded the available bytes and was truncated.
-    #[error("{field} points outside the WAD buffer (offset {offset}, size {size}, len {len}); truncated")]
+    #[error(
+        "{field} points outside the WAD buffer (offset {offset}, size {size}, len {len}); truncated"
+    )]
     OutOfBounds {
         /// The logical field being validated.
         field: &'static str,
