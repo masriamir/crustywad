@@ -2,7 +2,7 @@
 
 This directory is reserved for locally downloaded FreeDoom WAD files used by optional integration tests.
 
-- Source: https://github.com/freedoom/freedoom/releases/tag/v0.13.0
+- Default source: https://github.com/freedoom/freedoom/releases/tag/v0.13.0
 - Expected files: `freedoom1.wad`, `freedoom2.wad`
 - Local path: `tests/fixtures/freedoom/`
 - Environment variable: `CRUSTYWAD_FREEDOOM_DIR`

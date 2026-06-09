@@ -4,7 +4,8 @@ Usage:
     python tests/fixtures/fetch_freedoom.py [--version VERSION]
 
     VERSION defaults to the FREEDOOM_VERSION environment variable, then to
-    the DEFAULT_VERSION constant below.  Pass a bare semver tag, e.g. "v0.13.0".
+    the DEFAULT_VERSION constant below.  The "v" prefix is optional — both
+    "v0.13.0" and "0.13.0" are accepted.
 """
 
 import argparse
