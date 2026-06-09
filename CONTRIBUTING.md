@@ -37,3 +37,5 @@ FreeDoom is an open-source project; see the [FreeDoom repository](https://github
 ## Releases
 
 `release-plz` is wired up for release PRs and Conventional Commits, but publishing to crates.io is intentionally disabled for now. To enable publishing later, update `release-plz.toml`, provide `CARGO_REGISTRY_TOKEN`, and adjust the release workflow.
+
+**Version bump checklist:** `crates/crustywad-cli/Cargo.toml` declares the `crustywad` path dependency with an explicit `version` field (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`). `cargo-deny` requires this (`wildcards = "deny"`), but it does not auto-track the workspace version. When bumping `version` in the workspace `Cargo.toml`, update this field to match.

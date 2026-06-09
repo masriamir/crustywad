@@ -183,6 +183,8 @@ CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `s
 
 `release-plz` (`.github/workflows/release-plz.yml`) creates release PRs on push to `main`. Publishing to crates.io is intentionally disabled until credentials and release policy are ready.
 
+**Version bump:** `crates/crustywad-cli/Cargo.toml` pins the `crustywad` path dependency with an explicit version (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`). `cargo-deny` requires this (`wildcards = "deny"`) but it does not inherit the workspace version automatically. When bumping the workspace `version`, update this field to match or `cargo deny check` will fail.
+
 ## Roadmap
 
 1. ✅ Directory reading and map-record scaffolding (this PR)
