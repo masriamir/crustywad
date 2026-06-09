@@ -7,8 +7,7 @@ queries:
   - uses: security-extended
   - uses: security-and-quality
 
-# Widen the default scope to make sure generated code produced by build.rs
-# or proc-macro crates is analysed when present.
+# Ensure CodeQL observes the build performed in the workflow.
 build-mode: manual
 
 # Exclude paths that do not contain production code.
