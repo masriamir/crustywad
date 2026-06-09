@@ -32,7 +32,7 @@ A WAD contains a 12-byte header, lump data blobs, and a directory of 16-byte lum
 
 ## Feature plan
 
-- `mmap`: reserved module and feature flag for future memory-mapped I/O.
+- `mmap`: enables `Wad::from_path_mapped[_with_options]` for read-only memory-mapped file loading via `memmap2`; `from_path` always reads into memory regardless of this flag.
 - `freedoom-tests`: optional integration tests that inspect downloaded FreeDoom fixtures.
 - Future `async`: alternate I/O constructors without changing the in-memory parse model.
 - Future zero-copy: borrowed views over validated bytes.
