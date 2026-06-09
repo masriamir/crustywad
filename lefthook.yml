@@ -1,0 +1,22 @@
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      run: cargo fmt --all
+    clippy:
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+commit-msg:
+  commands:
+    conventional-commits:
+      run: |
+        python - <<'PY' "{1}"
+import pathlib
+import re
+import sys
+message = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()[0]
+pattern = re.compile(r'^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._/-]+\))?!?: .+')
+if not pattern.match(message):
+    print('commit message must follow Conventional Commits, e.g. feat(parser): add wad reader')
+    sys.exit(1)
+PY

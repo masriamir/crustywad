@@ -1,0 +1,30 @@
+[package]
+name = "crustywad"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+autobenches = false
+
+[features]
+default = []
+mmap = ["dep:memmap2"]
+freedoom-tests = []
+
+[dependencies]
+binrw.workspace = true
+memmap2 = { version = "0.9.5", optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3.20.0"
+
+[lints]
+workspace = true

@@ -1,0 +1,12 @@
+{
+  "name": "crustywad",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bullseye",
+  "postCreateCommand": "cargo install just cargo-llvm-cov cargo-deny cargo-binstall && cargo binstall --no-confirm cargo-lefthook || cargo install cargo-lefthook",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer"
+      ]
+    }
+  }
+}

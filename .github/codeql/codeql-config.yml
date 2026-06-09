@@ -1,0 +1,29 @@
+name: "Advanced CodeQL configuration"
+
+# Run the extended security-and-quality suite in addition to the default
+# security queries.  This increases analysis time slightly but surfaces
+# code-quality issues alongside security alerts.
+queries:
+  - uses: security-extended
+  - uses: security-and-quality
+
+# Ensure CodeQL observes the build performed in the workflow.
+build-mode: manual
+
+# Exclude paths that do not contain production code.
+paths-ignore:
+  - "docs/**"
+  - "tests/**"
+  - "**/*.md"
+  - "**/*.txt"
+  - ".github/**"
+  - "deny.toml"
+  - "lefthook.yml"
+  - "release-plz.toml"
+  - "rustfmt.toml"
+  - ".editorconfig"
+
+# Ensure all in-scope source files are indexed regardless of whether they
+# are reachable from the default entry-point heuristics.
+paths:
+  - "crates/**/*.rs"
