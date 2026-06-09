@@ -9,7 +9,7 @@ queries:
 
 # Widen the default scope to make sure generated code produced by build.rs
 # or proc-macro crates is analysed when present.
-build-mode: autobuild
+build-mode: manual
 
 # Exclude paths that do not contain production code.
 paths-ignore:
