@@ -29,6 +29,24 @@ fn loads_from_path_mapped() {
     assert_eq!(wad.lump_bytes(0), Some(&[1, 2, 3, 4][..]));
 }
 
+#[cfg(feature = "mmap")]
+#[test]
+fn mmap_nonexistent_file_returns_io_error() {
+    let err = Wad::from_path_mapped("/nonexistent/path/file.wad")
+        .expect_err("missing file should fail");
+    assert!(matches!(err, ParseError::Io { .. }));
+}
+
+#[cfg(feature = "mmap")]
+#[test]
+fn mmap_empty_file_fails() {
+    // On Linux, mmap of a zero-length file returns EINVAL → ParseError::Io.
+    // On macOS, the mapping succeeds but the WAD parser can't read the header → ParseError::Header.
+    // Either way, loading an empty file must fail.
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    Wad::from_path_mapped(file.path()).expect_err("empty file should not load as a WAD");
+}
+
 #[test]
 fn finds_lumps_by_name() {
     let lumps = [("TITLEPIC", &[9, 9][..]), ("PLAYPAL", &[3][..])];
