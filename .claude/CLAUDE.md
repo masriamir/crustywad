@@ -53,6 +53,8 @@ Install [just](https://github.com/casey/just), then:
 | Fetch FreeDoom fixtures | `just fetch-fixtures` |
 | Full CI check | `just ci` |
 
+**Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
+
 Exact CI commands:
 
 ```bash

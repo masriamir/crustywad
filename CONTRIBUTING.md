@@ -22,6 +22,8 @@ just fetch-fixtures
 just ci
 ```
 
+**Always run `just ci` before pushing.** It mirrors the full GitHub Actions pipeline (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
+
 ## Conventional Commits
 
 Commits are expected to follow Conventional Commits. The bundled `lefthook.yml` validates commit messages with a lightweight Python-based check.
