@@ -32,8 +32,8 @@ fn loads_from_path_mapped() {
 #[cfg(feature = "mmap")]
 #[test]
 fn mmap_nonexistent_file_returns_io_error() {
-    let err = Wad::from_path_mapped("/nonexistent/path/file.wad")
-        .expect_err("missing file should fail");
+    let err =
+        Wad::from_path_mapped("/nonexistent/path/file.wad").expect_err("missing file should fail");
     assert!(matches!(err, ParseError::Io { .. }));
 }
 
