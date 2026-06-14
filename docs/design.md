@@ -16,6 +16,40 @@
 
 A WAD contains a 12-byte header, lump data blobs, and a directory of 16-byte lump entries. The header stores the byte offset at which the directory begins; in practice the directory sits after all lump data at the end of the file. `crustywad` models the file as owned bytes plus validated metadata for the parsed header and lump directory.
 
+### WAD File Format
+
+The diagram below shows the on-disk layout of a WAD file. The header is always at offset 0 and is exactly 12 bytes. Lump data blobs follow immediately. The lump directory sits at the byte offset stored in `infotableofs` (typically at the end of the file). Each directory entry is exactly 16 bytes and describes one lump.
+
+```mermaid
+block-beta
+  columns 3
+
+  block:header["Header (12 bytes, offset 0)"]:3
+    magic["magic\n4 bytes\n'IWAD' or 'PWAD'"]
+    numlumps["numlumps\n4 bytes (i32)\ncount of lumps"]
+    infotableofs["infotableofs\n4 bytes (i32)\noffset to directory"]
+  end
+
+  space:3
+
+  block:data["Lump Data Blobs (variable)"]:3
+    lump0["lump 0 data\n(variable)"]
+    lump1["lump 1 data\n(variable)"]
+    lumpN["... lump N data\n(variable)"]
+  end
+
+  space:3
+
+  block:dir["Lump Directory (N × 16 bytes, at infotableofs)"]:3
+    entry0["entry 0: filepos(4) + size(4) + name(8)"]
+    entry1["entry 1: filepos(4) + size(4) + name(8)"]
+    entryN["... entry N-1: filepos(4) + size(4) + name(8)"]
+  end
+
+  header --> data
+  data --> dir
+```
+
 ## Read pipeline
 
 1. Read the file into owned bytes.
@@ -24,11 +58,140 @@ A WAD contains a 12-byte header, lump data blobs, and a directory of 16-byte lum
 4. Parse the lump directory.
 5. Clamp invalid lump ranges in lenient mode and collect warnings.
 
+### Read Pipeline Flowchart
+
+The flowchart below traces how bytes become a `Wad`. At each validation step the path diverges on `Strictness`: strict mode returns an `Err(ParseError)` immediately, while lenient mode pushes a `ParseWarning` and continues.
+
+```mermaid
+flowchart TD
+    A["Input bytes\n(from_bytes / from_path / from_path_mapped)"]
+    B["binrw reads RawHeader\n(12 bytes, little-endian)"]
+    C{Header OK?}
+    D["Err(ParseError::Header)"]
+    E{Magic valid?\n'IWAD' / 'PWAD'}
+    F{Strictness?}
+    G["Err(ParseError::InvalidMagic)"]
+    H["warn ParseWarning::InvalidMagic\nkind = WadKind::Unknown"]
+    I["Validate numlumps / infotableofs\n(coerce_i32: reject negatives)"]
+    J{Values non-negative?}
+    K["Err(ParseError::NegativeValue)"]
+    L["warn ParseWarning::NegativeValue\nclamp to 0"]
+    M["Compute directory span\n(numlumps x 16 bytes)"]
+    N{Directory within buffer?}
+    O["Err(ParseError::OutOfBounds)"]
+    P["warn ParseWarning::OutOfBounds\ntruncate to available entries"]
+    Q["Parse N x RawDirectoryEntry\n(16 bytes each, little-endian)"]
+    R["validate_entry: check filepos/size/name\nper-entry strict/lenient branch"]
+    S["Ok(Wad)\n+ warnings (may be empty)"]
+
+    A --> B
+    B --> C
+    C -- "binrw error" --> D
+    C -- "ok" --> E
+    E -- "yes" --> I
+    E -- "no" --> F
+    F -- "Strict" --> G
+    F -- "Lenient" --> H
+    H --> I
+    I --> J
+    J -- "yes" --> M
+    J -- "no" --> F2{Strictness?}
+    F2 -- "Strict" --> K
+    F2 -- "Lenient" --> L
+    L --> M
+    M --> N
+    N -- "yes" --> Q
+    N -- "no" --> F3{Strictness?}
+    F3 -- "Strict" --> O
+    F3 -- "Lenient" --> P
+    P --> Q
+    Q --> R
+    R --> S
+```
+
 ## Strict vs. lenient parsing
 
 `Strictness::Strict` treats malformed magic, negative counts, out-of-range offsets, oversized lumps, and non-ASCII names as hard errors.
 
 `Strictness::Lenient` keeps parsing when possible, returning a `Wad` plus collected warnings. In lenient mode, invalid directory sizes are truncated to the number of complete entries that fit in the buffer and invalid lump byte ranges are clamped into a safe slice.
+
+### Strict vs. Lenient Mode Comparison
+
+The sequence diagram below shows how the same malformed WAD (bad magic bytes) flows through each mode. Strict mode returns an error immediately; lenient mode records a warning and proceeds to produce a usable `Wad`.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Parser
+    participant Warnings
+
+    Note over Caller,Warnings: Input: WAD bytes with magic = "XWAD" (not IWAD/PWAD)
+
+    rect rgb(255, 230, 230)
+        Note over Caller,Parser: Strict mode (ParseOptions::strict())
+        Caller->>Parser: from_bytes_with_options(bytes, strict)
+        Parser->>Parser: read RawHeader -- magic = "XWAD"
+        Parser->>Parser: magic != IWAD/PWAD, Strictness::Strict
+        Parser-->>Caller: Err(ParseError::InvalidMagic { magic: "XWAD" })
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Caller,Warnings: Lenient mode (ParseOptions::lenient())
+        Caller->>Parser: from_bytes_with_options(bytes, lenient)
+        Parser->>Parser: read RawHeader -- magic = "XWAD"
+        Parser->>Parser: magic != IWAD/PWAD, Strictness::Lenient
+        Parser->>Warnings: push ParseWarning::InvalidMagic("XWAD")
+        Parser->>Parser: kind = WadKind::Unknown([X,W,A,D])
+        Parser->>Parser: continue parsing numlumps, infotableofs, directory
+        Parser-->>Caller: Ok(Wad { kind: Unknown, warnings: [InvalidMagic] })
+        Caller->>Caller: wad.warnings() returns [ParseWarning::InvalidMagic("XWAD")]
+    end
+```
+
+## Map record parsing
+
+### Map Record Parsing Flowchart
+
+`parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any map record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. Records are read sequentially until the cursor reaches the end of the slice.
+
+```mermaid
+flowchart TD
+    A["Input: &[u8] lump bytes\n(e.g. THINGS lump data)"]
+    B["Caller selects record type T\ne.g. parse_records::Thing(bytes)"]
+    C{bytes.len() %\nsize_of::T() == 0?}
+    D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
+    E["Allocate Vec with capacity\nbytes.len() / size_of::T()"]
+    F{cursor.position()\n< bytes.len()?}
+    G["binrw reads one T\n(little-endian fixed-size struct)"]
+    H{binrw ok?}
+    I["Err(MapParseError::Binrw)"]
+    J["push T into Vec"]
+    K["Ok(Vec of T)\ne.g. Vec of Thing, Vec of Linedef, ..."]
+
+    A --> B
+    B --> C
+    C -- "no (trailing bytes)" --> D
+    C -- "yes" --> E
+    E --> F
+    F -- "yes (more bytes)" --> G
+    G --> H
+    H -- "error" --> I
+    H -- "ok" --> J
+    J --> F
+    F -- "no (done)" --> K
+
+    subgraph "Concrete T examples"
+        T1["Thing\n10 bytes: x(i16) y(i16) angle(u16)\ntype_id(u16) flags(u16)"]
+        T2["Linedef\n14 bytes: 7 x u16"]
+        T3["Vertex\n4 bytes: x(i16) y(i16)"]
+        T4["Sector\n26 bytes: heights(i16) textures(Name8) ..."]
+    end
+
+    K -.-> T1
+    K -.-> T2
+    K -.-> T3
+    K -.-> T4
+```
 
 ## Feature plan
 
