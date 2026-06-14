@@ -1,3 +1,15 @@
+pre-push:
+  commands:
+    branch-name:
+      run: |
+        branch=$(git rev-parse --abbrev-ref HEAD)
+        pattern='^(main|feature/[0-9]+(-[a-z0-9_-]*)?|bugfix/[0-9]+(-[a-z0-9_-]*)?|hotfix/[0-9]+(-[a-z0-9_-]*)?)$'
+        if ! echo "$branch" | grep -qE "$pattern"; then
+          echo "Branch '$branch' does not follow naming conventions."
+          echo "Use: feature/###, bugfix/###, hotfix/###, or main"
+          exit 1
+        fi
+
 pre-commit:
   parallel: true
   commands:

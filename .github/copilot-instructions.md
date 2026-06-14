@@ -149,6 +149,31 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 Scope can be added when useful: `feat(map):`, `fix(cli):`, etc.
 
+The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
+
+## Git branching workflow
+
+All feature and bugfix work branches from `main` after a `git pull`. Branches are tied to GitHub issue numbers.
+
+| Branch type | Template | Example |
+|---|---|---|
+| Feature | `feature/###` or `feature/###-short-desc` | `feature/42-mmap-support` |
+| Bugfix | `bugfix/###` or `bugfix/###-short-desc` | `bugfix/17-header-parse` |
+| Hotfix | `hotfix/###` or `hotfix/###-short-desc` | `hotfix/55-oob-read` |
+
+`###` is the GitHub issue number. A short slug after the number is optional but encouraged for readability.
+
+**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`vX.Y.Z`) from Conventional Commits on `main`. When publishing is enabled, merge the `release-plz` release PR to ship.
+
+The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes from non-conforming branches.
+
+**Workflow:**
+1. `git pull origin main`
+2. `git checkout -b feature/###-description`
+3. Commit with Conventional Commits (`feat(scope): ...`)
+4. Run `just ci` before pushing
+5. Open a PR against `main`
+
 ## CI and security
 
 The main CI pipeline (`.github/workflows/ci.yml`) runs:
