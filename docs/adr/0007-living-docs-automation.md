@@ -22,11 +22,10 @@ All three files currently describe the same conventions (error-handling rules,
 lint settings, naming, strictness model, commit prefixes, CI jobs, feature
 flags). When a convention changes — for example, a new lint group is added, the
 MSRV bumps, or a new `just` recipe lands — every file must be updated manually.
-In practice each file has already drifted: `copilot-instructions.md` omits the
-`ParseWarning` rule present in `CLAUDE.md`; `CLAUDE.md` has a richer "Adding a
-new lump type" checklist absent from `copilot-instructions.md`; neither
-mentions the `docs/adr/` ADR-first workflow in the same detail as
-`0001-record-architecture-decisions.md`.
+In practice each file has already drifted: `.claude/CLAUDE.md` has a richer
+"Adding a new lump type" checklist absent from
+`.github/copilot-instructions.md`; neither mentions the `docs/adr/` ADR-first
+workflow in the same detail as `0001-record-architecture-decisions.md`.
 
 A single-source-of-truth approach is appealing but faces a structural
 constraint: each file is tailored to its consumer. `CLAUDE.md` includes
@@ -96,14 +95,21 @@ all three files. The check runs as a new `docs-sync` step in the existing
 `ci.yml` workflow and is also exercisable locally via `just docs-sync`.
 
 Anchors are chosen from lines that are unlikely to change wording frequently,
-such as:
+such as (shown as bare substrings, not quoted, so they can be copied directly
+into `anchors.txt`):
 
 ```
-"cargo clippy --workspace --all-targets --all-features -- -D warnings"
-"missing_docs = \"deny\""
-"ParseOptions { strictness"
-"just ci"
+ParseOptions { strictness
+just ci
+thiserror
+Conventional Commits
 ```
+
+Note: anchors must appear verbatim in *all three* checked files. The two
+examples above (`ParseOptions { strictness` and `just ci`) already appear in
+`.claude/CLAUDE.md` and `.github/copilot-instructions.md`; when
+`docs/design.md` is updated as part of the implementation work tracked in
+issue #33, it must include matching text for every anchor in `anchors.txt`.
 
 When a convention changes, the author updates all files and the anchor
 naturally appears in the diff. If the author updates only one file, CI fails
