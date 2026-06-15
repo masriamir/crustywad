@@ -60,7 +60,7 @@ We choose **cargo-fuzz** for the following reasons:
 - honggfuzz-rs requires the honggfuzz binary to be installed separately and offers
   fewer sanitizer combinations than libFuzzer.
 
-The `justfile` `fuzz` recipe is updated to print a human-readable notice
+The `justfile` `fuzz` recipe will be updated to print a human-readable notice
 explaining the nightly requirement and the `cargo fuzz run <target>` invocation,
 replacing the existing placeholder message.
 

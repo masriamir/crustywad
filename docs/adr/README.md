@@ -32,5 +32,6 @@ implementation begins.**
 | ADR | Title | Status |
 | ---: | --- | --- |
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
+| [0009](0009-cargo-fuzz-harness.md) | cargo-fuzz harness for WAD parser | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
