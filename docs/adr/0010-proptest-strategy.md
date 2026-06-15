@@ -93,7 +93,7 @@ and payloads of 0–256 bytes.
 
 ### 3. Test placement
 
-Per `CLAUDE.md`, property-based tests live in the same integration test file as
+Per `.claude/CLAUDE.md`, property-based tests live in the same integration test file as
 the regular tests they complement:
 
 - Invariants I-1, I-2, I-3, I-4, I-6, I-7 → `crates/crustywad/tests/wad_reader.rs`
@@ -114,8 +114,8 @@ invariant is identified as needing more exploration, a per-test
 `ProptestConfig { cases: N, .. }` can override the default without affecting
 other tests.
 
-**Regression files (`.proptest-regressions/`):** Regression files are committed
-to the repository. Proptest appends a minimal failing seed whenever it shrinks a
+**Regression files (`.proptest-regressions/`):** Regression files should be committed
+to the repository when produced. Proptest appends a minimal failing seed whenever it shrinks a
 counter-example; committing those files ensures that the exact failure is always
 replayed on every subsequent `cargo test` run, even after the fix, until the file
 is explicitly removed. A `.gitignore` entry is intentionally not added for these
@@ -127,9 +127,9 @@ prohibitively slow on the MSRV toolchain (Rust 1.85.0).
 
 ## Consequences
 
-- Four proptest blocks are added to `wad_reader.rs` and two to `map_records.rs`.
-  Existing hand-crafted tests are not removed; proptest complements them.
-- `common/mod.rs` gains `arb_valid_wad` and `arb_lump_pair`. These are public
+- Four proptest blocks will be added to `wad_reader.rs` and two to `map_records.rs`.
+  Existing hand-crafted tests will not be removed; proptest will complement them.
+- `common/mod.rs` will gain `arb_valid_wad` and `arb_lump_pair`. These will be public
   within the test crate only (`pub` inside `tests/`).
 - CI wall-clock time increases by the time required to run 256 × 6 = 1 536
   proptest cases across all property tests. On a contemporary laptop each case
