@@ -9,9 +9,8 @@ use thiserror::Error;
 
 /// Errors that can occur while reading a WAD.
 ///
-/// All variants are produced in both strict and lenient mode, except where
-/// noted.  In lenient mode the parser recovers from several of these conditions
-/// and records a [`ParseWarning`] instead — only truly unrecoverable failures
+/// In lenient mode the parser recovers from several of these conditions and
+/// records a [`ParseWarning`] instead — only truly unrecoverable failures
 /// (like an unreadable file or a truncated header) still return `ParseError`.
 ///
 /// To handle errors programmatically, match on the variant you care about and

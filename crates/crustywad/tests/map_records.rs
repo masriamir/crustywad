@@ -93,7 +93,7 @@ fn parses_segs() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&1_u16.to_le_bytes()); // start_vertex
     bytes.extend_from_slice(&2_u16.to_le_bytes()); // end_vertex
-    bytes.extend_from_slice(&90_i16.to_le_bytes()); // angle
+    bytes.extend_from_slice(&90_u16.to_le_bytes()); // angle
     bytes.extend_from_slice(&3_u16.to_le_bytes()); // linedef
     bytes.extend_from_slice(&0_u16.to_le_bytes()); // direction
     bytes.extend_from_slice(&(-5_i16).to_le_bytes()); // offset — negative, validates i16 type

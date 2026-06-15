@@ -233,10 +233,10 @@ pub struct Seg {
     pub end_vertex: u16,
     /// Angle of the seg expressed as a binary angle (`BAMS` unit).
     ///
-    /// The Doom engine stores angles as 16-bit signed fixed-point values where
-    /// `0x4000` = 90°, `0x8000` = 180°, etc.  This is the direction from
-    /// `start_vertex` to `end_vertex`.
-    pub angle: i16,
+    /// The full circle maps to `[0, 65536)`: `0x4000` = 90°, `0x8000` = 180°,
+    /// `0xC000` = 270°.  This is the direction from `start_vertex` to
+    /// `end_vertex`.
+    pub angle: u16,
     /// Index into the `LINEDEFS` lump for the linedef this seg is part of.
     pub linedef: u16,
     /// Which side of the parent linedef this seg faces.
