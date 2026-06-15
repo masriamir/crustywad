@@ -45,4 +45,4 @@ See the [Doom Wiki](https://doomwiki.org/wiki/WAD) for the full unofficial spec.
 
 ## Next steps
 
-Start with [Getting Started](getting-started.md) to add `crustywad` to your
+Start with [Getting Started](getting-started.md) to add `crustywad` to your project and parse your first WAD file.

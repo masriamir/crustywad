@@ -97,3 +97,20 @@ let lenient = ParseOptions::lenient();
 ```rust
 use crustywad::{Wad, WadKind};
 
+# let mut bytes = Vec::new();
+# bytes.extend_from_slice(b"IWAD");
+# bytes.extend_from_slice(&1_i32.to_le_bytes());
+# bytes.extend_from_slice(&16_i32.to_le_bytes());
+# bytes.extend_from_slice(&[1, 2, 3, 4]);
+# bytes.extend_from_slice(&12_i32.to_le_bytes());
+# bytes.extend_from_slice(&4_i32.to_le_bytes());
+# bytes.extend_from_slice(b"TEST\0\0\0\0");
+let wad = Wad::from_bytes(bytes)?;
+
+match wad.kind() {
+    WadKind::Iwad => println!("IWAD — base game data"),
+    WadKind::Pwad => println!("PWAD — patch or add-on"),
+    WadKind::Unknown(magic) => println!("Unknown magic: {:?}", magic),
+}
+# Ok::<(), crustywad::ParseError>(())
+```

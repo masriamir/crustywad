@@ -1,7 +1,9 @@
 # Map Record Parsing
 
 Doom maps are stored as a group of sequentially named lumps. After the marker lump
-(e.g. `E1M1`) come the map data lumps in a fixed order:
+(e.g. `E1M1`) come the parsed map data lumps. The table below covers the record lumps
+that `crustywad` decodes; classic Doom maps also include additional lumps such as
+`REJECT` and `BLOCKMAP` after `SECTORS`:
 
 | Lump | Record type | Record size |
 |---|---|---|
@@ -108,3 +110,8 @@ See `crustywad::map` in the API docs for the full definitions of `Seg`,
 
 `parse_records` returns `MapParseError`:
 
+- `MapParseError::TrailingBytes` — the lump length is not an exact multiple of the record
+  size (e.g. a `THINGS` lump whose byte count is not divisible by 10).
+- `MapParseError::Binrw` — `binrw` failed to decode a record from the byte stream.
+
+Both variants implement `std::error::Error` and display a human-readable message.

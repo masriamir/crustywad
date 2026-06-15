@@ -40,7 +40,7 @@ into a `Vec<u8>`) is equally fast and has simpler lifetime semantics.
 
 The mapping is held for the lifetime of the `Wad`. Truncating or writing to the
 file from another process while the `Wad` is alive is unsupported and may cause
-`SIGBUS` on Unix or data corruption on Windows.
+`SIGBUS` on Unix; on Windows the mapping prevents truncation but concurrent writes may produce inconsistent reads.
 
 ## freedoom-tests
 
@@ -62,3 +62,6 @@ passing `--all-features` in CI is safe without fetching fixtures first.
 Features are independent and can be combined:
 
 ```toml
+[dependencies]
+crustywad = { version = "0.1", features = ["mmap"] }
+```
