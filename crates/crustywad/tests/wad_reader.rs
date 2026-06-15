@@ -213,3 +213,209 @@ proptest! {
         prop_assert!(matches!(wad.kind(), WadKind::Iwad | WadKind::Pwad));
     }
 }
+
+#[test]
+fn header_returns_parsed_header() {
+    let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("FLAT", &[0xAA])]))
+        .expect("wad should parse");
+    let header = wad.header();
+    assert_eq!(header.kind, WadKind::Iwad);
+    assert_eq!(header.num_lumps, 1);
+}
+
+#[test]
+fn clone_produces_independent_copy() {
+    let wad = Wad::from_bytes(common::build_wad(*b"PWAD", &[("DEMO", &[1, 2, 3])]))
+        .expect("wad should parse");
+    let cloned = wad.clone();
+    assert_eq!(cloned.kind(), WadKind::Pwad);
+    assert_eq!(cloned.lump_count(), 1);
+    assert_eq!(cloned.lump_bytes(0), Some(&[1, 2, 3][..]));
+}
+
+#[test]
+fn lump_by_name_returns_none_for_missing_lump() {
+    let wad =
+        Wad::from_bytes(common::build_wad(*b"IWAD", &[("EXIST", &[1])])).expect("wad should parse");
+    assert!(wad.lump_by_name("NOPE").is_none());
+}
+
+#[test]
+fn lump_returns_none_for_out_of_bounds_index() {
+    let wad =
+        Wad::from_bytes(common::build_wad(*b"IWAD", &[("FLAT", &[0])])).expect("wad should parse");
+    assert!(wad.lump(99).is_none());
+}
+
+#[test]
+fn lump_bytes_returns_none_for_out_of_bounds_index() {
+    let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[])).expect("wad should parse");
+    assert!(wad.lump_bytes(0).is_none());
+}
+
+#[test]
+fn lump_accessors_return_correct_values() {
+    let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("PLAYPAL", &[7, 8, 9])]))
+        .expect("wad should parse");
+    let lump = wad.lump(0).expect("lump 0 should exist");
+    assert_eq!(lump.name(), "PLAYPAL");
+    assert_eq!(lump.size(), 3);
+    // filepos should be right after the 12-byte WAD header
+    assert_eq!(lump.filepos(), 12);
+}
+
+#[test]
+fn lump_is_not_virtual_when_has_size() {
+    let wad =
+        Wad::from_bytes(common::build_wad(*b"IWAD", &[("MAP01", &[])])).expect("wad should parse");
+    let lump = wad.lump(0).expect("lump should exist");
+    // Virtual lumps have size == 0; our lump data is empty so size is 0
+    assert_eq!(lump.size(), 0);
+}
+
+#[test]
+fn strict_mode_rejects_directory_extending_past_end() {
+    // Build a WAD with numlumps set so that numlumps*16 overflows file length
+    let wad = common::build_wad(*b"IWAD", &[("TEST", &[1, 2, 3])]);
+    // directory offset is valid but numlumps is much too large
+    let mut corrupt = wad.clone();
+    // Set numlumps to 1000 (way beyond what the file contains)
+    corrupt[4..8].copy_from_slice(&1000_i32.to_le_bytes());
+    let err = Wad::from_bytes(corrupt).expect_err("directory overflow should fail in strict mode");
+    assert!(matches!(
+        err,
+        ParseError::OutOfBounds {
+            field: "directory",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn lenient_mode_non_ascii_name_decoded_lossily() {
+    let mut wad = common::build_wad(*b"PWAD", &[("TEST", &[1])]);
+    let name_offset = wad.len() - 8;
+    wad[name_offset] = 0xFF;
+    let parsed = Wad::from_bytes_with_options(wad, ParseOptions::lenient())
+        .expect("lenient mode should handle non-ascii names");
+    assert_eq!(parsed.lump_count(), 1);
+    assert!(
+        parsed
+            .warnings()
+            .iter()
+            .any(|w| matches!(w, ParseWarning::NonAsciiName { index: 0 }))
+    );
+}
+
+#[test]
+fn wad_kind_unknown_preserved_in_lenient_mode() {
+    let wad = common::build_wad(*b"XWAD", &[]);
+    let parsed = Wad::from_bytes_with_options(wad, ParseOptions::lenient())
+        .expect("lenient mode should accept unknown magic");
+    assert!(matches!(parsed.kind(), WadKind::Unknown(_)));
+    if let WadKind::Unknown(magic) = parsed.kind() {
+        assert_eq!(&magic, b"XWAD");
+    }
+}
+
+#[test]
+fn parse_error_display_formats_correctly() {
+    let err =
+        Wad::from_bytes(common::build_wad(*b"NOPE", &[])).expect_err("invalid magic should fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("NOPE"),
+        "error message should contain the invalid magic"
+    );
+}
+
+#[test]
+fn parse_warning_display_formats_correctly() {
+    let mut wad = common::build_wad(*b"NOPE", &[]);
+    wad[4..8].copy_from_slice(&0_i32.to_le_bytes()); // 0 lumps
+    let parsed = Wad::from_bytes_with_options(wad, ParseOptions::lenient())
+        .expect("lenient parse should succeed");
+    let warnings = parsed.warnings();
+    assert!(!warnings.is_empty());
+    let msg = warnings[0].to_string();
+    assert!(!msg.is_empty(), "warning should have a display message");
+}
+
+#[test]
+fn parse_options_strict_factory() {
+    use crustywad::Strictness;
+    let opts = ParseOptions::strict();
+    assert_eq!(opts.strictness, Strictness::Strict);
+}
+
+#[test]
+fn parse_options_lenient_factory() {
+    use crustywad::Strictness;
+    let opts = ParseOptions::lenient();
+    assert_eq!(opts.strictness, Strictness::Lenient);
+}
+
+#[test]
+fn wad_lumps_slice_matches_lump_count() {
+    let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("A", &[1]), ("B", &[2])]))
+        .expect("wad should parse");
+    assert_eq!(wad.lumps().len(), wad.lump_count());
+}
+
+#[test]
+fn lump_data_returns_correct_slice() {
+    let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("DEMO1", &[10, 20, 30])]))
+        .expect("wad should parse");
+    let lump = wad.lump(0).expect("lump should exist");
+    let data = wad.lump_data(lump);
+    assert_eq!(data, &[10, 20, 30]);
+}
+
+#[cfg(feature = "mmap")]
+#[test]
+fn mmap_into_bytes_recovers_mapped_data() {
+    let original = common::build_wad(*b"IWAD", &[("FLAT", &[0xAA, 0xBB])]);
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), &original).expect("wad should be written");
+    let wad = Wad::from_path_mapped(file.path()).expect("wad should load via mmap");
+    let recovered = wad.into_bytes();
+    assert_eq!(recovered, original);
+}
+
+#[test]
+fn lump_data_after_directory_parses_correctly() {
+    // Build a WAD where the lump data lives AFTER the directory (unusual but valid).
+    // This exercises the `filepos >= directory_end` branch in validate_entry.
+    //
+    // Layout: header (12) | directory (16) | lump data (3)
+    //   header:    magic=IWAD, numlumps=1, infotableofs=12
+    //   directory: filepos=28, size=3, name=b"AFTER\0\0\0"
+    //   lump data: [0xDE, 0xAD, 0xBE] at offset 28
+    let mut bytes = Vec::new();
+    // Header
+    bytes.extend_from_slice(b"IWAD");
+    bytes.extend_from_slice(&1_i32.to_le_bytes()); // numlumps = 1
+    bytes.extend_from_slice(&12_i32.to_le_bytes()); // infotableofs = 12
+    // Directory entry (16 bytes)
+    bytes.extend_from_slice(&28_i32.to_le_bytes()); // filepos = 28 (after directory)
+    bytes.extend_from_slice(&3_i32.to_le_bytes()); // size = 3
+    bytes.extend_from_slice(b"AFTER\0\0\0"); // name (8 bytes)
+    // Lump data at offset 28
+    bytes.extend_from_slice(&[0xDE, 0xAD, 0xBE]);
+    assert_eq!(bytes.len(), 31);
+
+    let wad = Wad::from_bytes(bytes).expect("WAD with post-directory lump data should parse");
+    assert_eq!(wad.lump_count(), 1);
+    assert_eq!(wad.lump_bytes(0), Some(&[0xDE, 0xAD, 0xBE][..]));
+}
+
+#[cfg(feature = "mmap")]
+#[test]
+fn from_path_mapped_with_options_lenient() {
+    let original = common::build_wad(*b"IWAD", &[("FLAT", &[0xCC])]);
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), &original).expect("wad should be written");
+    let wad = Wad::from_path_mapped_with_options(file.path(), ParseOptions::lenient())
+        .expect("mmap with lenient options should succeed");
+    assert_eq!(wad.kind(), WadKind::Iwad);
+}

@@ -120,3 +120,56 @@ fn parses_name8_lossily() {
     let record = Name8(*b"START\0\0\0");
     assert_eq!(record.as_str_lossy(), "START");
 }
+
+#[test]
+fn parse_records_returns_empty_vec_for_empty_slice() {
+    let records = parse_records::<Thing>(&[]).expect("empty slice should parse to empty vec");
+    assert!(records.is_empty());
+}
+
+#[test]
+fn parse_records_multiple_records() {
+    // Two back-to-back Thing records (each 10 bytes)
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[1, 0, 2, 0, 0, 0, 1, 0, 0, 0]); // thing 0
+    bytes.extend_from_slice(&[3, 0, 4, 0, 45, 0, 2, 0, 7, 0]); // thing 1
+    let records = parse_records::<Thing>(&bytes).expect("two things should parse");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].x, 1);
+    assert_eq!(records[1].x, 3);
+}
+
+#[test]
+fn parse_records_zst_empty_buffer_returns_empty() {
+    use crustywad::map::MapParseError;
+    // ZST type `()` has size 0; empty buffer → empty vec
+    let records = parse_records::<()>(&[]).expect("ZST empty buffer should produce empty vec");
+    assert!(records.is_empty());
+    // ZST type with non-empty buffer → TrailingBytes error
+    let err =
+        parse_records::<()>(&[0xFF]).expect_err("non-empty buffer for ZST record type should fail");
+    assert!(matches!(err, MapParseError::TrailingBytes { offset: 0 }));
+}
+
+#[test]
+fn map_parse_error_display_trailing_bytes() {
+    let bytes = [1, 0, 2, 0, 90, 0, 4, 0, 5, 0, 99]; // 11 bytes, Thing is 10
+    let err = parse_records::<Thing>(&bytes).expect_err("trailing byte should fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("10"),
+        "error message should mention the offset: {msg}"
+    );
+}
+
+#[test]
+fn name8_full_8_bytes_no_null() {
+    let record = Name8(*b"ABCDEFGH");
+    assert_eq!(record.as_str_lossy(), "ABCDEFGH");
+}
+
+#[test]
+fn name8_all_null_returns_empty() {
+    let record = Name8([0u8; 8]);
+    assert_eq!(record.as_str_lossy(), "");
+}
