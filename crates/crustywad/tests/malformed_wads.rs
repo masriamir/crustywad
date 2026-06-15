@@ -257,8 +257,8 @@ fn lenient_clamps_lump_size_extending_beyond_eof() {
 }
 
 #[test]
-fn strict_rejects_filepos_plus_size_overflow() {
-    // filepos near i32::MAX so that filepos + size overflows usize.
+fn strict_rejects_huge_filepos_and_size_out_of_bounds() {
+    // filepos and size near i32::MAX — both are out of bounds on any target.
     // We use a raw WAD with a crafted directory entry.
     let lump_payload = [0xAB_u8; 4];
     let lump_name = b"OVERFLOW";
@@ -447,7 +447,7 @@ fn lump_by_name_finds_correct_lump_in_large_wad() {
     let mut lumps: Vec<(String, Vec<u8>)> = Vec::with_capacity(1000);
     for i in 0..1000_u32 {
         let name = format!("L{i:07}");
-        let payload = vec![u8::try_from(i % 256).expect("i < 256 fits u8")];
+        let payload = vec![u8::try_from(i % 256).expect("i % 256 fits u8")];
         lumps.push((name, payload));
     }
 
