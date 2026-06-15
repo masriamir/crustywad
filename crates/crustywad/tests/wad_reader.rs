@@ -265,17 +265,16 @@ fn lump_accessors_return_correct_values() {
 }
 
 #[test]
-fn lump_is_not_virtual_when_has_size() {
-    let wad =
-        Wad::from_bytes(common::build_wad(*b"IWAD", &[("MAP01", &[])])).expect("wad should parse");
+fn non_empty_lump_has_nonzero_size() {
+    let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("MAP01", &[1, 2, 3])]))
+        .expect("wad should parse");
     let lump = wad.lump(0).expect("lump should exist");
-    // Virtual lumps have size == 0; our lump data is empty so size is 0
-    assert_eq!(lump.size(), 0);
+    assert_eq!(lump.size(), 3);
 }
 
 #[test]
 fn strict_mode_rejects_directory_extending_past_end() {
-    // Build a WAD with numlumps set so that numlumps*16 overflows file length
+    // Build a WAD with numlumps set so that the directory region extends past the end of the file
     let wad = common::build_wad(*b"IWAD", &[("TEST", &[1, 2, 3])]);
     // directory offset is valid but numlumps is much too large
     let mut corrupt = wad.clone();
