@@ -129,7 +129,7 @@ sequenceDiagram
 
     rect rgb(255, 230, 230)
         Note over Caller,Parser: Strict mode (ParseOptions::strict())
-        Caller->>Parser: from_bytes_with_options(bytes, strict)
+        Caller->>Parser: Wad::from_bytes_with_options(bytes, ParseOptions::strict())
         Parser->>Parser: read RawHeader -- magic = "XWAD"
         Parser->>Parser: magic != IWAD/PWAD, Strictness::Strict
         Parser-->>Caller: Err(ParseError::InvalidMagic { magic: "XWAD" })
@@ -137,7 +137,7 @@ sequenceDiagram
 
     rect rgb(230, 255, 230)
         Note over Caller,Warnings: Lenient mode (ParseOptions::lenient())
-        Caller->>Parser: from_bytes_with_options(bytes, lenient)
+        Caller->>Parser: Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
         Parser->>Parser: read RawHeader -- magic = "XWAD"
         Parser->>Parser: magic != IWAD/PWAD, Strictness::Lenient
         Parser->>Warnings: push ParseWarning::InvalidMagic("XWAD")
@@ -152,15 +152,19 @@ sequenceDiagram
 
 ### Map Record Parsing Flowchart
 
-`parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any map record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. Records are read sequentially until the cursor reaches the end of the slice.
+`parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any map record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. Zero-sized types (`size_of::<T>() == 0`) are handled as a special case before the modulo check: an empty buffer yields an empty `Vec`, and a non-empty buffer is an unconditional `TrailingBytes` error. For all other types, records are read sequentially until the cursor reaches the end of the slice.
 
 ```mermaid
 flowchart TD
     A["Input: &[u8] lump bytes\n(e.g. THINGS lump data)"]
-    B["Caller selects record type T\ne.g. parse_records::Thing(bytes)"]
-    C{bytes.len() %\nsize_of::T() == 0?}
+    B["Caller selects record type T\ne.g. parse_records::<Thing>(bytes)"]
+    ZST{size_of::<T>() == 0?\n(zero-sized type)}
+    ZST_EMPTY{bytes.is_empty()?}
+    ZST_OK["Ok(Vec::new())"]
+    ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
+    C{bytes.len() %\nsize_of::<T>() == 0?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
-    E["Allocate Vec with capacity\nbytes.len() / size_of::T()"]
+    E["Allocate Vec with capacity\nbytes.len() / size_of::<T>()"]
     F{cursor.position()\n< bytes.len()?}
     G["binrw reads one T\n(little-endian fixed-size struct)"]
     H{binrw ok?}
@@ -169,7 +173,11 @@ flowchart TD
     K["Ok(Vec of T)\ne.g. Vec of Thing, Vec of Linedef, ..."]
 
     A --> B
-    B --> C
+    B --> ZST
+    ZST -- "yes" --> ZST_EMPTY
+    ZST_EMPTY -- "yes" --> ZST_OK
+    ZST_EMPTY -- "no" --> ZST_ERR
+    ZST -- "no" --> C
     C -- "no (trailing bytes)" --> D
     C -- "yes" --> E
     E --> F
