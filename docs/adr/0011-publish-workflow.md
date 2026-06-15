@@ -62,7 +62,7 @@ release = true
 publish = true          # was false
 changelog_update = true
 allow_dirty = false
-semver_check = true     # enable API compatibility checks on publish
+semver_check = false    # no baseline until 0.1.0 is published; enable after first release
 
 [[package]]
 name = "crustywad"
@@ -108,11 +108,12 @@ later deprecated (e.g., the project decides the binary is out of scope),
 `publish = false` can be re-applied to the `[[package]]` block without affecting
 the library.
 
-`semver_check` is set to `true` at publish time. `release-plz` runs
-`cargo-semver-checks` to detect accidental breaking changes before the release
-PR is merged. This was disabled initially (`semver_check = false`) because the
-project had not yet published a baseline; once `0.1.0` is published the check
-becomes meaningful.
+`semver_check` is left `false` for the first publish. `release-plz` runs
+`cargo-semver-checks` to detect accidental breaking changes before a release PR
+is merged, but the check requires a published baseline to diff against. Because
+no baseline exists until `crustywad 0.1.0` lands on crates.io, enabling it
+immediately would produce spurious failures. Once `0.1.0` is published, flip
+`semver_check` to `true` in `release-plz.toml` (see pre-publish checklist §7).
 
 ### 3. Version strategy
 
@@ -220,6 +221,7 @@ The following steps must be completed **before** setting `publish = true` in
 - Once `crustywad 0.1.0` is on crates.io, yanking it is possible but
   disruptive. Ensuring the dry-run CI step and pre-publish checklist are
   completed before the first release avoids the need to yank.
-- Issues #49–#52 (implementation work for milestones 2–4) are not blocked by
-  this ADR, but the publish workflow should be enabled before or alongside the
-  first stable milestone release so that crate name reservation is in place.
+- Issues #49–#52 (implementation work for milestones 2–4) are blocked on this
+  ADR being accepted. The publish workflow must be agreed before implementation
+  of those milestones begins, so that crate name reservation and the release
+  pipeline are in place when the first stable milestone ships.
