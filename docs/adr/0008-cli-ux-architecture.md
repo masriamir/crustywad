@@ -120,14 +120,18 @@ churn without user benefit. A `just man` recipe and `OUT_DIR/man/` placement are
 for when this is adopted.
 
 Both `clap_complete` and `clap_mangen` are added as `build-dependencies` (not runtime
-dependencies) so they do not affect the binary size or MSRV constraints of end-users.
+dependencies) so they do not affect the runtime binary size or the MSRV seen by users who
+install a pre-built binary. They do, however, impose an MSRV on anyone building from source,
+so their minimum supported Rust version must not exceed 1.85.0.
 
 ## Consequences
 
 - Every new subcommand must implement the `--format` flag and route output through the
   shared format helper before merging.
 - The exit-code convention is a public API contract; breaking changes to codes 0–3 require
-  a semver-major bump of `crustywad-cli` (tracked separately from the library crate).
+  a semver-major bump of `crustywad-cli`. Because `crustywad-cli` currently uses
+  `version.workspace = true`, this bump is shared with the library crate; decoupling the
+  versions would be a prerequisite for independent CLI releases.
 - The flat subcommand namespace reserves the verbs listed above; adding a conflicting verb
   requires updating this ADR.
 - `build.rs` is added to `crustywad-cli`, which is currently build-script-free; CI must

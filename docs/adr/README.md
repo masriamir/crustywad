@@ -32,5 +32,6 @@ implementation begins.**
 | ADR | Title | Status |
 | ---: | --- | --- |
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
+| [0008](0008-cli-ux-architecture.md) | `cwad` CLI UX and architecture | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
