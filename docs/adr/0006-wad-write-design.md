@@ -38,7 +38,7 @@ and sizes are computed as lumps are appended; no pre-existing layout is reused.
 Pros:
 - Simple and correct by construction — directory always follows all lump data.
 - Works regardless of whether the `Wad` was originally memory-mapped or owned.
-- Easy to round-trip: `Wad::from_bytes(wad.to_bytes()?)` always parses cleanly.
+- Easy to round-trip: serialize to bytes then re-parse, and the result always parses cleanly.
 
 Cons:
 - O(total WAD size) allocation for any edit, even a one-byte change.
@@ -86,8 +86,8 @@ with their read counterparts.
 
 The existing `ParseOptions { strictness }` type encodes two modes:
 
-- **Strict:** reject the first invalid input (bad lump name, oversized name, zero-length
-  magic, etc.) and return a typed error.
+- **Strict:** reject the first invalid input (bad lump name, oversized lump name, unknown
+  `WadKind`, etc.) and return a typed error.
 - **Lenient:** warn and clamp (e.g., truncate a name longer than 8 bytes to 8 bytes,
   replace non-ASCII bytes with `?`).
 
@@ -95,7 +95,8 @@ Write validation rules are the inverse of parse validation:
 - Lump names must be ASCII, at most 8 bytes; strict mode rejects violations, lenient mode
   truncates and emits a `WriteWarning`.
 - Lump data sizes must fit in `i32`; strict mode rejects oversized lumps, lenient mode
-  clamps to `i32::MAX`.
+  truncates the lump data to `i32::MAX` bytes and emits a `WriteWarning` (so the directory
+  entry and the bytes written remain consistent).
 - Total lump count must fit in `i32`; strict mode rejects overflow.
 - `WadKind::Unknown` magic: strict mode rejects it, lenient mode writes the raw bytes.
 
