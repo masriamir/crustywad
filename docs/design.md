@@ -156,16 +156,16 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["Input: &[u8] lump bytes\n(e.g. THINGS lump data)"]
-    B["Caller selects record type T\ne.g. parse_records::<Thing>(bytes)"]
-    ZST{size_of::<T>() == 0?\n(zero-sized type)}
+    A["Input: &amp;[u8] lump bytes\n(e.g. THINGS lump data)"]
+    B["Caller selects record type T\ne.g. parse_records::&lt;Thing&gt;(bytes)"]
+    ZST{size_of::&lt;T&gt;() == 0?\n(zero-sized type)}
     ZST_EMPTY{bytes.is_empty()?}
     ZST_OK["Ok(Vec::new())"]
     ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
-    C{bytes.len() %\nsize_of::<T>() == 0?}
+    C{bytes.len() %\nsize_of::&lt;T&gt;() == 0?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
-    E["Allocate Vec with capacity\nbytes.len() / size_of::<T>()"]
-    F{cursor.position()\n< bytes.len()?}
+    E["Allocate Vec with capacity\nbytes.len() / size_of::&lt;T&gt;()"]
+    F{cursor.position()\n&lt; bytes.len()?}
     G["binrw reads one T\n(little-endian fixed-size struct)"]
     H{binrw ok?}
     I["Err(MapParseError::Binrw)"]
