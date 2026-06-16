@@ -21,8 +21,8 @@ A WAD contains a 12-byte header, lump data blobs, and a directory of 16-byte lum
 The diagram below shows the on-disk layout of a WAD file. The header is always at offset 0 and is exactly 12 bytes. Lump data blobs follow immediately. The lump directory sits at the byte offset stored in `infotableofs` (typically at the end of the file). Each directory entry is exactly 16 bytes and describes one lump.
 
 ```mermaid
-graph TD
-    subgraph Header["Header — 12 bytes at offset 0"]
+flowchart TD
+    subgraph Header["Header - 12 bytes at offset 0"]
         magic["magic\n4 bytes\n'IWAD' or 'PWAD'"]
         numlumps["numlumps\n4 bytes i32\nlump count"]
         infotableofs["infotableofs\n4 bytes i32\ndirectory offset"]
@@ -32,7 +32,7 @@ graph TD
         lump1["lump 1 data\n(variable)"]
         lumpN["... lump N data\n(variable)"]
     end
-    subgraph Dir["Lump Directory — N x 16 bytes at infotableofs"]
+    subgraph Dir["Lump Directory - N x 16 bytes at infotableofs"]
         entry0["entry 0\nfilepos(4) + size(4) + name(8)"]
         entry1["entry 1\nfilepos(4) + size(4) + name(8)"]
         entryN["... entry N-1\nfilepos(4) + size(4) + name(8)"]
@@ -116,26 +116,26 @@ sequenceDiagram
     participant Parser
     participant Warnings
 
-    Note over Caller,Warnings: Input: WAD bytes with magic = "XWAD" (not IWAD/PWAD)
+    Note over Caller,Warnings: Input: WAD bytes with magic = XWAD (not IWAD/PWAD)
 
     rect rgb(255, 230, 230)
         Note over Caller,Parser: Strict mode (ParseOptions::strict())
         Caller->>Parser: Wad::from_bytes_with_options(bytes, ParseOptions::strict())
-        Parser->>Parser: read RawHeader -- magic = "XWAD"
+        Parser->>Parser: read RawHeader, magic = XWAD
         Parser->>Parser: magic != IWAD/PWAD, Strictness::Strict
-        Parser-->>Caller: Err(ParseError::InvalidMagic { magic: "XWAD" })
+        Parser-->>Caller: Err(ParseError::InvalidMagic)
     end
 
     rect rgb(230, 255, 230)
         Note over Caller,Warnings: Lenient mode (ParseOptions::lenient())
         Caller->>Parser: Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
-        Parser->>Parser: read RawHeader -- magic = "XWAD"
+        Parser->>Parser: read RawHeader, magic = XWAD
         Parser->>Parser: magic != IWAD/PWAD, Strictness::Lenient
-        Parser->>Warnings: push ParseWarning::InvalidMagic("XWAD")
-        Parser->>Parser: kind = WadKind::Unknown([X,W,A,D])
+        Parser->>Warnings: push ParseWarning::InvalidMagic
+        Parser->>Parser: kind = WadKind::Unknown
         Parser->>Parser: continue parsing numlumps, infotableofs, directory
-        Parser-->>Caller: Ok(Wad { kind: Unknown, warnings: [InvalidMagic] })
-        Caller->>Caller: wad.warnings() returns [ParseWarning::InvalidMagic("XWAD")]
+        Parser-->>Caller: Ok(Wad) with warnings
+        Caller->>Caller: wad.warnings() includes InvalidMagic
     end
 ```
 
@@ -148,14 +148,14 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A["Input: raw lump bytes\n(e.g. THINGS lump data)"]
-    B["Caller selects record type T\ne.g. parse_records::<Thing>(bytes)"]
+    B["Caller selects record type T\ne.g. parse_records of T=Thing"]
     ZST{T is zero-sized?}
     ZST_EMPTY{bytes.is_empty()?}
     ZST_OK["Ok(Vec::new())"]
     ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
     C{exact multiple\nof record size?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
-    E["Allocate Vec with capacity\nbytes.len() / size_of::<T>()"]
+    E["Allocate Vec with capacity\nbytes.len() / size_of(T)"]
     F{more bytes\nto read?}
     G["binrw reads one T\n(little-endian fixed-size struct)"]
     H{binrw ok?}
