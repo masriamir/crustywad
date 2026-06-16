@@ -72,7 +72,7 @@ flowchart TD
     F{Strictness?}
     G["Err(ParseError::InvalidMagic)"]
     H["warn ParseWarning::InvalidMagic\nkind = WadKind::Unknown"]
-    I["Validate numlumps / infotableofs\n(coerce_i32: reject negatives)"]
+    I["Validate numlumps / infotableofs\n(coerce_i32: negative values invalid)"]
     J{Values non-negative?}
     K["Err(ParseError::NegativeValue)"]
     L["warn ParseWarning::NegativeValue\nclamp to 0"]
@@ -81,7 +81,7 @@ flowchart TD
     O["Err(ParseError::OutOfBounds)"]
     P["warn ParseWarning::OutOfBounds\ntruncate to available entries"]
     Q["Parse N x RawDirectoryEntry\n(16 bytes each, little-endian)"]
-    R["validate_entry: check filepos/size/name\nper-entry strict/lenient branch"]
+    R["validate_entry: check filepos/size/name\nlump↔directory overlap\nper-entry strict/lenient branch"]
     S["Ok(Wad)\n+ warnings (may be empty)"]
 
     A --> B
