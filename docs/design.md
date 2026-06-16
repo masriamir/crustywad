@@ -21,33 +21,24 @@ A WAD contains a 12-byte header, lump data blobs, and a directory of 16-byte lum
 The diagram below shows the on-disk layout of a WAD file. The header is always at offset 0 and is exactly 12 bytes. Lump data blobs follow immediately. The lump directory sits at the byte offset stored in `infotableofs` (typically at the end of the file). Each directory entry is exactly 16 bytes and describes one lump.
 
 ```mermaid
-block-beta
-  columns 3
-
-  block:header["Header (12 bytes, offset 0)"]:3
-    magic["magic\n4 bytes\n'IWAD' or 'PWAD'"]
-    numlumps["numlumps\n4 bytes (i32)\ncount of lumps"]
-    infotableofs["infotableofs\n4 bytes (i32)\noffset to directory"]
-  end
-
-  space:3
-
-  block:data["Lump Data Blobs (variable)"]:3
-    lump0["lump 0 data\n(variable)"]
-    lump1["lump 1 data\n(variable)"]
-    lumpN["... lump N data\n(variable)"]
-  end
-
-  space:3
-
-  block:dir["Lump Directory (N × 16 bytes, at infotableofs)"]:3
-    entry0["entry 0: filepos(4) + size(4) + name(8)"]
-    entry1["entry 1: filepos(4) + size(4) + name(8)"]
-    entryN["... entry N-1: filepos(4) + size(4) + name(8)"]
-  end
-
-  header --> data
-  data --> dir
+graph TD
+    subgraph Header["Header — 12 bytes at offset 0"]
+        magic["magic\n4 bytes\n'IWAD' or 'PWAD'"]
+        numlumps["numlumps\n4 bytes i32\nlump count"]
+        infotableofs["infotableofs\n4 bytes i32\ndirectory offset"]
+    end
+    subgraph Data["Lump Data Blobs (variable)"]
+        lump0["lump 0 data\n(variable)"]
+        lump1["lump 1 data\n(variable)"]
+        lumpN["... lump N data\n(variable)"]
+    end
+    subgraph Dir["Lump Directory — N x 16 bytes at infotableofs"]
+        entry0["entry 0\nfilepos(4) + size(4) + name(8)"]
+        entry1["entry 1\nfilepos(4) + size(4) + name(8)"]
+        entryN["... entry N-1\nfilepos(4) + size(4) + name(8)"]
+    end
+    Header --> Data
+    Data --> Dir
 ```
 
 ## Read pipeline
@@ -81,7 +72,7 @@ flowchart TD
     O["Err(ParseError::OutOfBounds)"]
     P["warn ParseWarning::OutOfBounds\ntruncate to available entries"]
     Q["Parse N x RawDirectoryEntry\n(16 bytes each, little-endian)"]
-    R["validate_entry: check filepos/size/name\nlump↔directory overlap\nper-entry strict/lenient branch"]
+    R["validate_entry: check filepos/size/name\nlump-directory overlap\nper-entry strict/lenient branch"]
     S["Ok(Wad)\n+ warnings (may be empty)"]
 
     A --> B
@@ -156,16 +147,16 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["Input: &amp;[u8] lump bytes\n(e.g. THINGS lump data)"]
-    B["Caller selects record type T\ne.g. parse_records::&lt;Thing&gt;(bytes)"]
-    ZST{size_of::&lt;T&gt;() == 0?\n(zero-sized type)}
+    A["Input: &[u8] lump bytes\n(e.g. THINGS lump data)"]
+    B["Caller selects record type T\ne.g. parse_records::<Thing>(bytes)"]
+    ZST{size_of::<T>() == 0?\n(zero-sized type)}
     ZST_EMPTY{bytes.is_empty()?}
     ZST_OK["Ok(Vec::new())"]
     ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
-    C{bytes.len() %\nsize_of::&lt;T&gt;() == 0?}
+    C{bytes.len() %\nsize_of::<T>() == 0?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
-    E["Allocate Vec with capacity\nbytes.len() / size_of::&lt;T&gt;()"]
-    F{cursor.position()\n&lt; bytes.len()?}
+    E["Allocate Vec with capacity\nbytes.len() / size_of::<T>()"]
+    F{cursor.position()\n< bytes.len()?}
     G["binrw reads one T\n(little-endian fixed-size struct)"]
     H{binrw ok?}
     I["Err(MapParseError::Binrw)"]
