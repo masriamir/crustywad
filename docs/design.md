@@ -147,21 +147,21 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["Input: raw lump bytes\n(e.g. THINGS lump data)"]
-    B["Caller specifies record type T\nfor parse_records (e.g. T = Thing)"]
+    A["Input: raw lump bytes\ne.g. THINGS lump data"]
+    B["Caller specifies record type T\nfor parse_records, e.g. T = Thing"]
     ZST{T is zero-sized?}
-    ZST_EMPTY{bytes.is_empty()?}
-    ZST_OK["Ok(Vec::new())"]
-    ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
+    ZST_EMPTY{bytes is empty?}
+    ZST_OK["Ok, empty Vec"]
+    ZST_ERR["Err, TrailingBytes\noffset = 0"]
     C{exact multiple\nof record size?}
-    D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
-    E["Allocate Vec with capacity\nbytes.len() / size_of(T)"]
+    D["Err, TrailingBytes\noffset = last complete record end"]
+    E["Allocate Vec\ncapacity = bytes.len() / size_of T"]
     F{more bytes\nto read?}
-    G["binrw reads one T\n(little-endian fixed-size struct)"]
+    G["binrw reads one T\nlittle-endian fixed-size struct"]
     H{binrw ok?}
-    I["Err(MapParseError::Binrw)"]
+    I["Err, MapParseError::Binrw"]
     J["push T into Vec"]
-    K["Ok(Vec of T)\ne.g. Vec of Thing, Vec of Linedef, ..."]
+    K["Ok, Vec of T\ne.g. Vec of Thing or Vec of Linedef"]
 
     A --> B
     B --> ZST
@@ -169,27 +169,27 @@ flowchart TD
     ZST_EMPTY -- "yes" --> ZST_OK
     ZST_EMPTY -- "no" --> ZST_ERR
     ZST -- "no" --> C
-    C -- "no (trailing bytes)" --> D
+    C -- "no" --> D
     C -- "yes" --> E
     E --> F
-    F -- "yes (more bytes)" --> G
+    F -- "yes" --> G
     G --> H
     H -- "error" --> I
     H -- "ok" --> J
     J --> F
-    F -- "no (done)" --> K
+    F -- "no" --> K
 
     subgraph examples["Concrete T examples"]
-        T1["Thing\n10 bytes: x(i16) y(i16) angle(u16)\ntype_id(u16) flags(u16)"]
+        T1["Thing\n10 bytes: x i16, y i16, angle u16\ntype_id u16, flags u16"]
         T2["Linedef\n14 bytes: 7 x u16"]
-        T3["Vertex\n4 bytes: x(i16) y(i16)"]
-        T4["Sector\n26 bytes: heights(i16) textures(Name8) ..."]
+        T3["Vertex\n4 bytes: x i16, y i16"]
+        T4["Sector\n26 bytes: heights i16, textures Name8"]
     end
 
-    K -.-> T1
-    K -.-> T2
-    K -.-> T3
-    K -.-> T4
+    K --> T1
+    K --> T2
+    K --> T3
+    K --> T4
 ```
 
 ## Feature plan
