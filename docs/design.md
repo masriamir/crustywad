@@ -51,7 +51,7 @@ flowchart TD
 
 ### Read Pipeline Flowchart
 
-The flowchart below traces how bytes become a `Wad`. At each validation step the path diverges on `Strictness`: strict mode returns an `Err(ParseError)` immediately, while lenient mode pushes a `ParseWarning` and continues.
+The flowchart below traces how bytes become a `Wad`. At each validation step the path diverges on `Strictness`: strict mode returns an `Err(ParseError)` immediately, while lenient mode pushes a `ParseWarning` and continues. The initial `binrw` decode of the 12-byte header is an exception — a decode failure is always fatal regardless of mode.
 
 ```mermaid
 flowchart TD
@@ -148,7 +148,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A["Input: raw lump bytes\n(e.g. THINGS lump data)"]
-    B["Caller selects record type T\ne.g. parse_records of T=Thing"]
+    B["Caller specifies record type T\nfor parse_records (e.g. T = Thing)"]
     ZST{T is zero-sized?}
     ZST_EMPTY{bytes.is_empty()?}
     ZST_OK["Ok(Vec::new())"]
