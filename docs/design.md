@@ -147,16 +147,16 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["Input: &[u8] lump bytes\n(e.g. THINGS lump data)"]
+    A["Input: raw lump bytes\n(e.g. THINGS lump data)"]
     B["Caller selects record type T\ne.g. parse_records::<Thing>(bytes)"]
-    ZST{size_of::<T>() == 0?\n(zero-sized type)}
+    ZST{T is zero-sized?}
     ZST_EMPTY{bytes.is_empty()?}
     ZST_OK["Ok(Vec::new())"]
     ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
-    C{bytes.len() %\nsize_of::<T>() == 0?}
+    C{exact multiple\nof record size?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
     E["Allocate Vec with capacity\nbytes.len() / size_of::<T>()"]
-    F{cursor.position()\n< bytes.len()?}
+    F{more bytes\nto read?}
     G["binrw reads one T\n(little-endian fixed-size struct)"]
     H{binrw ok?}
     I["Err(MapParseError::Binrw)"]
@@ -179,7 +179,7 @@ flowchart TD
     J --> F
     F -- "no (done)" --> K
 
-    subgraph "Concrete T examples"
+    subgraph examples["Concrete T examples"]
         T1["Thing\n10 bytes: x(i16) y(i16) angle(u16)\ntype_id(u16) flags(u16)"]
         T2["Linedef\n14 bytes: 7 x u16"]
         T3["Vertex\n4 bytes: x(i16) y(i16)"]
