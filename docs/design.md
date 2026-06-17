@@ -68,6 +68,10 @@ flowchart TD
     K["Err(ParseError::NegativeValue)"]
     L["warn ParseWarning::NegativeValue\nclamp to 0"]
     M["Compute directory span\n(numlumps x 16 bytes)"]
+    MOVF{dir_span overflows?}
+    F4{Strictness?}
+    OVF_E["Err(ParseError::Overflow)"]
+    OVF_W["warn ParseWarning::Overflow\ndir_span saturated"]
     N{Directory within buffer?}
     O["Err(ParseError::OutOfBounds)"]
     P["warn ParseWarning::OutOfBounds\ntruncate to available entries"]
@@ -90,7 +94,12 @@ flowchart TD
     F2 -- "Strict" --> K
     F2 -- "Lenient" --> L
     L --> M
-    M --> N
+    M --> MOVF
+    MOVF -- "yes" --> F4
+    F4 -- "Strict" --> OVF_E
+    F4 -- "Lenient" --> OVF_W
+    OVF_W --> N
+    MOVF -- "no" --> N
     N -- "yes" --> Q
     N -- "no" --> F3{Strictness?}
     F3 -- "Strict" --> O
@@ -152,14 +161,14 @@ flowchart TD
     ZST{T is zero-sized?}
     ZST_EMPTY{bytes is empty?}
     ZST_OK["Ok, empty Vec"]
-    ZST_ERR["Err, TrailingBytes\noffset = 0"]
+    ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
     C{exact multiple\nof record size?}
-    D["Err, TrailingBytes\noffset = last complete record end"]
+    D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
     E["Allocate Vec\ncapacity = bytes.len() / size_of T"]
     F{more bytes\nto read?}
     G["binrw reads one T\nlittle-endian fixed-size struct"]
     H{binrw ok?}
-    I["Err, MapParseError::Binrw"]
+    I["Err(MapParseError::Binrw)"]
     J["push T into Vec"]
     K["Ok, Vec of T\ne.g. Vec of Thing or Vec of Linedef"]
 
@@ -183,7 +192,7 @@ flowchart TD
         T1["Thing\n10 bytes: x i16, y i16, angle u16\ntype_id u16, flags u16"]
         T2["Linedef\n14 bytes: 7 x u16"]
         T3["Vertex\n4 bytes: x i16, y i16"]
-        T4["Sector\n26 bytes: heights i16, textures Name8"]
+        T4["Sector\n26 bytes: floor_height i16, ceiling_height i16\nfloor_texture Name8, ceiling_texture Name8\nlight_level i16, special_type i16, tag i16"]
     end
 
     K --> T1
