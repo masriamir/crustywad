@@ -63,7 +63,7 @@ flowchart TD
     F{Strictness?}
     G["Err(ParseError::InvalidMagic)"]
     H["warn ParseWarning::InvalidMagic\nkind = WadKind::Unknown"]
-    I["Validate numlumps / infotableofs\n(coerce_i32: negative values invalid)"]
+    I["Validate numlumps / infotableofs\n(coerce_i32: negative values → error or clamp)"]
     J{Values non-negative?}
     K["Err(ParseError::NegativeValue)"]
     L["warn ParseWarning::NegativeValue\nclamp to 0"]
