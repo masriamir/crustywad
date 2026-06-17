@@ -37,8 +37,7 @@ flowchart TD
         entry1["entry 1\nfilepos(4) + size(4) + name(8)"]
         entryN["... entry N-1\nfilepos(4) + size(4) + name(8)"]
     end
-    Header --> Data
-    Data --> Dir
+    Header -- "infotableofs" --> Dir
 ```
 
 ## Read pipeline
@@ -164,7 +163,7 @@ flowchart TD
     ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
     C{exact multiple\nof record size?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
-    E["Allocate Vec\ncapacity = bytes.len() / size_of T"]
+    E["Allocate Vec\ncapacity = bytes.len() / size_of(T)"]
     F{more bytes\nto read?}
     G["binrw reads one T\nlittle-endian fixed-size struct"]
     H{binrw ok?}
