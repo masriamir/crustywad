@@ -18,7 +18,7 @@ A WAD contains a 12-byte header, lump data blobs, and a directory of 16-byte lum
 
 ### WAD File Format
 
-The diagram below shows the on-disk layout of a WAD file. The header is always at offset 0 and is exactly 12 bytes. Lump data blobs follow immediately. The lump directory sits at the byte offset stored in `infotableofs` (typically at the end of the file). Each directory entry is exactly 16 bytes and describes one lump.
+The diagram below shows the on-disk layout of a WAD file. The header is always at offset 0 and is exactly 12 bytes. Lump data blobs can appear anywhere in the file; each directory entry's `filepos` and `size` fields locate the blob. The lump directory sits at the byte offset stored in `infotableofs` (typically at the end of the file). Each directory entry is exactly 16 bytes and describes one lump.
 
 ```mermaid
 flowchart TD
@@ -51,7 +51,7 @@ flowchart TD
 
 ### Read Pipeline Flowchart
 
-The flowchart below traces how bytes become a `Wad`. At each validation step the path diverges on `Strictness`: strict mode returns an `Err(ParseError)` immediately, while lenient mode pushes a `ParseWarning` and continues. The initial `binrw` decode of the 12-byte header is an exception — a decode failure is always fatal regardless of mode.
+The flowchart below traces how bytes become a `Wad`. `Strictness` only affects semantic validation: strict mode returns `Err(ParseError)` immediately; lenient mode pushes a `ParseWarning` and continues. Binary decode errors from `binrw` — for both the header and directory entries — are always fatal regardless of mode.
 
 ```mermaid
 flowchart TD
