@@ -76,6 +76,7 @@ cargo doc --workspace --all-features --no-deps
 - Every public function that can fail returns `Result<_, ErrorType>` with full doc comments on the `# Errors` section.
 
 ### Documentation
+- All documentation uses American English spelling (e.g. "artifacts" not "artefacts", "customization" not "customisation").
 - `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
 - Use `///` for item-level docs and `//!` for module-level docs.
 - Include `# Errors` sections in doc comments for fallible functions.

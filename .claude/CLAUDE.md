@@ -84,6 +84,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 ### Documentation
 
+- All documentation uses American English spelling (e.g. "artifacts" not "artefacts", "customization" not "customisation").
 - `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
 - Use `//!` for module-level docs, `///` for item-level docs.
 - Include `# Errors` in doc comments for fallible functions, `# Panics` where relevant.
