@@ -1,6 +1,6 @@
 # 0002. Use `binrw` and typed library errors
 
-- Status: accepted
+- **Status:** Accepted
 - Date: 2026-06-05
 
 ## Context

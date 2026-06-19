@@ -1,6 +1,6 @@
 # 0003. Default to strict parsing
 
-- Status: accepted
+- **Status:** Accepted
 - Date: 2026-06-05
 
 ## Context

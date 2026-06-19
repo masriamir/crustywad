@@ -1,13 +1,13 @@
-# 0007. Living-docs automation strategy
+# ADR-0007: Living-docs automation strategy
 
-- Status: Proposed
-- Date: 2026-06-14
-- Deciders: @masriamir
-- Tracking issue: https://github.com/masriamir/crustywad/issues/32
+- **Status:** Proposed
+- **Date:** 2026-06-14
+- **Deciders:** @masriamir
+- **Tracking issue:** https://github.com/masriamir/crustywad/issues/32
 
 ## Context and problem statement
 
-The repository currently maintains three overlapping documentation artefacts
+The repository currently maintains three overlapping documentation artifacts
 that describe coding conventions, workflow, and project structure:
 
 1. `.github/copilot-instructions.md` — context injected into GitHub Copilot
@@ -33,7 +33,7 @@ A single-source-of-truth approach is appealing but faces a structural
 constraint: each file is tailored to its consumer. `.claude/CLAUDE.md` includes
 Claude-specific caveats (inner-attribute syntax, `#![doc = r#"..."]` reminder)
 that would be noise in a Copilot context. `.github/copilot-instructions.md` includes
-inline code examples optimised for completion assistance that would clutter a
+inline code examples optimized for completion assistance that would clutter a
 design document. Templating tools that generate both from one source would need
 to preserve these per-consumer sections, adding complexity.
 
@@ -46,7 +46,7 @@ to preserve these per-consumer sections, adding complexity.
 - Any automated enforcement must integrate naturally with the existing `just ci`
   local-check loop and the GitHub Actions CI pipeline.
 - AI-context files (`.claude/CLAUDE.md`, `.github/copilot-instructions.md`) have intentionally
-  different scopes; a strategy must accommodate per-consumer customisation
+  different scopes; a strategy must accommodate per-consumer customization
   without discarding shared content.
 
 ## Considered options
@@ -122,7 +122,7 @@ intentionally excluded from anchors, so the detector never flags legitimate
 divergence.
 
 **Pros:** Simple to implement (< 50 lines of shell or Python); runs in CI with
-no new external dependencies; preserves per-consumer customisation; gives a
+no new external dependencies; preserves per-consumer customization; gives a
 clear, actionable failure message; does not require generated files or a
 template language.
 
@@ -165,7 +165,7 @@ becomes worthwhile. At that point the anchor detector can be replaced by a
 generated-file check.
 
 **Option 4** is deferred indefinitely: the value-to-complexity ratio is
-unfavourable for the current team size, and the anchor detector solves the
+unfavorable for the current team size, and the anchor detector solves the
 core problem adequately.
 
 ### Implementation sketch

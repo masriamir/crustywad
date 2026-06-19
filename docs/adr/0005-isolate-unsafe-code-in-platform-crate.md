@@ -1,6 +1,6 @@
 # 0005. Isolate unsafe code in a dedicated `crustywad-platform` workspace crate
 
-- Status: proposed
+- **Status:** Proposed
 - Date: 2026-06-06
 
 ## Context

@@ -1,6 +1,6 @@
 # 0004. Parse API and safety contracts for `Wad` and map records
 
-- Status: accepted
+- **Status:** Accepted
 - Date: 2026-06-06
 
 ## Context
