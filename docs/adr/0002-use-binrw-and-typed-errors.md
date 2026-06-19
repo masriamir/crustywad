@@ -1,7 +1,7 @@
-# 0002. Use `binrw` and typed library errors
+# ADR-0002: Use `binrw` and typed library errors
 
 - **Status:** Accepted
-- Date: 2026-06-05
+- **Date:** 2026-06-05
 
 ## Context
 

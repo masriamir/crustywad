@@ -1,7 +1,7 @@
-# 0003. Default to strict parsing
+# ADR-0003: Default to strict parsing
 
 - **Status:** Accepted
-- Date: 2026-06-05
+- **Date:** 2026-06-05
 
 ## Context
 

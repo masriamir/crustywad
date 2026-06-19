@@ -1,7 +1,7 @@
-# 0005. Isolate unsafe code in a dedicated `crustywad-platform` workspace crate
+# ADR-0005: Isolate unsafe code in a dedicated `crustywad-platform` workspace crate
 
 - **Status:** Proposed
-- Date: 2026-06-06
+- **Date:** 2026-06-06
 
 ## Context
 
