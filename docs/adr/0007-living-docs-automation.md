@@ -28,9 +28,9 @@ In practice each file has already drifted: `.claude/CLAUDE.md` has a richer
 workflow in the same detail as `0001-record-architecture-decisions.md`.
 
 A single-source-of-truth approach is appealing but faces a structural
-constraint: each file is tailored to its consumer. `CLAUDE.md` includes
+constraint: each file is tailored to its consumer. `.claude/CLAUDE.md` includes
 Claude-specific caveats (inner-attribute syntax, `#![doc = r#"..."]` reminder)
-that would be noise in a Copilot context. `copilot-instructions.md` includes
+that would be noise in a Copilot context. `.github/copilot-instructions.md` includes
 inline code examples optimised for completion assistance that would clutter a
 design document. Templating tools that generate both from one source would need
 to preserve these per-consumer sections, adding complexity.
@@ -43,7 +43,7 @@ to preserve these per-consumer sections, adding complexity.
   that require significant ongoing infrastructure are a poor fit.
 - Any automated enforcement must integrate naturally with the existing `just ci`
   local-check loop and the GitHub Actions CI pipeline.
-- AI-context files (`CLAUDE.md`, `copilot-instructions.md`) have intentionally
+- AI-context files (`.claude/CLAUDE.md`, `.github/copilot-instructions.md`) have intentionally
   different scopes; a strategy must accommodate per-consumer customisation
   without discarding shared content.
 
@@ -51,7 +51,7 @@ to preserve these per-consumer sections, adding complexity.
 
 ### Option 1 — Manual with PR template checklist
 
-Add a `.github/pull_request_template.md` containing a docs-sync checklist:
+Update the existing `.github/PULL_REQUEST_TEMPLATE.md` to add a docs-sync checklist:
 
 ```markdown
 - [ ] If conventions changed, updated `.github/copilot-instructions.md`
@@ -72,8 +72,8 @@ already does not happen reliably without a prompt.
 
 Designate one file (e.g. `docs/conventions.md`) as the canonical source.
 Write a script or use a Markdown pre-processor (e.g. `mdbook`, a Jinja
-template, or a small Python script) to generate `CLAUDE.md` and
-`copilot-instructions.md` from it. CI fails if the generated files differ
+template, or a small Python script) to generate `.claude/CLAUDE.md` and
+`.github/copilot-instructions.md` from it. CI fails if the generated files differ
 from the committed ones.
 
 **Pros:** True single source; drift is structurally impossible for shared
@@ -82,7 +82,7 @@ sections; enforced by CI.
 **Cons:** Per-consumer sections (Claude-specific caveats, Copilot-specific
 examples) require a templating mechanism. The generated files must not be
 edited directly, which confuses contributors and AI assistants that read
-`CLAUDE.md` and try to update it in-place. Adds a build-time dependency on
+`.claude/CLAUDE.md` and try to update it in-place. Adds a build-time dependency on
 the generator and increases the risk that CI becomes flaky if the generator is
 not pinned.
 
@@ -105,11 +105,11 @@ thiserror
 Conventional Commits
 ```
 
-Note: anchors must appear verbatim in *all three* checked files. The two
-examples above (`ParseOptions { strictness` and `just ci`) already appear in
-`.claude/CLAUDE.md` and `.github/copilot-instructions.md`; when
-`docs/design.md` is updated as part of the implementation work tracked in
-issue #33, it must include matching text for every anchor in `anchors.txt`.
+Note: anchors must appear verbatim in *all three* checked files. All four
+examples above already appear in `.claude/CLAUDE.md` and
+`.github/copilot-instructions.md`; when `docs/design.md` is updated as part
+of the implementation work tracked in issue #33, it must include matching text
+for every anchor in `anchors.txt`.
 
 When a convention changes, the author updates all files and the anchor
 naturally appears in the diff. If the author updates only one file, CI fails
@@ -183,13 +183,13 @@ core problem adequately.
 4. Add a `docs-sync` job to `.github/workflows/ci.yml` that runs
    `python scripts/check_doc_anchors.py` on `ubuntu-latest` with no
    Rust toolchain required.
-5. Add `.github/pull_request_template.md` with a checklist reminding authors
-   to update the anchor list when renaming a convention phrase.
+5. Update `.github/PULL_REQUEST_TEMPLATE.md` with a checklist reminding
+   authors to update the anchor list when renaming a convention phrase.
 
 ### Consequences
 
 - Good: convention drift is caught in CI before it reaches `main`.
-- Good: per-consumer sections (`CLAUDE.md` Claude-specific caveats, Copilot
+- Good: per-consumer sections (`.claude/CLAUDE.md` Claude-specific caveats, Copilot
   completion examples) remain intentionally different without triggering false
   failures.
 - Good: no new runtime dependencies; the check runs in any environment with
@@ -208,6 +208,6 @@ core problem adequately.
 ## More information
 
 - Tracking issue: https://github.com/masriamir/crustywad/issues/32
-- Implementation will be tracked in a follow-up issue once this ADR is accepted.
-- ADR template: [`template.md`](template.md)
+- Implementation is tracked in issue [#33](https://github.com/masriamir/crustywad/issues/33).
+- ADR template: [`0000-adr-template.md`](0000-adr-template.md)
 - ADR index: [`README.md`](README.md)
