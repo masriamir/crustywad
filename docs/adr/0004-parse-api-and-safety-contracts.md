@@ -1,6 +1,8 @@
 # ADR-0004: Parse API and safety contracts for `Wad` and map records
 
 - **Status:** Accepted
+- **Deciders:** @masriamir
+- **Tracking issue:** N/A (established during initial workspace scaffold)
 - **Date:** 2026-06-06
 
 ## Context

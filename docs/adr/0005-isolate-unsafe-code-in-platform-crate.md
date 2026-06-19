@@ -1,6 +1,8 @@
 # ADR-0005: Isolate unsafe code in a dedicated `crustywad-platform` workspace crate
 
 - **Status:** Proposed
+- **Deciders:** @masriamir
+- **Tracking issue:** N/A (established during initial workspace scaffold)
 - **Date:** 2026-06-06
 
 ## Context

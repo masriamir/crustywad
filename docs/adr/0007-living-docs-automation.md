@@ -93,8 +93,8 @@ not pinned.
 Extract a small set of "conventions anchor" strings — short, stable sentences
 that appear in every documentation file when they describe the same rule. A CI
 script (a `bash` or `python` one-liner) checks that each anchor is present in
-all three files. The check runs as a new `docs-sync` step in the existing
-`ci.yml` workflow and is also exercisable locally via `just docs-sync`.
+all three files. The check will run as a new `docs-sync` step in the existing
+`ci.yml` workflow and will also be exercisable locally via `just docs-sync`.
 
 Anchors are chosen from lines that are unlikely to change wording frequently,
 such as (shown as bare substrings, not quoted, so they can be copied directly
@@ -155,9 +155,10 @@ enforces consistency automatically in CI, is proportionate to the repository's
 size and team, requires no external API dependencies, and leaves per-consumer
 sections free to diverge intentionally.
 
-**Option 1** is adopted as a complementary lightweight measure: a PR template
-checklist is added for convention changes that require adding a *new* anchor,
-so authors are reminded to update both the anchor list and all three files.
+**Option 1** will be adopted as a complementary lightweight measure: a PR
+template checklist will be added for convention changes that require adding a
+*new* anchor, so authors are reminded to update both the anchor list and all
+three files.
 
 **Option 2** is deferred: if the documentation surface grows substantially
 (e.g. a contributors' guide, a public-facing book), a template-based approach
