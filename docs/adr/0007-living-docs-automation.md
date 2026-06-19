@@ -22,10 +22,12 @@ All three files currently describe the same conventions (error-handling rules,
 lint settings, naming, strictness model, commit prefixes, CI jobs, feature
 flags). When a convention changes — for example, a new lint group is added, the
 MSRV bumps, or a new `just` recipe lands — every file must be updated manually.
-In practice each file has already drifted: `.claude/CLAUDE.md` has a richer
-"Adding a new lump type" checklist absent from
-`.github/copilot-instructions.md`; neither mentions the `docs/adr/` ADR-first
-workflow in the same detail as `0001-record-architecture-decisions.md`.
+In practice each file has already drifted: `.claude/CLAUDE.md` has a
+seven-step "Adding a new lump type" checklist (including `Args<'a> = ()`,
+the Doom spec note on signed vs unsigned, and a proptest reminder) that is
+absent from the five-step version in `.github/copilot-instructions.md`;
+neither file mentions the `docs/adr/` ADR-first workflow in the same detail
+as `0001-record-architecture-decisions.md`.
 
 A single-source-of-truth approach is appealing but faces a structural
 constraint: each file is tailored to its consumer. `.claude/CLAUDE.md` includes
