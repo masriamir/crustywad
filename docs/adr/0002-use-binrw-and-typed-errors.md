@@ -1,9 +1,9 @@
 # ADR-0002: Use `binrw` and typed library errors
 
 - **Status:** Accepted
+- **Date:** 2026-06-05
 - **Deciders:** @masriamir
 - **Tracking issue:** N/A (established during initial workspace scaffold)
-- **Date:** 2026-06-05
 
 ## Context
 
