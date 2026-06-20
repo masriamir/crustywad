@@ -21,8 +21,8 @@ pub enum ParseError {
     ///
     /// This is the first error checked when loading from a path.  Common causes
     /// are a missing file, insufficient permissions, or an I/O failure on the
-    /// underlying storage device.  Check [`source`][Self::Io::source] for the
-    /// OS error code.
+    /// underlying storage device.  The `source` field contains the underlying
+    /// [`std::io::Error`] from the OS.
     #[error("failed to read `{path}`: {source}")]
     Io {
         /// The file path that could not be read, as a display string.

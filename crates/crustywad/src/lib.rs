@@ -583,8 +583,8 @@ impl Wad {
     ///   same name as the IWAD lumps they override.  This method returns only
     ///   the **first** directory entry with the given name (lowest index).
     ///   Iterate [`lumps()`][Wad::lumps()] directly if you need all matches.
-    /// - The Doom engine treats lump names as case-sensitive.  Pass the name in
-    ///   the correct case (conventionally uppercase, e.g. `"E1M1"`, `"THINGS"`).
+    /// - Matching is exact and case-sensitive.  Pass the name in the correct
+    ///   case (conventionally uppercase in WAD files, e.g. `"E1M1"`, `"THINGS"`).
     #[must_use]
     pub fn lump_by_name(&self, name: &str) -> Option<&Lump> {
         self.lumps.iter().find(|lump| lump.name() == name)
