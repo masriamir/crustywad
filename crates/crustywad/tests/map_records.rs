@@ -105,6 +105,20 @@ fn parses_segs() {
 }
 
 #[test]
+fn seg_angle_high_bit_is_unsigned() {
+    // 0x8000 = 180° in BAMS. As i16 this was -32768; as u16 it must be 32768.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0_u16.to_le_bytes()); // start_vertex
+    bytes.extend_from_slice(&1_u16.to_le_bytes()); // end_vertex
+    bytes.extend_from_slice(&0x8000_u16.to_le_bytes()); // angle (high bit set)
+    bytes.extend_from_slice(&0_u16.to_le_bytes()); // linedef
+    bytes.extend_from_slice(&0_u16.to_le_bytes()); // direction
+    bytes.extend_from_slice(&0_i16.to_le_bytes()); // offset
+    let records = parse_records::<Seg>(&bytes).expect("seg should parse");
+    assert_eq!(records[0].angle, 0x8000);
+}
+
+#[test]
 fn parse_records_rejects_trailing_bytes() {
     // 11 bytes for a 10-byte Thing record leaves 1 trailing byte
     let bytes = [1, 0, 2, 0, 90, 0, 4, 0, 5, 0, 99];
