@@ -493,9 +493,11 @@ impl Wad {
     ///
     /// **Warning:** the WAD file must not be truncated or replaced while the
     /// [`Wad`] is alive.  On Unix, truncation from another process triggers a
-    /// `SIGBUS` on the next lump data access.  On Windows the mapping prevents
-    /// truncation but concurrent writes by another process may expose
-    /// inconsistent data.  Reading the file via this crate is always safe.
+    /// `SIGBUS` on the next lump data access, which will abort the process.
+    /// On Windows the mapping prevents truncation but concurrent writes by
+    /// another process may expose inconsistent data.  This crate performs no
+    /// unsafe memory operations on the mapping, but it cannot protect the
+    /// process from OS-level signals caused by external file modification.
     ///
     /// # Errors
     ///
