@@ -435,7 +435,7 @@ pub enum MapParseError {
 /// - [`MapParseError::TrailingBytes`] — the slice length is not a whole
 ///   multiple of `size_of::<T>()`.  The lump is likely truncated or contains
 ///   the wrong record type.  Note that the check uses the **in-memory** size
-///   (`std::mem::size_of::<T>()`), which includes any alignment padding.  For
+///   (`std::mem::size_of::<T>()`), which includes any alignment padding.
 ///   For all types defined in this module `size_of::<T>()` happens to equal
 ///   the number of bytes `BinRead` reads per record, but this is not a
 ///   layout guarantee — Rust's default representation does not promise
