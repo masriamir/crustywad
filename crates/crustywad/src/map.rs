@@ -394,12 +394,14 @@ pub struct BlockmapLump;
 pub enum MapParseError {
     /// The lump byte slice length is not an exact multiple of the record size.
     ///
-    /// This indicates a corrupt or truncated lump.  The `offset` field gives
-    /// the position of the last complete record, which is also the byte count
-    /// of any successfully parsed records multiplied by `size_of::<T>()`.
+    /// This indicates a corrupt or truncated lump.  This check runs before any
+    /// records are decoded: `offset` is the byte position where the trailing
+    /// partial record begins, equal to
+    /// `(lump_len / size_of::<T>()) * size_of::<T>()`.
     #[error("record stream ended mid-record at byte offset {offset}")]
     TrailingBytes {
-        /// The byte offset where the final incomplete record begins.
+        /// The byte offset of the start of the trailing partial record
+        /// (i.e. the first byte that does not belong to a complete record).
         offset: u64,
     },
     /// `binrw` failed to decode a record from the byte stream.
