@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `Seg::angle` field type corrected from `i16` to `u16`. Binary
+  angles (BAMS) are unsigned; `0x8000` encodes 180° and must not be
+  sign-extended to `-32768`.
+
 ### Added
 
 - Initial workspace scaffold with a safe WAD header and directory reader.
