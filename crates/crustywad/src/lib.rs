@@ -36,7 +36,7 @@ assert_eq!(wad.lump(0).expect("missing lump").name(), "TEST");
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `mmap`  | off     | Enables [`Wad::from_path_mapped`] for zero-copy memory-mapped loading |
+| `mmap`  | off     | Enables `Wad::from_path_mapped` for zero-copy memory-mapped loading |
 
 # Strictness
 
@@ -302,7 +302,7 @@ impl Deref for WadData {
 /// `Wad` holds the complete WAD bytes together with the validated header and
 /// lump directory.  Use the [`from_bytes`][Wad::from_bytes],
 /// [`from_path`][Wad::from_path], or (with the `mmap` feature)
-/// [`from_path_mapped`][Wad::from_path_mapped] constructors to obtain one.
+/// `from_path_mapped` constructors to obtain one.
 ///
 /// Once loaded, iterate the lump directory via [`lumps()`][Wad::lumps()], look
 /// up by name with [`lump_by_name()`][Wad::lump_by_name()], and extract raw
