@@ -399,9 +399,12 @@ impl Wad {
     /// # Errors
     ///
     /// Returns [`ParseError`] when the bytes cannot be decoded or validated
-    /// according to the supplied [`ParseOptions`]. In lenient mode only
-    /// unrecoverable I/O-level failures produce an error; see [`ParseError`]
-    /// for the full list.
+    /// according to the supplied [`ParseOptions`]. In lenient mode the parser
+    /// recovers from many validation anomalies (bad magic, negative values,
+    /// out-of-bounds ranges, non-ASCII names) and records [`ParseWarning`]s
+    /// instead; truly unrecoverable failures (truncated header, unreadable
+    /// directory entry) still return [`ParseError`]. See [`ParseError`] for
+    /// the full list.
     ///
     /// # Examples
     ///
