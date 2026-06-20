@@ -203,7 +203,7 @@ flowchart TD
 ## Feature plan
 
 - `mmap`: enables `Wad::from_path_mapped[_with_options]` for read-only memory-mapped file loading via `memmap2`; `from_path` always reads into memory regardless of this flag.
-- `freedoom-tests`: optional integration tests that inspect downloaded FreeDoom fixtures.
+- `freedoom-tests`: optional integration tests that inspect downloaded Freedoom fixtures.
 - Future `async`: alternate I/O constructors without changing the in-memory parse model.
 - Future zero-copy: borrowed views over validated bytes.
 
@@ -219,6 +219,6 @@ flowchart TD
 ## Testing strategy
 
 - Synthetic WAD builders for offline unit and integration tests.
-- Optional FreeDoom fixture coverage for real-world inputs.
+- Optional Freedoom fixture coverage for real-world inputs.
 - `proptest` for parser invariants.
 - Future fuzzing and criterion benchmarks once the API surface expands.
