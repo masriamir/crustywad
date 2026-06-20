@@ -436,10 +436,12 @@ pub enum MapParseError {
 ///   multiple of `size_of::<T>()`.  The lump is likely truncated or contains
 ///   the wrong record type.  Note that the check uses the **in-memory** size
 ///   (`std::mem::size_of::<T>()`), which includes any alignment padding.  For
-///   all types defined in this module the in-memory and on-disk sizes are
-///   identical (no padding, packed little-endian fields).  If you call
-///   `parse_records` with a custom type, make sure its in-memory size exactly
-///   equals the number of bytes `BinRead` consumes per record.
+///   For all types defined in this module `size_of::<T>()` happens to equal
+///   the number of bytes `BinRead` reads per record, but this is not a
+///   layout guarantee — Rust's default representation does not promise
+///   absence of padding.  If you call `parse_records` with a custom type,
+///   verify that its `size_of` equals the number of bytes `BinRead` consumes
+///   per record before relying on this function.
 /// - [`MapParseError::Binrw`] — `binrw` encountered an error decoding a
 ///   record. This usually means the bytes are corrupt.
 pub fn parse_records<T>(bytes: &[u8]) -> Result<Vec<T>, MapParseError>
