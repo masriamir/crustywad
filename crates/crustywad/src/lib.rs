@@ -4,7 +4,7 @@
 
 A WAD (*Where's All the Data?*) is the binary container format used by id
 Software's classic Doom engine to bundle levels, graphics, sounds, and music.
-WAD files come in two flavours: **IWAD** (the main game data that ships with
+WAD files come in two flavors: **IWAD** (the main game data that ships with
 Doom/Doom II) and **PWAD** (user-created patches that override or extend the
 IWAD). This library lets you load either format, inspect the lump directory, and
 extract raw lump data or typed map records — without performing any unsafe I/O

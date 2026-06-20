@@ -51,7 +51,7 @@ pub enum ParseError {
         #[source]
         source: binrw::Error,
     },
-    /// The first 4 bytes of the WAD are not a recognised magic value.
+    /// The first 4 bytes of the WAD are not a recognized magic value.
     ///
     /// Valid WADs start with either `"IWAD"` or `"PWAD"` (ASCII, no NUL
     /// terminator).  Any other value is rejected in strict mode.  Switch to
@@ -113,7 +113,7 @@ pub enum ParseError {
     },
     /// A numeric calculation overflowed while validating the WAD.
     ///
-    /// This is a defence-in-depth check for pathological inputs — for example
+    /// This is a defense-in-depth check for pathological inputs — for example
     /// a `numlumps` value large enough that multiplying it by 16 (bytes per
     /// directory entry) would overflow a `usize`.  In lenient mode the
     /// calculation is saturated and a [`ParseWarning::Overflow`] is recorded

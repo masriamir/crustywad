@@ -116,7 +116,7 @@ pub struct Linedef {
     pub start_vertex: u16,
     /// Index into the `VERTEXES` lump for the end (second) vertex.
     pub end_vertex: u16,
-    /// Bitfield of linedef behaviour flags.
+    /// Bitfield of linedef behavior flags.
     ///
     /// Common flags:
     /// - bit 0 (`0x0001`) — impassable (blocks player and monsters)
@@ -375,7 +375,7 @@ pub struct Sector {
 ///
 /// The `REJECT` lump is a bit matrix used by the engine to quickly determine
 /// whether a monster in one sector can potentially see the player in another.
-/// It exists as a performance optimisation for the AI line-of-sight check.
+/// It exists as a performance optimization for the AI line-of-sight check.
 /// Full parsing is deferred to a future milestone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RejectLump;
