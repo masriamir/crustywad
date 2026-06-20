@@ -2,7 +2,7 @@
 
 ## Project overview
 
-`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is dual-licensed under MIT OR Apache-2.0.
+`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is licensed under MIT.
 
 The repository currently implements milestone 1:
 - Safe WAD header and lump-directory reading

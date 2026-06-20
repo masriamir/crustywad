@@ -5,7 +5,7 @@
 [![Coverage](https://codecov.io/gh/masriamir/crustywad/graph/badge.svg)](https://codecov.io/gh/masriamir/crustywad)
 [![docs.rs](https://img.shields.io/badge/docs.rs-pending-blue)](https://docs.rs/crustywad)
 [![crates.io](https://img.shields.io/badge/crates.io-pending-inactive)](https://crates.io/crates/crustywad)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85.0-blue)](https://www.rust-lang.org)
 
 WAD file I/O implemented in Rust.
@@ -111,9 +111,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, hooks, fixture handling, and r
 
 ## License
 
-Licensed under either of:
-
-- [MIT License](LICENSE-MIT)
-- [Apache License, Version 2.0](LICENSE-APACHE)
-
-at your option.
+Licensed under the [MIT License](LICENSE-MIT).
