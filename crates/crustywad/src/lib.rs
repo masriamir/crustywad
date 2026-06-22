@@ -36,8 +36,8 @@ assert_eq!(wad.lump(0).expect("missing lump").name(), "TEST");
 
 | Feature          | Default | Description |
 |------------------|---------|-------------|
-| `mmap`           | off     | Enables `Wad::from_path_mapped` for zero-copy memory-mapped loading |
-| `freedoom-tests` | off     | Enables integration tests against local Freedoom WAD fixtures (test-only; not useful as a library dependency) |
+| `mmap`           | no  | Enables `Wad::from_path_mapped` for zero-copy memory-mapped loading |
+| `freedoom-tests` | no  | Enables integration tests against local Freedoom WAD fixtures (test-only; not useful as a library dependency) |
 
 # Strictness
 
