@@ -119,6 +119,12 @@ fn seg_angle_high_bit_is_unsigned() {
 }
 
 #[test]
+fn parse_records_empty_slice_returns_empty_vec() {
+    let records = parse_records::<Thing>(&[]).expect("empty slice should return empty vec");
+    assert!(records.is_empty());
+}
+
+#[test]
 fn parse_records_rejects_trailing_bytes() {
     // 11 bytes for a 10-byte Thing record leaves 1 trailing byte
     let bytes = [1, 0, 2, 0, 90, 0, 4, 0, 5, 0, 99];
@@ -127,6 +133,46 @@ fn parse_records_rejects_trailing_bytes() {
         err,
         crustywad::map::MapParseError::TrailingBytes { offset: 10 }
     ));
+}
+
+#[test]
+fn parse_records_buffer_shorter_than_one_record_returns_trailing_bytes_at_zero() {
+    // 5 bytes is shorter than one Thing record (10 bytes). The first BinRead
+    // call returns UnexpectedEof, which parse_records maps to TrailingBytes{0}.
+    let bytes = [1_u8, 0, 2, 0, 90];
+    let err = parse_records::<Thing>(&bytes).expect_err("too-short buffer should fail");
+    assert!(matches!(
+        err,
+        crustywad::map::MapParseError::TrailingBytes { offset: 0 }
+    ));
+}
+
+#[test]
+fn parse_records_zero_size_record_type_returns_trailing_bytes() {
+    // A unit struct has no fields so BinRead reads 0 bytes per record.
+    // Any non-empty buffer must be rejected as unresolvable trailing data.
+    #[derive(binrw::BinRead, Debug)]
+    struct Empty;
+    let err = parse_records::<Empty>(&[1_u8]).expect_err("zero-size record type should fail");
+    assert!(matches!(
+        err,
+        crustywad::map::MapParseError::TrailingBytes { offset: 0 }
+    ));
+}
+
+#[test]
+fn parse_records_non_io_parse_error_wraps_in_binrw_variant() {
+    // A struct with a magic value produces BadMagic (not an Io error) when the
+    // bytes do not match. parse_records must wrap it in MapParseError::Binrw.
+    #[derive(binrw::BinRead, Debug)]
+    #[br(little, magic = 0xDEAD_BEEFu32)]
+    struct Magic {
+        _value: u32,
+    }
+    // First 4 bytes [0,0,0,0] do not match the magic 0xDEAD_BEEF.
+    let bytes = [0u8; 8];
+    let err = parse_records::<Magic>(&bytes).expect_err("bad magic should fail");
+    assert!(matches!(err, crustywad::map::MapParseError::Binrw(_)));
 }
 
 #[test]

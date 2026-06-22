@@ -454,14 +454,14 @@ where
     // in-memory layout (including any alignment padding) and may not match
     // the number of bytes binrw reads per record.
     //
-    // An UnexpectedEof on the very first record means the buffer is shorter
-    // than one record — map that to TrailingBytes rather than Binrw so the
-    // error is consistent with the truncation case (not a corruption case).
+    // An EOF on the very first record means the buffer is shorter than one
+    // record — map that to TrailingBytes rather than Binrw so the error is
+    // consistent with the truncation case (not a corruption case). binrw
+    // wraps IO errors in Error::Backtrace, so use is_eof() instead of
+    // matching Error::Io directly.
     let first: T = cursor.read_le().map_err(|e| {
-        if let binrw::Error::Io(ref io_err) = e {
-            if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
-                return MapParseError::TrailingBytes { offset: 0 };
-            }
+        if e.is_eof() {
+            return MapParseError::TrailingBytes { offset: 0 };
         }
         MapParseError::Binrw(e)
     })?;
