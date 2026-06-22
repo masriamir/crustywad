@@ -453,7 +453,18 @@ where
     // consumes. This avoids relying on size_of::<T>(), which reflects the
     // in-memory layout (including any alignment padding) and may not match
     // the number of bytes binrw reads per record.
-    let first: T = cursor.read_le()?;
+    //
+    // An UnexpectedEof on the very first record means the buffer is shorter
+    // than one record — map that to TrailingBytes rather than Binrw so the
+    // error is consistent with the truncation case (not a corruption case).
+    let first: T = cursor.read_le().map_err(|e| {
+        if let binrw::Error::Io(ref io_err) = e {
+            if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
+                return MapParseError::TrailingBytes { offset: 0 };
+            }
+        }
+        MapParseError::Binrw(e)
+    })?;
     let record_size = usize::try_from(cursor.position()).unwrap_or(usize::MAX);
 
     if record_size == 0 {
