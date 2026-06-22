@@ -392,12 +392,12 @@ pub struct BlockmapLump;
 /// Errors returned when decoding typed map records from a lump byte slice.
 #[derive(Debug, Error)]
 pub enum MapParseError {
-    /// The lump byte slice length is not an exact multiple of the record size.
+    /// The lump byte slice length is not an exact multiple of the on-disk
+    /// record size consumed by `BinRead`.
     ///
-    /// This indicates a corrupt or truncated lump.  This check runs before any
-    /// records are decoded: `offset` is the byte position where the trailing
-    /// partial record begins, equal to
-    /// `(lump_len / size_of::<T>()) * size_of::<T>()`.
+    /// This indicates a corrupt or truncated lump.  `offset` is the byte
+    /// position where the trailing partial record begins — i.e. the first byte
+    /// that does not belong to a complete record.
     #[error("record stream ended mid-record at byte offset {offset}")]
     TrailingBytes {
         /// The byte offset of the start of the trailing partial record
@@ -432,42 +432,44 @@ pub enum MapParseError {
 ///
 /// # Errors
 ///
-/// - [`MapParseError::TrailingBytes`] — the slice length is not a whole
-///   multiple of `size_of::<T>()`.  The lump is likely truncated or contains
-///   the wrong record type.  Note that the check uses the **in-memory** size
-///   (`std::mem::size_of::<T>()`), which includes any alignment padding.
-///   For all types defined in this module `size_of::<T>()` happens to equal
-///   the number of bytes `BinRead` reads per record, but this is not a
-///   layout guarantee — Rust's default representation does not promise
-///   absence of padding.  If you call `parse_records` with a custom type,
-///   verify that its `size_of` equals the number of bytes `BinRead` consumes
-///   per record before relying on this function.
-/// - [`MapParseError::Binrw`] — `binrw` encountered an error decoding a
-///   record. This usually means the bytes are corrupt.
+/// - [`MapParseError::TrailingBytes`] — the slice length is not an exact
+///   multiple of the on-disk record size (measured by how many bytes `BinRead`
+///   actually consumes for the first record).  The lump is likely truncated or
+///   contains the wrong record type.
+/// - [`MapParseError::Binrw`] — `binrw` failed to decode a record.  This
+///   usually means the bytes are corrupt.
 pub fn parse_records<T>(bytes: &[u8]) -> Result<Vec<T>, MapParseError>
 where
     T: for<'a> BinRead<Args<'a> = ()>,
 {
-    let record_size = std::mem::size_of::<T>();
-    if record_size == 0 {
-        // ZST records have no binary representation. An empty buffer produces
-        // zero records; any non-empty buffer has unresolvable trailing bytes.
-        return if bytes.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Err(MapParseError::TrailingBytes { offset: 0 })
-        };
+    if bytes.is_empty() {
+        return Ok(Vec::new());
     }
+
+    let mut cursor = Cursor::new(bytes);
+    let bytes_len = bytes.len() as u64;
+
+    // Parse the first record to learn the actual on-disk size that BinRead
+    // consumes. This avoids relying on size_of::<T>(), which reflects the
+    // in-memory layout (including any alignment padding) and may not match
+    // the number of bytes binrw reads per record.
+    let first: T = cursor.read_le()?;
+    let record_size = usize::try_from(cursor.position()).unwrap_or(usize::MAX);
+
+    if record_size == 0 {
+        // BinRead consumed zero bytes — T has no on-disk representation.
+        // Any non-empty input is unresolvable trailing data.
+        return Err(MapParseError::TrailingBytes { offset: 0 });
+    }
+
     if bytes.len() % record_size != 0 {
         return Err(MapParseError::TrailingBytes {
             offset: (bytes.len() / record_size * record_size) as u64,
         });
     }
 
-    let mut cursor = Cursor::new(bytes);
     let mut records = Vec::with_capacity(bytes.len() / record_size);
-    let bytes_len = bytes.len() as u64;
-
+    records.push(first);
     while cursor.position() < bytes_len {
         records.push(cursor.read_le()?);
     }
