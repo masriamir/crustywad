@@ -23,6 +23,7 @@ memmap2 = { version = "0.9.5", optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+binrw.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 

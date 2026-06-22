@@ -130,6 +130,36 @@ fn parse_records_rejects_trailing_bytes() {
 }
 
 #[test]
+fn parse_records_uses_on_disk_size_not_size_of() {
+    // Regression: parse_records must derive per-record size from BinRead cursor
+    // advancement, not from size_of::<T>(). For a #[repr(C)] struct whose fields
+    // contain alignment padding, size_of is larger than the bytes BinRead consumes.
+    #[repr(C)]
+    #[derive(binrw::BinRead, Debug, PartialEq)]
+    #[br(little)]
+    struct Padded {
+        a: u8,
+        b: u16,
+    }
+    // BinRead reads: a (1 byte) + b (2 bytes) = 3 bytes on disk.
+    // size_of::<Padded>() == 4 because #[repr(C)] inserts a padding byte before b.
+    assert_eq!(
+        std::mem::size_of::<Padded>(),
+        4,
+        "sanity: repr(C) must pad to 4"
+    );
+    // Two records back-to-back = 6 bytes. The old size_of-based approach would
+    // treat this as 6 % 4 != 0 and return TrailingBytes; cursor-based detects 3.
+    let bytes: Vec<u8> = vec![1, 2, 0, 3, 4, 0];
+    let records = parse_records::<Padded>(&bytes).expect("should parse 2 padded records");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].a, 1);
+    assert_eq!(records[0].b, 2);
+    assert_eq!(records[1].a, 3);
+    assert_eq!(records[1].b, 4);
+}
+
+#[test]
 fn parses_name8_lossily() {
     let record = Name8(*b"START\0\0\0");
     assert_eq!(record.as_str_lossy(), "START");
