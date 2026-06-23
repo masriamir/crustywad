@@ -270,8 +270,8 @@ fn lenient_clamps_lump_size_extending_beyond_eof() {
 #[test]
 fn strict_rejects_lump_with_huge_filepos_and_size() {
     // filepos and size are both i32::MAX - 2 — vastly beyond the tiny file.
-    // 2 × (i32::MAX - 2) = 4_294_967_290 < u32::MAX, so checked_add never
-    // overflows on any target width; the out-of-bounds check always fires.
+    // 2 × (i32::MAX - 2) = 4_294_967_290 < u32::MAX, so checked_add does not
+    // overflow on 32-bit or wider targets; the out-of-bounds check always fires.
     let lump_payload = [0xAB_u8; 4];
     let lump_name = b"HUGEVAL\0";
     // Place directory at offset 16 (after 12-byte header + 4-byte payload).
