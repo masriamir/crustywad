@@ -18,11 +18,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install mdBook
-        run: cargo install mdbook --locked
+        run: cargo install mdbook --version 0.5.3 --locked
       - name: Build guide
         run: mdbook build docs/guide
       - name: Upload artifact
