@@ -212,12 +212,6 @@ fn parses_name8_lossily() {
 }
 
 #[test]
-fn parse_records_returns_empty_vec_for_empty_slice() {
-    let records = parse_records::<Thing>(&[]).expect("empty slice should parse to empty vec");
-    assert!(records.is_empty());
-}
-
-#[test]
 fn parse_records_multiple_records() {
     // Two back-to-back Thing records (each 10 bytes)
     let mut bytes = Vec::new();

@@ -231,6 +231,10 @@ fn clone_produces_independent_copy() {
     assert_eq!(cloned.kind(), WadKind::Pwad);
     assert_eq!(cloned.lump_count(), 1);
     assert_eq!(cloned.lump_bytes(0), Some(&[1, 2, 3][..]));
+    let original_bytes = wad.into_bytes();
+    let cloned_bytes = cloned.into_bytes();
+    assert_eq!(original_bytes, cloned_bytes);
+    assert_ne!(original_bytes.as_ptr(), cloned_bytes.as_ptr());
 }
 
 #[test]
