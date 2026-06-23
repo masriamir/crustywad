@@ -91,8 +91,8 @@ fn strict_rejects_truncated_to_two_bytes() {
 }
 
 #[test]
-fn strict_rejects_truncated_to_four_bytes_bad_magic() {
-    // Exactly 4 bytes — magic can be read but header (12 bytes) will fail.
+fn strict_rejects_truncated_to_four_bytes_incomplete_header() {
+    // Exactly 4 bytes — valid magic but the remaining 8 header bytes are absent.
     let bytes = b"IWAD";
     let err = Wad::from_bytes(bytes.to_vec()).expect_err("truncated IWAD header should fail");
     assert!(matches!(err, ParseError::Header(_)));
