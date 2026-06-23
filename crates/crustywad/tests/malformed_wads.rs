@@ -138,14 +138,17 @@ fn strict_rejects_infotableofs_into_lump_payload() {
     let mut bytes = common::build_wad(*b"PWAD", &[("TEST", &[0xAA, 0xBB, 0xCC, 0xDD])]);
     // infotableofs lives at bytes 8..12; point it to offset 13 (inside payload).
     bytes[8..12].copy_from_slice(&13_i32.to_le_bytes());
-    // num_lumps stays 1 → directory at offset 13, size 16 → extends to 29,
-    // but the WAD is only 12 + 4 + 16 = 32 bytes. The parser should
-    // detect the directory partially or fully overlaps data.
+    // The directory at offset 13 fits within the 32-byte file (13+16=29 < 32),
+    // so it is read successfully — but the reinterpreted filepos (0x0CDDCCBB,
+    // built from payload bytes) is far beyond EOF. The lump-data bounds check
+    // is the first check that fires.
     let err = Wad::from_bytes(bytes).expect_err("directory into payload should fail");
-    // Could be OutOfBounds or a lump validation error.
     assert!(matches!(
         err,
-        ParseError::OutOfBounds { .. } | ParseError::NonAsciiName { .. }
+        ParseError::OutOfBounds {
+            field: "lump data",
+            ..
+        }
     ));
 }
 
@@ -161,11 +164,20 @@ fn strict_rejects_infotableofs_zero_pointing_to_header() {
 
 #[test]
 fn lenient_recovers_infotableofs_zero() {
-    // infotableofs = 0, num_lumps = 0 → empty directory, valid in lenient mode.
-    let bytes = raw_wad(*b"IWAD", 0, 0, &[]);
+    // infotableofs = 0, num_lumps = 1 → parser tries to read a 16-byte directory
+    // entry at offset 0, but the file is only 12 bytes → OOB. Lenient mode
+    // clamps to 0 lumps and records an OutOfBounds warning.
+    let bytes = raw_wad(*b"IWAD", 1, 0, &[]);
     let wad = Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
-        .expect("lenient should handle infotableofs=0 with 0 lumps");
+        .expect("lenient should recover from directory OOB at offset 0");
     assert_eq!(wad.lump_count(), 0);
+    assert!(wad.warnings().iter().any(|w| matches!(
+        w,
+        ParseWarning::OutOfBounds {
+            field: "directory",
+            ..
+        }
+    )));
 }
 
 // ---------------------------------------------------------------------------
@@ -257,18 +269,20 @@ fn lenient_clamps_lump_size_extending_beyond_eof() {
 }
 
 #[test]
-fn strict_rejects_huge_filepos_and_size_out_of_bounds() {
-    // filepos and size near i32::MAX — both are out of bounds on any target.
-    // We use a raw WAD with a crafted directory entry.
+fn strict_rejects_lump_with_huge_filepos_and_size() {
+    // filepos and size are both i32::MAX - 2 — vastly beyond the tiny file.
+    // On 64-bit targets the addition does not overflow and the out-of-bounds
+    // check fires; on 32-bit targets the usize addition overflows instead.
+    // Both outcomes are valid rejections of the corrupt entry.
     let lump_payload = [0xAB_u8; 4];
-    let lump_name = b"OVERFLOW";
+    let lump_name = b"HUGEVAL\0";
     // Place directory at offset 16 (after 12-byte header + 4-byte payload).
     let entry = dir_entry(i32::MAX - 2, i32::MAX - 2, *lump_name);
     let mut extra = Vec::new();
     extra.extend_from_slice(&lump_payload);
     extra.extend_from_slice(&entry);
     let bytes = raw_wad(*b"IWAD", 1, 16, &extra);
-    let err = Wad::from_bytes(bytes).expect_err("overflow of filepos+size should fail");
+    let err = Wad::from_bytes(bytes).expect_err("huge filepos/size should fail");
     assert!(matches!(
         err,
         ParseError::OutOfBounds { .. } | ParseError::Overflow { .. }
