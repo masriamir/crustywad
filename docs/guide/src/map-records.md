@@ -47,7 +47,7 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
 pub struct Thing {
     pub x: i16,        // X coordinate in map units
     pub y: i16,        // Y coordinate in map units
-    pub angle: u16,    // Facing angle in degrees (0-359, clockwise from east)
+    pub angle: u16,    // Facing angle in degrees (0-359, counter-clockwise from east)
     pub type_id: u16,  // Editor number / thing type
     pub flags: u16,    // Doom thing flags
 }

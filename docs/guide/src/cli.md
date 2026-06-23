@@ -58,8 +58,8 @@ cwad --lenient info damaged.wad
 Warnings from lenient parsing are written to stderr:
 
 ```text
-warning: invalid magic bytes: "\xde\xad\xbe\xef"
-kind: Unknown([222, 173, 190, 239])
+warning: unrecognized WAD magic `XWAD`
+kind: Unknown([88, 87, 65, 68])
 lumps: 3
 ```
 
