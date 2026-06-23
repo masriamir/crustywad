@@ -214,9 +214,8 @@ fn lenient_clamps_num_lumps_exceeding_available_entries() {
 fn strict_rejects_lump_filepos_beyond_eof() {
     // 1-lump WAD; set filepos to a value beyond the file length.
     let mut bytes = common::build_wad(*b"IWAD", &[("DATA", &[0xFF])]);
-    // filepos is at bytes[directory_start .. directory_start+4].
-    // Directory starts at offset 13 (12 header + 1 byte payload).
-    let dir_start = 13_usize;
+    // The single directory entry is the last 16 bytes of the file.
+    let dir_start = bytes.len() - 16;
     bytes[dir_start..dir_start + 4].copy_from_slice(&99999_i32.to_le_bytes());
     let err = Wad::from_bytes(bytes).expect_err("filepos beyond EOF should fail");
     assert!(matches!(err, ParseError::OutOfBounds { .. }));
@@ -225,7 +224,7 @@ fn strict_rejects_lump_filepos_beyond_eof() {
 #[test]
 fn lenient_clamps_lump_filepos_beyond_eof() {
     let mut bytes = common::build_wad(*b"IWAD", &[("DATA", &[0xFF])]);
-    let dir_start = 13_usize;
+    let dir_start = bytes.len() - 16;
     bytes[dir_start..dir_start + 4].copy_from_slice(&99999_i32.to_le_bytes());
     let wad = Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
         .expect("lenient should clamp lump beyond EOF");
@@ -243,7 +242,7 @@ fn lenient_clamps_lump_filepos_beyond_eof() {
 fn strict_rejects_lump_size_extending_beyond_eof() {
     // filepos is valid but size is large enough to extend past EOF.
     let mut bytes = common::build_wad(*b"IWAD", &[("DATA", &[1, 2, 3])]);
-    let dir_start = 15_usize;
+    let dir_start = bytes.len() - 16;
     // Write a size of 9999 (well past end of file).
     bytes[dir_start + 4..dir_start + 8].copy_from_slice(&9999_i32.to_le_bytes());
     let err = Wad::from_bytes(bytes).expect_err("oversized lump should fail");
@@ -253,7 +252,7 @@ fn strict_rejects_lump_size_extending_beyond_eof() {
 #[test]
 fn lenient_clamps_lump_size_extending_beyond_eof() {
     let mut bytes = common::build_wad(*b"IWAD", &[("DATA", &[1, 2, 3])]);
-    let dir_start = 15_usize;
+    let dir_start = bytes.len() - 16;
     bytes[dir_start + 4..dir_start + 8].copy_from_slice(&9999_i32.to_le_bytes());
     let wad = Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
         .expect("lenient should clamp oversized lump size");
@@ -271,9 +270,8 @@ fn lenient_clamps_lump_size_extending_beyond_eof() {
 #[test]
 fn strict_rejects_lump_with_huge_filepos_and_size() {
     // filepos and size are both i32::MAX - 2 — vastly beyond the tiny file.
-    // On 64-bit targets the addition does not overflow and the out-of-bounds
-    // check fires; on 32-bit targets the usize addition overflows instead.
-    // Both outcomes are valid rejections of the corrupt entry.
+    // 2 × (i32::MAX - 2) = 4_294_967_290 < u32::MAX, so checked_add never
+    // overflows on any target width; the out-of-bounds check always fires.
     let lump_payload = [0xAB_u8; 4];
     let lump_name = b"HUGEVAL\0";
     // Place directory at offset 16 (after 12-byte header + 4-byte payload).
@@ -283,18 +281,15 @@ fn strict_rejects_lump_with_huge_filepos_and_size() {
     extra.extend_from_slice(&entry);
     let bytes = raw_wad(*b"IWAD", 1, 16, &extra);
     let err = Wad::from_bytes(bytes).expect_err("huge filepos/size should fail");
-    assert!(matches!(
-        err,
-        ParseError::OutOfBounds { .. } | ParseError::Overflow { .. }
-    ));
+    assert!(matches!(err, ParseError::OutOfBounds { .. }));
 }
 
 #[test]
 fn lenient_handles_negative_lump_size() {
-    // Negative size is stored as a large unsigned value in little-endian;
-    // the parser reads i32 and must handle it gracefully.
+    // Negative size is written as a raw two's-complement i32 value;
+    // the parser reads it as i32 and must handle it gracefully.
     let mut bytes = common::build_wad(*b"IWAD", &[("SNEG", &[1, 2, 3])]);
-    let dir_start = 15_usize;
+    let dir_start = bytes.len() - 16;
     bytes[dir_start + 4..dir_start + 8].copy_from_slice(&(-5_i32).to_le_bytes());
     let wad = Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
         .expect("lenient should handle negative lump size");
@@ -311,7 +306,7 @@ fn lenient_handles_negative_lump_size() {
 #[test]
 fn strict_rejects_negative_lump_size() {
     let mut bytes = common::build_wad(*b"IWAD", &[("SNEG", &[1, 2, 3])]);
-    let dir_start = 15_usize;
+    let dir_start = bytes.len() - 16;
     bytes[dir_start + 4..dir_start + 8].copy_from_slice(&(-5_i32).to_le_bytes());
     let err = Wad::from_bytes(bytes).expect_err("negative lump size should fail in strict mode");
     assert!(matches!(
