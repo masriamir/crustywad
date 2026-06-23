@@ -465,7 +465,9 @@ where
         }
         MapParseError::Binrw(e)
     })?;
-    let record_size = usize::try_from(cursor.position()).unwrap_or(usize::MAX);
+    // Safe: cursor is backed by `bytes: &[u8]`, so position() ≤ bytes.len() ≤ usize::MAX.
+    #[allow(clippy::cast_possible_truncation)]
+    let record_size = cursor.position() as usize;
 
     if record_size == 0 {
         // BinRead consumed zero bytes — T has no on-disk representation.
