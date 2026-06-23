@@ -14,5 +14,5 @@
 
 - [ ] Header and directory parsing
 - [ ] Map lump records
-- [ ] Real-world FreeDoom fixture coverage
+- [ ] Real-world Freedoom fixture coverage
 - [ ] Follow-up TODOs filed for deferred work

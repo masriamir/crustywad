@@ -19,7 +19,7 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 Integration tests for each layer live in `crates/crustywad/tests/`:
 - `wad_reader.rs` — WAD header and directory parsing
 - `map_records.rs` — typed map-record decoding (`Thing`, `Linedef`, `Sector`, etc.)
-- `freedoom.rs` — optional tests against real FreeDoom WAD fixtures
+- `freedoom.rs` — optional tests against real Freedoom WAD fixtures
 
 ## Workspace layout
 
@@ -58,7 +58,7 @@ cargo run -p crustywad-cli -- list path/to/file.wad
 | Feature | Default | Description |
 | --- | --- | --- |
 | `mmap` | no | Enables `Wad::from_path_mapped` and `Wad::from_path_mapped_with_options` for memory-mapped file loading via `memmap2` — no heap copy on load. `Wad::from_path` always reads into memory regardless of this flag. |
-| `freedoom-tests` | no | Enables optional integration tests that inspect locally downloaded FreeDoom fixtures. |
+| `freedoom-tests` | no | Enables optional integration tests that inspect locally downloaded Freedoom fixtures. |
 
 ## Development
 
@@ -75,9 +75,9 @@ just ci
 
 `just cov` uses `cargo-llvm-cov`, and the Codecov upload in CI may require a `CODECOV_TOKEN` repository secret depending on repository visibility and Codecov settings.
 
-### FreeDoom fixtures
+### Freedoom fixtures
 
-Optional integration tests parse real FreeDoom WAD files. The FreeDoom version to download is configurable:
+Optional integration tests parse real Freedoom WAD files. The Freedoom version to download is configurable:
 
 ```bash
 # Default version (v0.13.0)
