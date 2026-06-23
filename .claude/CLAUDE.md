@@ -20,7 +20,7 @@ crates/
       common/mod.rs    # Shared WAD-building helpers (build_wad, lump_map)
       wad_reader.rs    # Integration tests for the main WAD reader API
       map_records.rs   # Integration tests for typed map-record parsing
-      freedoom.rs      # Optional FreeDoom fixture tests (feature = "freedoom-tests")
+      freedoom.rs      # Optional Freedoom fixture tests (feature = "freedoom-tests")
   crustywad-cli/       # CLI binary crate (`cwad`)
     src/main.rs        # `info` and `list` subcommands via clap
 docs/
@@ -28,7 +28,7 @@ docs/
   adr/                 # Architecture decision records
 tests/
   fixtures/
-    fetch_freedoom.py  # Downloads FreeDoom WAD fixtures from GitHub releases
+    fetch_freedoom.py  # Downloads Freedoom WAD fixtures from GitHub releases
     README.md          # Fixture documentation and version configuration
 .github/
   codeql/codeql-config.yml   # Advanced CodeQL query config (security-extended + quality)
@@ -50,7 +50,7 @@ Install [just](https://github.com/casey/just), then:
 | Docs | `just doc` |
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
-| Fetch FreeDoom fixtures | `just fetch-fixtures` |
+| Fetch Freedoom fixtures | `just fetch-fixtures` |
 | Full CI check | `just ci` |
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
@@ -65,7 +65,7 @@ cargo fmt --all --check
 cargo doc --workspace --all-features --no-deps
 ```
 
-FreeDoom fixture tests require both the feature flag and the env var:
+Freedoom fixture tests require both the feature flag and the env var:
 
 ```bash
 just fetch-fixtures                         # default version
@@ -122,7 +122,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 - **Integration tests** (all public API): `crates/crustywad/tests/`, one file per concern.
 - `common/mod.rs` contains shared WAD-building helpers; add shared test utilities there.
 
-### FreeDoom fixture tests
+### Freedoom fixture tests
 
 - Live in `tests/freedoom.rs`, gated by `#[cfg(feature = "freedoom-tests")]`.
 - Fixtures are gitignored — never commit WAD blobs.
@@ -148,7 +148,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
-| `freedoom-tests` | no | Enables optional integration tests against local FreeDoom fixture WADs |
+| `freedoom-tests` | no | Enables optional integration tests against local Freedoom fixture WADs |
 
 ## Commit conventions
 

@@ -1,4 +1,4 @@
-"""Fetch FreeDoom WAD fixtures from a versioned GitHub release archive.
+"""Fetch Freedoom WAD fixtures from a versioned GitHub release archive.
 
 Usage:
     python tests/fixtures/fetch_freedoom.py [--version VERSION]
@@ -75,7 +75,7 @@ if __name__ == "__main__":
         "--version",
         default=os.environ.get("FREEDOOM_VERSION", DEFAULT_VERSION),
         help=(
-            "FreeDoom release version tag to download (default: %(default)s). "
+            "Freedoom release version tag to download (default: %(default)s). "
             "Can also be set via the FREEDOOM_VERSION environment variable."
         ),
     )
