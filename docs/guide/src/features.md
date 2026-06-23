@@ -57,11 +57,3 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --all-features
 The tests are skipped gracefully when `CRUSTYWAD_FREEDOOM_DIR` is not set, so
 passing `--all-features` in CI is safe without fetching fixtures first.
 
-## Combining features
-
-Features are independent and can be combined:
-
-```toml
-[dependencies]
-crustywad = { version = "0.1", features = ["mmap"] }
-```
