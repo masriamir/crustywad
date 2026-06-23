@@ -1,4 +1,4 @@
-//! Optional integration tests that inspect local `FreeDoom` fixtures.
+//! Optional integration tests that inspect local Freedoom fixtures.
 
 #![cfg(feature = "freedoom-tests")]
 
@@ -13,14 +13,14 @@ fn freedoom_dir() -> Option<PathBuf> {
 #[test]
 fn parses_freedoom_when_fixtures_are_available() {
     let Some(dir) = freedoom_dir() else {
-        eprintln!("skipping FreeDoom fixture test: CRUSTYWAD_FREEDOOM_DIR not set");
+        eprintln!("skipping Freedoom fixture test: CRUSTYWAD_FREEDOOM_DIR not set");
         return;
     };
 
     for name in ["freedoom1.wad", "freedoom2.wad"] {
         let path = dir.join(name);
         if !path.exists() {
-            eprintln!("skipping missing FreeDoom fixture: {}", path.display());
+            eprintln!("skipping missing Freedoom fixture: {}", path.display());
             continue;
         }
 
