@@ -22,9 +22,9 @@ that `crustywad` decodes; classic Doom maps also include additional lumps such a
 All record types implement `BinRead` with little-endian byte order.
 
 ```rust
-use crustywad::{Wad, map};
+use crustywad::map;
 
-// Build a minimal IWAD that contains one THINGS lump with a single thing.
+// Parse a raw THINGS byte slice containing a single thing.
 let thing_bytes: &[u8] = &[
     100_i16.to_le_bytes()[0], 100_i16.to_le_bytes()[1],  // x = 100
     200_i16.to_le_bytes()[0], 200_i16.to_le_bytes()[1],  // y = 200
