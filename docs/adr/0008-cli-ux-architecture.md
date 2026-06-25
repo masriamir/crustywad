@@ -37,15 +37,22 @@ must accept a global `--format <FORMAT>` flag (shorthand `-F`) with three values
 `human` is the default so existing `cwad info` / `cwad list` output is unchanged.
 `json` and `csv` are designed for piping into `jq`, spreadsheet imports, or CI scripts.
 
-Subcommands that only confirm a result without emitting records (`merge`, `extract` used as
-a write command) emit a single-line human message to stdout when `--format human` or
-`--format csv` is used (no tabular data exists to render as CSV), and a machine-readable
-`{"ok": true}` / `{"ok": false, "error": "..."}` envelope when `--format json` is used.
+Subcommands that write to a file and only confirm a result (`merge`) emit a single-line
+human message to stdout when `--format human` or `--format csv` is used (no tabular data
+exists to render as CSV), and a machine-readable `{"ok": true}` /
+`{"ok": false, "error": "..."}` envelope when `--format json` is used.
+
+`extract` is a special case: when writing to stdout (`-` or no output path), only the raw
+lump bytes are written to stdout — no confirmation text, to avoid corrupting the stream.
+Any progress or error messages go to stderr. When writing to a file, `extract` uses the
+same confirmation format as `merge`.
 
 Implementation: a `Format` enum is added to the shared CLI layer, parsed once by `clap`,
 and passed as a parameter to every output helper. No third-party serialization crate is
-pulled in; JSON is hand-formatted for the flat record structures involved. If `serde`/
-`serde_json` are needed later an ADR amendment is required first.
+pulled in; JSON is hand-formatted for the flat record structures involved. All string
+values in hand-formatted JSON must properly escape backslashes, double quotes, and control
+characters (U+0000–U+001F) to produce valid JSON even for edge-case lump names. If
+`serde`/`serde_json` are needed later an ADR amendment is required first.
 
 ### 2. Exit code conventions
 
@@ -64,7 +71,8 @@ Note: clap's built-in default for parse errors is exit code `2`, not `3`. To avo
 colliding with the I/O-error code, the implementation must intercept clap parse failures
 via `Cli::try_parse()`. On error, check `clap::Error::kind()`: `DisplayHelp` and
 `DisplayVersion` should call `err.exit()` (which prints and exits `0`); all other error
-kinds indicate bad arguments and should call `std::process::exit(3)`.
+kinds indicate bad arguments and should call `err.print()` (writes the diagnostic to
+stderr) then `std::process::exit(3)`.
 
 `validate` exits `1` when validation errors are found and `0` when the WAD is clean.
 `diff` exits `1` when the two WADs differ and `0` when they are identical (matching `diff(1)`
