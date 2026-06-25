@@ -191,4 +191,4 @@ managing two code paths outweighs the memory savings, especially given that mmap
   must be generalized to cover both parse and write contexts — or a write-specific
   `WriteStrictness` enum introduced — to avoid misleading API documentation.
 - Implementation of this ADR requires sub-issues #21–#27 (per the epic tracking issue #12)
-  to be opened and tackled after this ADR is accepted.
+  to be tackled after this ADR is accepted.
