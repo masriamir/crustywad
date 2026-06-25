@@ -97,10 +97,12 @@ The existing `ParseOptions { strictness }` type encodes two modes:
   `WadKind::Unknown`).
 
 Write validation rules are the inverse of parse validation:
-- Lump names must be ASCII and at most 8 bytes. Strict mode rejects any violation with a
-  `WriteError`. Lenient mode truncates names longer than 8 bytes and emits a `WriteWarning`;
-  non-ASCII names are rejected in both modes — there is no unambiguous ASCII-preserving
-  sanitization for arbitrary Unicode input.
+- Lump names must be ASCII, free of embedded NUL bytes, and at most 8 bytes. Strict mode
+  rejects any violation with a `WriteError`. Lenient mode truncates names longer than 8 bytes
+  and emits a `WriteWarning`; non-ASCII and NUL-containing names are rejected in both modes.
+  Embedded NULs are forbidden because `decode_name` terminates at the first `\0` — a name
+  written with an interior NUL would be silently shortened on re-parse, breaking round-trip
+  invariants.
 - Lump data sizes must fit in `i32`; both strict and lenient mode reject oversized lumps
   with a `WriteError` — truncating would silently discard user data with no way to recover
   it.
