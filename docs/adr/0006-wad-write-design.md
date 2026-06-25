@@ -106,8 +106,8 @@ Write validation rules are the inverse of parse validation:
   `WriteError` — the count is stored as `i32` in the header with no fallback representation.
 - `WadKind::Unknown` magic: strict mode rejects it, lenient mode writes the raw bytes.
 
-A new `WriteOptions { strictness: Strictness }` (or reuse of `ParseOptions` renamed to
-`Options`) should be introduced to avoid coupling write behavior to parse behavior.
+A new `WriteOptions { strictness: Strictness }` should be introduced to avoid coupling
+write behavior to parse behavior.
 
 ### The existing `into_bytes` stub
 
@@ -140,8 +140,10 @@ Concretely:
    round-tripping and editing (add, remove, reorder lumps).
 6. Introduce `WriteError` and `WriteWarning` types following the same `thiserror` pattern
    as `ParseError` / `ParseWarning`.
-7. Introduce `WriteOptions { strictness: Strictness }` mirroring `ParseOptions`; pass it
-   to `WadBuilder::build_with_options`.
+7. Introduce `WriteOptions { strictness: Strictness }` mirroring `ParseOptions`.
+   `WadBuilder::build_with_options(opts: WriteOptions) -> Result<(Vec<u8>, Vec<WriteWarning>), WriteError>`
+   is the lenient-mode entry point; `WadBuilder::build()` is a strict-mode convenience
+   wrapper that returns `Result<Vec<u8>, WriteError>` (no warnings possible in strict mode).
 8. Keep `Wad::into_bytes` as a raw buffer extractor (no behavior change).
 9. Offset and size fields (`filepos`, `size` in directory entries; `infotableofs`,
    `numlumps` in the header) are always recomputed by the builder — callers never supply
