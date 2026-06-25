@@ -9,8 +9,8 @@
 
 `crustywad` currently provides read-only WAD access. Milestone 6 adds write support. Before
 any implementation begins, the design space must be explored and a direction chosen, because
-the approach affects public API surface, error model, and how the existing `into_bytes` stub
-in `lib.rs` should evolve.
+the approach affects public API surface, error model, and how `Wad::into_bytes` in `lib.rs`
+relates to the new serialization entry point.
 
 ### WAD on-disk layout recap
 
@@ -28,8 +28,9 @@ The header stores:
 - `infotableofs` — byte offset of the directory (i32 LE)
 
 Each directory entry is 16 bytes: `filepos` (i32), `size` (i32), `name` ([u8; 8], zero-padded).
-The name field is an 8-byte array with no format-level character-set constraint; `crustywad`
-validates that names contain only ASCII bytes as a crate policy.
+The name field is an 8-byte array; WAD names are conventionally ASCII characters (per the
+Doom spec), and `crustywad` enforces this — rejecting non-ASCII in strict mode and decoding
+lossily in lenient mode.
 
 ### Three approaches considered
 
@@ -89,8 +90,8 @@ with their read counterparts.
 
 The existing `ParseOptions { strictness }` type encodes two modes:
 
-- **Strict:** reject the first invalid input (bad lump name, oversized lump name, unknown
-  `WadKind`, etc.) and return a typed error.
+- **Strict:** reject the first invalid input (non-standard magic, non-ASCII lump names,
+  out-of-bounds lump data ranges, negative counts) and return a typed error.
 - **Lenient:** warn and recover (e.g., clamp out-of-bounds lump data ranges, decode
   non-ASCII lump names lossily via `String::from_utf8_lossy`, preserve unknown magic as
   `WadKind::Unknown`).
@@ -113,7 +114,7 @@ Write validation rules are the inverse of parse validation:
 A new `WriteOptions { strictness: Strictness }` should be introduced to avoid coupling
 write behavior to parse behavior.
 
-### The existing `into_bytes` stub
+### `Wad::into_bytes`
 
 `Wad::into_bytes(self) -> Vec<u8>` currently returns the original backing bytes unmodified —
 it is a raw buffer extractor, not a serializer. This is useful for extracting owned bytes
