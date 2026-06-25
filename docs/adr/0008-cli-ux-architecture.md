@@ -44,8 +44,9 @@ exists to render as CSV), and a machine-readable `{"ok": true}` /
 
 `extract` is a special case: when writing to stdout (`-` or no output path), only the raw
 lump bytes are written to stdout — no confirmation text, to avoid corrupting the stream.
+The `--format` flag is ignored in this mode; specifying it does not alter stdout output.
 Any progress or error messages go to stderr. When writing to a file, `extract` uses the
-same confirmation format as `merge`.
+same confirmation format as `merge` and respects `--format` normally.
 
 Implementation: a `Format` enum is added to the shared CLI layer, parsed once by `clap`,
 and passed as a parameter to every output helper. No third-party serialization crate is
