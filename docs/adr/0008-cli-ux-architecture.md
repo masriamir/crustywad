@@ -25,7 +25,7 @@ Five areas need explicit decisions:
 
 ### 1. Output format strategy
 
-Every subcommand that emits structured data (`info`, `list`, `validate`, `diff`, `extract`)
+Every subcommand that emits structured data (`info`, `list`, `validate`, `diff`)
 must accept a global `--format <FORMAT>` flag (shorthand `-F`) with three values:
 
 | Value   | Description                                           |
@@ -53,11 +53,15 @@ pulled in; JSON is hand-formatted for the flat record structures involved. If `s
 | `0`  | Success — all requested operations completed without error       |
 | `1`  | Logical failure — WAD is invalid, diff found differences, etc.  |
 | `2`  | I/O or parse error — file not found, truncated header, etc.     |
-| `3`  | Usage error — bad arguments (clap default; not overridden)       |
+| `3`  | Usage error — bad arguments                                      |
 
 `anyhow::Result<()>` in `main` maps to exit code `1` for any error today. The implementation
 must switch to `std::process::exit` (or a custom `run()` function returning `ExitCode`) so
 that I/O errors and logical failures are distinguishable by callers.
+
+Note: clap's built-in default for parse errors is exit code `2`, not `3`. To avoid
+colliding with the I/O-error code, the implementation must intercept clap parse failures
+via `Cli::try_parse()` and call `std::process::exit(3)` explicitly on bad-argument errors.
 
 `validate` exits `1` when validation errors are found and `0` when the WAD is clean.
 `diff` exits `1` when the two WADs differ and `0` when they are identical (matching `diff(1)`
