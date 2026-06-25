@@ -66,7 +66,7 @@ Cons:
 - Two code paths (in-place and rebuild) increase implementation and testing surface.
 - The "fall back to full rebuild" logic is invisible to callers and hard to test in isolation.
 
-**Option C — Builder pattern (a separate `WadBuilder` / `WadWriter` type).**
+**Option C — Builder pattern (a separate `WadBuilder` type).**
 Introduce a standalone `WadBuilder` that accepts a `WadKind` and a sequence of `(name,
 bytes)` pairs, validates them, and serializes to a `Vec<u8>` on `build()`. The existing
 `Wad` type grows a `to_builder()` conversion to allow round-tripping.
@@ -140,7 +140,7 @@ Concretely:
 2. `WadBuilder::new(kind: WadKind)` starts an empty builder.
 3. `WadBuilder::add_lump(name: &str, data: impl Into<Vec<u8>>) -> &mut Self` stores the
    lump. All name and size validation is deferred to `build()` / `build_with_options()`,
-   where `WriteOptions` is available to determine strict-vs-lenient behaviour (e.g., whether
+   where `WriteOptions` is available to determine strict-vs-lenient behavior (e.g., whether
    an over-length name is an error or is truncated with a warning).
 4. `WadBuilder::build() -> Result<Vec<u8>, WriteError>` serializes the complete WAD:
    - Writes a placeholder 12-byte header.
