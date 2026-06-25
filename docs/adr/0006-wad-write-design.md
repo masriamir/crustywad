@@ -181,7 +181,7 @@ managing two code paths outweighs the memory savings, especially given that mmap
 - The `Wad::to_builder()` method creates an owned copy of all lump data, so memory usage
   doubles during a round-trip. This is acceptable for an offline editing tool; a future
   zero-copy edit path can be added without changing the public API.
-- Write validation mirrors parse validation: `WriteOptions::strict()` / `::lenient()`
-  follows the same ergonomics as `ParseOptions`.
+- `WriteOptions::strict()` / `::lenient()` follow the same API ergonomics as `ParseOptions`,
+  making the write API consistent and familiar for existing users of the library.
 - Implementation of this ADR requires sub-issues #21–#27 (per the epic tracking issue #12)
   to be opened and tackled after this ADR is accepted.
