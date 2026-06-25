@@ -28,7 +28,8 @@ The header stores:
 - `infotableofs` — byte offset of the directory (i32 LE)
 
 Each directory entry is 16 bytes: `filepos` (i32), `size` (i32), `name` ([u8; 8], zero-padded).
-Lump names are ASCII, up to 8 bytes, zero-padded to 8 bytes.
+The name field is an 8-byte array with no format-level character-set constraint; `crustywad`
+validates that names contain only ASCII bytes as a crate policy.
 
 ### Three approaches considered
 
