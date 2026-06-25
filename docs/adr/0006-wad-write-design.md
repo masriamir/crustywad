@@ -7,7 +7,8 @@
 
 ## Context
 
-`crustywad` currently provides read-only WAD access. Milestone 6 adds write support. Before
+`crustywad` currently provides read-only WAD access. Milestone 6 of the design roadmap
+(tracked as Epic #12) adds write support. Before
 any implementation begins, the design space must be explored and a direction chosen, because
 the approach affects public API surface, error model, and how `Wad::into_bytes` in `lib.rs`
 relates to the new serialization entry point.
@@ -137,8 +138,10 @@ Concretely:
    flag, off by default, to keep the default API surface read-only and reduce compile time
    for read-only users).
 2. `WadBuilder::new(kind: WadKind)` starts an empty builder.
-3. `WadBuilder::add_lump(name: &str, data: impl Into<Vec<u8>>) -> Result<&mut Self, WriteError>`
-   validates the name and stores the lump.
+3. `WadBuilder::add_lump(name: &str, data: impl Into<Vec<u8>>) -> &mut Self` stores the
+   lump. All name and size validation is deferred to `build()` / `build_with_options()`,
+   where `WriteOptions` is available to determine strict-vs-lenient behaviour (e.g., whether
+   an over-length name is an error or is truncated with a warning).
 4. `WadBuilder::build() -> Result<Vec<u8>, WriteError>` serializes the complete WAD:
    - Writes a placeholder 12-byte header.
    - Appends each lump's data in insertion order, tracking `filepos` per lump.
@@ -183,5 +186,9 @@ managing two code paths outweighs the memory savings, especially given that mmap
   zero-copy edit path can be added without changing the public API.
 - `WriteOptions::strict()` / `::lenient()` follow the same API ergonomics as `ParseOptions`,
   making the write API consistent and familiar for existing users of the library.
+- `Strictness`'s rustdoc currently describes it exclusively in terms of parsing (`ParseError`,
+  `ParseWarning`, `Wad::warnings()`). When the `write` feature is implemented, its doc comment
+  must be generalized to cover both parse and write contexts — or a write-specific
+  `WriteStrictness` enum introduced — to avoid misleading API documentation.
 - Implementation of this ADR requires sub-issues #21–#27 (per the epic tracking issue #12)
   to be opened and tackled after this ADR is accepted.
