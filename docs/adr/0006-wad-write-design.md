@@ -1,9 +1,9 @@
-# 0006. WAD write design
+# ADR-0006: WAD write design
 
-- Status: proposed
-- Date: 2026-06-14
-- Deciders: @masriamir
-- Tracking issue: https://github.com/masriamir/crustywad/issues/20
+- **Status:** Proposed
+- **Date:** 2026-06-14
+- **Deciders:** @masriamir
+- **Tracking issue:** https://github.com/masriamir/crustywad/issues/20
 
 ## Context
 
@@ -89,14 +89,14 @@ The existing `ParseOptions { strictness }` type encodes two modes:
 - **Strict:** reject the first invalid input (bad lump name, oversized lump name, unknown
   `WadKind`, etc.) and return a typed error.
 - **Lenient:** warn and clamp (e.g., truncate a name longer than 8 bytes to 8 bytes,
-  replace non-ASCII bytes with `?`).
+  replace non-ASCII bytes with the Unicode replacement character (U+FFFD)).
 
 Write validation rules are the inverse of parse validation:
 - Lump names must be ASCII, at most 8 bytes; strict mode rejects violations, lenient mode
   truncates and emits a `WriteWarning`.
-- Lump data sizes must fit in `i32`; strict mode rejects oversized lumps, lenient mode
-  truncates the lump data to `i32::MAX` bytes and emits a `WriteWarning` (so the directory
-  entry and the bytes written remain consistent).
+- Lump data sizes must fit in `i32`; both strict and lenient mode reject oversized lumps
+  with a `WriteError` — truncating would silently discard user data with no way to recover
+  it. Lenient mode additionally records a `WriteWarning` to aid debugging.
 - Total lump count must fit in `i32`; strict mode rejects overflow.
 - `WadKind::Unknown` magic: strict mode rejects it, lenient mode writes the raw bytes.
 

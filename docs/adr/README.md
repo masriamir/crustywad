@@ -36,6 +36,7 @@ implementation begins.**
 | [0003](0003-default-to-strict-parsing.md) | Default to strict parsing | Accepted |
 | [0004](0004-parse-api-and-safety-contracts.md) | Parse API and safety contracts for `Wad` and map records | Accepted |
 | [0005](0005-isolate-unsafe-code-in-platform-crate.md) | Isolate unsafe code in a dedicated `crustywad-platform` workspace crate | Proposed |
+| [0006](0006-wad-write-design.md) | WAD write design | Proposed |
 | [0007](0007-living-docs-automation.md) | Living-docs automation strategy | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
