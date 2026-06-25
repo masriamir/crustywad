@@ -1,9 +1,9 @@
-# 0008. `cwad` CLI UX and architecture
+# ADR-0008: `cwad` CLI UX and architecture
 
-- Status: proposed
-- Date: 2026-06-14
-- Deciders: @masriamir
-- Tracking issue: https://github.com/masriamir/crustywad/issues/34
+- **Status:** Proposed
+- **Date:** 2026-06-14
+- **Deciders:** @masriamir
+- **Tracking issue:** https://github.com/masriamir/crustywad/issues/34
 
 ## Context
 
@@ -42,7 +42,7 @@ a write command) emit a single-line human message to stdout and a machine-readab
 `{"ok": true}` / `{"ok": false, "error": "..."}` envelope when `--format json` is used.
 
 Implementation: a `Format` enum is added to the shared CLI layer, parsed once by `clap`,
-and passed as a parameter to every output helper. No third-party serialisation crate is
+and passed as a parameter to every output helper. No third-party serialization crate is
 pulled in; JSON is hand-formatted for the flat record structures involved. If `serde`/
 `serde_json` are needed later an ADR amendment is required first.
 
@@ -75,10 +75,10 @@ handler catches `anyhow::Error`, writes `"error: {err:#}"` to stderr, then calls
 `std::process::exit` with the appropriate code from decision 2.
 
 Warnings collected by `Wad::warnings()` in lenient mode are printed to stderr as
-`"warning: {w}"` after the successful result, mirroring the existing behaviour.
+`"warning: {w}"` after the successful result, mirroring the existing behavior.
 
-No colour or ANSI escape codes are added at this stage; a `--color=auto|always|never` flag
-can be addressed in a future ADR once a colour crate is evaluated.
+No color or ANSI escape codes are added at this stage; a `--color=auto|always|never` flag
+can be addressed in a future ADR once a color crate is evaluated.
 
 ### 4. Subcommand grouping
 
@@ -114,15 +114,15 @@ A `just completions` recipe installs them to `~/.local/share/bash-completion/com
 `~/.zfunc/`, and `~/.config/fish/completions/` respectively on developer machines. CI does
 not test completion installation; only that `build.rs` runs without error.
 
-Man pages via `clap_mangen` are deferred until the subcommand surface stabilises (after
+Man pages via `clap_mangen` are deferred until the subcommand surface stabilizes (after
 milestone 2). Generating and vendoring man pages before the CLI is stable would create
 churn without user benefit. A `just man` recipe and `OUT_DIR/man/` placement are reserved
 for when this is adopted.
 
 Both `clap_complete` and `clap_mangen` are added as `build-dependencies` (not runtime
-dependencies) so they do not affect the runtime binary size or the MSRV seen by users who
-install a pre-built binary. They do, however, impose an MSRV on anyone building from source,
-so their minimum supported Rust version must not exceed 1.85.0.
+dependencies), so they are not shipped in the binary and do not affect its size. They are
+compiled by anyone building from source, however, so their minimum supported Rust version
+must not exceed 1.85.0.
 
 ## Consequences
 
