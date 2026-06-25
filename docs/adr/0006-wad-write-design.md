@@ -42,7 +42,9 @@ and sizes are computed as lumps are appended; no pre-existing layout is reused.
 Pros:
 - Simple and correct by construction — directory always follows all lump data.
 - Works regardless of whether the `Wad` was originally memory-mapped or owned.
-- Easy to round-trip: serialize to bytes then re-parse, and the result always parses cleanly.
+- Structurally self-consistent: the bytes produced by `build()` can always be re-parsed
+  under `ParseOptions` compatible with the `WriteOptions` used — e.g., a strict build
+  always re-parses under strict settings.
 
 Cons:
 - O(total WAD size) allocation for any edit, even a one-byte change.
@@ -96,7 +98,7 @@ The existing `ParseOptions { strictness }` type encodes two modes:
   non-ASCII lump names lossily via `String::from_utf8_lossy`, preserve unknown magic as
   `WadKind::Unknown`).
 
-Write validation rules are the inverse of parse validation:
+Write validation ensures caller-provided inputs are representable in the WAD format:
 - Lump names must be ASCII, free of embedded NUL bytes, and at most 8 bytes. Strict mode
   rejects any violation with a `WriteError`. Lenient mode truncates names longer than 8 bytes
   and emits a `WriteWarning`; non-ASCII and NUL-containing names are rejected in both modes.
@@ -147,7 +149,8 @@ Concretely:
    round-tripping and editing (add, remove, reorder lumps).
 6. Introduce `WriteError` and `WriteWarning` types following the same `thiserror` pattern
    as `ParseError` / `ParseWarning`.
-7. Introduce `WriteOptions { strictness: Strictness }` mirroring `ParseOptions`.
+7. Introduce `WriteOptions { strictness: Strictness }` with the same API shape as
+   `ParseOptions` (`strictness` field, `strict()` / `lenient()` constructors).
    `WadBuilder::build_with_options(opts: WriteOptions) -> Result<(Vec<u8>, Vec<WriteWarning>), WriteError>`
    is the lenient-mode entry point; `WadBuilder::build()` is a strict-mode convenience
    wrapper that returns `Result<Vec<u8>, WriteError>` (no warnings possible in strict mode).
