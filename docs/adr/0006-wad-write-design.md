@@ -90,8 +90,9 @@ The existing `ParseOptions { strictness }` type encodes two modes:
 
 - **Strict:** reject the first invalid input (bad lump name, oversized lump name, unknown
   `WadKind`, etc.) and return a typed error.
-- **Lenient:** warn and clamp (e.g., truncate a name longer than 8 bytes to 8 bytes,
-  replace non-ASCII bytes with the Unicode replacement character (U+FFFD)).
+- **Lenient:** warn and recover (e.g., clamp out-of-bounds lump data ranges, decode
+  non-ASCII lump names lossily via `String::from_utf8_lossy`, preserve unknown magic as
+  `WadKind::Unknown`).
 
 Write validation rules are the inverse of parse validation:
 - Lump names must be ASCII and at most 8 bytes. Strict mode rejects any violation with a
@@ -132,8 +133,8 @@ Concretely:
 4. `WadBuilder::build() -> Result<Vec<u8>, WriteError>` serializes the complete WAD:
    - Writes a placeholder 12-byte header.
    - Appends each lump's data in insertion order, tracking `filepos` per lump.
-   - Writes directory entries using `BinWrite` on a new `RawDirectoryEntry` type that
-     derives both `BinRead` and `BinWrite`.
+   - Writes directory entries using `BinWrite` on the existing `RawDirectoryEntry` type,
+     extended to derive both `BinRead` and `BinWrite`.
    - Back-patches `numlumps` and `infotableofs` in the header.
 5. `Wad::to_builder() -> WadBuilder` converts a parsed `Wad` into a `WadBuilder` for
    round-tripping and editing (add, remove, reorder lumps).
