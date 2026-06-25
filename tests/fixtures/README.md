@@ -1,6 +1,6 @@
-# FreeDoom fixtures
+# Freedoom fixtures
 
-This directory is reserved for locally downloaded FreeDoom WAD files used by optional integration tests.
+This directory is reserved for locally downloaded Freedoom WAD files used by optional integration tests.
 
 - Default source: https://github.com/freedoom/freedoom/releases/tag/v0.13.0
 - Expected files: `freedoom1.wad`, `freedoom2.wad`
@@ -9,7 +9,7 @@ This directory is reserved for locally downloaded FreeDoom WAD files used by opt
 
 The fetch script downloads a versioned `freedoom-<version>.zip` release archive and extracts the expected WADs into this directory. The downloaded WAD files are intentionally gitignored so the repository stays small and tests can run offline.
 
-## Changing the FreeDoom version
+## Changing the Freedoom version
 
 The default version is controlled by the `DEFAULT_VERSION` constant in `fetch_freedoom.py`. You can override it without touching the source file:
 

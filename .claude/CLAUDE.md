@@ -20,7 +20,7 @@ crates/
       common/mod.rs    # Shared WAD-building helpers (build_wad, lump_map)
       wad_reader.rs    # Integration tests for the main WAD reader API
       map_records.rs   # Integration tests for typed map-record parsing
-      freedoom.rs      # Optional FreeDoom fixture tests (feature = "freedoom-tests")
+      freedoom.rs      # Optional Freedoom fixture tests (feature = "freedoom-tests")
   crustywad-cli/       # CLI binary crate (`cwad`)
     src/main.rs        # `info` and `list` subcommands via clap
 docs/
@@ -28,7 +28,7 @@ docs/
   adr/                 # Architecture decision records
 tests/
   fixtures/
-    fetch_freedoom.py  # Downloads FreeDoom WAD fixtures from GitHub releases
+    fetch_freedoom.py  # Downloads Freedoom WAD fixtures from GitHub releases
     README.md          # Fixture documentation and version configuration
 .github/
   codeql/codeql-config.yml   # Advanced CodeQL query config (security-extended + quality)
@@ -50,7 +50,7 @@ Install [just](https://github.com/casey/just), then:
 | Docs | `just doc` |
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
-| Fetch FreeDoom fixtures | `just fetch-fixtures` |
+| Fetch Freedoom fixtures | `just fetch-fixtures` |
 | Full CI check | `just ci` |
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
@@ -65,7 +65,7 @@ cargo fmt --all --check
 cargo doc --workspace --all-features --no-deps
 ```
 
-FreeDoom fixture tests require both the feature flag and the env var:
+Freedoom fixture tests require both the feature flag and the env var:
 
 ```bash
 just fetch-fixtures                         # default version
@@ -84,6 +84,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 ### Documentation
 
+- All documentation uses American English spelling (e.g. "artifacts" not "artefacts", "customization" not "customisation").
 - `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
 - Use `//!` for module-level docs, `///` for item-level docs.
 - Include `# Errors` in doc comments for fallible functions, `# Panics` where relevant.
@@ -121,7 +122,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 - **Integration tests** (all public API): `crates/crustywad/tests/`, one file per concern.
 - `common/mod.rs` contains shared WAD-building helpers; add shared test utilities there.
 
-### FreeDoom fixture tests
+### Freedoom fixture tests
 
 - Live in `tests/freedoom.rs`, gated by `#[cfg(feature = "freedoom-tests")]`.
 - Fixtures are gitignored — never commit WAD blobs.
@@ -131,6 +132,17 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 - Use `proptest` for parser invariants; place in the same file as the regular tests they complement.
 - `wad_reader.rs` has an existing proptest for empty-WAD parsing.
+
+## Writing or updating an ADR
+
+Before opening a PR for a new or updated ADR, run through this checklist. The items target the most common review-round causes: claims that diverge from the actual codebase, field descriptions written from memory, and incomplete API surface.
+
+1. **Verify every claim about existing code.** For each statement about a type, function, error variant, or behavior, open the relevant file and confirm it. Common failure modes: calling an implemented function a "stub", citing a validation that only applies to the write path in a read-path description, describing a lenient-mode output as a strict-mode rejection.
+2. **Anchor on-disk field descriptions to Rust types.** Derive prose from the struct definition (`[u8; 8]`, `i32 LE`), not from informal memory. Avoid wording like "up to 8 characters" when the field is `[u8; 8]`; use "8 bytes".
+3. **Keep read-path and write-path concerns separate.** "Oversized lump name" is a write-side concern (the field is always exactly 8 bytes on disk). Don't let write-side validation examples leak into descriptions of the read-side `ParseOptions` behavior.
+4. **Specify complete API signatures for any new type that surfaces values.** If the ADR introduces a warning type, define how callers observe those warnings on success (e.g., `Result<(T, Vec<Warning>), Error>`). An API item mentioned without a return type is underspecified.
+5. **Cross-check Context vs Decision.** Re-read both sections back-to-back. Remove any alternative or option from Context that the Decision has already rejected — surviving alternatives mislead implementers.
+6. **Verify "new" types and functions don't already exist.** Grep the codebase for any type or function the ADR calls "new" before declaring it new. Extending an existing type (`RawDirectoryEntry` adding `BinWrite`) is different from introducing one.
 
 ## Adding a new lump type
 
@@ -147,7 +159,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
-| `freedoom-tests` | no | Enables optional integration tests against local FreeDoom fixture WADs |
+| `freedoom-tests` | no | Enables optional integration tests against local Freedoom fixture WADs |
 
 ## Commit conventions
 

@@ -32,6 +32,7 @@ pub fn build_wad(kind: [u8; 4], lumps: &[(&str, &[u8])]) -> Vec<u8> {
     wad
 }
 
+#[allow(dead_code)]
 pub fn lump_map<'a>(pairs: &'a [(&'a str, &'a [u8])]) -> HashMap<&'a str, &'a [u8]> {
     pairs.iter().copied().collect()
 }
