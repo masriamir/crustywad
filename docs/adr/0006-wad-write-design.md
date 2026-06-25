@@ -14,7 +14,9 @@ in `lib.rs` should evolve.
 
 ### WAD on-disk layout recap
 
-A WAD file has three regions, written in this order:
+The WAD format tracks the directory via `infotableofs`, so the directory can appear
+at any offset in the file. The proposed writer will always emit three regions in this
+order:
 
 ```
 [ 12-byte header ][ lump data blobs... ][ 16-byte directory entries... ]
@@ -26,7 +28,7 @@ The header stores:
 - `infotableofs` — byte offset of the directory (i32 LE)
 
 Each directory entry is 16 bytes: `filepos` (i32), `size` (i32), `name` ([u8; 8], zero-padded).
-Lump names are ASCII, up to 8 characters, zero-padded to 8 bytes.
+Lump names are ASCII, up to 8 bytes, zero-padded to 8 bytes.
 
 ### Three approaches considered
 
@@ -92,12 +94,15 @@ The existing `ParseOptions { strictness }` type encodes two modes:
   replace non-ASCII bytes with the Unicode replacement character (U+FFFD)).
 
 Write validation rules are the inverse of parse validation:
-- Lump names must be ASCII, at most 8 bytes; strict mode rejects violations, lenient mode
-  truncates and emits a `WriteWarning`.
+- Lump names must be ASCII and at most 8 bytes. Strict mode rejects any violation with a
+  `WriteError`. Lenient mode truncates names longer than 8 bytes and emits a `WriteWarning`;
+  non-ASCII names are rejected in both modes — there is no unambiguous ASCII-preserving
+  sanitization for arbitrary Unicode input.
 - Lump data sizes must fit in `i32`; both strict and lenient mode reject oversized lumps
   with a `WriteError` — truncating would silently discard user data with no way to recover
-  it. Lenient mode additionally records a `WriteWarning` to aid debugging.
-- Total lump count must fit in `i32`; strict mode rejects overflow.
+  it.
+- Total lump count must fit in `i32`; both strict and lenient mode reject overflow with a
+  `WriteError` — the count is stored as `i32` in the header with no fallback representation.
 - `WadKind::Unknown` magic: strict mode rejects it, lenient mode writes the raw bytes.
 
 A new `WriteOptions { strictness: Strictness }` (or reuse of `ParseOptions` renamed to
@@ -119,7 +124,8 @@ serialization.**
 Concretely:
 
 1. Introduce a `WadBuilder` struct in a new `write` module (gated behind a `write` feature
-   flag, off by default, to avoid pulling in new dependencies for read-only users).
+   flag, off by default, to keep the default API surface read-only and reduce compile time
+   for read-only users).
 2. `WadBuilder::new(kind: WadKind)` starts an empty builder.
 3. `WadBuilder::add_lump(name: &str, data: impl Into<Vec<u8>>) -> Result<&mut Self, WriteError>`
    validates the name and stores the lump.
