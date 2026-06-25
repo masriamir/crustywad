@@ -38,7 +38,8 @@ must accept a global `--format <FORMAT>` flag (shorthand `-F`) with three values
 `json` and `csv` are designed for piping into `jq`, spreadsheet imports, or CI scripts.
 
 Subcommands that only confirm a result without emitting records (`merge`, `extract` used as
-a write command) emit a single-line human message to stdout and a machine-readable
+a write command) emit a single-line human message to stdout when `--format human` or
+`--format csv` is used (no tabular data exists to render as CSV), and a machine-readable
 `{"ok": true}` / `{"ok": false, "error": "..."}` envelope when `--format json` is used.
 
 Implementation: a `Format` enum is added to the shared CLI layer, parsed once by `clap`,
@@ -51,8 +52,8 @@ pulled in; JSON is hand-formatted for the flat record structures involved. If `s
 | Code | Meaning                                                          |
 |------|------------------------------------------------------------------|
 | `0`  | Success — all requested operations completed without error       |
-| `1`  | Logical failure — WAD is invalid, diff found differences, etc.  |
-| `2`  | I/O or parse error — file not found, truncated header, etc.     |
+| `1`  | Negative result — validation errors found, WADs differ, etc.    |
+| `2`  | I/O or parse error — file not found, unreadable or malformed WAD|
 | `3`  | Usage error — bad arguments                                      |
 
 `anyhow::Result<()>` in `main` maps to exit code `1` for any error today. The implementation
@@ -61,7 +62,9 @@ that I/O errors and logical failures are distinguishable by callers.
 
 Note: clap's built-in default for parse errors is exit code `2`, not `3`. To avoid
 colliding with the I/O-error code, the implementation must intercept clap parse failures
-via `Cli::try_parse()` and call `std::process::exit(3)` explicitly on bad-argument errors.
+via `Cli::try_parse()`. On error, check `clap::Error::kind()`: `DisplayHelp` and
+`DisplayVersion` should call `err.exit()` (which prints and exits `0`); all other error
+kinds indicate bad arguments and should call `std::process::exit(3)`.
 
 `validate` exits `1` when validation errors are found and `0` when the WAD is clean.
 `diff` exits `1` when the two WADs differ and `0` when they are identical (matching `diff(1)`
@@ -123,10 +126,10 @@ milestone 2). Generating and vendoring man pages before the CLI is stable would 
 churn without user benefit. A `just man` recipe and `OUT_DIR/man/` placement are reserved
 for when this is adopted.
 
-Both `clap_complete` and `clap_mangen` are added as `build-dependencies` (not runtime
-dependencies), so they are not shipped in the binary and do not affect its size. They are
-compiled by anyone building from source, however, so their minimum supported Rust version
-must not exceed 1.85.0.
+`clap_complete` is added as a `build-dependency` (not a runtime dependency), so it is not
+shipped in the binary and does not affect its size. It is compiled by anyone building from
+source, so its minimum supported Rust version must not exceed 1.85.0. `clap_mangen` is
+deferred along with man-page generation and is not added until that work begins.
 
 ## Consequences
 
