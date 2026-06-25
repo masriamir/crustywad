@@ -21,7 +21,7 @@ crates/
       mmap.rs          # Optional memory-mapped I/O (feature = "mmap")
     tests/
       common/mod.rs    # Shared WAD-building helpers for integration tests
-      freedoom.rs      # Optional FreeDoom fixture tests (feature = "freedoom-tests")
+      freedoom.rs      # Optional Freedoom fixture tests (feature = "freedoom-tests")
       map_records.rs   # Integration tests for typed map-record parsing
       wad_reader.rs    # Integration tests for the main WAD reader API
   crustywad-cli/       # CLI binary crate (`cwad`)
@@ -29,7 +29,7 @@ crates/
 docs/                  # Design doc, ADRs
 tests/
   fixtures/
-    fetch_freedoom.py  # Script to download FreeDoom WAD fixtures
+    fetch_freedoom.py  # Script to download Freedoom WAD fixtures
     README.md          # Fixture documentation
 .github/
   codeql/
@@ -53,7 +53,7 @@ Install [just](https://github.com/casey/just) then run these recipes:
 | Docs | `just doc` |
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
-| Fetch FreeDoom fixtures | `just fetch-fixtures` |
+| Fetch Freedoom fixtures | `just fetch-fixtures` |
 | Full CI check | `just ci` |
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
@@ -76,6 +76,7 @@ cargo doc --workspace --all-features --no-deps
 - Every public function that can fail returns `Result<_, ErrorType>` with full doc comments on the `# Errors` section.
 
 ### Documentation
+- All documentation uses American English spelling (e.g. "artifacts" not "artefacts", "customization" not "customisation").
 - `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
 - Use `///` for item-level docs and `//!` for module-level docs.
 - Include `# Errors` sections in doc comments for fallible functions.
@@ -107,10 +108,10 @@ cargo doc --workspace --all-features --no-deps
 - **Integration tests** (for public API, including typed map records): place in `crates/crustywad/tests/`, one file per concern. These have access only to the public API.
 - The `common/` module in the test directory contains shared WAD-building helpers; add shared test utilities there.
 
-### FreeDoom fixture tests
+### Freedoom fixture tests
 - Optional integration tests that parse real WAD files live in `tests/freedoom.rs`, gated by `#[cfg(feature = "freedoom-tests")]`.
-- Fixtures are fetched from the FreeDoom GitHub release archive using `just fetch-fixtures`.
-- The FreeDoom version is configurable:
+- Fixtures are fetched from the Freedoom GitHub release archive using `just fetch-fixtures`.
+- The Freedoom version is configurable:
   - CLI: `just fetch-fixtures version=v0.14.0`
   - Environment variable: `FREEDOOM_VERSION=v0.14.0 just fetch-fixtures`
   - Direct invocation: `python tests/fixtures/fetch_freedoom.py --version v0.14.0`
@@ -134,7 +135,7 @@ cargo doc --workspace --all-features --no-deps
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
-| `freedoom-tests` | no | Enables optional FreeDoom integration tests |
+| `freedoom-tests` | no | Enables optional Freedoom integration tests |
 
 ## Commit conventions
 
