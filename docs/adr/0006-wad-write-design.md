@@ -105,6 +105,9 @@ Write validation rules are the inverse of parse validation:
   it.
 - Total lump count must fit in `i32`; both strict and lenient mode reject overflow with a
   `WriteError` — the count is stored as `i32` in the header with no fallback representation.
+- Computed offsets (`filepos` per lump, `infotableofs` in the header) and the total output
+  length must fit in `i32`; both modes reject a build where any computed offset would
+  overflow — wrapping would produce an unreadable directory with no safe recovery path.
 - `WadKind::Unknown` magic: strict mode rejects it, lenient mode writes the raw bytes.
 
 A new `WriteOptions { strictness: Strictness }` should be introduced to avoid coupling
