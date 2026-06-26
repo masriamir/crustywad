@@ -8,8 +8,9 @@
 ## Context
 
 `crustywad` accepts untrusted input via `Wad::from_bytes` and
-`Wad::from_bytes_with_options` (both take `impl Into<Vec<u8>>` and take
-ownership of the data) and `parse_records::<T>` (which borrows `&[u8]`). The
+`Wad::from_bytes_with_options` (both take `impl Into<Vec<u8>>`: a `Vec<u8>`
+caller transfers ownership without copying; a `&[u8]` caller allocates a new
+`Vec`) and `parse_records::<T>` (which borrows `&[u8]`). The
 `from_bytes`
 variants decode the 12-byte header and walk the variable-length directory,
 validating and clamping offsets and ranges; they do not read lump payload bytes.
