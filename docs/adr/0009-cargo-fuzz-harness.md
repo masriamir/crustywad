@@ -7,8 +7,10 @@
 
 ## Context
 
-`crustywad` accepts arbitrary byte slices from callers via `Wad::from_bytes`,
-`Wad::from_bytes_with_options`, and `parse_records::<T>`. The `from_bytes`
+`crustywad` accepts untrusted input via `Wad::from_bytes` and
+`Wad::from_bytes_with_options` (both take `impl Into<Vec<u8>>` and take
+ownership of the data) and `parse_records::<T>` (which borrows `&[u8]`). The
+`from_bytes`
 variants decode the 12-byte header and walk the variable-length directory,
 validating and clamping offsets and ranges; they do not read lump payload bytes.
 `parse_records::<T>` reads lump payload bytes and uses `binrw` to deserialize
@@ -75,8 +77,8 @@ Three targets are defined under `fuzz/fuzz_targets/`:
 
 | Target file | Entry point | Goal |
 |---|---|---|
-| `fuzz_wad_strict.rs` | `Wad::from_bytes(data)` | No panic on arbitrary bytes; `Err(ParseError)` is always acceptable |
-| `fuzz_wad_lenient.rs` | `Wad::from_bytes_with_options(data, ParseOptions::lenient())` | Same goal; lenient path exercises warning accumulation and best-effort clamping |
+| `fuzz_wad_strict.rs` | `Wad::from_bytes(data.to_vec())` | No panic on arbitrary bytes; `Err(ParseError)` is always acceptable |
+| `fuzz_wad_lenient.rs` | `Wad::from_bytes_with_options(data.to_vec(), ParseOptions::lenient())` | Same goal; lenient path exercises warning accumulation and best-effort clamping |
 | `fuzz_parse_records_thing.rs` | `parse_records::<Thing>(data)` | No panic; `Err(MapParseError)` acceptable; exercises `binrw` little-endian fixed-record parsing |
 
 The oracle in every harness is:
