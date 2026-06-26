@@ -77,21 +77,22 @@ just fetch-fixtures version=v0.14.0
 ### Running the tests
 
 ```sh
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom \
-  cargo test --workspace --all-features
-```
-
-Or with `just`:
-
-```sh
+# Using just — defaults CRUSTYWAD_FREEDOOM_DIR to tests/fixtures/freedoom:
 just test-freedoom
+
+# Override the fixture directory:
+just test-freedoom dir=/path/to/freedoom
+
+# Or run cargo directly:
+CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom \
+  cargo test -p crustywad --features freedoom-tests
 ```
 
 ### CI
 
-The `freedoom-tests` feature is intentionally **not** enabled in CI by default because the
-fixture WADs are not committed to the repository (they are gitignored). They run only when
-`CRUSTYWAD_FREEDOOM_DIR` is set, which CI does not do.
+CI runs `cargo test --workspace --all-features`, which enables the `freedoom-tests` feature
+flag. The tests skip gracefully when `CRUSTYWAD_FREEDOOM_DIR` is not set — and CI never sets
+it because the fixture WADs are gitignored and not downloaded in the standard CI pipeline.
 
 ---
 

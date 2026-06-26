@@ -32,9 +32,10 @@ build-mmap:
 test-mmap:
     cargo test -p crustywad --features mmap
 
-# Run Freedoom fixture tests. Requires CRUSTYWAD_FREEDOOM_DIR to be set and fixtures fetched.
-test-freedoom:
-    cargo test --workspace --all-features
+# Run Freedoom fixture tests. Fixtures must be fetched first with `just fetch-fixtures`.
+# Override the directory with: just test-freedoom dir=/path/to/freedoom
+test-freedoom dir="tests/fixtures/freedoom":
+    CRUSTYWAD_FREEDOOM_DIR={{dir}} cargo test -p crustywad --features freedoom-tests
 
 fuzz:
     @echo "Fuzz targets are planned for a later milestone; see docs/design.md."
