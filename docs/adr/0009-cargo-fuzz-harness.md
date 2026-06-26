@@ -8,12 +8,14 @@
 ## Context
 
 `crustywad` accepts arbitrary byte slices from callers via `Wad::from_bytes`,
-`Wad::from_bytes_with_options`, and `parse_records::<T>`. These functions touch
-every byte of the input: they decode a fixed-size header, walk a variable-length
-directory, clamp and validate offsets, and invoke `binrw` to deserialize typed
-map records. Malformed or adversarial input could trigger unexpected panics or —
-should future milestones introduce `unsafe` for SIMD or direct I/O — undefined
-behavior. Coverage-guided fuzzing is the most effective way to discover such
+`Wad::from_bytes_with_options`, and `parse_records::<T>`. The `from_bytes`
+variants decode the 12-byte header and walk the variable-length directory,
+validating and clamping offsets and ranges; they do not read lump payload bytes.
+`parse_records::<T>` reads lump payload bytes and uses `binrw` to deserialize
+typed map records. Malformed or adversarial input across either path could
+trigger unexpected panics or — should future milestones introduce `unsafe` for
+SIMD or direct I/O — undefined behavior. Coverage-guided fuzzing is the most
+effective way to discover such
 cases before they reach production.
 
 Three mature Rust fuzzing engines exist, each with a different toolchain
