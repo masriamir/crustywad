@@ -156,6 +156,8 @@ Before opening a PR for a new or updated ADR, run through this checklist. The it
 
 ## Feature flags
 
+See [`docs/features.md`](../docs/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations.
+
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
