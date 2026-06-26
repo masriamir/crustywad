@@ -39,6 +39,6 @@ implementation begins.**
 | [0006](0006-wad-write-design.md) | WAD write design | Proposed |
 | [0007](0007-living-docs-automation.md) | Living-docs automation strategy | Proposed |
 | [0008](0008-cli-ux-architecture.md) | `cwad` CLI UX and architecture | Proposed |
-| [0009](0009-cargo-fuzz-harness.md) | cargo-fuzz harness for WAD parser | Proposed |
+| [0009](0009-cargo-fuzz-harness.md) | `cargo-fuzz` harness for WAD parser | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->

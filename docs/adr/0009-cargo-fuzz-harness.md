@@ -1,4 +1,4 @@
-# ADR-0009: cargo-fuzz harness for WAD parser
+# ADR-0009: `cargo-fuzz` harness for WAD parser
 
 - **Status:** Proposed
 - **Date:** 2026-06-14
@@ -117,7 +117,7 @@ following properties:
 - Runs only on Linux (`ubuntu-latest`) to keep nightly toolchain maintenance to
   one platform.
 - Installs the nightly toolchain via `dtolnay/rust-toolchain@nightly` and
-  `cargo install cargo-fuzz`.
+  `cargo install --locked cargo-fuzz`.
 - Runs each target with a 60-second wall-clock limit:
   `cargo fuzz run <target> -- -max_total_time=60`.
 - Uploads any crash artifacts (files written to `fuzz/artifacts/<target>/`) as
