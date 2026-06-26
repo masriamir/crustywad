@@ -71,7 +71,7 @@ If the environment variable is not set the tests skip gracefully — they do not
 just fetch-fixtures
 
 # Specific Freedoom release:
-just fetch-fixtures version=v0.14.0
+just fetch-fixtures version=v0.13.0
 ```
 
 ### Running the tests
@@ -104,7 +104,7 @@ it because the fixture WADs are gitignored and not downloaded in the standard CI
 | Build with `mmap` only | `cargo build -p crustywad --features mmap` |
 | Test with all features | `cargo test --workspace --all-features` |
 | Test with `mmap` only | `cargo test -p crustywad --features mmap` |
-| Test with Freedoom fixtures | `CRUSTYWAD_FREEDOOM_DIR=… cargo test --workspace --all-features` |
+| Test with Freedoom fixtures | `CRUSTYWAD_FREEDOOM_DIR=… cargo test -p crustywad --features freedoom-tests` |
 | Full CI check | `just ci` |
 
 See the [`justfile`](../justfile) for available `just` recipes including feature-specific

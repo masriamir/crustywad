@@ -35,7 +35,7 @@ test-mmap:
 # Run Freedoom fixture tests. Fixtures must be fetched first with `just fetch-fixtures`.
 # Override the directory with: just test-freedoom dir=/path/to/freedoom
 test-freedoom dir="tests/fixtures/freedoom":
-    CRUSTYWAD_FREEDOOM_DIR={{dir}} cargo test -p crustywad --features freedoom-tests
+    CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests
 
 fuzz:
     @echo "Fuzz targets are planned for a later milestone; see docs/design.md."
