@@ -91,11 +91,13 @@ correct rejection of invalid input, not bugs. Panics, assertion failures, and
 any kind of UB (caught by sanitizers) are failures.
 
 `fuzz_wad_lenient.rs` also asserts that `wad.warnings().len()` does not exceed
-`wad.lump_count() * 5 + 4` — a loose upper bound derived from the five per-lump
+`wad.lump_count() * 5 + 5` — a loose upper bound derived from the five per-lump
 warning sites (`NegativeValue` for `filepos`, `NegativeValue` for `size`,
 `NonAsciiName`, `Overflow` for the lump range, and `OutOfBounds` for lump data)
-plus up to four header-level warning sites — to guard against unbounded warning
-vector growth.
+plus up to five header/directory-level warnings emitted before the per-lump loop
+(`InvalidMagic`, `NegativeValue` for `numlumps`, `NegativeValue` for
+`infotableofs`, `Overflow` for directory length, and `OutOfBounds` for directory
+range) — to guard against unbounded warning vector growth.
 
 Additional targets for `parse_records::<Linedef>`, `Sidedef`, `Vertex`, and so
 on can be added later without any structural change.
@@ -133,8 +135,9 @@ cargo-fuzz out of the box.
 Seed inputs are committed under `fuzz/corpus/<target>/`:
 
 - `fuzz/corpus/fuzz_wad_strict/` — a minimal valid IWAD, a minimal valid PWAD, a
-  zero-byte file, and a 12-byte truncated header (enough to trigger every
-  `ParseError` variant from short input).
+  zero-byte file (triggers `ParseError::Header`), and a 12-byte file containing
+  only a complete WAD header that claims one lump but provides no directory bytes
+  (triggers `ParseError::Directory`).
 - `fuzz/corpus/fuzz_wad_lenient/` — same four seeds; the lenient path diverges
   at the strictness branch inside `parse_bytes`.
 - `fuzz/corpus/fuzz_parse_records_thing/` — an empty slice, a single valid
