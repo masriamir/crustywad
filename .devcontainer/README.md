@@ -28,8 +28,9 @@ builds; the floating tag is intentional for this development container.
 | `cargo-deny` | Dependency audit (`just deny`) |
 | `cargo-lefthook` | Git hook runner (used by `postStartCommand`) |
 
-`postStartCommand` runs `lefthook install` to register the pre-commit and pre-push hooks
-defined in `lefthook.yml`.
+`postStartCommand` runs `cargo lefthook install` to register the pre-commit and pre-push hooks
+defined in `lefthook.yml`. This uses the Cargo subcommand provided by `cargo-lefthook`; no
+standalone `lefthook` binary is required.
 
 ## VS Code extensions
 
