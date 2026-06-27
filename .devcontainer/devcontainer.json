@@ -1,7 +1,7 @@
 {
   "name": "crustywad",
   "image": "mcr.microsoft.com/devcontainers/rust:1-1.85-bullseye",
-  "postCreateCommand": "cargo install --locked just cargo-llvm-cov cargo-deny && (cargo binstall --no-confirm cargo-lefthook 2>/dev/null || cargo install --locked cargo-lefthook)",
+  "postCreateCommand": "cargo install --locked just cargo-llvm-cov cargo-deny cargo-lefthook",
   "postStartCommand": "lefthook install",
   "customizations": {
     "vscode": {
