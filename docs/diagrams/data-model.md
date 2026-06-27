@@ -34,7 +34,9 @@ The class diagram below shows the public API types in `crustywad` and how they r
 classDiagram
     class Wad {
         +from_bytes(bytes) Result~Wad, ParseError~
+        +from_bytes_with_options(bytes, opts) Result~Wad, ParseError~
         +from_path(path) Result~Wad, ParseError~
+        +from_path_with_options(path, opts) Result~Wad, ParseError~
         +from_path_mapped(path) Result~Wad, ParseError~ [mmap]
         +from_path_mapped_with_options(path, opts) Result~Wad, ParseError~ [mmap]
         +kind() WadKind
