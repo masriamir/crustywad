@@ -24,6 +24,10 @@ deny:
 fetch-fixtures version="":
     python tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
 
+# Test the full workspace with all features enabled (alias for discoverability).
+test-all-features:
+    cargo test --workspace --all-features
+
 # Build the core library with the mmap feature enabled.
 build-mmap:
     cargo build -p crustywad --features mmap
@@ -32,8 +36,9 @@ build-mmap:
 test-mmap:
     cargo test -p crustywad --features mmap
 
-# Run Freedoom fixture tests. Fixtures must be fetched first with `just fetch-fixtures`.
-# Override the directory with: just test-freedoom dir=/path/to/freedoom
+# Run Freedoom fixture tests. Tests skip gracefully when fixtures are missing.
+# Fetch fixtures first with `just fetch-fixtures`, then override the directory if needed:
+# just test-freedoom dir=/path/to/freedoom
 test-freedoom dir="tests/fixtures/freedoom":
     CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests
 

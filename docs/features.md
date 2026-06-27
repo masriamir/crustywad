@@ -57,12 +57,8 @@ files are read-only; there is no risk of accidentally writing to the underlying 
 **Adds dependency:** none (test-only fixture files on disk)
 
 Gates optional tests that parse real [Freedoom](https://freedoom.github.io/) WAD files.
-These tests require:
-
-1. The Freedoom fixture files to be downloaded locally (see below).
-2. The `CRUSTYWAD_FREEDOOM_DIR` environment variable to point at the directory containing them.
-
-If the environment variable is not set the tests skip gracefully — they do not fail.
+Tests skip gracefully when `CRUSTYWAD_FREEDOOM_DIR` is not set or when the expected WAD files
+are not present in that directory — they do not fail.
 
 ### Fetching fixtures
 
