@@ -8,7 +8,7 @@ The root node represents the **on-disk directory entry** (raw fields as stored i
 
 ```mermaid
 graph TD
-    Lump["WAD directory entry (on-disk)\nname: [u8; 8] · filepos: i32 · size: i32"]
+    Lump["WAD directory entry (on-disk)\nfilepos: i32 · size: i32 · name: [u8; 8]"]
 
     Lump --> Map["Map group\n(follows a map-marker lump, e.g. E1M1 / MAP01)"]
     Lump --> NS["Namespace markers\n(delimit resource namespaces)"]
@@ -36,4 +36,4 @@ graph TD
     Special --> PNAMES["PNAMES\n(patch name list — planned)"]
 ```
 
-Structs for the map group are defined in `crates/crustywad/src/map.rs` and parsed via `parse_records::<T>`. Items marked **stub** have a zero-sized placeholder type. Items marked **planned** are future milestones with no current typed struct.
+Record-based map lump types (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) are defined in `crates/crustywad/src/map.rs` and decoded via `parse_records::<T>`. Items marked **stub** (`RejectLump`, `BlockmapLump`) have zero-sized placeholder types and are not parsed via `parse_records`. Items marked **planned** are future milestones with no current typed struct.

@@ -38,7 +38,7 @@ See [Data flow](diagrams/data-flow.md) for the strict/lenient mode comparison di
 
 ## Map record parsing
 
-`parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any map record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. Zero-sized types (`size_of::<T>() == 0`) are handled as a special case before the modulo check: an empty buffer yields an empty `Vec`, and a non-empty buffer is an unconditional `TrailingBytes` error. For all other types, records are read sequentially until the cursor reaches the end of the slice.
+`parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any record-based map lump type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. An empty buffer always yields an empty `Vec`. Otherwise the on-disk record size is derived by parsing the first record and measuring the bytes consumed by `BinRead` — this avoids relying on `size_of::<T>()`, which reflects in-memory layout rather than on-disk size. If zero bytes are consumed or the total length is not an exact multiple of the record size, a `TrailingBytes` error is returned.
 
 See [Data flow](diagrams/data-flow.md) for the map record parsing flowchart.
 

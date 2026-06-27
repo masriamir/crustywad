@@ -40,13 +40,13 @@ classDiagram
         +from_path_mapped(path) Result~Wad, ParseError~ [mmap]
         +from_path_mapped_with_options(path, opts) Result~Wad, ParseError~ [mmap]
         +kind() WadKind
-        +header() WadHeader
+        +header() &WadHeader
         +lump_count() usize
-        +lumps() Lump[]
-        +lump(index) Option~Lump~
-        +lump_by_name(name) Option~Lump~
-        +lump_bytes(index) Option~u8[]~
-        +warnings() ParseWarning[]
+        +lumps() &[Lump]
+        +lump(index) Option~&Lump~
+        +lump_by_name(name) Option~&Lump~
+        +lump_bytes(index) Option~&[u8]~
+        +warnings() &[ParseWarning]
         +into_bytes() Vec~u8~
     }
     class WadHeader {
@@ -55,7 +55,7 @@ classDiagram
         +info_table_offset usize
     }
     class Lump {
-        +name() str
+        +name() &str
         +filepos() usize
         +size() usize
     }
