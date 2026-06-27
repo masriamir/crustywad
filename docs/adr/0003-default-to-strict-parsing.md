@@ -1,7 +1,9 @@
-# 0003. Default to strict parsing
+# ADR-0003: Default to strict parsing
 
-- Status: accepted
-- Date: 2026-06-05
+- **Status:** Accepted
+- **Date:** 2026-06-05
+- **Deciders:** @masriamir
+- **Tracking issue:** N/A (established during initial workspace scaffold)
 
 ## Context
 

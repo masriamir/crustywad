@@ -1,12 +1,28 @@
 {
   "name": "crustywad",
-  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bullseye",
-  "postCreateCommand": "cargo install just cargo-llvm-cov cargo-deny cargo-binstall && cargo binstall --no-confirm cargo-lefthook || cargo install cargo-lefthook",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-1.85-bullseye",
+  "postCreateCommand": "cargo install --locked just cargo-llvm-cov cargo-deny cargo-lefthook",
+  "postStartCommand": "cargo lefthook install",
   "customizations": {
     "vscode": {
       "extensions": [
-        "rust-lang.rust-analyzer"
-      ]
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "serayuzgur.crates",
+        "vadimcn.vscode-lldb",
+        "fill-labs.dependi"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.check.extraArgs": [
+          "--workspace",
+          "--all-targets",
+          "--all-features",
+          "--",
+          "-D",
+          "warnings"
+        ]
+      }
     }
   }
 }

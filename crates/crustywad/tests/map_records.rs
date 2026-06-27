@@ -93,7 +93,7 @@ fn parses_segs() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&1_u16.to_le_bytes()); // start_vertex
     bytes.extend_from_slice(&2_u16.to_le_bytes()); // end_vertex
-    bytes.extend_from_slice(&90_i16.to_le_bytes()); // angle
+    bytes.extend_from_slice(&90_u16.to_le_bytes()); // angle
     bytes.extend_from_slice(&3_u16.to_le_bytes()); // linedef
     bytes.extend_from_slice(&0_u16.to_le_bytes()); // direction
     bytes.extend_from_slice(&(-5_i16).to_le_bytes()); // offset — negative, validates i16 type
@@ -102,6 +102,26 @@ fn parses_segs() {
     assert_eq!(records[0].angle, 90);
     assert_eq!(records[0].linedef, 3);
     assert_eq!(records[0].offset, -5);
+}
+
+#[test]
+fn seg_angle_high_bit_is_unsigned() {
+    // 0x8000 = 180° in BAMS. As i16 this was -32768; as u16 it must be 32768.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0_u16.to_le_bytes()); // start_vertex
+    bytes.extend_from_slice(&1_u16.to_le_bytes()); // end_vertex
+    bytes.extend_from_slice(&0x8000_u16.to_le_bytes()); // angle (high bit set)
+    bytes.extend_from_slice(&0_u16.to_le_bytes()); // linedef
+    bytes.extend_from_slice(&0_u16.to_le_bytes()); // direction
+    bytes.extend_from_slice(&0_i16.to_le_bytes()); // offset
+    let records = parse_records::<Seg>(&bytes).expect("seg should parse");
+    assert_eq!(records[0].angle, 0x8000);
+}
+
+#[test]
+fn parse_records_empty_slice_returns_empty_vec() {
+    let records = parse_records::<Thing>(&[]).expect("empty slice should return empty vec");
+    assert!(records.is_empty());
 }
 
 #[test]
@@ -116,7 +136,124 @@ fn parse_records_rejects_trailing_bytes() {
 }
 
 #[test]
+fn parse_records_buffer_shorter_than_one_record_returns_trailing_bytes_at_zero() {
+    // 5 bytes is shorter than one Thing record (10 bytes). The first BinRead
+    // call returns UnexpectedEof, which parse_records maps to TrailingBytes{0}.
+    let bytes = [1_u8, 0, 2, 0, 90];
+    let err = parse_records::<Thing>(&bytes).expect_err("too-short buffer should fail");
+    assert!(matches!(
+        err,
+        crustywad::map::MapParseError::TrailingBytes { offset: 0 }
+    ));
+}
+
+#[test]
+fn parse_records_zero_size_record_type_returns_trailing_bytes() {
+    // A unit struct has no fields so BinRead reads 0 bytes per record.
+    // Any non-empty buffer must be rejected as unresolvable trailing data.
+    #[derive(binrw::BinRead, Debug)]
+    struct Empty;
+    let err = parse_records::<Empty>(&[1_u8]).expect_err("zero-size record type should fail");
+    assert!(matches!(
+        err,
+        crustywad::map::MapParseError::TrailingBytes { offset: 0 }
+    ));
+}
+
+#[test]
+fn parse_records_non_io_parse_error_wraps_in_binrw_variant() {
+    // A struct with a magic value produces BadMagic (not an Io error) when the
+    // bytes do not match. parse_records must wrap it in MapParseError::Binrw.
+    #[derive(binrw::BinRead, Debug)]
+    #[br(little, magic = 0xDEAD_BEEFu32)]
+    struct Magic {
+        _value: u32,
+    }
+    // First 4 bytes [0,0,0,0] do not match the magic 0xDEAD_BEEF.
+    let bytes = [0u8; 8];
+    let err = parse_records::<Magic>(&bytes).expect_err("bad magic should fail");
+    assert!(matches!(err, crustywad::map::MapParseError::Binrw(_)));
+}
+
+#[test]
+fn parse_records_uses_on_disk_size_not_size_of() {
+    // Regression: parse_records must derive per-record size from BinRead cursor
+    // advancement, not from size_of::<T>(). For a #[repr(C)] struct whose fields
+    // contain alignment padding, size_of is larger than the bytes BinRead consumes.
+    #[repr(C)]
+    #[derive(binrw::BinRead, Debug, PartialEq)]
+    #[br(little)]
+    struct Padded {
+        a: u8,
+        b: u16,
+    }
+    // BinRead reads: a (1 byte) + b (2 bytes) = 3 bytes on disk.
+    // size_of::<Padded>() == 4 because #[repr(C)] inserts a padding byte before b.
+    assert_eq!(
+        std::mem::size_of::<Padded>(),
+        4,
+        "sanity: repr(C) must pad to 4"
+    );
+    // Two records back-to-back = 6 bytes. The old size_of-based approach would
+    // treat this as 6 % 4 != 0 and return TrailingBytes; cursor-based detects 3.
+    let bytes: Vec<u8> = vec![1, 2, 0, 3, 4, 0];
+    let records = parse_records::<Padded>(&bytes).expect("should parse 2 padded records");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].a, 1);
+    assert_eq!(records[0].b, 2);
+    assert_eq!(records[1].a, 3);
+    assert_eq!(records[1].b, 4);
+}
+
+#[test]
 fn parses_name8_lossily() {
     let record = Name8(*b"START\0\0\0");
     assert_eq!(record.as_str_lossy(), "START");
+}
+
+#[test]
+fn parse_records_multiple_records() {
+    // Two back-to-back Thing records (each 10 bytes)
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[1, 0, 2, 0, 0, 0, 1, 0, 0, 0]); // thing 0
+    bytes.extend_from_slice(&[3, 0, 4, 0, 45, 0, 2, 0, 7, 0]); // thing 1
+    let records = parse_records::<Thing>(&bytes).expect("two things should parse");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].x, 1);
+    assert_eq!(records[1].x, 3);
+}
+
+#[test]
+fn parse_records_zst_empty_buffer_returns_empty() {
+    use crustywad::map::MapParseError;
+    // ZST type `()` has size 0; empty buffer → empty vec
+    let records = parse_records::<()>(&[]).expect("ZST empty buffer should produce empty vec");
+    assert!(records.is_empty());
+    // ZST type with non-empty buffer → TrailingBytes error
+    let err =
+        parse_records::<()>(&[0xFF]).expect_err("non-empty buffer for ZST record type should fail");
+    assert!(matches!(err, MapParseError::TrailingBytes { offset: 0 }));
+}
+
+#[test]
+fn map_parse_error_display_trailing_bytes() {
+    let bytes = [1, 0, 2, 0, 90, 0, 4, 0, 5, 0, 99]; // 11 bytes, Thing is 10
+    let err = parse_records::<Thing>(&bytes).expect_err("trailing byte should fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("10"),
+        "error message should mention the offset: {msg}"
+    );
+}
+
+#[test]
+fn name8_full_8_bytes_no_null() {
+    let record = Name8(*b"ABCDEFGH");
+    assert_eq!(record.as_str_lossy(), "ABCDEFGH");
+}
+
+#[test]
+fn name8_all_null_returns_empty() {
+    let record = Name8([0u8; 8]);
+    assert_eq!(record.as_str_lossy(), "");
 }

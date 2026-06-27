@@ -1,0 +1,13 @@
+[book]
+title = "crustywad"
+description = "A safe Rust library for Doom WAD file I/O"
+authors = ["Amir Masri"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../../target/book"
+
+[output.html]
+site-url = "/crustywad/"
+git-repository-url = "https://github.com/masriamir/crustywad"
