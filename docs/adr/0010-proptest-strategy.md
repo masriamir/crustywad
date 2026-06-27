@@ -36,7 +36,7 @@ hand-crafted tests yet are provable by random generation:
 
 | # | Invariant | Test classification |
 |---|---|---|
-| I-1 | **No panic on arbitrary bytes** — `Wad::from_bytes` never panics regardless of input content or length, in both strict and lenient modes. An `Err` result is acceptable; a panic is not. | Safety / robustness |
+| I-1 | **No panic on arbitrary bytes** — `Wad::from_bytes_with_options` never panics for any input or any `ParseOptions`. (`from_bytes` is strict-only; testing both modes requires `from_bytes_with_options` with `ParseOptions::strict()` and `ParseOptions::lenient()` respectively.) An `Err` result is acceptable; a panic is not. | Safety / robustness |
 | I-2 | **Lump count consistency** — for a successfully parsed WAD, `wad.lump_count()` equals `wad.lumps().len()` and equals `wad.header().num_lumps`. | API contract |
 | I-3 | **`lump_by_name` / `lumps()` agreement** — for every `Lump` returned by `lumps()`, `lump_by_name(lump.name())` returns `Some`. No name returned by any lump is absent from the `lump_by_name` lookup. | API contract |
 | I-4 | **Lump name ASCII validity and length** — every name returned by a successfully parsed lump satisfies `name.is_ascii()` and `name.len() <= 8` in strict mode. Lenient mode may return non-ASCII names only when a `ParseWarning::NonAsciiName` warning accompanies them. | Correctness |
