@@ -28,6 +28,8 @@ jobs:
         # warning against mdBook 0.5.3 but builds and renders correctly.
         # Bump this pin once a release declares 0.5.3 compatibility.
         run: cargo install mdbook-mermaid --version 0.17.0 --locked
+      - name: Generate mdbook-mermaid assets
+        run: mdbook-mermaid install docs/guide
       - name: Build guide
         run: mdbook build docs/guide
       - name: Upload artifact

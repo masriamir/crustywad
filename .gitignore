@@ -24,6 +24,10 @@
 /fuzz/artifacts/
 /fuzz/coverage/
 
+# mdbook-mermaid generated assets (produced by `mdbook-mermaid install`; generated at build time, not committed)
+docs/guide/mermaid.min.js
+docs/guide/mermaid-init.js
+
 # Downloaded FreeDoom WAD fixtures (fetched locally & in CI, never committed)
 /tests/fixtures/freedoom/
 /crates/crustywad/tests/fixtures/freedoom/
