@@ -1,6 +1,6 @@
 # Dev Container
 
-Provides a reproducible Rust development environment for VS Code and GitHub Codespaces.
+Provides a consistent Rust development environment for VS Code and GitHub Codespaces.
 
 ## Base image
 
