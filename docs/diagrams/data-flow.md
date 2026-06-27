@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TD
-    A["Input bytes\n(from_bytes / from_path / from_path_mapped)"]
+    A["Input bytes\n(from_bytes / from_path / from_path_mapped [mmap])"]
     B["binrw reads RawHeader\n(12 bytes, little-endian)"]
     C{Header OK?}
     D["Err(ParseError::Header)"]
@@ -103,11 +103,14 @@ sequenceDiagram
 flowchart TD
     A["Input: raw lump bytes\ne.g. THINGS lump data"]
     B["Caller specifies record type T\nfor parse_records, e.g. T = Thing"]
-    ZST{T is zero-sized?}
-    ZST_EMPTY{bytes is empty?}
-    ZST_OK["Ok, empty Vec"]
-    ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
-    C{exact multiple\nof record size?}
+    EMPTY{bytes is empty?}
+    OK_EMPTY["Ok, empty Vec"]
+    FIRST["BinRead parses first T\nrecord_size = cursor.position()"]
+    BINRW1{BinRead ok?}
+    BINRW1_ERR["Err(MapParseError::Binrw)"]
+    ZSZ{record_size == 0?}
+    ZSZ_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
+    C{bytes.len() %\nrecord_size == 0?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
     E["Allocate Vec\ncapacity = bytes.len() / record_size\npush first record"]
     F{more bytes\nto read?}
@@ -118,11 +121,14 @@ flowchart TD
     K["Ok, Vec of T\ne.g. Vec of Thing or Vec of Linedef"]
 
     A --> B
-    B --> ZST
-    ZST -- "yes" --> ZST_EMPTY
-    ZST_EMPTY -- "yes" --> ZST_OK
-    ZST_EMPTY -- "no" --> ZST_ERR
-    ZST -- "no" --> C
+    B --> EMPTY
+    EMPTY -- "yes" --> OK_EMPTY
+    EMPTY -- "no" --> FIRST
+    FIRST --> BINRW1
+    BINRW1 -- "error" --> BINRW1_ERR
+    BINRW1 -- "ok" --> ZSZ
+    ZSZ -- "yes" --> ZSZ_ERR
+    ZSZ -- "no" --> C
     C -- "no" --> D
     C -- "yes" --> E
     E --> F
