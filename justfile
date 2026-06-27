@@ -24,6 +24,23 @@ deny:
 fetch-fixtures version="":
     python tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
 
+# Test the full workspace with all features enabled (alias for discoverability).
+test-all-features: test
+
+# Build the core library with the mmap feature enabled.
+build-mmap:
+    cargo build -p crustywad --features mmap
+
+# Test the core library with the mmap feature enabled.
+test-mmap:
+    cargo test -p crustywad --features mmap
+
+# Run Freedoom fixture tests. Tests skip gracefully when fixtures are missing.
+# Fetch fixtures first with `just fetch-fixtures`, then override the directory if needed:
+# just test-freedoom dir=/path/to/freedoom
+test-freedoom dir="tests/fixtures/freedoom":
+    CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests
+
 fuzz:
     @echo "Fuzz targets are planned for a later milestone; see docs/design.md."
 
