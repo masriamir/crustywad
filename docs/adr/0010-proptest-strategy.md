@@ -24,8 +24,8 @@ Four design questions need to be decided before writing more proptest tests:
    file policy)?
 
 These decisions interact: a raw-bytes strategy trivially covers the "no panic"
-class of invariants but cannot express structured invariants such as "every name
-returned by `lumps()` has at most 8 bytes"; those require a structured generator.
+class of invariants but cannot express structured invariants such as "`wad.lump_count()`
+equals `wad.lumps().len()`"; those require a structured generator.
 
 ## Decision
 
@@ -43,7 +43,7 @@ hand-crafted tests yet are provable by random generation:
 | I-5 | **`parse_records` no-panic** — `map::parse_records::<T>` never panics on arbitrary byte slices for any map-record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`). A `MapParseError` result is acceptable. | Safety / robustness |
 | I-6 | **Strict errors / lenient warnings correspondence** — for any input `bytes: Vec<u8>` that causes `from_bytes_with_options(bytes.clone(), ParseOptions::strict())` to return `Err(e)`, calling `from_bytes_with_options(bytes, ParseOptions::lenient())` either also returns `Err` (for unrecoverable errors such as a truncated header) or returns `Ok` with a non-empty `warnings()` slice. A strict error must never silently disappear in lenient mode. (Proptest implementations must clone before the strict call since `from_bytes_with_options` consumes its input via `Into<Vec<u8>>`.) | Correctness |
 | I-7 | **`lump_bytes` bounds safety** — for every lump index `i < wad.lump_count()`, `wad.lump_bytes(i)` returns `Some` and the returned slice is fully within the original input bytes (no out-of-bounds access). | Safety / correctness |
-| I-8 | **`parse_records` trailing-bytes semantics** — for any byte slice whose length is not an exact multiple of the on-disk record size consumed by `BinRead` for `T`, `parse_records::<T>` returns `Err(MapParseError::TrailingBytes { .. })`. For any byte slice whose length is an exact multiple, the function never returns `Err(MapParseError::TrailingBytes { .. })`; if it returns `Ok`, the `Vec` has `bytes.len() / record_size` elements. (`record_size` is inferred by parsing the first record — it is not `size_of::<T>()`, which may include in-memory alignment padding. A length-multiple slice may still yield `Err(MapParseError::Binrw(_))` if a record fails to decode.) | Correctness |
+| I-8 | **`parse_records` trailing-bytes semantics** — scoped to types where `BinRead` consumes at least one byte per record (i.e. `record_size > 0`; all fixed-size map-record types in this module satisfy this). For any non-empty byte slice whose length is not an exact multiple of `record_size`, `parse_records::<T>` returns `Err(MapParseError::TrailingBytes { .. })`. For any byte slice whose length is an exact multiple, the function never returns `Err(MapParseError::TrailingBytes { .. })`; if it returns `Ok`, the `Vec` has `bytes.len() / record_size` elements. (`record_size` is inferred by parsing the first record — it is not `size_of::<T>()`, which may include in-memory alignment padding. A length-multiple slice may still yield `Err(MapParseError::Binrw(_))` if a record fails to decode.) | Correctness |
 
 ### 2. Generation strategy
 
@@ -52,8 +52,12 @@ Three options were considered:
 **Option A — structured WADs only (`build_wad`-based):** Generate valid WAD
 bytes using the existing `common::build_wad` helper with arbitrary names, lump
 counts, and payloads. This is straightforward to write and always produces
-parseable inputs, but it cannot reach the adversarial / malformed-input
-invariants (I-1, I-6) without additional mutation passes.
+structurally well-formed WAD bytes (correct header offsets, consistent
+directory), but strict parseability also requires constraining the generator
+(magic ∈ {`IWAD`, `PWAD`}, ASCII-only names). Without those constraints, valid
+WAD structure is no guarantee of successful strict parsing. It also cannot reach
+the adversarial / malformed-input invariants (I-1, I-6) without additional
+mutation passes.
 
 **Option B — raw arbitrary bytes only:** Feed proptest's `vec(any::<u8>(), 0..4096)`
 directly to `from_bytes`. This trivially covers I-1 and I-6 but cannot express
