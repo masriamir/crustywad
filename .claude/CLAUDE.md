@@ -161,7 +161,12 @@ Before opening a PR for a new or updated ADR, run through this checklist. The it
 
 ## Feature flags
 
-See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations. This file is the single source of truth — it is published via the mdBook guide to GitHub Pages.
+See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations. That file is the single source of truth — it is published via the mdBook guide to GitHub Pages.
+
+**Sync rule:** when a feature flag is added, removed, or renamed, update **all three** of:
+1. `docs/guide/src/features.md` — detailed docs, usage examples, and the summary table (primary)
+2. The summary table below in this file
+3. The summary table in `.github/copilot-instructions.md`
 
 | Feature | Default | Purpose |
 |---|---|---|
