@@ -25,8 +25,7 @@ fetch-fixtures version="":
     python tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
 
 # Test the full workspace with all features enabled (alias for discoverability).
-test-all-features:
-    cargo test --workspace --all-features
+test-all-features: test
 
 # Build the core library with the mmap feature enabled.
 build-mmap:
