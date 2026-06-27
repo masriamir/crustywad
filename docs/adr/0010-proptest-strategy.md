@@ -1,9 +1,9 @@
-# 0010. Proptest invariant testing strategy
+# ADR-0010: Proptest invariant testing strategy
 
-- Status: Proposed
-- Date: 2026-06-14
-- Deciders: @masriamir
-- Issue: https://github.com/masriamir/crustywad/issues/46
+- **Status:** Proposed
+- **Date:** 2026-06-14
+- **Deciders:** @masriamir
+- **Tracking issue:** https://github.com/masriamir/crustywad/issues/46
 
 ## Context
 
@@ -43,7 +43,7 @@ hand-crafted tests yet are provable by random generation:
 | I-5 | **`parse_records` no-panic** — `map::parse_records::<T>` never panics on arbitrary byte slices for any map-record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`). A `MapParseError` result is acceptable. | Safety / robustness |
 | I-6 | **Strict errors / lenient warnings correspondence** — for any input that causes `from_bytes_with_options(bytes, ParseOptions::strict())` to return `Err(e)`, calling `from_bytes_with_options(bytes.clone(), ParseOptions::lenient())` either also returns `Err` (for unrecoverable errors such as a truncated header) or returns `Ok` with a non-empty `warnings()` slice. A strict error must never silently disappear in lenient mode. | Correctness |
 | I-7 | **`lump_bytes` bounds safety** — for every lump index `i < wad.lump_count()`, `wad.lump_bytes(i)` returns `Some` and the returned slice is fully within the original input bytes (no out-of-bounds access). | Safety / correctness |
-| I-8 | **`parse_records` trailing-bytes semantics** — for any byte slice whose length is not an exact multiple of `size_of::<T>()`, `parse_records::<T>` returns `Err(MapParseError::TrailingBytes { .. })`. For any byte slice whose length is an exact multiple, the function returns `Ok` and the returned `Vec` has `bytes.len() / size_of::<T>()` elements. | Correctness |
+| I-8 | **`parse_records` trailing-bytes semantics** — for any byte slice whose length is not an exact multiple of the on-disk record size consumed by `BinRead` for `T`, `parse_records::<T>` returns `Err(MapParseError::TrailingBytes { .. })`. For any byte slice whose length is an exact multiple, the function returns `Ok` and the returned `Vec` has `bytes.len() / record_size` elements. (`record_size` is inferred by parsing the first record — it is not `size_of::<T>()`, which may include in-memory alignment padding.) | Correctness |
 
 ### 2. Generation strategy
 
@@ -131,9 +131,11 @@ prohibitively slow on the MSRV toolchain (Rust 1.85.0).
   Existing hand-crafted tests will not be removed; proptest will complement them.
 - `common/mod.rs` will gain `arb_valid_wad` and `arb_lump_pair`. These will be public
   within the test crate only (`pub` inside `tests/`).
-- CI wall-clock time increases by the time required to run 256 × 6 = 1 536
-  proptest cases across all property tests. On a contemporary laptop each case
-  is sub-millisecond, so the total overhead is under two seconds.
+- CI wall-clock time increases by the time required to run 256 × 7 = 1 792
+  proptest cases across all property tests (the 6 new blocks plus the existing
+  `strict_parser_handles_generated_empty_wads` property in `wad_reader.rs`). On
+  a contemporary laptop each case is sub-millisecond, so the total overhead is
+  under two seconds.
 - If proptest shrinks a counter-example in CI, it will appear in the job log and
   a regression seed will be emitted. Because the seed is not automatically
   committed by CI, a developer must copy it into the local regression file and
