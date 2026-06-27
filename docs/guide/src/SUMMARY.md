@@ -2,8 +2,21 @@
 
 [Introduction](introduction.md)
 
+# User Guide
+
 - [Getting Started](getting-started.md)
 - [Reading WAD Files](reading-wads.md)
 - [Map Record Parsing](map-records.md)
 - [CLI Usage](cli.md)
 - [Feature Flags](features.md)
+
+# Reference
+
+- [Architecture](architecture.md)
+- [Data Model](data-model.md)
+- [CLI Flow](cli-flow.md)
+
+# Contributing
+
+- [Parse Pipeline](data-flow.md)
+- [Lump Hierarchy](lump-hierarchy.md)

@@ -14,6 +14,10 @@ fmt:
 doc:
     cargo doc --workspace --all-features --no-deps
 
+# Build the mdBook user guide. Requires: cargo install mdbook mdbook-mermaid
+guide:
+    mdbook build docs/guide
+
 cov:
     cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 

@@ -23,6 +23,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install mdBook
         run: cargo install mdbook --version 0.5.3 --locked
+      - name: Install mdbook-mermaid
+        run: cargo install mdbook-mermaid --version 0.17.0 --locked
       - name: Build guide
         run: mdbook build docs/guide
       - name: Upload artifact
