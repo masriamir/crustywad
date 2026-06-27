@@ -28,14 +28,15 @@ flowchart TD
 
 ## Rust type relationships
 
-The class diagram below shows the public API types in `crustywad` and how they relate to each other. Constructors (`from_bytes`, `from_path`, `from_path_mapped` and their `_with_options` variants) return `Result<Wad, ParseError>`. In lenient mode the returned `Wad` carries zero or more `ParseWarning` values accessible via `Wad::warnings`.
+The class diagram below shows the public API types in `crustywad` and how they relate to each other. Constructors return `Result<Wad, ParseError>`; in lenient mode the returned `Wad` carries zero or more `ParseWarning` values accessible via `Wad::warnings`. Methods marked `[mmap]` are only available when the `mmap` feature flag is enabled.
 
 ```mermaid
 classDiagram
     class Wad {
         +from_bytes(bytes) Result~Wad, ParseError~
         +from_path(path) Result~Wad, ParseError~
-        +from_path_mapped(path) Result~Wad, ParseError~
+        +from_path_mapped(path) Result~Wad, ParseError~ [mmap]
+        +from_path_mapped_with_options(path, opts) Result~Wad, ParseError~ [mmap]
         +kind() WadKind
         +header() WadHeader
         +lump_count() usize
@@ -60,7 +61,7 @@ classDiagram
         <<enumeration>>
         Iwad
         Pwad
-        Unknown
+        Unknown([u8; 4])
     }
     class ParseOptions {
         +strictness Strictness

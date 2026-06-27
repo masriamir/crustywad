@@ -4,9 +4,11 @@
 
 Lumps in a WAD file are undifferentiated byte blobs at the format level — each identified only by an 8-byte name, a file offset, and a size. This diagram shows the conventional taxonomy used by the Doom engine and followed by `crustywad`'s typed structs.
 
+The root node represents the **on-disk directory entry** (raw fields as stored in the WAD). The public `Lump` API type exposes these as a decoded `&str` name and `usize` offsets.
+
 ```mermaid
 graph TD
-    Lump["Lump\nname: [u8; 8] · filepos: i32 · size: i32"]
+    Lump["WAD directory entry (on-disk)\nname: [u8; 8] · filepos: i32 · size: i32"]
 
     Lump --> Map["Map group\n(follows a map-marker lump, e.g. E1M1 / MAP01)"]
     Lump --> NS["Namespace markers\n(delimit resource namespaces)"]

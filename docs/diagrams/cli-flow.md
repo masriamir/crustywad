@@ -4,9 +4,11 @@
 
 The `cwad` binary exposes two subcommands. The `--lenient` flag is global and switches the parser to lenient mode for the entire invocation. Warnings are always written to stderr; normal output goes to stdout.
 
+> **Note:** Issue #95 referenced `--format` routing as a candidate for this diagram. The current CLI has no `--format` flag; this diagram reflects the implemented interface only.
+
 ```mermaid
 flowchart TD
-    A["cwad [--lenient] &lt;subcommand&gt; &lt;path&gt;"]
+    A["cwad [--lenient] <subcommand> <path>"]
     B{"--lenient flag?"}
     C["ParseOptions::strict()\n(default)"]
     D["ParseOptions::lenient()"]

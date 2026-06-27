@@ -97,7 +97,7 @@ sequenceDiagram
 
 ## Map record parsing
 
-`parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any map record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. Zero-sized types (`size_of::<T>() == 0`) are handled as a special case before the modulo check: an empty buffer yields an empty `Vec`, and a non-empty buffer is an unconditional `TrailingBytes` error.
+`parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any map record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. An empty buffer always yields an empty `Vec`. Otherwise the function parses the first record and measures how many bytes `BinRead` consumed (`record_size = cursor.position()`); this avoids relying on `size_of::<T>()`, which reflects in-memory layout rather than on-disk size. If `record_size == 0` the type has no on-disk representation and any non-empty input is a `TrailingBytes` error. If the total length is not an exact multiple of `record_size`, the remaining partial bytes are a `TrailingBytes` error.
 
 ```mermaid
 flowchart TD
@@ -109,7 +109,7 @@ flowchart TD
     ZST_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
     C{exact multiple\nof record size?}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
-    E["Allocate Vec\ncapacity = bytes.len() / size_of::<T>()"]
+    E["Allocate Vec\ncapacity = bytes.len() / record_size\npush first record"]
     F{more bytes\nto read?}
     G["binrw reads one T\nlittle-endian fixed-size struct"]
     H{binrw ok?}
