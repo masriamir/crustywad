@@ -48,6 +48,12 @@ let wad = Wad::from_path_mapped_with_options("doom.wad", ParseOptions::lenient()
 `memmap2` is supported on all tier-1 Rust targets (Linux, macOS, Windows). Memory-mapped
 files are read-only; there is no risk of accidentally writing to the underlying file.
 
+**Warning:** the WAD file must not be truncated or replaced by another process while the
+`Wad` is alive. On Unix, truncation from another process triggers a `SIGBUS` on the next
+lump data access, which will abort the process. On Windows the mapping prevents truncation
+but concurrent writes by another process may expose inconsistent data. Use `Wad::from_path`
+if the file may be modified externally while in use.
+
 ---
 
 ## `freedoom-tests`
