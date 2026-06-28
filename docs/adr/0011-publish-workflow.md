@@ -46,8 +46,8 @@ are required.
 **Manual step — version bump:** `cargo-deny` enforces `wildcards = "deny"`,
 which means every dependency in `Cargo.toml` must carry an explicit version
 specifier. `crustywad-cli/Cargo.toml` does not inherit the workspace version
-for its `crustywad` dependency — it pins it explicitly. Whenever the workspace
-version is bumped (by `release-plz` or manually), the pinned version in
+for its `crustywad` dependency — it pins it explicitly. Whenever the
+`crustywad` library version is bumped (by `release-plz` or manually), the pinned version in
 `crustywad-cli/Cargo.toml` **must** be updated to match or `cargo deny check`
 will fail in CI. This is a release-time checklist item, not an automated step.
 
@@ -229,8 +229,14 @@ The following steps must be completed **before** setting `publish = true` in
 
 ## Consequences
 
-- Enabling publishing requires touching `release-plz.toml`, the release workflow
-  YAML, and adding the `CARGO_REGISTRY_TOKEN` secret — no source code changes.
+- Enabling publishing requires several one-time changes beyond toggling
+  `release-plz.toml` and adding the `CARGO_REGISTRY_TOKEN` secret: both crates
+  must switch from `version.workspace = true` to explicit `version` fields (§3
+  migration), per-crate `CHANGELOG.md` files must be created and seeded (§4
+  migration), and the `description` field must be added to `[workspace.package]`
+  with `description.workspace = true` in each crate (checklist item 3). None of
+  these touch library source code, but they do require `Cargo.toml` and
+  documentation file changes before the first publish succeeds.
 - The version pin in `crustywad-cli/Cargo.toml` must be updated manually
   whenever the library version changes or `cargo deny check` will fail in CI.
   With independent versioning this only fires on library releases, not on every
