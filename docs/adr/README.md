@@ -40,5 +40,6 @@ implementation begins.**
 | [0007](0007-living-docs-automation.md) | Living-docs automation strategy | Proposed |
 | [0008](0008-cli-ux-architecture.md) | `cwad` CLI UX and architecture | Proposed |
 | [0009](0009-cargo-fuzz-harness.md) | `cargo-fuzz` harness for WAD parser | Proposed |
+| [0010](0010-proptest-strategy.md) | Proptest invariant testing strategy | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
