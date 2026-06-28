@@ -37,12 +37,11 @@ so the version named in `version = "..."` must already exist in the registry
 before `cargo publish` is run for `crustywad-cli`. Publishing in reverse order
 produces an unresolvable registry dependency and will be rejected.
 
-`release-plz` supports this via its `publish_jobs` configuration. Setting a
-`publish_sequence` (or simply publishing crates individually in dependency
-order) ensures the library lands in the registry before the CLI attempts to
-reference it. The release workflow job should call `cargo publish -p crustywad`
-first, wait for crates.io to index it (typically under 60 seconds; the
-`--no-verify` flag is not needed), and then call `cargo publish -p crustywad-cli`.
+`release-plz` handles this automatically: when `release-plz release` runs (via
+the workflow job described in §2), it publishes workspace crates in dependency
+order, so `crustywad` will be indexed on crates.io before `crustywad-cli` is
+published. No explicit `cargo publish` calls or custom sequencing configuration
+are required.
 
 **Manual step — version bump:** `cargo-deny` enforces `wildcards = "deny"`,
 which means every dependency in `Cargo.toml` must carry an explicit version
