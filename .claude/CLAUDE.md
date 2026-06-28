@@ -26,6 +26,10 @@ crates/
 docs/
   design.md            # Goals, data model, read pipeline, feature plan
   adr/                 # Architecture decision records
+  diagrams/            # Standalone Mermaid diagram files (included into the guide via {{#include}})
+  guide/               # mdBook user guide — source of truth for user-facing docs, deployed to GitHub Pages
+    book.toml          # mdBook + mdbook-mermaid configuration
+    src/               # Guide source pages (SUMMARY.md, *.md)
 tests/
   fixtures/
     fetch_freedoom.py  # Downloads Freedoom WAD fixtures from GitHub releases
@@ -48,6 +52,7 @@ Install [just](https://github.com/casey/just), then:
 | Lint (fmt + clippy) | `just lint` |
 | Auto-format | `just fmt` |
 | Docs | `just doc` |
+| Guide (mdBook) | `just guide` (requires `mdbook` + `mdbook-mermaid`) |
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
 | Fetch Freedoom fixtures | `just fetch-fixtures` |
@@ -156,7 +161,12 @@ Before opening a PR for a new or updated ADR, run through this checklist. The it
 
 ## Feature flags
 
-See [`docs/features.md`](../docs/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations.
+See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations. That file is the single source of truth — it is published via the mdBook guide to GitHub Pages.
+
+**Sync rule:** when a feature flag is added, removed, or renamed, update **all three** of:
+1. `docs/guide/src/features.md` — detailed docs, usage examples, and the summary table (primary)
+2. The summary table below in this file
+3. The summary table in `.github/copilot-instructions.md`
 
 | Feature | Default | Purpose |
 |---|---|---|
