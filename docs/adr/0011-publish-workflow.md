@@ -126,6 +126,16 @@ Each crate has its own `version` field in its `Cargo.toml`; neither uses
 proposing version bumps only for crates whose content has changed since the
 last release.
 
+**Required migration:** Both crates currently inherit the workspace version via
+`version.workspace = true`. Before enabling publishing, replace this with an
+explicit `version` field in each crate's `[package]` block, starting from the
+current workspace version:
+
+```toml
+# in crates/crustywad/Cargo.toml and crates/crustywad-cli/Cargo.toml:
+version = "0.1.0"   # replaces version.workspace = true
+```
+
 Pros:
 - A CLI fix does not force a library version bump, and vice-versa.
 - Library consumers see version increments that reflect only API-relevant
@@ -150,9 +160,13 @@ Each crate maintains its own `CHANGELOG.md` under its crate directory:
 - `crates/crustywad/CHANGELOG.md` — library release history
 - `crates/crustywad-cli/CHANGELOG.md` — CLI release history
 
+**Required migration:** Neither file exists yet — the repo currently has only a
+root `CHANGELOG.md`. Before activating `changelog_path` in `release-plz.toml`,
+create both files with an `[Unreleased]` section (seeded from the relevant
+entries in the root changelog), then remove the root `CHANGELOG.md`.
+
 `release-plz` writes entries to the per-crate paths via the `changelog_path`
-setting in each `[[package]]` block (see §2). The existing root `CHANGELOG.md`
-should be removed once publishing is enabled and the per-crate files take over.
+setting in each `[[package]]` block (see §2).
 
 `release-plz` will automatically:
 - Move the `[Unreleased]` section content into a versioned `## [X.Y.Z]` section
