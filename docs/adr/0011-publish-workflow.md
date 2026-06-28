@@ -1,9 +1,9 @@
-# 0011. crates.io publish workflow
+# ADR-0011: crates.io publish workflow
 
-- Status: proposed
-- Date: 2026-06-14
-- Deciders: @masriamir
-- Tracking issue: https://github.com/masriamir/crustywad/issues/48
+- **Status:** Proposed
+- **Date:** 2026-06-14
+- **Deciders:** @masriamir
+- **Tracking issue:** https://github.com/masriamir/crustywad/issues/48
 
 ## Context
 
@@ -82,7 +82,7 @@ A corresponding `publish` job must be added to `.github/workflows/release-plz.ym
     runs-on: ubuntu-latest
     needs: release-pr
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -138,7 +138,7 @@ Cons:
   accumulate unnecessary semver churn from CLI-only changes.
 
 The cons are acceptable at the project's current scale (pre-1.0, small API
-surface). If the library stabilises and the CLI diverges significantly in
+surface). If the library stabilizes and the CLI diverges significantly in
 release cadence, switching to independent versioning is straightforward: remove
 `version.workspace = true` from one crate, give it its own `version` field, and
 update `release-plz.toml` to manage the two packages independently.
@@ -147,7 +147,7 @@ update `release-plz.toml` to manage the two packages independently.
 
 The current format — a single `CHANGELOG.md` at the workspace root using
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with `## [Unreleased]`
-headers — is acceptable as-is and no customisation is required at this stage.
+headers — is acceptable as-is and no customization is required at this stage.
 
 `release-plz` will automatically:
 - Move the `[Unreleased]` section content into a versioned `## [X.Y.Z]` section
@@ -174,11 +174,15 @@ The following steps must be completed **before** setting `publish = true` in
    are available and metadata is valid. The dry-run will catch missing
    `description`, `license`, and `repository` fields before they reach CI.
 
-3. **`description` field** — add a `description` field to
-   `[workspace.package]` in `Cargo.toml`. crates.io requires this field and
-   `cargo publish` will fail without it:
+3. **`description` field** — add a `description` field to `[workspace.package]`
+   in `Cargo.toml` and `description.workspace = true` to each crate's `[package]`
+   block. crates.io requires this field and `cargo publish` will fail without it
+   (workspace fields are not automatically inherited — each crate must opt in):
    ```toml
+   # in [workspace.package]:
    description = "Safe, documented Doom WAD file I/O"
+   # in each crate's [package]:
+   description.workspace = true
    ```
 
 4. **README** — `readme = "README.md"` is already set in the workspace package
