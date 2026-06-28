@@ -43,13 +43,17 @@ order, so `crustywad` will be indexed on crates.io before `crustywad-cli` is
 published. No explicit `cargo publish` calls or custom sequencing configuration
 are required.
 
-**Manual step — version bump:** `cargo-deny` enforces `wildcards = "deny"`,
-which means every dependency in `Cargo.toml` must carry an explicit version
-specifier. `crustywad-cli/Cargo.toml` does not inherit the workspace version
-for its `crustywad` dependency — it pins it explicitly. Whenever the
-`crustywad` library version is bumped (by `release-plz` or manually), the pinned version in
-`crustywad-cli/Cargo.toml` **must** be updated to match or `cargo deny check`
-will fail in CI. This is a release-time checklist item, not an automated step.
+**Manual step — version bump:** `crustywad-cli/Cargo.toml` pins the library
+dependency with an explicit version specifier (`cargo-deny`'s `wildcards =
+"deny"` prohibits bare `*` specifiers, but it does not enforce that the
+specifier matches the current library version). Whenever the `crustywad`
+library version is bumped beyond the current constraint range (for example,
+from `0.1.x` to `0.2.0`), Cargo dependency resolution fails for local builds
+— `cargo build`, `cargo test`, and `cargo clippy` all fail before `cargo deny
+check` even runs — and publishing `crustywad-cli` would declare a stale
+registry dependency. Update the pinned version in `crustywad-cli/Cargo.toml`
+to match before merging. This is a release-time checklist item, not an
+automated step.
 
 ### 2. release-plz configuration
 
@@ -238,10 +242,12 @@ The following steps must be completed **before** setting `publish = true` in
   these touch library source code, but they do require `Cargo.toml` and
   documentation file changes before the first publish succeeds.
 - The version pin in `crustywad-cli/Cargo.toml` must be updated manually
-  whenever the library version changes or `cargo deny check` will fail in CI.
-  With independent versioning this only fires on library releases, not on every
-  release. A future improvement would be a `release-plz` post-hook that patches
-  this automatically, but that is out of scope for this ADR.
+  whenever the `crustywad` library version moves beyond the current constraint
+  range. A version bump outside the range breaks Cargo dependency resolution —
+  `cargo build`, `cargo test`, and `cargo clippy` all fail before `cargo deny
+  check` runs. With independent versioning this only fires on library releases,
+  not on every release. A future improvement would be a `release-plz` post-hook
+  that patches this automatically, but that is out of scope for this ADR.
 - Independent versioning gives library consumers accurate semver signals: a
   version bump means the library changed, not the CLI.
 - Each crate maintains its own `CHANGELOG.md`; the root `CHANGELOG.md` is
