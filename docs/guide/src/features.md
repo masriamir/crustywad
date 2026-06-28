@@ -82,7 +82,7 @@ are not present in that directory — they do not fail.
 just fetch-fixtures
 
 # Specific Freedoom release:
-just fetch-fixtures version=v0.13.0
+just fetch-fixtures version=v0.14.0
 ```
 
 ### Running the tests
