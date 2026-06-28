@@ -37,10 +37,11 @@ crustywad = { version = "0.1", features = ["mmap"] }
 use crustywad::{Wad, ParseOptions};
 
 // Zero-copy load from disk:
-let wad = Wad::from_path_mapped("doom.wad")?;
+let _wad = Wad::from_path_mapped("doom.wad")?;
 
 // Zero-copy load with options:
-let wad = Wad::from_path_mapped_with_options("doom.wad", ParseOptions::lenient())?;
+let _wad = Wad::from_path_mapped_with_options("doom.wad", ParseOptions::lenient())?;
+# Ok::<(), crustywad::ParseError>(())
 ```
 
 ### When to use mmap
