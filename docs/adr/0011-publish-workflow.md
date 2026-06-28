@@ -67,11 +67,13 @@ semver_check = false    # no baseline until 0.1.0 is published; enable after fir
 name = "crustywad"
 release = true
 publish = true          # was false
+changelog_path = "crates/crustywad/CHANGELOG.md"
 
 [[package]]
 name = "crustywad-cli"
 release = true
 publish = true          # was false; see note below on whether to publish the CLI
+changelog_path = "crates/crustywad-cli/CHANGELOG.md"
 ```
 
 A corresponding `release` job must be added to `.github/workflows/release-plz.yml`:
@@ -117,49 +119,47 @@ immediately would produce spurious failures. Once `0.1.0` is published, flip
 
 ### 3. Version strategy
 
-**Chosen: unified versioning (both crates share the workspace version).**
+**Chosen: independent versioning (each crate carries its own version).**
 
-Both crates carry `version.workspace = true` in their `Cargo.toml` files and
-will track the same `[workspace.package] version` field. When `release-plz`
-proposes a version bump it bumps that single field and both crates move
-together.
+Each crate has its own `version` field in its `Cargo.toml`; neither uses
+`version.workspace = true`. `release-plz` manages each package independently,
+proposing version bumps only for crates whose content has changed since the
+last release.
 
 Pros:
-- Simple mental model: one version number describes the whole project at any
-  point in time.
-- The explicit pin in `crustywad-cli/Cargo.toml` stays correct as long as it
-  is updated in the same commit that bumps the workspace version (see §1).
-- Release notes and the CHANGELOG are naturally unified.
+- A CLI fix does not force a library version bump, and vice-versa.
+- Library consumers see version increments that reflect only API-relevant
+  changes, reducing semver noise.
+- Each crate's release cadence can diverge naturally as the project matures.
 
 Cons:
-- A patch fix to the CLI forces a library version bump (and vice-versa), even
-  if only one crate changed.
-- Once the API surface is large and stable, consumers of the library may
-  accumulate unnecessary semver churn from CLI-only changes.
+- Whenever the library version changes, the explicit pin in
+  `crustywad-cli/Cargo.toml` must be updated manually to match (see §1
+  manual step). This is the same checklist item as before, but it fires only
+  on library releases rather than on every release.
+- Two version numbers to track instead of one.
 
-The cons are acceptable at the project's current scale (pre-1.0, small API
-surface). If the library stabilizes and the CLI diverges significantly in
-release cadence, switching to independent versioning is straightforward: remove
-`version.workspace = true` from one crate, give it its own `version` field, and
-update `release-plz.toml` to manage the two packages independently.
+The library and CLI serve different audiences and have different change
+frequencies. Decoupling their versions now avoids false semver signals to
+library consumers before the project reaches 1.0.
 
 ### 4. Changelog management
 
-The current format — a single `CHANGELOG.md` at the workspace root using
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with `## [Unreleased]`
-headers — is acceptable as-is and no customization is required at this stage.
+Each crate maintains its own `CHANGELOG.md` under its crate directory:
+
+- `crates/crustywad/CHANGELOG.md` — library release history
+- `crates/crustywad-cli/CHANGELOG.md` — CLI release history
+
+`release-plz` writes entries to the per-crate paths via the `changelog_path`
+setting in each `[[package]]` block (see §2). The existing root `CHANGELOG.md`
+should be removed once publishing is enabled and the per-crate files take over.
 
 `release-plz` will automatically:
 - Move the `[Unreleased]` section content into a versioned `## [X.Y.Z]` section
-  when it creates a release PR.
-- Add a git tag `vX.Y.Z` when the release PR is merged and the `release` job
-  runs.
-
-No `changelog_config` block is needed in `release-plz.toml`. The only
-configuration that should be considered in a follow-up is whether to generate
-per-crate changelogs (e.g., `CHANGELOG.md` inside each crate directory) once the
-two crates evolve at different rates. For now, the single root changelog is
-sufficient.
+  in the relevant crate's changelog when it creates a release PR.
+- Add a git tag when the release PR is merged and the `release` job runs. With
+  independent versioning, tags are per-crate (e.g., `crustywad-v0.2.0` and
+  `crustywad-cli-v0.1.3`).
 
 ### 5. Pre-publish checklist
 
@@ -217,13 +217,15 @@ The following steps must be completed **before** setting `publish = true` in
 
 - Enabling publishing requires touching `release-plz.toml`, the release workflow
   YAML, and adding the `CARGO_REGISTRY_TOKEN` secret — no source code changes.
-- The version pin in `crustywad-cli/Cargo.toml` introduces a permanent manual
-  maintenance burden: every version bump must update that field or CI fails. A
-  future improvement would be a custom `release-plz` post-hook that patches this
-  automatically, but that is out of scope for this ADR.
-- Unified versioning means downstream library consumers may see version numbers
-  advance faster than the API changes warrant. Semver pre-1.0 (`0.x.y`) gives
-  broad latitude here; this is re-evaluated at 1.0 planning.
+- The version pin in `crustywad-cli/Cargo.toml` must be updated manually
+  whenever the library version changes or `cargo deny check` will fail in CI.
+  With independent versioning this only fires on library releases, not on every
+  release. A future improvement would be a `release-plz` post-hook that patches
+  this automatically, but that is out of scope for this ADR.
+- Independent versioning gives library consumers accurate semver signals: a
+  version bump means the library changed, not the CLI.
+- Each crate maintains its own `CHANGELOG.md`; the root `CHANGELOG.md` is
+  retired when publishing is enabled.
 - Once `crustywad 0.1.0` is on crates.io, yanking it is possible but
   disruptive. Ensuring the dry-run CI step and pre-publish checklist are
   completed before the first release avoids the need to yank.
