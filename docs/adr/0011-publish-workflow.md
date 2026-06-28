@@ -97,7 +97,7 @@ A corresponding `publish` job must be added to `.github/workflows/release-plz.ym
 The **required GitHub secret** is `CARGO_REGISTRY_TOKEN`. It must be set in the
 repository's Settings → Secrets and variables → Actions. The token must be
 scoped to the `publish-new` and `publish-update` operations for the
-`masriamir:crustywad` and `masriamir:crustywad-cli` crate names.
+`crustywad` and `crustywad-cli` crate names.
 
 **Should `crustywad-cli` publish?** Yes, but with lower priority than the
 library. The CLI (`cwad`) provides a useful dogfooding surface for end users who
@@ -169,10 +169,12 @@ The following steps must be completed **before** setting `publish = true` in
 1. **crates.io account** — confirm that the `masriamir` crates.io account exists
    and is in good standing (email verified, 2FA enabled).
 
-2. **Crate name reservation** — run `cargo publish --dry-run -p crustywad` and
+2. **Metadata dry-run** — run `cargo publish --dry-run -p crustywad` and
    `cargo publish --dry-run -p crustywad-cli` locally to verify the crate names
    are available and metadata is valid. The dry-run will catch missing
    `description`, `license`, and `repository` fields before they reach CI.
+   Note: dry-run does not reserve crate names on crates.io; the name is claimed
+   only when the first `cargo publish` succeeds.
 
 3. **`description` field** — add a `description` field to `[workspace.package]`
    in `Cargo.toml` and `description.workspace = true` to each crate's `[package]`
