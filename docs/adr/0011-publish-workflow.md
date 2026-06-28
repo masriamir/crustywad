@@ -80,6 +80,7 @@ A corresponding `publish` job must be added to `.github/workflows/release-plz.ym
   release:
     runs-on: ubuntu-latest
     needs: release-pr
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
         with:
