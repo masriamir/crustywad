@@ -74,7 +74,7 @@ release = true
 publish = true          # was false; see note below on whether to publish the CLI
 ```
 
-A corresponding `publish` job must be added to `.github/workflows/release-plz.yml`:
+A corresponding `release` job must be added to `.github/workflows/release-plz.yml`:
 
 ```yaml
   release:
