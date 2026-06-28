@@ -26,7 +26,13 @@ crates/
       wad_reader.rs    # Integration tests for the main WAD reader API
   crustywad-cli/       # CLI binary crate (`cwad`)
     src/main.rs
-docs/                  # Design doc, ADRs
+docs/
+  design.md            # Goals, data model, read pipeline, feature plan
+  adr/                 # Architecture decision records
+  diagrams/            # Standalone Mermaid diagram files (source for the guide via {{#include}})
+  guide/               # mdBook user guide — deployed to GitHub Pages; single source of truth for user-facing docs
+    book.toml          # mdBook + mdbook-mermaid configuration
+    src/               # Guide source pages (SUMMARY.md, *.md including features.md)
 tests/
   fixtures/
     fetch_freedoom.py  # Script to download Freedoom WAD fixtures
@@ -51,6 +57,7 @@ Install [just](https://github.com/casey/just) then run these recipes:
 | Lint (fmt + clippy) | `just lint` |
 | Auto-format | `just fmt` |
 | Docs | `just doc` |
+| Guide (mdBook) | `just guide` (requires `mdbook` + `mdbook-mermaid`) |
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
 | Fetch Freedoom fixtures | `just fetch-fixtures` |
@@ -143,10 +150,19 @@ Before opening a PR for a new or updated ADR, run through this checklist. The it
 
 ## Feature flags
 
+The full feature flag reference (usage examples, platform notes, cargo invocations) lives in
+[`docs/guide/src/features.md`](../docs/guide/src/features.md), which is published via the
+mdBook guide to GitHub Pages. That file is the single source of truth.
+
+**Sync rule:** when a feature flag is added, removed, or renamed, update **all three** of:
+1. `docs/guide/src/features.md` — detailed docs, usage examples, and the summary table
+2. The summary table in `.claude/CLAUDE.md` (Feature flags section)
+3. The summary table below in this file
+
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
-| `freedoom-tests` | no | Enables optional Freedoom integration tests |
+| `freedoom-tests` | no | Enables optional Freedoom integration tests against local WAD fixtures |
 
 ## Commit conventions
 
