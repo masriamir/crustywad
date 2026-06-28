@@ -43,17 +43,16 @@ order, so `crustywad` will be indexed on crates.io before `crustywad-cli` is
 published. No explicit `cargo publish` calls or custom sequencing configuration
 are required.
 
-**Manual step — version bump:** `crustywad-cli/Cargo.toml` pins the library
-dependency with an explicit version specifier (`cargo-deny`'s `wildcards =
-"deny"` prohibits bare `*` specifiers, but it does not enforce that the
-specifier matches the current library version). Whenever the `crustywad`
-library version is bumped beyond the current constraint range (for example,
-from `0.1.x` to `0.2.0`), Cargo dependency resolution fails for local builds
-— `cargo build`, `cargo test`, and `cargo clippy` all fail before `cargo deny
-check` even runs — and publishing `crustywad-cli` would declare a stale
-registry dependency. Update the pinned version in `crustywad-cli/Cargo.toml`
-to match before merging. This is a release-time checklist item, not an
-automated step.
+**Manual step — version bump:** `crustywad-cli/Cargo.toml` specifies the
+library dependency as `version = "0.1.0"`. In Cargo, an unadorned version
+string like `"0.1.0"` is a caret requirement (`^0.1.0`), not an exact pin —
+patch bumps within `[0.1.0, 0.2.0)` satisfy the constraint without any change.
+However, when `crustywad` is bumped to `0.2.0` or beyond, the caret range is
+no longer satisfied: `cargo build`, `cargo test`, and `cargo clippy` all fail
+before `cargo deny check` even runs, and publishing `crustywad-cli` would
+register a dependency that crates.io cannot resolve. Update the version
+specifier in `crustywad-cli/Cargo.toml` to match the new library version
+before merging. This is a release-time checklist item, not an automated step.
 
 ### 2. release-plz configuration
 
@@ -125,10 +124,10 @@ immediately would produce spurious failures. Once `0.1.0` is published, flip
 
 **Chosen: independent versioning (each crate carries its own version).**
 
-Each crate has its own `version` field in its `Cargo.toml`; neither uses
-`version.workspace = true`. `release-plz` manages each package independently,
-proposing version bumps only for crates whose content has changed since the
-last release.
+Under independent versioning, each crate has its own `version` field in its
+`Cargo.toml`; neither uses `version.workspace = true`. `release-plz` manages
+each package independently, proposing version bumps only for crates whose
+content has changed since the last release.
 
 **Required migration:** Both crates currently inherit the workspace version via
 `version.workspace = true`. Before enabling publishing, replace this with an
