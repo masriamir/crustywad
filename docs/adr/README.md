@@ -36,6 +36,11 @@ implementation begins.**
 | [0003](0003-default-to-strict-parsing.md) | Default to strict parsing | Accepted |
 | [0004](0004-parse-api-and-safety-contracts.md) | Parse API and safety contracts for `Wad` and map records | Accepted |
 | [0005](0005-isolate-unsafe-code-in-platform-crate.md) | Isolate unsafe code in a dedicated `crustywad-platform` workspace crate | Proposed |
+| [0006](0006-wad-write-design.md) | WAD write design | Proposed |
+| [0007](0007-living-docs-automation.md) | Living-docs automation strategy | Proposed |
+| [0008](0008-cli-ux-architecture.md) | `cwad` CLI UX and architecture | Proposed |
+| [0009](0009-cargo-fuzz-harness.md) | `cargo-fuzz` harness for WAD parser | Proposed |
+| [0010](0010-proptest-strategy.md) | Proptest invariant testing strategy | Proposed |
 | [0011](0011-publish-workflow.md) | crates.io publish workflow | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
