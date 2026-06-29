@@ -139,7 +139,7 @@ flowchart TD
     J --> F
     F -- "no" --> K
 
-    subgraph examples["Concrete T examples"]
+    subgraph examples[Concrete T examples]
         T1["Thing\n10 bytes: x i16, y i16, angle u16\ntype_id u16, flags u16"]
         T2["Linedef\n14 bytes: 7 x u16"]
         T3["Vertex\n4 bytes: x i16, y i16"]
