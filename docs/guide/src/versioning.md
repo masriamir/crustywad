@@ -66,9 +66,9 @@ Rules:
 - **An MSRV bump is a minor version change**, never a patch. A caller pinned to the old
   compiler will fail to build after an MSRV bump, so it is treated as a backward-incompatible
   change to the build environment even though the public API is unchanged.
-- **MSRV bumps follow Rust releases.** The MSRV will only be raised to a stable Rust version
-  that has been available for at least six months, giving downstream projects time to update
-  their toolchains.
+- **MSRV bumps are need-driven.** The MSRV will only be raised when there is a concrete need
+  (for example, a required dependency or language feature), and only to a toolchain version
+  that has been stable for a reasonable period.
 - **CI enforces the declared MSRV.** The `msrv` job in CI builds and tests the workspace
   against the exact `rust-version` value on every PR. A PR that raises the MSRV must update
   this field and bump the crate version accordingly.
@@ -98,7 +98,7 @@ match before merging — otherwise `cargo build` and CI fail.
 
 ## Release Cadence
 
-Releases are automated by [release-plz](https://release-plz.eplz.dev/), which monitors
+Releases are automated by [release-plz](https://release-plz.dev/), which monitors
 `main` for Conventional Commits and opens a release PR whenever releasable changes
 accumulate.
 
