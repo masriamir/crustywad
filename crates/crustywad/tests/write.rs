@@ -119,3 +119,9 @@ fn lenient_allows_unknown_magic() {
         .unwrap();
     assert_eq!(&bytes[0..4], b"XWAD");
 }
+
+#[test]
+fn write_options_default_is_strict() {
+    let opts = WriteOptions::default();
+    assert_eq!(opts.strictness, crustywad::Strictness::Strict);
+}
