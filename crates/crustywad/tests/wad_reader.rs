@@ -212,6 +212,88 @@ proptest! {
         prop_assert_eq!(wad.lump_count(), 0);
         prop_assert!(matches!(wad.kind(), WadKind::Iwad | WadKind::Pwad));
     }
+
+    // I-1: No panic on arbitrary bytes (strict mode)
+    #[test]
+    fn no_panic_strict_arbitrary_bytes(data in proptest::collection::vec(any::<u8>(), 0..8192usize)) {
+        let _ = std::hint::black_box(
+            Wad::from_bytes_with_options(data, ParseOptions::strict())
+        );
+    }
+
+    // I-1: No panic on arbitrary bytes (lenient mode)
+    #[test]
+    fn no_panic_lenient_arbitrary_bytes(data in proptest::collection::vec(any::<u8>(), 0..8192usize)) {
+        let _ = std::hint::black_box(
+            Wad::from_bytes_with_options(data, ParseOptions::lenient())
+        );
+    }
+
+    // I-2: lump_count() == lumps().len() for any structurally valid WAD
+    #[test]
+    fn lump_count_consistent(bytes in common::arb_valid_wad()) {
+        if let Ok(wad) = Wad::from_bytes(bytes) {
+            prop_assert_eq!(wad.lump_count(), wad.lumps().len());
+        }
+    }
+
+    // I-3: lump_by_name agrees with lumps() for every lump in the directory
+    #[test]
+    fn lump_by_name_agrees_with_lumps(bytes in common::arb_valid_wad()) {
+        if let Ok(wad) = Wad::from_bytes(bytes) {
+            for lump in wad.lumps() {
+                prop_assert!(
+                    wad.lump_by_name(lump.name()).is_some(),
+                    "lump_by_name returned None for {:?}", lump.name()
+                );
+            }
+        }
+    }
+
+    // I-4: All lump names in strict mode are valid ASCII and at most 8 chars
+    #[test]
+    fn strict_lump_names_are_ascii(bytes in common::arb_valid_wad()) {
+        if let Ok(wad) = Wad::from_bytes(bytes) {
+            for lump in wad.lumps() {
+                prop_assert!(lump.name().is_ascii(), "non-ASCII name: {:?}", lump.name());
+                prop_assert!(lump.name().len() <= 8, "name too long: {:?}", lump.name());
+            }
+        }
+    }
+
+    // I-6: If strict parsing fails, lenient either also fails or produces at
+    // least one warning — strict Err must not become lenient Ok with no warnings.
+    #[test]
+    fn strict_errors_appear_in_lenient(
+        bytes in proptest::collection::vec(any::<u8>(), 0..8192usize)
+    ) {
+        let strict = Wad::from_bytes_with_options(
+            bytes.clone(),
+            ParseOptions::strict(),
+        );
+        if strict.is_err() {
+            let lenient = Wad::from_bytes_with_options(
+                bytes,
+                ParseOptions::lenient(),
+            );
+            if let Ok(wad) = lenient {
+                prop_assert!(
+                    !wad.warnings().is_empty(),
+                    "strict Err but lenient Ok with no warnings"
+                );
+            }
+        }
+    }
+
+    // I-7: lump_bytes returns Some for every valid index
+    #[test]
+    fn lump_bytes_always_in_bounds(bytes in common::arb_valid_wad()) {
+        if let Ok(wad) = Wad::from_bytes(bytes) {
+            for i in 0..wad.lump_count() {
+                prop_assert!(wad.lump_bytes(i).is_some(), "lump_bytes({i}) returned None");
+            }
+        }
+    }
 }
 
 #[test]

@@ -3,6 +3,7 @@
 use crustywad::map::{
     Linedef, Name8, Node, Sector, Seg, Sidedef, Subsector, Thing, Vertex, parse_records,
 };
+use proptest::prelude::*;
 
 #[test]
 fn parses_things() {
@@ -256,4 +257,33 @@ fn name8_full_8_bytes_no_null() {
 fn name8_all_null_returns_empty() {
     let record = Name8([0u8; 8]);
     assert_eq!(record.as_str_lossy(), "");
+}
+
+proptest! {
+    // I-5: parse_records::<Thing> never panics on arbitrary bytes
+    #[test]
+    fn parse_records_thing_no_panic(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        let _ = std::hint::black_box(
+            parse_records::<Thing>(&data)
+        );
+    }
+
+    // I-8: When data length is an exact multiple of THING_SIZE, a successful
+    // parse must yield exactly data.len() / THING_SIZE records.
+    #[test]
+    fn thing_trailing_bytes_semantics(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const THING_SIZE: usize = 10;
+        let result = parse_records::<Thing>(&data);
+        if data.len() % THING_SIZE == 0 {
+            if let Ok(records) = result {
+                prop_assert_eq!(records.len(), data.len() / THING_SIZE);
+            }
+            // Err is also acceptable (binrw decode failure on the record fields)
+        }
+        // Non-multiple lengths: only absence of panic is asserted (covered by I-5)
+    }
 }
