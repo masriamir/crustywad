@@ -4,11 +4,34 @@ mod cli;
 
 use std::process;
 
+use std::fmt::Write as _;
+
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
 use crustywad::{ParseOptions, Wad};
 
 use cli::{Cli, Format, SubCommand};
+
+/// Encodes a string as a JSON string literal (including surrounding `"`).
+/// Uses standard JSON `\uXXXX` escapes for control characters, ensuring
+/// output is always valid JSON regardless of the input content.
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => write!(out, "\\u{:04x}", c as u32).unwrap(),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
 
 /// Escapes a field value per RFC 4180: wraps in double-quotes if the value
 /// contains a comma, double-quote, or newline; internal double-quotes are
@@ -100,10 +123,10 @@ fn run(cli: Cli) -> Result<i32> {
                 Format::Json => {
                     for (i, lump) in wad.lumps().iter().enumerate() {
                         println!(
-                            r#"{{"index":{i},"filepos":{},"size":{},"name":{:?}}}"#,
+                            r#"{{"index":{i},"filepos":{},"size":{},"name":{}}}"#,
                             lump.filepos(),
                             lump.size(),
-                            lump.name()
+                            json_string(lump.name())
                         );
                     }
                 }
@@ -143,7 +166,9 @@ fn run(cli: Cli) -> Result<i32> {
                     // Result output goes to stdout; human diagnostic to stderr.
                     match cli.format {
                         Format::Human => eprintln!("error: {}: {e:#}", path.display()),
-                        Format::Json => println!(r#"{{"ok":false,"error":{:?}}}"#, e.to_string()),
+                        Format::Json => {
+                            println!(r#"{{"ok":false,"error":{}}}"#, json_string(&e.to_string()));
+                        }
                         Format::Csv => {
                             println!("ok");
                             println!("false");
