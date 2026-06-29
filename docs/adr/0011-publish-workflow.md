@@ -26,7 +26,7 @@ concrete configuration changes required to implement it.
 
 `crustywad` (the library) **must** be published before `crustywad-cli` (the
 binary). `crustywad-cli` carries a hard dependency on the library with an
-explicit version pin:
+explicit version requirement:
 
 ```toml
 crustywad = { path = "../crustywad", version = "0.1.0" }
@@ -146,9 +146,9 @@ Pros:
 - Each crate's release cadence can diverge naturally as the project matures.
 
 Cons:
-- Whenever the library version changes, the explicit pin in
-  `crustywad-cli/Cargo.toml` must be updated manually to match (see §1
-  manual step). This is the same checklist item as before, but it fires only
+- Whenever the library version changes beyond the caret range, the version
+  requirement in `crustywad-cli/Cargo.toml` must be updated manually to match
+  (see §1 manual step). This is the same checklist item as before, but it fires only
   on library releases rather than on every release.
 - Two version numbers to track instead of one.
 
@@ -240,9 +240,9 @@ The following steps must be completed **before** setting `publish = true` in
   with `description.workspace = true` in each crate (checklist item 3). None of
   these touch library source code, but they do require `Cargo.toml` and
   documentation file changes before the first publish succeeds.
-- The version pin in `crustywad-cli/Cargo.toml` must be updated manually
-  whenever the `crustywad` library version moves beyond the current constraint
-  range. A version bump outside the range breaks Cargo dependency resolution —
+- The version requirement in `crustywad-cli/Cargo.toml` must be updated
+  manually whenever `crustywad` bumps beyond the caret range (e.g., `0.1.x` →
+  `0.2.0`). A bump outside that range breaks Cargo dependency resolution —
   `cargo build`, `cargo test`, and `cargo clippy` all fail before `cargo deny
   check` runs. With independent versioning this only fires on library releases,
   not on every release. A future improvement would be a `release-plz` post-hook
