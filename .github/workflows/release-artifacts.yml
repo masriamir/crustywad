@@ -1,0 +1,78 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            binary: cwad
+            archive_ext: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            binary: cwad
+            archive_ext: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            binary: cwad
+            archive_ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: cwad.exe
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --package crustywad-cli --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf cwad-${{ matrix.target }}.tar.gz ${{ matrix.binary }}
+          mv cwad-${{ matrix.target }}.tar.gz ${{ github.workspace }}/
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path ${{ matrix.binary }} -DestinationPath ${{ github.workspace }}/cwad-${{ matrix.target }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cwad-${{ matrix.target }}
+          path: cwad-${{ matrix.target }}.${{ matrix.archive_ext }}
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: cwad-${{ matrix.target }}.${{ matrix.archive_ext }}
