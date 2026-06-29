@@ -110,7 +110,7 @@ flowchart TD
     BINRW1_ERR["Err(MapParseError::Binrw)"]
     ZSZ{record_size == 0?}
     ZSZ_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
-    C{bytes.len() %\nrecord_size == 0?}
+    C{"bytes.len() %\nrecord_size == 0?"}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
     E["Allocate Vec\ncapacity = bytes.len() / record_size\npush first record"]
     F{more bytes\nto read?}
@@ -139,7 +139,7 @@ flowchart TD
     J --> F
     F -- "no" --> K
 
-    subgraph examples[Concrete T examples]
+    subgraph examples["Concrete T examples"]
         T1["Thing\n10 bytes: x i16, y i16, angle u16\ntype_id u16, flags u16"]
         T2["Linedef\n14 bytes: 7 x u16"]
         T3["Vertex\n4 bytes: x i16, y i16"]
