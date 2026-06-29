@@ -43,6 +43,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(cli: Cli) -> Result<i32> {
     let options = if cli.lenient {
         ParseOptions::lenient()
@@ -53,7 +54,7 @@ fn run(cli: Cli) -> Result<i32> {
     match cli.command {
         SubCommand::Info { path } => {
             let wad = Wad::from_path_with_options(&path, options)
-                .with_context(|| format!("failed to open {}", path.display()))?;
+                .with_context(|| format!("failed to load {}", path.display()))?;
             for w in wad.warnings() {
                 eprintln!("warning: {w}");
             }
@@ -69,7 +70,11 @@ fn run(cli: Cli) -> Result<i32> {
                 ),
                 Format::Csv => {
                     println!("kind,lumps");
-                    println!("{:?},{}", wad.kind(), wad.lump_count());
+                    println!(
+                        "{},{}",
+                        csv_field(&format!("{:?}", wad.kind())),
+                        wad.lump_count()
+                    );
                 }
             }
             Ok(0)
@@ -77,7 +82,7 @@ fn run(cli: Cli) -> Result<i32> {
 
         SubCommand::List { path } => {
             let wad = Wad::from_path_with_options(&path, options)
-                .with_context(|| format!("failed to open {}", path.display()))?;
+                .with_context(|| format!("failed to load {}", path.display()))?;
             for w in wad.warnings() {
                 eprintln!("warning: {w}");
             }
