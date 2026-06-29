@@ -23,6 +23,7 @@ fn builder_produces_parseable_single_lump() {
     assert_eq!(wad.lump_count(), 1);
     assert_eq!(wad.lumps()[0].name(), "TESTLUMP");
     assert_eq!(wad.lumps()[0].size(), 5);
+    assert_eq!(wad.lump_data(&wad.lumps()[0]), b"hello");
 }
 
 #[test]
@@ -96,13 +97,19 @@ fn strict_rejects_name_longer_than_8() {
     let result = WadBuilder::new(WadKind::Pwad)
         .add_lump("TOOLONGNAME", b"")
         .build();
-    assert!(matches!(result, Err(crustywad::WriteError::NameTooLong { .. })));
+    assert!(matches!(
+        result,
+        Err(crustywad::WriteError::NameTooLong { .. })
+    ));
 }
 
 #[test]
 fn strict_rejects_unknown_magic() {
     let result = WadBuilder::new(WadKind::Unknown(*b"XWAD")).build();
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(crustywad::WriteError::UnknownMagicStrict)
+    ));
 }
 
 #[test]

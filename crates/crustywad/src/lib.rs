@@ -672,8 +672,8 @@ impl Wad {
     #[must_use]
     pub fn to_builder(&self) -> write::WadBuilder {
         let mut builder = write::WadBuilder::new(self.kind());
-        for (i, lump) in self.lumps().iter().enumerate() {
-            let data = self.lump_bytes(i).unwrap_or_default().to_vec();
+        for lump in self.lumps() {
+            let data = self.lump_data(lump).to_vec();
             builder.add_lump(lump.name(), data);
         }
         builder

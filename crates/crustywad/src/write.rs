@@ -219,9 +219,9 @@ impl WadBuilder {
     ///
     /// # Panics
     ///
-    /// This function does not panic under normal operation. The internal
-    /// `try_from` casts used during serialization are preceded by explicit
-    /// bounds checks that return [`WriteError`] before any overflow can occur.
+    /// Does not panic. The internal `expect` calls on `i32::try_from` are
+    /// preceded by explicit bounds checks that return [`WriteError`] before any
+    /// overflow can reach them.
     pub fn build_with_options(
         &self,
         opts: &WriteOptions,
@@ -298,7 +298,9 @@ impl WadBuilder {
                 return Err(WriteError::OffsetOverflow { offset });
             }
             filepos_list.push(offset);
-            offset = offset.saturating_add(entry.data.len());
+            offset = offset
+                .checked_add(entry.data.len())
+                .ok_or(WriteError::OffsetOverflow { offset })?;
         }
         let infotableofs = offset;
         if infotableofs > i32::MAX as usize {
