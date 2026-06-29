@@ -83,7 +83,7 @@ pub enum WriteError {
 /// Warnings are returned alongside the serialized bytes from
 /// [`WadBuilder::build_with_options`] when
 /// [`WriteOptions::strictness`] is [`Strictness::Lenient`].
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WriteWarning {
     /// A lump name longer than 8 bytes was truncated to fit the WAD name field.
     #[error("lump name {name:?} was truncated to 8 bytes")]
@@ -103,7 +103,7 @@ pub enum WriteWarning {
 /// let strict = WriteOptions::strict();
 /// let lenient = WriteOptions::lenient();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteOptions {
     /// Whether to use strict or lenient validation.
     pub strictness: Strictness,
@@ -324,8 +324,9 @@ impl WadBuilder {
 
         // Write lump data blobs.
         for entry in &self.lumps {
-            // Use io::Write to advance the cursor position alongside the data.
-            std::io::Write::write_all(&mut buf, &entry.data).expect("write to Vec is infallible");
+            let new_pos = buf.position() + entry.data.len() as u64;
+            buf.get_mut().extend_from_slice(&entry.data);
+            buf.set_position(new_pos);
         }
 
         // Write directory entries.
