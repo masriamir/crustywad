@@ -137,7 +137,7 @@ fn run(cli: Cli) -> Result<i32> {
                     // All parse and I/O errors exit 2 per ADR-0008 (malformed WAD = parse error).
                     // Result output goes to stdout; human diagnostic to stderr.
                     match cli.format {
-                        Format::Human => eprintln!("error: {e}"),
+                        Format::Human => eprintln!("error: {}: {e:#}", path.display()),
                         Format::Json => println!(r#"{{"ok":false,"error":{:?}}}"#, e.to_string()),
                         Format::Csv => {
                             println!("ok");
