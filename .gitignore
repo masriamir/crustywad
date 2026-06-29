@@ -20,7 +20,8 @@
 
 # Fuzzing (cargo-fuzz)
 /fuzz/target/
-/fuzz/corpus/
+# Auto-generated corpus entries from libFuzzer (hex-named); seed corpus files are committed
+fuzz/corpus/*/[0-9a-f][0-9a-f]*
 /fuzz/artifacts/
 /fuzz/coverage/
 

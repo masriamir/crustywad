@@ -1,0 +1,30 @@
+name: Fuzz
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 0'  # weekly, Sunday 02:00 UTC
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+      - name: Fuzz fuzz_wad_strict
+        run: cargo fuzz run fuzz_wad_strict -- -max_total_time=60
+        working-directory: fuzz
+      - name: Fuzz fuzz_wad_lenient
+        run: cargo fuzz run fuzz_wad_lenient -- -max_total_time=60
+        working-directory: fuzz
+      - name: Fuzz fuzz_parse_records_thing
+        run: cargo fuzz run fuzz_parse_records_thing -- -max_total_time=60
+        working-directory: fuzz
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz/artifacts/
