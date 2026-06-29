@@ -138,25 +138,90 @@ fn list_lenient_emits_warning_for_bad_magic() {
 }
 
 // ---------------------------------------------------------------------------
-// Error paths
+// `cwad validate`
 // ---------------------------------------------------------------------------
 
 #[test]
-fn missing_file_exits_nonzero() {
+fn validate_clean_wad_exits_0() {
+    let wad = write_wad(*b"IWAD", &[]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", wad.path().to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn validate_clean_wad_human_output() {
+    let wad = write_wad(*b"IWAD", &[]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok:"));
+}
+
+#[test]
+fn validate_json_format_ok() {
+    let wad = write_wad(*b"IWAD", &[]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "validate", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"ok\""));
+}
+
+#[test]
+fn validate_missing_file_exits_2() {
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "/nonexistent/path/to/missing.wad"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn validate_corrupt_wad_exits_1() {
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), b"NOTAWADX").unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", file.path().to_str().unwrap()])
+        .assert()
+        .code(1);
+}
+
+// ---------------------------------------------------------------------------
+// Exit codes and error paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn missing_file_exits_2() {
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", "/nonexistent/path/file.wad"])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
-fn invalid_magic_strict_mode_exits_nonzero() {
+fn invalid_magic_strict_mode_exits_1() {
     let file = NamedTempFile::new().unwrap();
     std::fs::write(file.path(), b"BOGUS_DATA_NOT_A_WAD").unwrap();
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
+}
+
+#[test]
+fn unknown_subcommand_exits_3() {
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["notasubcommand"])
+        .assert()
+        .code(3);
 }
