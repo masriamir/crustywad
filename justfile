@@ -53,4 +53,8 @@ fuzz:
 bench:
     cargo bench
 
-ci: build test lint doc deny
+# Check that living-doc anchor strings are present in all three doc files (ADR-0007).
+docs-sync:
+    python3 scripts/check_doc_anchors.py
+
+ci: build test lint doc deny docs-sync

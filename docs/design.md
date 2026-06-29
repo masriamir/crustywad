@@ -1,5 +1,9 @@
 # Design
 
+## Project overview
+
+`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is dual-licensed under MIT OR Apache-2.0.
+
 ## Goals
 
 - Provide a small, safe Rust library for Doom WAD file I/O.
@@ -29,6 +33,8 @@ See [Data model](diagrams/data-model.md) for the WAD on-disk layout and public A
 See [Data flow](diagrams/data-flow.md) for the read pipeline flowchart.
 
 ## Strict vs. lenient parsing
+
+Parsing is controlled by `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient }`.
 
 `Strictness::Strict` treats malformed magic, negative counts, out-of-range offsets, oversized lumps, and non-ASCII names as hard errors.
 
@@ -64,3 +70,29 @@ See [Data flow](diagrams/data-flow.md) for the map record parsing flowchart.
 - Optional Freedoom fixture coverage for real-world inputs.
 - `proptest` for parser invariants.
 - Future fuzzing and criterion benchmarks once the API surface expands.
+
+## Code conventions
+
+### Error handling
+
+All errors in the library crate use `thiserror`-derived enums (`ParseError`, `MapParseError`). `anyhow` is permitted only in `crustywad-cli`.
+
+### Documentation
+
+`missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment. All documentation uses American English spelling.
+
+### Safety
+
+`#![deny(unsafe_code)]` is set in the core library crate. Unsafe code is permitted only in `mmap.rs`.
+
+### Lints
+
+`clippy::all` and `clippy::pedantic` are enabled workspace-wide. All warnings are errors in CI.
+
+## Development workflow
+
+Run `just ci` before pushing. It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
+
+## Commit conventions
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat:`, `fix:`, `docs:`, `chore:`). Scope is encouraged: `feat(map):`, `fix(cli):`, etc.
