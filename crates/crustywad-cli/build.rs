@@ -16,6 +16,7 @@ use clap::CommandFactory as _;
 use clap_complete::{Shell, generate_to};
 
 fn main() -> Result<(), Error> {
+    println!("cargo:rerun-if-changed=src/cli.rs");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("completions");
     std::fs::create_dir_all(&out)?;
     let mut cmd = cli::Cli::command();

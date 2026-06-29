@@ -6,7 +6,7 @@ use std::process;
 
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
-use crustywad::{ParseError, ParseOptions, Wad};
+use crustywad::{ParseOptions, Wad};
 
 use cli::{Cli, Format, SubCommand};
 
@@ -117,21 +117,18 @@ fn run(cli: Cli) -> Result<i32> {
                     }
                     Ok(0)
                 }
-                Err(e @ ParseError::Io { .. }) => {
-                    // I/O failure (missing file, permission denied) — propagate
-                    // as an unrecoverable error so the caller receives exit 2.
-                    Err(e).with_context(|| format!("failed to open {}", path.display()))
-                }
                 Err(e) => {
+                    // All parse and I/O errors exit 2 per ADR-0008 (malformed WAD = parse error).
+                    // Result output goes to stdout; human diagnostic to stderr.
                     match cli.format {
                         Format::Human => eprintln!("error: {e}"),
-                        Format::Json => eprintln!(r#"{{"ok":false,"error":{:?}}}"#, e.to_string()),
+                        Format::Json => println!(r#"{{"ok":false,"error":{:?}}}"#, e.to_string()),
                         Format::Csv => {
-                            eprintln!("ok");
-                            eprintln!("false");
+                            println!("ok");
+                            println!("false");
                         }
                     }
-                    Ok(1)
+                    Ok(2)
                 }
             }
         }

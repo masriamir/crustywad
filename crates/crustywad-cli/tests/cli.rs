@@ -183,14 +183,14 @@ fn validate_missing_file_exits_2() {
 }
 
 #[test]
-fn validate_corrupt_wad_exits_1() {
+fn validate_corrupt_wad_exits_2() {
     let file = NamedTempFile::new().unwrap();
     std::fs::write(file.path(), b"NOTAWADX").unwrap();
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", file.path().to_str().unwrap()])
         .assert()
-        .code(1);
+        .code(2);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ fn missing_file_exits_2() {
 }
 
 #[test]
-fn invalid_magic_strict_mode_exits_1() {
+fn invalid_magic_strict_mode_exits_2() {
     let file = NamedTempFile::new().unwrap();
     std::fs::write(file.path(), b"BOGUS_DATA_NOT_A_WAD").unwrap();
     Command::cargo_bin("cwad")
