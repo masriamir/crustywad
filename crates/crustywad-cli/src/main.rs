@@ -10,6 +10,17 @@ use crustywad::{ParseOptions, Wad};
 
 use cli::{Cli, Format, SubCommand};
 
+/// Escapes a field value per RFC 4180: wraps in double-quotes if the value
+/// contains a comma, double-quote, or newline; internal double-quotes are
+/// escaped by doubling them.
+fn csv_field(s: &str) -> String {
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_owned()
+    }
+}
+
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(c) => c,
@@ -94,7 +105,12 @@ fn run(cli: Cli) -> Result<i32> {
                 Format::Csv => {
                     println!("index,filepos,size,name");
                     for (i, lump) in wad.lumps().iter().enumerate() {
-                        println!("{i},{},{},{}", lump.filepos(), lump.size(), lump.name());
+                        println!(
+                            "{i},{},{},{}",
+                            lump.filepos(),
+                            lump.size(),
+                            csv_field(lump.name())
+                        );
                     }
                 }
             }

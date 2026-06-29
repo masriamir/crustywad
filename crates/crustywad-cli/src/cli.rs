@@ -53,7 +53,7 @@ pub(crate) enum SubCommand {
         /// Path to the WAD file.
         path: PathBuf,
     },
-    /// Validate WAD correctness. Exits 0 if clean, 1 if errors, 2 on I/O failure.
+    /// Validate WAD correctness. Exits 0 if clean, 2 on I/O or parse error.
     Validate {
         /// Path to the WAD file.
         path: PathBuf,
