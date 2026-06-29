@@ -41,5 +41,6 @@ implementation begins.**
 | [0008](0008-cli-ux-architecture.md) | `cwad` CLI UX and architecture | Proposed |
 | [0009](0009-cargo-fuzz-harness.md) | `cargo-fuzz` harness for WAD parser | Proposed |
 | [0010](0010-proptest-strategy.md) | Proptest invariant testing strategy | Proposed |
+| [0011](0011-publish-workflow.md) | crates.io publish workflow | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
