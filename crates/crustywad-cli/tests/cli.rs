@@ -51,6 +51,30 @@ fn write_wad(kind: [u8; 4], lumps: &[(&str, &[u8])]) -> NamedTempFile {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn info_json_format() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\""))
+        .stdout(predicate::str::contains("\"lumps\""));
+}
+
+#[test]
+fn info_csv_format() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kind,lumps"))
+        .stdout(predicate::str::contains("Iwad,1"));
+}
+
+#[test]
 fn info_iwad() {
     let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
     Command::cargo_bin("cwad")
@@ -97,6 +121,74 @@ fn info_lenient_emits_warning_for_bad_magic() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn list_json_format() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[9])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"index\""))
+        .stdout(predicate::str::contains("\"name\""))
+        .stdout(predicate::str::contains("\"PLAYPAL\""));
+}
+
+#[test]
+fn list_csv_format() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[9])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("index,filepos,size,name"))
+        .stdout(predicate::str::contains("PLAYPAL"));
+}
+
+#[test]
+fn list_json_escapes_special_chars_in_lump_name() {
+    // Lump name with chars requiring JSON escaping: \ " \n \r \t \x01 P A
+    // (exactly 8 bytes — the WAD name field width).
+    // Exercises every escape arm in json_string().
+    let wad = write_wad(*b"IWAD", &[("\\\"\n\r\t\x01PA", &[1])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "-F",
+            "json",
+            "list",
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\\\\")) // \ → \\
+        .stdout(predicate::str::contains("\\\"")) // " → \"
+        .stdout(predicate::str::contains("\\n")) // newline
+        .stdout(predicate::str::contains("\\r")) // carriage return
+        .stdout(predicate::str::contains("\\t")) // tab
+        .stdout(predicate::str::contains("\\u0001")); // control char U+0001
+}
+
+#[test]
+fn list_csv_quotes_lump_name_with_comma() {
+    // Lump name containing a comma; csv_field() must wrap it in double-quotes.
+    let wad = write_wad(*b"IWAD", &[("A,B", &[1])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "-F",
+            "csv",
+            "list",
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"A,B\""));
+}
+
+#[test]
 fn list_shows_lump_names_and_indices() {
     let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[9, 9, 9]), ("COLORMAP", &[0])]);
     Command::cargo_bin("cwad")
@@ -140,6 +232,42 @@ fn list_lenient_emits_warning_for_bad_magic() {
 // ---------------------------------------------------------------------------
 // `cwad validate`
 // ---------------------------------------------------------------------------
+
+#[test]
+fn validate_csv_format_ok() {
+    let wad = write_wad(*b"IWAD", &[]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "validate", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("ok\ntrue\n");
+}
+
+#[test]
+fn validate_json_format_error() {
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), b"NOTAWAD").unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "validate", file.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"ok\":false"))
+        .stdout(predicate::str::contains("\"error\""));
+}
+
+#[test]
+fn validate_csv_format_error() {
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), b"NOTAWAD").unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "validate", file.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stdout("ok\nfalse\n");
+}
 
 #[test]
 fn validate_clean_wad_exits_0() {
@@ -194,8 +322,38 @@ fn validate_corrupt_wad_exits_2() {
 }
 
 // ---------------------------------------------------------------------------
+// `cwad validate` (lenient / warnings)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn validate_lenient_emits_warning_for_bad_magic() {
+    let mut bytes = build_wad(*b"NOPE", &[("TEST", &[1])]);
+    bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
+
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), &bytes).unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["--lenient", "validate", file.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"));
+}
+
+// ---------------------------------------------------------------------------
 // Exit codes and error paths
 // ---------------------------------------------------------------------------
+
+#[test]
+fn help_flag_exits_successfully() {
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success();
+}
 
 #[test]
 fn missing_file_exits_2() {
