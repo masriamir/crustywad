@@ -175,6 +175,7 @@ See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full f
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
 | `freedoom-tests` | no | Enables optional integration tests against local Freedoom fixture WADs |
+| `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
 
 ## Commit conventions
 
