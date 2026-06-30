@@ -383,3 +383,21 @@ fn unknown_subcommand_exits_3() {
         .assert()
         .code(3);
 }
+
+#[test]
+fn invalid_format_value_exits_3() {
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "notaformat", "info", "/dev/null"])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn missing_required_arg_exits_3() {
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .arg("info")
+        .assert()
+        .code(3);
+}
