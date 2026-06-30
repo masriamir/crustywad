@@ -70,9 +70,9 @@ Install [just](https://github.com/casey/just) then run these recipes:
 | Anchor drift check | `just docs-sync` |
 | Full CI check | `just ci` |
 
-**Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
+**Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
-Exact commands used in CI:
+Core Rust commands run by CI:
 
 ```bash
 cargo build --workspace --all-features
