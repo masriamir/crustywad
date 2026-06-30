@@ -1,0 +1,17 @@
+[package]
+name = "tools"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# This package is not part of the main workspace and is never built directly.
+# Its sole purpose is to give Dependabot a Cargo manifest to watch so it opens
+# automatic version-bump PRs when mdbook or mdbook-mermaid publish new releases.
+# The pages workflow reads the versions from this file at install time.
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+mdbook = "=0.5.3"
+mdbook-mermaid = "=0.17.0"
