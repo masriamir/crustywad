@@ -24,16 +24,8 @@ jobs:
       - name: Install mdBook and mdbook-mermaid
         # Versions are pinned in tools/Cargo.toml and kept current by Dependabot.
         run: |
-          mdbook_ver=$(python3 -c "
-          import tomllib
-          v = tomllib.load(open('tools/Cargo.toml', 'rb'))['dependencies']['mdbook']
-          print(v if isinstance(v, str) else v['version'])
-          ")
-          mermaid_ver=$(python3 -c "
-          import tomllib
-          v = tomllib.load(open('tools/Cargo.toml', 'rb'))['dependencies']['mdbook-mermaid']
-          print(v if isinstance(v, str) else v['version'])
-          ")
+          mdbook_ver=$(python3 -c "import tomllib; v=tomllib.load(open('tools/Cargo.toml','rb'))['dependencies']['mdbook']; print(v if isinstance(v,str) else v['version'])")
+          mermaid_ver=$(python3 -c "import tomllib; v=tomllib.load(open('tools/Cargo.toml','rb'))['dependencies']['mdbook-mermaid']; print(v if isinstance(v,str) else v['version'])")
           cargo install mdbook --version "$mdbook_ver" --locked
           cargo install mdbook-mermaid --version "$mermaid_ver" --locked
       - name: Generate mdbook-mermaid assets
