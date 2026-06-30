@@ -148,9 +148,6 @@ fn run(cli: Cli) -> Result<i32> {
         SubCommand::Validate { path } => {
             match Wad::from_path_with_options(&path, options) {
                 Ok(wad) => {
-                    for w in wad.warnings() {
-                        eprintln!("warning: {w}");
-                    }
                     match cli.format {
                         Format::Human => println!("ok: {}", path.display()),
                         Format::Json => println!(r#"{{"ok":true}}"#),
@@ -158,6 +155,9 @@ fn run(cli: Cli) -> Result<i32> {
                             println!("ok");
                             println!("true");
                         }
+                    }
+                    for w in wad.warnings() {
+                        eprintln!("warning: {w}");
                     }
                     Ok(0)
                 }
