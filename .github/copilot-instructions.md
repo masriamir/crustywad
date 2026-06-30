@@ -37,6 +37,9 @@ tests/
   fixtures/
     fetch_freedoom.py  # Script to download Freedoom WAD fixtures
     README.md          # Fixture documentation
+tools/
+  Cargo.toml           # Pinned versions of mdbook and mdbook-mermaid; Dependabot watches this
+  src/lib.rs           # Empty; makes the package a valid Cargo package for Dependabot resolution
 .github/
   codeql/
     codeql-config.yml  # Advanced CodeQL query configuration

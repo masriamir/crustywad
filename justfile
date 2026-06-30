@@ -14,8 +14,8 @@ fmt:
 doc:
     cargo doc --workspace --all-features --no-deps
 
-# Build the mdBook user guide. Requires: cargo install mdbook mdbook-mermaid
-# mdbook-mermaid install generates mermaid.min.js / mermaid-init.js (gitignored, built on demand).
+# Build the mdBook user guide. Requires mdbook and mdbook-mermaid; see tools/Cargo.toml for
+# pinned versions. mdbook-mermaid install generates mermaid.min.js / mermaid-init.js (gitignored).
 guide:
     mdbook-mermaid install docs/guide
     mdbook build docs/guide
