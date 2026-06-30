@@ -14,7 +14,7 @@ naming the anchor and the files where it is absent.
 
 Run from the repository root::
 
-    python scripts/check_doc_anchors.py
+    python3 scripts/check_doc_anchors.py
 
 Or via just::
 
@@ -80,15 +80,16 @@ def main() -> int:
         print(f"docs-sync: all {len(anchors)} anchor(s) found in all checked files.")
         return 0
 
-    print("docs-sync: anchor drift detected — the following anchors are missing:\n")
+    print("docs-sync: anchor drift detected — the following anchors are missing:\n", file=sys.stderr)
     for anchor, absent_files in failures:
-        print(f"  anchor: {anchor!r}")
+        print(f"  anchor: {anchor!r}", file=sys.stderr)
         for p in absent_files:
-            print(f"    missing from: {p}")
+            print(f"    missing from: {p}", file=sys.stderr)
     print(
         f"\n{len(failures)} anchor(s) out of {len(anchors)} failed. "
         "Update the missing files to include the anchor text, "
-        "or update anchors.txt if the convention wording changed."
+        "or update anchors.txt if the convention wording changed.",
+        file=sys.stderr,
     )
     return 1
 
