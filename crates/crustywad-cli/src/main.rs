@@ -78,9 +78,6 @@ fn run(cli: Cli) -> Result<i32> {
         SubCommand::Info { path } => {
             let wad = Wad::from_path_with_options(&path, options)
                 .with_context(|| format!("failed to load {}", path.display()))?;
-            for w in wad.warnings() {
-                eprintln!("warning: {w}");
-            }
             match cli.format {
                 Format::Human => {
                     println!("kind:  {:?}", wad.kind());
@@ -100,15 +97,15 @@ fn run(cli: Cli) -> Result<i32> {
                     );
                 }
             }
+            for w in wad.warnings() {
+                eprintln!("warning: {w}");
+            }
             Ok(0)
         }
 
         SubCommand::List { path } => {
             let wad = Wad::from_path_with_options(&path, options)
                 .with_context(|| format!("failed to load {}", path.display()))?;
-            for w in wad.warnings() {
-                eprintln!("warning: {w}");
-            }
             match cli.format {
                 Format::Human => {
                     for (i, lump) in wad.lumps().iter().enumerate() {
@@ -141,6 +138,9 @@ fn run(cli: Cli) -> Result<i32> {
                         );
                     }
                 }
+            }
+            for w in wad.warnings() {
+                eprintln!("warning: {w}");
             }
             Ok(0)
         }
