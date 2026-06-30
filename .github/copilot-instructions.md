@@ -37,6 +37,9 @@ tests/
   fixtures/
     fetch_freedoom.py  # Script to download Freedoom WAD fixtures
     README.md          # Fixture documentation
+tools/
+  Cargo.toml           # Pinned versions of mdbook and mdbook-mermaid; Dependabot watches this
+  src/lib.rs           # Empty; makes the package a valid Cargo package for Dependabot resolution
 .github/
   codeql/
     codeql-config.yml  # Advanced CodeQL query configuration
@@ -163,6 +166,7 @@ mdBook guide to GitHub Pages. That file is the single source of truth.
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
 | `freedoom-tests` | no | Enables optional Freedoom integration tests against local WAD fixtures |
+| `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
 
 ## Commit conventions
 
