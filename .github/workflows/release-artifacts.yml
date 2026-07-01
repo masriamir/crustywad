@@ -18,10 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # musl produces a fully static binary with no libc dependency.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             binary: cwad
             archive_ext: tar.gz
+          # macOS links against system dylibs (libSystem etc.); fully static
+          # binaries are not supported on Apple platforms. The binary is
+          # portable across macOS versions that ship those system libraries.
           - target: x86_64-apple-darwin
             os: macos-latest
             binary: cwad
@@ -30,6 +34,8 @@ jobs:
             os: macos-latest
             binary: cwad
             archive_ext: tar.gz
+          # +crt-static links the MSVC CRT statically, producing a
+          # self-contained exe with no MSVC runtime DLL dependency.
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             binary: cwad.exe
