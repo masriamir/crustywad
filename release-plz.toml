@@ -9,8 +9,10 @@ semver_check = false
 name = "crustywad"
 release = true
 publish = false
+changelog_path = "crates/crustywad/CHANGELOG.md"
 
 [[package]]
 name = "crustywad-cli"
 release = true
 publish = false
+changelog_path = "crates/crustywad-cli/CHANGELOG.md"
