@@ -301,17 +301,23 @@ proptest! {
             let lump = wad.lump(i).unwrap();
             let filepos = lump.filepos();
             let size = lump.size();
+            let end = filepos.saturating_add(size);
+            prop_assert!(
+                end <= original.len(),
+                "lump {} filepos={} + size={} = {} exceeds input length {}",
+                i, filepos, size, end, original.len()
+            );
             let slice = wad.lump_bytes(i);
-            prop_assert!(slice.is_some(), "lump_bytes({i}) returned None");
+            prop_assert!(slice.is_some(), "lump_bytes({}) returned None", i);
             let slice = slice.unwrap();
             prop_assert_eq!(
                 slice.len(), size,
                 "lump_bytes({}) length {} != lump.size() {}", i, slice.len(), size
             );
             prop_assert_eq!(
-                slice, &original[filepos..filepos + size],
+                slice, &original[filepos..end],
                 "lump_bytes({}) content does not match original bytes[{}..{}]",
-                i, filepos, filepos + size
+                i, filepos, end
             );
         }
     }
