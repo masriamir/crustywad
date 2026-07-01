@@ -37,15 +37,24 @@ assert_eq!(wad.lump(0).expect("missing lump").name(), "TEST");
 | Feature          | Default | Description |
 |------------------|---------|-------------|
 | `mmap`           | no  | Enables `Wad::from_path_mapped` for zero-copy memory-mapped loading |
+| `write`          | no  | Enables `WadBuilder`, `WriteError`, `WriteOptions`, and `WriteWarning` for WAD serialization |
 | `freedoom-tests` | no  | Enables integration tests against local Freedoom WAD fixtures (test-only; not useful as a library dependency) |
 
 # Strictness
 
-By default, parsing uses [`Strictness::Strict`] and returns the first
+[`Strictness`] controls validation on both the **read path** and the **write path**
+(requires the `write` feature).
+
+**Reading:** by default, parsing uses [`Strictness::Strict`] and returns the first
 [`ParseError`] encountered. Enable [`Strictness::Lenient`] via
 [`ParseOptions::lenient()`] to let the parser recover from well-understood
 anomalies (negative field values, out-of-bounds ranges, non-ASCII names) and
 collect [`ParseWarning`] values instead of aborting.
+
+**Writing:** [`WriteOptions::strict()`] (the default) rejects over-length lump names
+and non-standard magic with a [`WriteError`]. [`WriteOptions::lenient()`] truncates
+over-length names and writes non-standard magic as-is, returning [`WriteWarning`]
+values alongside the serialized bytes.
 "#]
 
 //! The current milestone implements real header and directory parsing plus typed
@@ -108,28 +117,47 @@ pub enum WadKind {
     Unknown([u8; 4]),
 }
 
-/// Controls how aggressively the parser validates malformed input.
+/// Controls how strictly `crustywad` validates WAD data during both reading and
+/// writing.
 ///
-/// Use `Strict` (the default) when loading files you expect to be well-formed
-/// — it surfaces problems immediately rather than silently producing a partial
-/// result.  Use `Lenient` when you need to inspect or salvage WADs that violate
-/// the spec, such as files produced by buggy editors or heavily modified game
-/// builds.  In lenient mode the parser emits [`ParseWarning`] values instead
-/// of aborting on recoverable anomalies; consult [`Wad::warnings()`] after
-/// loading.
+/// `Strictness` is shared by [`ParseOptions`] (read path) and
+/// [`WriteOptions`] (write path, requires the `write` feature).
+///
+/// **Reading:** use `Strict` (the default) when loading files you expect to be
+/// well-formed — it surfaces problems immediately rather than silently producing
+/// a partial result.  Use `Lenient` when you need to inspect or salvage WADs
+/// that violate the spec, such as files produced by buggy editors or heavily
+/// modified game builds.  In lenient mode the parser emits [`ParseWarning`]
+/// values instead of aborting on recoverable anomalies; consult
+/// [`Wad::warnings()`] after loading.
+///
+/// **Writing** (requires `write` feature): use `Strict` to reject any
+/// non-standard input (over-length lump names, non-standard magic).  Use
+/// `Lenient` to recover where possible — over-length names are truncated and
+/// non-standard magic is written as-is — and collect [`WriteWarning`]
+/// values returned by [`WadBuilder::build_with_options`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Strictness {
-    /// Abort on the first validation error and return it as [`ParseError`].
+    /// Abort on the first validation error and return it immediately.
     ///
-    /// Choose this when loading files that are expected to be spec-compliant.
-    /// It is the default and is equivalent to `ParseOptions::default()`.
+    /// On the read path this returns [`ParseError`]; on the write path this
+    /// returns [`WriteError`].  Choose this when the input is expected to be
+    /// spec-compliant.  It is the default and is equivalent to
+    /// `ParseOptions::default()` / `WriteOptions::default()`.
     Strict,
-    /// Attempt best-effort recovery and accumulate [`ParseWarning`] values.
+    /// Attempt best-effort recovery and accumulate warnings rather than errors.
     ///
-    /// Recoverable conditions (negative header fields, out-of-bounds lump
-    /// ranges, non-ASCII lump names) are clamped or decoded lossily and
-    /// recorded as warnings accessible via [`Wad::warnings()`].  Parsing
-    /// only fails if the underlying byte stream is fundamentally unreadable.
+    /// On the **read path**, recoverable conditions (negative header fields,
+    /// out-of-bounds lump ranges, non-ASCII lump names) are clamped or decoded
+    /// lossily and recorded as [`ParseWarning`] values accessible via
+    /// [`Wad::warnings()`].  Parsing only fails if the underlying byte stream
+    /// is fundamentally unreadable.
+    ///
+    /// On the **write path** (requires `write` feature), recoverable conditions
+    /// (over-length lump names, non-standard magic) produce [`WriteWarning`]
+    /// values returned alongside the serialized bytes.  Unrecoverable conditions
+    /// (NUL in a name, non-ASCII names, size or offset overflow) still return
+    /// [`WriteError`] in both modes.
     Lenient,
 }
 

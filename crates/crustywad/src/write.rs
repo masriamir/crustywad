@@ -91,6 +91,14 @@ pub enum WriteWarning {
         /// The original (un-truncated) lump name.
         name: String,
     },
+    /// A non-standard magic value was written because lenient mode was requested.
+    ///
+    /// In strict mode [`WriteError::UnknownMagicStrict`] is returned instead.
+    #[error("non-standard magic {magic:?} written (not IWAD or PWAD)")]
+    UnknownMagic {
+        /// The non-standard 4-byte magic value that was written.
+        magic: [u8; 4],
+    },
 }
 
 /// Options controlling write-time validation behavior.
@@ -215,7 +223,7 @@ impl WadBuilder {
     /// [`WriteOptions::strictness`]. See [`build`][Self::build] for the full list
     /// of error variants; in lenient mode [`WriteError::NameTooLong`] and
     /// [`WriteError::UnknownMagicStrict`] are replaced by [`WriteWarning::NameTruncated`]
-    /// and a raw-bytes write respectively.
+    /// and [`WriteWarning::UnknownMagic`] respectively.
     ///
     /// # Panics
     ///
@@ -235,6 +243,7 @@ impl WadBuilder {
             WadKind::Pwad => *b"PWAD",
             WadKind::Unknown(b) => {
                 if lenient {
+                    warnings.push(WriteWarning::UnknownMagic { magic: b });
                     b
                 } else {
                     return Err(WriteError::UnknownMagicStrict);
