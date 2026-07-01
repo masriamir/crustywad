@@ -475,8 +475,8 @@ fn build_with_lump_files_produces_correct_lumps() {
             "pwad",
             "-o",
             out.path().to_str().unwrap(),
-            &format!("PLAYPAL={}", lump1.path().display()),
-            &format!("COLORMAP={}", lump2.path().display()),
+            &format!("PLAYPAL={}", lump1.path().to_str().unwrap()),
+            &format!("COLORMAP={}", lump2.path().to_str().unwrap()),
         ])
         .assert()
         .success();

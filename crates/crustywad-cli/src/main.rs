@@ -203,7 +203,7 @@ fn run(cli: Cli) -> Result<i32> {
                     process::exit(3);
                 }
                 let data = std::fs::read(file_path)
-                    .with_context(|| format!("failed to read lump file {file_path:?}"))?;
+                    .with_context(|| format!("failed to read lump file {file_path}"))?;
                 builder.add_lump(name, data);
             }
 
@@ -224,7 +224,7 @@ fn run(cli: Cli) -> Result<i32> {
             std::fs::write(&output, &bytes)
                 .with_context(|| format!("failed to write {}", output.display()))?;
 
-            let lump_count = lumps.len();
+            let lump_count = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
             match cli.format {
                 Format::Human => println!(
                     "wrote {}: kind={:?} lumps: {lump_count}",

@@ -17,12 +17,12 @@ path = "src/main.rs"
 [features]
 default = []
 mmap = ["crustywad/mmap"]
-write = ["crustywad/write"]
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 # version must match workspace version — cargo-deny enforces wildcards = "deny"
+# write feature required for WadBuilder
 crustywad = { path = "../crustywad", version = "0.1.0", features = ["write"] }
 
 [build-dependencies]
