@@ -20,3 +20,7 @@
 
 - [Parse Pipeline](data-flow.md)
 - [Lump Hierarchy](lump-hierarchy.md)
+
+# Project
+
+- [Versioning and Release Policy](versioning.md)
