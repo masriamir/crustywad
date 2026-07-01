@@ -1,7 +1,7 @@
 # Versioning and Release Policy
 
-This page documents the SemVer guarantees, MSRV policy, shared versioning model, and
-release cadence for `crustywad` and `crustywad-cli`.
+This page documents the SemVer guarantees, MSRV policy, versioning model, and release
+cadence for `crustywad` and `crustywad-cli`.
 
 ---
 
@@ -83,23 +83,26 @@ Rules:
 
 ---
 
-## Shared Versioning
+## Versioning Model
 
-`crustywad` (the library) and `crustywad-cli` (the CLI binary) share a workspace version.
-Both crates use `version.workspace = true`, inheriting their version from
-`[workspace.package]` in the root `Cargo.toml`.
+### Current state: shared workspace version
 
-This means:
-
-- A single version bump increments the version for both crates simultaneously.
-- `release-plz` determines the bump level from the highest-impact Conventional Commit
-  across both crates since the last release.
-- Library consumers see version increments that reflect changes in either crate.
+Both crates currently use `version.workspace = true`, inheriting their version from
+`[workspace.package]` in the root `Cargo.toml`. A single version bump increments the
+version for both crates simultaneously.
 
 **Dependency constraint:** `crustywad-cli/Cargo.toml` also pins the library as an explicit
 caret requirement (e.g., `crustywad = { version = "0.1.0", ... }`). `cargo-deny` requires
 this (`wildcards = "deny"`). When the workspace version is bumped, this field must be
 updated manually to match before merging — otherwise `cargo deny check` fails.
+
+### Planned: independent per-crate versioning
+
+Per [ADR-0011](https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md),
+the chosen long-term strategy is independent per-crate versioning: each crate will carry
+its own explicit `version` field rather than inheriting from the workspace. This migration
+is a required step before enabling crates.io publishing. Until then, both crates share the
+workspace version as described above.
 
 ---
 
