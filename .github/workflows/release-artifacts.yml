@@ -32,6 +32,7 @@ jobs:
             os: windows-latest
             binary: cwad.exe
             archive_ext: zip
+            rustflags: "-C target-feature=+crt-static"
 
     steps:
       - uses: actions/checkout@v7
@@ -49,6 +50,8 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags || '' }}
         run: cargo build --release --package crustywad-cli --target ${{ matrix.target }}
 
       - name: Package (Unix)
