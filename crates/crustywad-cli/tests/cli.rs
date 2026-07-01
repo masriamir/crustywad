@@ -59,7 +59,9 @@ fn info_json_format() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"kind\""))
-        .stdout(predicate::str::contains("\"lumps\""));
+        .stdout(predicate::str::contains("\"lumps\""))
+        .stdout(predicate::str::contains("\"data_size\""))
+        .stdout(predicate::str::contains("\"maps\""));
 }
 
 #[test]
@@ -70,8 +72,8 @@ fn info_csv_format() {
         .args(["-F", "csv", "info", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("kind,lumps"))
-        .stdout(predicate::str::contains("Iwad,1"));
+        .stdout(predicate::str::contains("kind,lumps,data_size,maps"))
+        .stdout(predicate::str::contains("Iwad,1,3,"));
 }
 
 #[test]
@@ -83,7 +85,9 @@ fn info_iwad() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Iwad"))
-        .stdout(predicate::str::contains("lumps: 1"));
+        .stdout(predicate::str::contains("lumps:"))
+        .stdout(predicate::str::contains("1"))
+        .stdout(predicate::str::contains("data size: 3 bytes"));
 }
 
 #[test]
@@ -95,7 +99,87 @@ fn info_pwad() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Pwad"))
-        .stdout(predicate::str::contains("lumps: 2"));
+        .stdout(predicate::str::contains("lumps:"))
+        .stdout(predicate::str::contains("2"))
+        .stdout(predicate::str::contains("data size: 3 bytes"));
+}
+
+#[test]
+fn info_maps_doom1_style() {
+    // E1M1 is a zero-size marker lump followed by THINGS etc. in real WADs, but
+    // the map-detection logic only checks the lump name, not the size.
+    let wad = write_wad(
+        *b"IWAD",
+        &[("E1M1", &[]), ("THINGS", &[0; 10]), ("E1M2", &[])],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("maps:"))
+        .stdout(predicate::str::contains("E1M1, E1M2"));
+}
+
+#[test]
+fn info_maps_doom2_style() {
+    let wad = write_wad(
+        *b"IWAD",
+        &[("MAP01", &[]), ("THINGS", &[0; 10]), ("MAP02", &[])],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("maps:"))
+        .stdout(predicate::str::contains("MAP01, MAP02"));
+}
+
+#[test]
+fn info_maps_json_includes_array() {
+    let wad = write_wad(*b"IWAD", &[("MAP01", &[]), ("THINGS", &[0; 4])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"maps\":[\"MAP01\"]"));
+}
+
+#[test]
+fn info_no_maps_json_empty_array() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"maps\":[]"));
+}
+
+#[test]
+fn info_no_maps_human_no_maps_line() {
+    // When there are no maps the "maps:" line should be absent.
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("maps:").not());
+}
+
+#[test]
+fn info_data_size_sums_all_lumps() {
+    // Three lumps: 4 + 8 + 2 = 14 bytes total data.
+    let wad = write_wad(*b"PWAD", &[("A", &[0; 4]), ("B", &[0; 8]), ("C", &[0; 2])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("data size: 14 bytes"));
 }
 
 #[test]
