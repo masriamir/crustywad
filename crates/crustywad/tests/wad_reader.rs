@@ -215,7 +215,7 @@ proptest! {
 
     // I-1: No panic on arbitrary bytes (strict mode)
     #[test]
-    fn no_panic_strict_arbitrary_bytes(data in proptest::collection::vec(any::<u8>(), 0..8192usize)) {
+    fn no_panic_strict_arbitrary_bytes(data in proptest::collection::vec(any::<u8>(), 0..=8192usize)) {
         let _ = std::hint::black_box(
             Wad::from_bytes_with_options(data, ParseOptions::strict())
         );
@@ -223,19 +223,20 @@ proptest! {
 
     // I-1: No panic on arbitrary bytes (lenient mode)
     #[test]
-    fn no_panic_lenient_arbitrary_bytes(data in proptest::collection::vec(any::<u8>(), 0..8192usize)) {
+    fn no_panic_lenient_arbitrary_bytes(data in proptest::collection::vec(any::<u8>(), 0..=8192usize)) {
         let _ = std::hint::black_box(
             Wad::from_bytes_with_options(data, ParseOptions::lenient())
         );
     }
 
-    // I-2: lump_count() == lumps().len() for any structurally valid WAD
+    // I-2: lump_count() == lumps().len() == header().num_lumps for any structurally valid WAD
     #[test]
     fn lump_count_consistent(bytes in common::arb_valid_wad()) {
         let result = Wad::from_bytes(bytes);
         prop_assert!(result.is_ok(), "arb_valid_wad() must produce parseable bytes: {:?}", result.err());
         let wad = result.unwrap();
         prop_assert_eq!(wad.lump_count(), wad.lumps().len());
+        prop_assert_eq!(wad.lump_count(), wad.header().num_lumps);
     }
 
     // I-3: lump_by_name agrees with lumps() for every lump in the directory
@@ -268,7 +269,7 @@ proptest! {
     // least one warning — strict Err must not become lenient Ok with no warnings.
     #[test]
     fn strict_errors_appear_in_lenient(
-        bytes in proptest::collection::vec(any::<u8>(), 0..8192usize)
+        bytes in proptest::collection::vec(any::<u8>(), 0..=8192usize)
     ) {
         let strict = Wad::from_bytes_with_options(
             bytes.clone(),
@@ -288,14 +289,30 @@ proptest! {
         }
     }
 
-    // I-7: lump_bytes returns Some for every valid index
+    // I-7: lump_bytes returns Some for every valid index and the returned slice
+    // is fully within the original input bytes (correct range, correct content).
     #[test]
     fn lump_bytes_always_in_bounds(bytes in common::arb_valid_wad()) {
+        let original = bytes.clone();
         let result = Wad::from_bytes(bytes);
         prop_assert!(result.is_ok(), "arb_valid_wad() must produce parseable bytes: {:?}", result.err());
         let wad = result.unwrap();
         for i in 0..wad.lump_count() {
-            prop_assert!(wad.lump_bytes(i).is_some(), "lump_bytes({i}) returned None");
+            let lump = wad.lump(i).unwrap();
+            let filepos = lump.filepos();
+            let size = lump.size();
+            let slice = wad.lump_bytes(i);
+            prop_assert!(slice.is_some(), "lump_bytes({i}) returned None");
+            let slice = slice.unwrap();
+            prop_assert_eq!(
+                slice.len(), size,
+                "lump_bytes({}) length {} != lump.size() {}", i, slice.len(), size
+            );
+            prop_assert_eq!(
+                slice, &original[filepos..filepos + size],
+                "lump_bytes({}) content does not match original bytes[{}..{}]",
+                i, filepos, filepos + size
+            );
         }
     }
 }
