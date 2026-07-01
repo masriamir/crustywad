@@ -13,7 +13,7 @@ jobs:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -76,8 +76,22 @@ jobs:
           name: cwad-${{ matrix.target }}
           path: cwad-${{ matrix.target }}.${{ matrix.archive_ext }}
 
+  publish:
+    name: Publish release assets
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: cwad-*
+          merge-multiple: true
+
       - name: Upload to release
-        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: cwad-${{ matrix.target }}.${{ matrix.archive_ext }}
+          files: artifacts/*
