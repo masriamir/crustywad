@@ -17,12 +17,13 @@ path = "src/main.rs"
 [features]
 default = []
 mmap = ["crustywad/mmap"]
+write = ["crustywad/write"]
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 # version must match workspace version — cargo-deny enforces wildcards = "deny"
-crustywad = { path = "../crustywad", version = "0.1.0" }
+crustywad = { path = "../crustywad", version = "0.1.0", features = ["write"] }
 
 [build-dependencies]
 clap.workspace = true
@@ -30,6 +31,8 @@ clap_complete.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
+# version must match workspace version — cargo-deny enforces wildcards = "deny"
+crustywad = { path = "../crustywad", version = "0.1.0" }
 predicates.workspace = true
 tempfile.workspace = true
 

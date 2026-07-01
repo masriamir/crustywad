@@ -40,6 +40,16 @@ pub(crate) struct Cli {
     pub(crate) format: Format,
 }
 
+/// WAD kind for the `build` subcommand.
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub(crate) enum WadKindArg {
+    /// IWAD — the main game data file.
+    Iwad,
+    /// PWAD — a patch or add-on WAD (default).
+    #[default]
+    Pwad,
+}
+
 /// Available `cwad` subcommands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SubCommand {
@@ -57,5 +67,22 @@ pub(crate) enum SubCommand {
     Validate {
         /// Path to the WAD file.
         path: PathBuf,
+    },
+    /// Build a new WAD file from lump data files.
+    ///
+    /// Lumps are specified as `NAME=FILE` pairs. The WAD kind defaults to PWAD.
+    Build {
+        /// Output WAD file path.
+        #[arg(short = 'o', long, value_name = "OUTPUT")]
+        output: PathBuf,
+        /// WAD kind: `iwad` or `pwad` (default: `pwad`).
+        #[arg(long, default_value = "pwad", value_name = "KIND")]
+        kind: WadKindArg,
+        /// Lump specifications as `NAME=FILE` pairs.
+        ///
+        /// Each argument must be of the form `LUMP_NAME=path/to/data.bin`.
+        /// Lumps are added to the WAD in the order they are listed.
+        #[arg(value_name = "NAME=FILE")]
+        lumps: Vec<String>,
     },
 }

@@ -401,3 +401,159 @@ fn missing_required_arg_exits_3() {
         .assert()
         .code(3);
 }
+
+// ---------------------------------------------------------------------------
+// `cwad build`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_empty_pwad_exits_0() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--kind",
+            "pwad",
+            "-o",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    // Output file must be a valid WAD.
+    let bytes = std::fs::read(out.path()).unwrap();
+    assert!(crustywad::Wad::from_bytes(bytes).is_ok());
+}
+
+#[test]
+fn build_empty_iwad_exits_0() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--kind",
+            "iwad",
+            "-o",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.kind(), crustywad::WadKind::Iwad);
+    assert_eq!(wad.lump_count(), 0);
+}
+
+#[test]
+fn build_default_kind_is_pwad() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.kind(), crustywad::WadKind::Pwad);
+}
+
+#[test]
+fn build_with_lump_files_produces_correct_lumps() {
+    // Create two lump data files.
+    let lump1 = NamedTempFile::new().unwrap();
+    std::fs::write(lump1.path(), b"\x01\x02\x03").unwrap();
+    let lump2 = NamedTempFile::new().unwrap();
+    std::fs::write(lump2.path(), b"\xAA\xBB").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--kind",
+            "pwad",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("PLAYPAL={}", lump1.path().display()),
+            &format!("COLORMAP={}", lump2.path().display()),
+        ])
+        .assert()
+        .success();
+
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.lump_count(), 2);
+    assert_eq!(wad.lump(0).unwrap().name(), "PLAYPAL");
+    assert_eq!(wad.lump(1).unwrap().name(), "COLORMAP");
+    assert_eq!(wad.lump_data(wad.lump(0).unwrap()), b"\x01\x02\x03");
+    assert_eq!(wad.lump_data(wad.lump(1).unwrap()), b"\xAA\xBB");
+}
+
+#[test]
+fn build_human_output_reports_lump_count() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lumps: 0"));
+}
+
+#[test]
+fn build_json_output_ok_true() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"ok\":true"));
+}
+
+#[test]
+fn build_csv_output_ok_true() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("ok\ntrue\n");
+}
+
+#[test]
+fn build_missing_lump_file_exits_2() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            "BADLUMP=/nonexistent/path/lump.bin",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn build_invalid_lump_spec_exits_3() {
+    // A lump spec without '=' is a usage error.
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap(), "NOEQUALSSIGN"])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_missing_output_arg_exits_3() {
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build"])
+        .assert()
+        .code(3);
+}

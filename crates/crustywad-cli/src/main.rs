@@ -8,9 +8,9 @@ use std::fmt::Write as _;
 
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
-use crustywad::{ParseOptions, Wad};
+use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
 
-use cli::{Cli, Format, SubCommand};
+use cli::{Cli, Format, SubCommand, WadKindArg};
 
 /// Encodes a string as a JSON string literal (including surrounding `"`).
 /// Uses standard JSON `\uXXXX` escapes for control characters, ensuring
@@ -177,6 +177,67 @@ fn run(cli: Cli) -> Result<i32> {
                     Ok(2)
                 }
             }
+        }
+
+        SubCommand::Build {
+            output,
+            kind,
+            lumps,
+        } => {
+            let wad_kind = match kind {
+                WadKindArg::Iwad => WadKind::Iwad,
+                WadKindArg::Pwad => WadKind::Pwad,
+            };
+            let mut builder = WadBuilder::new(wad_kind);
+
+            // Parse and load each NAME=FILE lump specification.
+            for spec in &lumps {
+                let Some((name, file_path)) = spec.split_once('=') else {
+                    eprintln!("error: invalid lump specification {spec:?}: expected NAME=FILE");
+                    process::exit(3);
+                };
+                if name.is_empty() || file_path.is_empty() {
+                    eprintln!(
+                        "error: invalid lump specification {spec:?}: name and file must not be empty"
+                    );
+                    process::exit(3);
+                }
+                let data = std::fs::read(file_path)
+                    .with_context(|| format!("failed to read lump file {file_path:?}"))?;
+                builder.add_lump(name, data);
+            }
+
+            let write_opts = if cli.lenient {
+                crustywad::WriteOptions::lenient()
+            } else {
+                crustywad::WriteOptions::strict()
+            };
+
+            let (bytes, warnings) = builder
+                .build_with_options(&write_opts)
+                .with_context(|| format!("failed to build WAD {}", output.display()))?;
+
+            for w in &warnings {
+                eprintln!("warning: {w}");
+            }
+
+            std::fs::write(&output, &bytes)
+                .with_context(|| format!("failed to write {}", output.display()))?;
+
+            let lump_count = lumps.len();
+            match cli.format {
+                Format::Human => println!(
+                    "wrote {}: kind={:?} lumps: {lump_count}",
+                    output.display(),
+                    wad_kind
+                ),
+                Format::Json => println!(r#"{{"ok":true,"lumps":{lump_count}}}"#),
+                Format::Csv => {
+                    println!("ok");
+                    println!("true");
+                }
+            }
+            Ok(0)
         }
     }
 }
