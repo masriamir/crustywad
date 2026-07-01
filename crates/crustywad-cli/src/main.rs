@@ -8,9 +8,9 @@ use std::fmt::Write as _;
 
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
-use crustywad::{ParseOptions, Wad};
+use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
 
-use cli::{Cli, Format, SubCommand};
+use cli::{Cli, Format, SubCommand, WadKindArg};
 
 /// Encodes a string as a JSON string literal (including surrounding `"`).
 /// Uses standard JSON `\uXXXX` escapes for control characters, ensuring
@@ -177,6 +177,31 @@ fn run(cli: Cli) -> Result<i32> {
                     Ok(2)
                 }
             }
+        }
+
+        SubCommand::Merge {
+            inputs,
+            output,
+            kind,
+        } => {
+            let wad_kind = match kind {
+                WadKindArg::Iwad => WadKind::Iwad,
+                WadKindArg::Pwad => WadKind::Pwad,
+            };
+            let mut builder = WadBuilder::new(wad_kind);
+            for path in &inputs {
+                let wad = Wad::from_path_with_options(path, options)
+                    .with_context(|| format!("failed to load {}", path.display()))?;
+                for lump in wad.lumps() {
+                    builder.add_lump(lump.name(), wad.lump_data(lump).to_vec());
+                }
+            }
+            let bytes = builder
+                .build()
+                .with_context(|| "failed to build merged WAD")?;
+            std::fs::write(&output, &bytes)
+                .with_context(|| format!("failed to write {}", output.display()))?;
+            Ok(0)
         }
     }
 }

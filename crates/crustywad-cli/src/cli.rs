@@ -9,6 +9,17 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+/// The WAD kind to use when writing the output WAD.
+///
+/// Passed to `--kind` on subcommands that write a WAD file (e.g. `merge`).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum WadKindArg {
+    /// Write an IWAD (main game data file).
+    Iwad,
+    /// Write a PWAD (patch/add-on WAD).
+    Pwad,
+}
+
 /// Output format for structured subcommand output.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum Format {
@@ -57,5 +68,16 @@ pub(crate) enum SubCommand {
     Validate {
         /// Path to the WAD file.
         path: PathBuf,
+    },
+    /// Merge multiple WAD files into one.
+    Merge {
+        /// Input WAD files to merge (in order).
+        inputs: Vec<PathBuf>,
+        /// Output WAD file path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Output WAD kind.
+        #[arg(long, default_value = "pwad")]
+        kind: WadKindArg,
     },
 }

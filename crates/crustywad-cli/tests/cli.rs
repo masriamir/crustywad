@@ -401,3 +401,178 @@ fn missing_required_arg_exits_3() {
         .assert()
         .code(3);
 }
+
+// ---------------------------------------------------------------------------
+// `cwad merge`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn merge_two_wads_contains_all_lumps_in_order() {
+    let wad1 = write_wad(*b"IWAD", &[("ALPHA", &[1, 2, 3]), ("BETA", &[4])]);
+    let wad2 = write_wad(*b"PWAD", &[("GAMMA", &[5, 6])]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "merge",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Verify all three lump names are present.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["list", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ALPHA"))
+        .stdout(predicate::str::contains("BETA"))
+        .stdout(predicate::str::contains("GAMMA"));
+
+    // Verify lump order: ALPHA before BETA, BETA before GAMMA.
+    let stdout = Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "list", out.path().to_str().unwrap()])
+        .output()
+        .unwrap()
+        .stdout;
+    let text = String::from_utf8(stdout).unwrap();
+    let alpha_pos = text.find("ALPHA").unwrap();
+    let beta_pos = text.find("BETA").unwrap();
+    let gamma_pos = text.find("GAMMA").unwrap();
+    assert!(alpha_pos < beta_pos, "ALPHA should come before BETA");
+    assert!(beta_pos < gamma_pos, "BETA should come before GAMMA");
+
+    // Verify total lump count.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lumps: 3"));
+}
+
+#[test]
+fn merge_output_is_parseable_wad() {
+    let wad1 = write_wad(*b"PWAD", &[("TEST", &[0xAB, 0xCD])]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "merge",
+            wad1.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn merge_default_kind_is_pwad() {
+    let wad1 = write_wad(*b"IWAD", &[("LUMP", &[1])]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "merge",
+            wad1.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Pwad"));
+}
+
+#[test]
+fn merge_kind_flag_iwad() {
+    let wad1 = write_wad(*b"PWAD", &[("LUMP", &[1])]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "merge",
+            wad1.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+            "--kind",
+            "iwad",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Iwad"));
+}
+
+#[test]
+fn merge_missing_input_exits_2() {
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "merge",
+            "/nonexistent/path/missing.wad",
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn merge_preserves_lump_data() {
+    let data1: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
+    let data2: &[u8] = &[0xCA, 0xFE];
+    let wad1 = write_wad(*b"PWAD", &[("LUMP1", data1)]);
+    let wad2 = write_wad(*b"PWAD", &[("LUMP2", data2)]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "merge",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let bytes = std::fs::read(out.path()).unwrap();
+    assert!(
+        bytes.windows(4).any(|w| w == [0xDE, 0xAD, 0xBE, 0xEF]),
+        "LUMP1 data should be present in output"
+    );
+    assert!(
+        bytes.windows(2).any(|w| w == [0xCA, 0xFE]),
+        "LUMP2 data should be present in output"
+    );
+}
