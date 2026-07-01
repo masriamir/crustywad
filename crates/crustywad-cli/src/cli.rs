@@ -58,4 +58,14 @@ pub(crate) enum SubCommand {
         /// Path to the WAD file.
         path: PathBuf,
     },
+    /// Compare two WAD files lump by lump.
+    ///
+    /// Exits 0 if the two WADs have identical lump directories and data,
+    /// 1 if any differences are found, or 2 on I/O or parse error.
+    Diff {
+        /// Path to the first WAD file.
+        file1: PathBuf,
+        /// Path to the second WAD file.
+        file2: PathBuf,
+    },
 }

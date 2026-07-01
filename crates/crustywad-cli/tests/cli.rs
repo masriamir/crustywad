@@ -343,6 +343,190 @@ fn validate_lenient_emits_warning_for_bad_magic() {
 }
 
 // ---------------------------------------------------------------------------
+// `cwad diff`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn diff_identical_wads_exits_0() {
+    let wad = write_wad(
+        *b"IWAD",
+        &[("THINGS", &[1, 2, 3]), ("LINEDEFS", &[4, 5, 6])],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad.path().to_str().unwrap(),
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn diff_different_lump_data_exits_1() {
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[9, 9, 9])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Changed"))
+        .stdout(predicate::str::contains("THINGS"));
+}
+
+#[test]
+fn diff_lump_only_in_first_exits_1() {
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1]), ("LINEDEFS", &[2])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Only in"))
+        .stdout(predicate::str::contains("LINEDEFS"));
+}
+
+#[test]
+fn diff_lump_only_in_second_exits_1() {
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[1]), ("NEWLUMP", &[99])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Only in"))
+        .stdout(predicate::str::contains("NEWLUMP"));
+}
+
+#[test]
+fn diff_missing_file_exits_2() {
+    let wad = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad.path().to_str().unwrap(),
+            "/nonexistent/path/missing.wad",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn diff_json_format_identical() {
+    let wad = write_wad(*b"IWAD", &[("THINGS", &[1, 2])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "json",
+            "diff",
+            wad.path().to_str().unwrap(),
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn diff_json_format_differences() {
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[2])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "json",
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("\"kind\""))
+        .stdout(predicate::str::contains("\"name\""))
+        .stdout(predicate::str::contains("\"THINGS\""));
+}
+
+#[test]
+fn diff_csv_format_identical() {
+    let wad = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "csv",
+            "diff",
+            wad.path().to_str().unwrap(),
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn diff_csv_format_differences() {
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[2])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "csv",
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("kind,name"))
+        .stdout(predicate::str::contains("changed,THINGS"));
+}
+
+#[test]
+fn diff_multiple_differences_all_reported() {
+    let wad1 = write_wad(
+        *b"IWAD",
+        &[("THINGS", &[1]), ("LINEDEFS", &[2]), ("SIDEDEFS", &[3])],
+    );
+    let wad2 = write_wad(
+        *b"IWAD",
+        &[("THINGS", &[9]), ("NEWLUMP", &[7]), ("SIDEDEFS", &[3])],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("THINGS"))
+        .stdout(predicate::str::contains("LINEDEFS"))
+        .stdout(predicate::str::contains("NEWLUMP"));
+}
+
+// ---------------------------------------------------------------------------
 // Exit codes and error paths
 // ---------------------------------------------------------------------------
 
