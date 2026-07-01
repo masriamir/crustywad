@@ -86,7 +86,8 @@ Rules:
   the declared MSRV on every PR. The toolchain version is pinned explicitly in
   `.github/workflows/ci.yml` and does not auto-track `[workspace.package].rust-version`. A
   PR that raises the MSRV must update both the `rust-version` field in `Cargo.toml` and the
-  `toolchain:` pin in the workflow file, then bump the crate version accordingly.
+  `toolchain:` pin in the workflow file, then bump the workspace version (a minor
+  bump, since all workspace crates share a single version via `version.workspace = true`).
 
 ---
 
