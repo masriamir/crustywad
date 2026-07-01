@@ -55,6 +55,8 @@ mod error;
 pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
+#[cfg(feature = "write")]
+pub mod write;
 
 use std::fs;
 use std::io::Cursor;
@@ -66,6 +68,8 @@ use binrw::{BinRead, BinReaderExt};
 use memmap2::Mmap;
 
 pub use error::{ParseError, ParseWarning};
+#[cfg(feature = "write")]
+pub use write::{WadBuilder, WriteError, WriteOptions, WriteWarning};
 
 /// The identified WAD variant, determined by the 4-byte magic at the start of
 /// the file.
@@ -328,6 +332,8 @@ impl Clone for Wad {
     }
 }
 
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, BinRead)]
 #[br(little)]
 struct RawHeader {
@@ -336,6 +342,8 @@ struct RawHeader {
     infotableofs: i32,
 }
 
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, Copy, BinRead)]
 #[br(little)]
 struct RawDirectoryEntry {
@@ -654,6 +662,21 @@ impl Wad {
             #[cfg(feature = "mmap")]
             WadData::Mapped(m) => m.to_vec(),
         }
+    }
+
+    /// Converts this `Wad` into a [`WadBuilder`] for round-tripping or editing.
+    ///
+    /// All lump data is copied into the builder. Memory usage roughly doubles
+    /// during the conversion.
+    #[cfg(feature = "write")]
+    #[must_use]
+    pub fn to_builder(&self) -> write::WadBuilder {
+        let mut builder = write::WadBuilder::new(self.kind());
+        for lump in self.lumps() {
+            let data = self.lump_data(lump).to_vec();
+            builder.add_lump(lump.name(), data);
+        }
+        builder
     }
 }
 

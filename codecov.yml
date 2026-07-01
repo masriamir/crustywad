@@ -1,0 +1,7 @@
+coverage:
+  status:
+    patch:
+      default:
+        # Defensive overflow guards (TooManyLumps, LumpTooLarge, OffsetOverflow)
+        # require >2 GB inputs and cannot be exercised in integration tests.
+        target: 90%

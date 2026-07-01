@@ -14,8 +14,8 @@ fmt:
 doc:
     cargo doc --workspace --all-features --no-deps
 
-# Build the mdBook user guide. Requires: cargo install mdbook mdbook-mermaid
-# mdbook-mermaid install generates mermaid.min.js / mermaid-init.js (gitignored, built on demand).
+# Build the mdBook user guide. Requires mdbook and mdbook-mermaid; see tools/Cargo.toml for
+# pinned versions. mdbook-mermaid install generates mermaid.min.js / mermaid-init.js (gitignored).
 guide:
     mdbook-mermaid install docs/guide
     mdbook build docs/guide
@@ -58,4 +58,8 @@ fuzz target="fuzz_wad_strict":
 bench:
     cargo bench
 
-ci: build test lint doc deny
+# Check that living-doc anchor strings are present in all three doc files (ADR-0007).
+docs-sync:
+    python3 scripts/check_doc_anchors.py
+
+ci: build test lint doc deny docs-sync

@@ -16,6 +16,7 @@ autobenches = false
 default = []
 mmap = ["dep:memmap2"]
 freedoom-tests = []
+write = []
 
 [dependencies]
 binrw.workspace = true
