@@ -91,10 +91,13 @@ Both crates currently use `version.workspace = true`, inheriting their version f
 `[workspace.package]` in the root `Cargo.toml`. A single version bump increments the
 version for both crates simultaneously.
 
-**Dependency constraint:** `crustywad-cli/Cargo.toml` also pins the library as an explicit
-caret requirement (e.g., `crustywad = { version = "0.1.0", ... }`). `cargo-deny` requires
-this (`wildcards = "deny"`). When the workspace version is bumped, this field must be
-updated manually to match before merging — otherwise `cargo deny check` fails.
+**Dependency constraint:** `crustywad-cli/Cargo.toml` pins the library with an explicit
+caret requirement (e.g., `crustywad = { version = "0.1.0", ... }`), required by
+`cargo-deny`'s `wildcards = "deny"` setting (which disallows `*` version requirements).
+`version = "0.1.0"` resolves as `^0.1.0` (`>=0.1.0, <0.2.0`), so patch bumps within
+the same minor series are satisfied automatically. When the workspace version moves outside
+that range (e.g., to `0.2.0`), this field must be updated manually before merging —
+otherwise `cargo build` and crates.io publishing will fail.
 
 ### Planned: independent per-crate versioning
 
