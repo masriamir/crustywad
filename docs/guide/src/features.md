@@ -9,6 +9,7 @@ allowing callers to opt in to additional capabilities.
 |---|---|---|
 | [`mmap`](#mmap) | no | Memory-mapped file loading via `memmap2` |
 | [`freedoom-tests`](#freedoom-tests) | no | Integration tests against local Freedoom WAD fixtures |
+| [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
 
 ---
 
@@ -108,6 +109,61 @@ it because the fixture WADs are gitignored and not downloaded in the standard CI
 
 ---
 
+## `write`
+
+**Enables:** `WadBuilder`, `WriteError`, `WriteWarning`, `WriteOptions`, and `Wad::to_builder`
+
+**Adds dependency:** none (uses `binrw` already in the dependency tree)
+
+Adds WAD serialization support. `WadBuilder` accumulates lumps and serializes them to a
+`Vec<u8>` in the canonical Doom WAD layout:
+`[12-byte header][lump data blobs][16-byte directory entries]`.
+
+### Usage
+
+```toml
+# Cargo.toml
+crustywad = { version = "0.1", features = ["write"] }
+```
+
+```rust
+use crustywad::{WadBuilder, WadKind};
+
+// Build a new PWAD from scratch:
+let bytes = WadBuilder::new(WadKind::Pwad)
+    .add_lump("MAP01", b"data")
+    .build()
+    .unwrap();
+
+assert!(crustywad::Wad::from_bytes(bytes).is_ok());
+```
+
+### Round-tripping a parsed WAD
+
+```rust
+use crustywad::{Wad, WadBuilder, WadKind};
+
+# let mut source = Vec::new();
+# source.extend_from_slice(b"PWAD");
+# source.extend_from_slice(&0_i32.to_le_bytes());
+# source.extend_from_slice(&12_i32.to_le_bytes());
+let wad = Wad::from_bytes(source).unwrap();
+let rebuilt = wad.to_builder().build().unwrap();
+```
+
+### Validation and error handling
+
+`WadBuilder::build` uses strict mode by default. Use `build_with_options` with
+`WriteOptions::lenient()` to collect recoverable issues as `WriteWarning` values instead:
+
+- Names with NUL bytes or non-ASCII bytes always error in both modes.
+- Names longer than 8 bytes: strict mode returns `WriteError::NameTooLong`; lenient mode
+  truncates and emits `WriteWarning::NameTruncated`.
+- `WadKind::Unknown` magic: strict mode returns `WriteError::UnknownMagicStrict`; lenient
+  mode writes the raw 4-byte magic.
+
+---
+
 ## Common `cargo` invocations
 
 | Goal | Command |
@@ -117,6 +173,8 @@ it because the fixture WADs are gitignored and not downloaded in the standard CI
 | Test with all features | `cargo test --workspace --all-features` |
 | Test with `mmap` only | `cargo test -p crustywad --features mmap` |
 | Test with Freedoom fixtures | `CRUSTYWAD_FREEDOOM_DIR=… cargo test -p crustywad --features freedoom-tests` |
+| Build with `write` | `cargo build -p crustywad --features write` |
+| Test with `write` | `cargo test -p crustywad --features write` |
 | Full CI check | `just ci` |
 
 See the [`justfile`](https://github.com/masriamir/crustywad/blob/main/justfile) for

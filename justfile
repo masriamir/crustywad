@@ -14,8 +14,8 @@ fmt:
 doc:
     cargo doc --workspace --all-features --no-deps
 
-# Build the mdBook user guide. Requires: cargo install mdbook mdbook-mermaid
-# mdbook-mermaid install generates mermaid.min.js / mermaid-init.js (gitignored, built on demand).
+# Build the mdBook user guide. Requires mdbook and mdbook-mermaid; see tools/Cargo.toml for
+# pinned versions. mdbook-mermaid install generates mermaid.min.js / mermaid-init.js (gitignored).
 guide:
     mdbook-mermaid install docs/guide
     mdbook build docs/guide
@@ -28,7 +28,7 @@ deny:
 
 # Download Freedoom fixtures. Override the release with e.g. `just fetch-fixtures version=v0.14.0`.
 fetch-fixtures version="":
-    python tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
+    python3 tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
 
 # Test the full workspace with all features enabled (alias for discoverability).
 test-all-features: test
@@ -47,10 +47,15 @@ test-mmap:
 test-freedoom dir="tests/fixtures/freedoom":
     CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests
 
-fuzz:
-    @echo "Fuzz targets are planned for a later milestone; see docs/design.md."
+# Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
+fuzz target="fuzz_wad_strict":
+    cd fuzz && cargo fuzz run {{target}}
 
 bench:
     cargo bench
 
-ci: build test lint doc deny
+# Check that living-doc anchor strings are present in all three doc files (ADR-0007).
+docs-sync:
+    python3 scripts/check_doc_anchors.py
+
+ci: build test lint doc deny docs-sync
