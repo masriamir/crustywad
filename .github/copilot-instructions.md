@@ -128,7 +128,7 @@ cargo doc --workspace --all-features --no-deps
 - The Freedoom version is configurable:
   - CLI: `just fetch-fixtures version=v0.14.0`
   - Environment variable: `FREEDOOM_VERSION=v0.14.0 just fetch-fixtures`
-  - Direct invocation: `python tests/fixtures/fetch_freedoom.py --version v0.14.0`
+  - Direct invocation: `python3 tests/fixtures/fetch_freedoom.py --version v0.14.0`
 - Fixture WADs are gitignored. Do not commit them.
 - Fixture tests skip gracefully when `CRUSTYWAD_FREEDOOM_DIR` is not set.
 
