@@ -27,7 +27,9 @@ Examples of patch changes:
 ### Minor releases (`0.MINOR.0`)
 
 A minor release adds new functionality in a backward-compatible way. Existing callers
-compile and run without modification.
+compile and run without modification on the same or a newer supported toolchain. (MSRV
+bumps are also minor releases — callers on a compiler older than the new MSRV will need
+to upgrade their toolchain.)
 
 Examples of minor changes:
 
@@ -40,6 +42,11 @@ Examples of minor changes:
 
 A major release contains at least one breaking change. Callers may need to update their
 code after upgrading.
+
+> **Pre-1.0 note:** While this crate is at `0.y.z`, there is no `1.0.0` to bump to.
+> Breaking changes are instead signaled by a **minor** bump (e.g. `0.1.0` → `0.2.0`).
+> The breaking-change examples below apply regardless of whether the release is `0.MINOR.0`
+> or a future `MAJOR.0.0`.
 
 Examples of breaking changes:
 
@@ -91,7 +98,7 @@ Both crates currently use `version.workspace = true`, inheriting their version f
 `[workspace.package]` in the root `Cargo.toml`. A single version bump increments the
 version for both crates simultaneously.
 
-**Dependency constraint:** `crustywad-cli/Cargo.toml` pins the library with an explicit
+**Dependency constraint:** `crates/crustywad-cli/Cargo.toml` pins the library with an explicit
 caret requirement (e.g., `crustywad = { version = "0.1.0", ... }`), required by
 `cargo-deny`'s `wildcards = "deny"` setting (which disallows `*` version requirements).
 `version = "0.1.0"` resolves as `^0.1.0` (`>=0.1.0, <0.2.0`), so patch bumps within
