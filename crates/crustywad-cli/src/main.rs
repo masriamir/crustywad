@@ -18,7 +18,7 @@ use cli::{Cli, Format, SubCommand};
 /// format (`E[1-9]M[1-9]`) or the Doom 2 numbered-map format (`MAP[0-9][0-9]`).
 /// The function does not check lump size — zero-size marker lumps and non-zero
 /// lumps with map names are both included, matching conventional WAD tooling
-/// behaviour.
+/// behavior.
 fn detect_maps(wad: &Wad) -> Vec<&str> {
     wad.lumps()
         .iter()
@@ -35,7 +35,7 @@ fn detect_maps(wad: &Wad) -> Vec<&str> {
 
 /// Returns `true` if `name` matches a Doom map-marker lump name.
 ///
-/// Recognised patterns:
+/// Recognized patterns:
 /// - `E[1-9]M[1-9]` — Doom 1 episode/map (e.g. `E1M1`, `E3M9`).
 /// - `MAP[0-9][0-9]` — Doom 2 numbered map (e.g. `MAP01`, `MAP32`).
 fn is_map_marker(name: &str) -> bool {
