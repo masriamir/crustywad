@@ -3,6 +3,7 @@
 use crustywad::map::{
     Linedef, Name8, Node, Sector, Seg, Sidedef, Subsector, Thing, Vertex, parse_records,
 };
+use proptest::prelude::*;
 
 #[test]
 fn parses_things() {
@@ -256,4 +257,37 @@ fn name8_full_8_bytes_no_null() {
 fn name8_all_null_returns_empty() {
     let record = Name8([0u8; 8]);
     assert_eq!(record.as_str_lossy(), "");
+}
+
+proptest! {
+    // I-5: parse_records::<Thing> never panics on arbitrary bytes
+    #[test]
+    fn parse_records_thing_no_panic(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        let _ = std::hint::black_box(
+            parse_records::<Thing>(&data)
+        );
+    }
+
+    // I-8: parse_records::<Thing> must return Ok with exactly len/10 records
+    // when the input length is an exact multiple of 10. Thing has five integer
+    // fields (i16/u16) with no validation, so any 10-byte sequence is a valid
+    // record — Err is never acceptable for this case.
+    #[test]
+    fn thing_trailing_bytes_semantics(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const THING_SIZE: usize = 10;
+        let result = parse_records::<Thing>(&data);
+        if data.len() % THING_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Thing> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), THING_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / THING_SIZE);
+        }
+        // Non-multiple lengths: only absence of panic is asserted (covered by I-5)
+    }
 }

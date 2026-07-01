@@ -60,7 +60,7 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     env:
-      RUSTDOCFLAGS: -D warnings
+      RUSTDOCFLAGS: --cfg docsrs -D warnings
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -90,3 +90,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny check
+
+  docs-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/check_doc_anchors.py

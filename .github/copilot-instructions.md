@@ -33,10 +33,16 @@ docs/
   guide/               # mdBook user guide — deployed to GitHub Pages; single source of truth for user-facing docs
     book.toml          # mdBook + mdbook-mermaid configuration
     src/               # Guide source pages (SUMMARY.md, *.md including features.md)
+scripts/
+  check_doc_anchors.py # Living-docs anchor drift detector (ADR-0007); run via `just docs-sync`
+anchors.txt            # Anchor strings that must appear verbatim in all three main doc files
 tests/
   fixtures/
     fetch_freedoom.py  # Script to download Freedoom WAD fixtures
     README.md          # Fixture documentation
+tools/
+  Cargo.toml           # Pinned versions of mdbook and mdbook-mermaid; Dependabot watches this
+  src/lib.rs           # Empty; makes the package a valid Cargo package for Dependabot resolution
 .github/
   codeql/
     codeql-config.yml  # Advanced CodeQL query configuration
@@ -61,11 +67,12 @@ Install [just](https://github.com/casey/just) then run these recipes:
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
 | Fetch Freedoom fixtures | `just fetch-fixtures` |
+| Anchor drift check | `just docs-sync` |
 | Full CI check | `just ci` |
 
-**Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
+**Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
-Exact commands used in CI:
+Core Rust commands run by CI:
 
 ```bash
 cargo build --workspace --all-features
@@ -121,7 +128,7 @@ cargo doc --workspace --all-features --no-deps
 - The Freedoom version is configurable:
   - CLI: `just fetch-fixtures version=v0.14.0`
   - Environment variable: `FREEDOOM_VERSION=v0.14.0 just fetch-fixtures`
-  - Direct invocation: `python tests/fixtures/fetch_freedoom.py --version v0.14.0`
+  - Direct invocation: `python3 tests/fixtures/fetch_freedoom.py --version v0.14.0`
 - Fixture WADs are gitignored. Do not commit them.
 - Fixture tests skip gracefully when `CRUSTYWAD_FREEDOOM_DIR` is not set.
 
@@ -163,6 +170,7 @@ mdBook guide to GitHub Pages. That file is the single source of truth.
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
 | `freedoom-tests` | no | Enables optional Freedoom integration tests against local WAD fixtures |
+| `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
 
 ## Commit conventions
 
@@ -212,6 +220,7 @@ The main CI pipeline (`.github/workflows/ci.yml`) runs:
 - `docs` — doc build with `-D warnings`
 - `coverage` — llvm-cov upload to Codecov
 - `security-deny` — `cargo deny check`
+- `docs-sync` — anchor drift check via `python3 scripts/check_doc_anchors.py`
 
 CodeQL static analysis (`.github/workflows/codeql.yml`) runs on push, pull request, and weekly on a schedule. It uses the advanced configuration in `.github/codeql/codeql-config.yml` which enables the `security-extended` and `security-and-quality` query suites.
 

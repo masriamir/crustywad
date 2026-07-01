@@ -110,7 +110,7 @@ flowchart TD
     BINRW1_ERR["Err(MapParseError::Binrw)"]
     ZSZ{record_size == 0?}
     ZSZ_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
-    C{bytes.len() %\nrecord_size == 0?}
+    C{"bytes.len() %\nrecord_size == 0?"}
     D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
     E["Allocate Vec\ncapacity = bytes.len() / record_size\npush first record"]
     F{more bytes\nto read?}
