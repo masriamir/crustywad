@@ -47,13 +47,9 @@ test-mmap:
 test-freedoom dir="tests/fixtures/freedoom":
     CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests
 
-# Run a fuzz target (requires nightly toolchain)
+# Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
 fuzz target="fuzz_wad_strict":
-    @echo "Fuzz targets require a nightly toolchain."
-    @echo "Install nightly: rustup toolchain install nightly"
-    @echo "Then run: cd fuzz && cargo +nightly fuzz run {{target}}"
-    @echo ""
-    @echo "Available targets: fuzz_wad_strict, fuzz_wad_lenient, fuzz_parse_records_thing"
+    cd fuzz && cargo fuzz run {{target}}
 
 bench:
     cargo bench
