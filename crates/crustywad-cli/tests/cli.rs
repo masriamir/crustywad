@@ -526,6 +526,59 @@ fn diff_multiple_differences_all_reported() {
         .stdout(predicate::str::contains("NEWLUMP"));
 }
 
+#[test]
+fn diff_duplicate_lump_count_differs_exits_1() {
+    // WAD1 has THINGS twice; WAD2 has THINGS once with the same data.
+    // The multiset comparison must detect the count difference and report Changed.
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3]), ("THINGS", &[1, 2, 3])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("THINGS"));
+}
+
+#[test]
+fn diff_duplicate_lumps_same_count_and_data_exits_0() {
+    // Both WADs have THINGS twice with identical data — must be identical.
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3]), ("THINGS", &[4, 5, 6])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3]), ("THINGS", &[4, 5, 6])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn diff_duplicate_lumps_order_differs_exits_1() {
+    // Both WADs have THINGS twice but in a different order — multiset comparison
+    // must detect the ordered-sequence difference.
+    let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3]), ("THINGS", &[4, 5, 6])]);
+    let wad2 = write_wad(*b"IWAD", &[("THINGS", &[4, 5, 6]), ("THINGS", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("THINGS"));
+}
+
 // ---------------------------------------------------------------------------
 // Exit codes and error paths
 // ---------------------------------------------------------------------------
