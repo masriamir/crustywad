@@ -28,7 +28,7 @@ deny:
 
 # Download Freedoom fixtures. Override the release with e.g. `just fetch-fixtures version=v0.14.0`.
 fetch-fixtures version="":
-    python tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
+    python3 tests/fixtures/fetch_freedoom.py {{ if version != "" { "--version " + version } else { "" } }}
 
 # Test the full workspace with all features enabled (alias for discoverability).
 test-all-features: test

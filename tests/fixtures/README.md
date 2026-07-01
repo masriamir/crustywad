@@ -21,5 +21,5 @@ FREEDOOM_VERSION=v0.14.0 just fetch-fixtures
 just fetch-fixtures version=v0.14.0
 
 # Direct invocation
-python tests/fixtures/fetch_freedoom.py --version v0.14.0
+python3 tests/fixtures/fetch_freedoom.py --version v0.14.0
 ```

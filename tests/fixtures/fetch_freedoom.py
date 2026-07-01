@@ -1,7 +1,7 @@
 """Fetch Freedoom WAD fixtures from a versioned GitHub release archive.
 
 Usage:
-    python tests/fixtures/fetch_freedoom.py [--version VERSION]
+    python3 tests/fixtures/fetch_freedoom.py [--version VERSION]
 
     VERSION defaults to the FREEDOOM_VERSION environment variable, then to
     the DEFAULT_VERSION constant below.  The "v" prefix is optional — both

@@ -181,10 +181,10 @@ core problem adequately.
 3. Add a `docs-sync` recipe to `justfile`:
    ```
    docs-sync:
-       python scripts/check_doc_anchors.py
+       python3 scripts/check_doc_anchors.py
    ```
 4. Add a `docs-sync` job to `.github/workflows/ci.yml` that runs
-   `python scripts/check_doc_anchors.py` on `ubuntu-latest` with no
+   `python3 scripts/check_doc_anchors.py` on `ubuntu-latest` with no
    Rust toolchain required.
 5. Update `.github/PULL_REQUEST_TEMPLATE.md` with a checklist reminding
    authors to update the anchor list when renaming a convention phrase.
