@@ -52,8 +52,8 @@ Column order: `index  filepos  size  name`.
 
 ### validate
 
-Check whether a WAD file parses without errors. Prints a result line to
-stdout and exits with the appropriate code (see [Exit codes](#exit-codes)).
+Check whether a WAD file parses without errors and exits with the
+appropriate code (see [Exit codes](#exit-codes)).
 
 ```text
 $ cwad validate doom.wad
