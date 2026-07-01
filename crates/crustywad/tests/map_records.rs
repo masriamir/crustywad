@@ -270,8 +270,10 @@ proptest! {
         );
     }
 
-    // I-8: When data length is an exact multiple of THING_SIZE, a successful
-    // parse must yield exactly data.len() / THING_SIZE records.
+    // I-8: parse_records::<Thing> must return Ok with exactly len/10 records
+    // when the input length is an exact multiple of 10. Thing has five integer
+    // fields (i16/u16) with no validation, so any 10-byte sequence is a valid
+    // record — Err is never acceptable for this case.
     #[test]
     fn thing_trailing_bytes_semantics(
         data in proptest::collection::vec(any::<u8>(), 0..4096usize)
@@ -279,10 +281,12 @@ proptest! {
         const THING_SIZE: usize = 10;
         let result = parse_records::<Thing>(&data);
         if data.len() % THING_SIZE == 0 {
-            if let Ok(records) = result {
-                prop_assert_eq!(records.len(), data.len() / THING_SIZE);
-            }
-            // Err is also acceptable (binrw decode failure on the record fields)
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Thing> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), THING_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / THING_SIZE);
         }
         // Non-multiple lengths: only absence of panic is asserted (covered by I-5)
     }
