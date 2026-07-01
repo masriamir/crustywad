@@ -1,13 +1,16 @@
 # Versioning and Release Policy
 
-This page documents the SemVer guarantees, MSRV policy, independent versioning model, and
+This page documents the SemVer guarantees, MSRV policy, shared versioning model, and
 release cadence for `crustywad` and `crustywad-cli`.
 
 ---
 
 ## Semantic Versioning
 
-Both crates follow [Semantic Versioning 2.0.0](https://semver.org/).
+Both crates follow [Semantic Versioning 2.0.0](https://semver.org/). While the crates are
+currently at `0.y.z` — which SemVer treats as explicitly unstable — this project uses
+patch, minor, and major increments as compatibility signals as documented on this page.
+A `0.y.z` version is not a license to make arbitrary breaking changes in patches.
 
 ### Patch releases (`0.x.PATCH`)
 
@@ -45,10 +48,13 @@ Examples of breaking changes:
 - Adding a variant to an exhaustive enum
 - Changing the behavior of an existing function in a way that violates the previous contract
 - Changing a feature flag that is on by default
+- Implementing a foreign trait (from `std` or a dependency) on an existing public type
+  (may cause coherence conflicts in downstream code)
 
 ### What is not a breaking change
 
-- Adding new public items (types, functions, methods, trait impls)
+- Adding new public items (types, functions, methods)
+- Adding new trait impls for traits defined in this crate
 - Adding variants to enums marked `#[non_exhaustive]`
 - Adding optional feature flags
 - Internal implementation changes with identical observable behavior
@@ -69,30 +75,31 @@ Rules:
 - **MSRV bumps are need-driven.** The MSRV will only be raised when there is a concrete need
   (for example, a required dependency or language feature), and only to a toolchain version
   that has been stable for a reasonable period.
-- **CI enforces the declared MSRV.** The `msrv` job in CI builds and tests the workspace
-  against the exact `rust-version` value on every PR. A PR that raises the MSRV must update
-  this field and bump the crate version accordingly.
+- **CI enforces the declared MSRV.** The `msrv` job in CI builds and tests the workspace on
+  the declared MSRV on every PR. The toolchain version is pinned explicitly in
+  `.github/workflows/ci.yml` and does not auto-track `[workspace.package].rust-version`. A
+  PR that raises the MSRV must update both the `rust-version` field in `Cargo.toml` and the
+  `toolchain:` pin in the workflow file, then bump the crate version accordingly.
 
 ---
 
-## Independent Versioning
+## Shared Versioning
 
-`crustywad` (the library) and `crustywad-cli` (the CLI binary) version independently.
-Each crate carries its own `version` field in its `Cargo.toml`.
+`crustywad` (the library) and `crustywad-cli` (the CLI binary) share a workspace version.
+Both crates use `version.workspace = true`, inheriting their version from
+`[workspace.package]` in the root `Cargo.toml`.
 
 This means:
 
-- A CLI bug fix increments `crustywad-cli`'s patch version without touching `crustywad`.
-- A library minor release increments `crustywad`'s minor version; `crustywad-cli` is
-  unchanged until a release is made for it.
-- Library consumers see version increments that reflect only API-relevant changes, reducing
-  semver noise.
+- A single version bump increments the version for both crates simultaneously.
+- `release-plz` determines the bump level from the highest-impact Conventional Commit
+  across both crates since the last release.
+- Library consumers see version increments that reflect changes in either crate.
 
-**Dependency constraint:** `crustywad-cli/Cargo.toml` pins the library as a caret
-requirement (e.g., `crustywad = { version = "0.1.0", ... }`). A caret requirement like
-`"0.1.0"` is satisfied by any `0.1.x` release. When `crustywad` bumps to `0.2.0` or
-beyond, the version requirement in `crustywad-cli/Cargo.toml` must be updated manually to
-match before merging — otherwise `cargo build` and CI fail.
+**Dependency constraint:** `crustywad-cli/Cargo.toml` also pins the library as an explicit
+caret requirement (e.g., `crustywad = { version = "0.1.0", ... }`). `cargo-deny` requires
+this (`wildcards = "deny"`). When the workspace version is bumped, this field must be
+updated manually to match before merging — otherwise `cargo deny check` fails.
 
 ---
 
