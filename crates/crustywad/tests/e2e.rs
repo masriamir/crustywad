@@ -201,13 +201,11 @@ fn marker_lump_round_trips() {
 #[test]
 fn binary_payload_fidelity() {
     let payload: Vec<u8> = (0u8..=255).collect();
-    let original = Wad::from_bytes(
-        WadBuilder::new(WadKind::Pwad)
-            .add_lump("BINDATA", payload.as_slice())
-            .build()
-            .expect("binary payload build"),
-    )
-    .expect("binary payload parse");
+    let bytes = WadBuilder::new(WadKind::Pwad)
+        .add_lump("BINDATA", payload.as_slice())
+        .build()
+        .expect("binary payload WAD should build");
+    let original = Wad::from_bytes(bytes).expect("binary payload WAD should parse");
 
     let written = original
         .to_builder()
