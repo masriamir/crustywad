@@ -60,7 +60,7 @@ jobs:
       - name: Build
         env:
           RUSTFLAGS: ${{ matrix.rustflags || '' }}
-        run: cargo build --release --package crustywad-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked --package crustywad-cli --target ${{ matrix.target }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
