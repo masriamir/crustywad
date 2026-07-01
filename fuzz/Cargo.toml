@@ -1,0 +1,32 @@
+[package]
+name = "crustywad-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[[bin]]
+name = "fuzz_wad_strict"
+path = "fuzz_targets/fuzz_wad_strict.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_wad_lenient"
+path = "fuzz_targets/fuzz_wad_lenient.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_parse_records_thing"
+path = "fuzz_targets/fuzz_parse_records_thing.rs"
+test = false
+doc = false
+
+[dependencies]
+libfuzzer-sys = "0.4"
+crustywad = { path = "../crates/crustywad" }
+
+[profile.release]
+debug = 1

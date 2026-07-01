@@ -47,8 +47,9 @@ test-mmap:
 test-freedoom dir="tests/fixtures/freedoom":
     CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests
 
-fuzz:
-    @echo "Fuzz targets are planned for a later milestone; see docs/design.md."
+# Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
+fuzz target="fuzz_wad_strict":
+    cd fuzz && cargo fuzz run {{target}}
 
 bench:
     cargo bench
