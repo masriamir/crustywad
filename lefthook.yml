@@ -22,7 +22,7 @@ commit-msg:
   commands:
     conventional-commits:
       run: |
-        python - <<'PY' "{1}"
+        python3 - <<'PY' "{1}"
 import pathlib
 import re
 import sys

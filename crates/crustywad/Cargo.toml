@@ -12,10 +12,15 @@ categories.workspace = true
 
 autobenches = false
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = []
 mmap = ["dep:memmap2"]
 freedoom-tests = []
+write = []
 
 [dependencies]
 binrw.workspace = true
