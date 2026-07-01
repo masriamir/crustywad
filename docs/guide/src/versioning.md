@@ -12,7 +12,7 @@ currently at `0.y.z` — which SemVer treats as explicitly unstable — this pro
 patch, minor, and major increments as compatibility signals as documented on this page.
 A `0.y.z` version is not a license to make arbitrary breaking changes in patches.
 
-### Patch releases (`0.y.PATCH`)
+### Patch releases (`0.MINOR.PATCH`)
 
 A patch release fixes a bug without changing any public API. It is safe for all existing
 callers to upgrade without modification.
