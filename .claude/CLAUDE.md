@@ -30,6 +30,9 @@ docs/
   guide/               # mdBook user guide — source of truth for user-facing docs, deployed to GitHub Pages
     book.toml          # mdBook + mdbook-mermaid configuration
     src/               # Guide source pages (SUMMARY.md, *.md)
+scripts/
+  check_doc_anchors.py # Living-docs anchor drift detector (ADR-0007); run via `just docs-sync`
+anchors.txt            # Anchor strings that must appear verbatim in all three main doc files
 tests/
   fixtures/
     fetch_freedoom.py  # Downloads Freedoom WAD fixtures from GitHub releases
@@ -59,11 +62,12 @@ Install [just](https://github.com/casey/just), then:
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
 | Fetch Freedoom fixtures | `just fetch-fixtures` |
+| Anchor drift check | `just docs-sync` |
 | Full CI check | `just ci` |
 
-**Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc) and catches failures locally before they reach CI.
+**Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
-Exact CI commands:
+Core Rust commands run by CI:
 
 ```bash
 cargo build --workspace --all-features
@@ -231,6 +235,7 @@ The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:
 | `docs` | `cargo doc` with `RUSTDOCFLAGS=-D warnings` |
 | `coverage` | `cargo llvm-cov` + Codecov upload |
 | `security-deny` | `cargo deny check` |
+| `docs-sync` | `python3 scripts/check_doc_anchors.py` — verifies anchor strings are present in all three main doc files |
 
 CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `security-extended` and `security-and-quality` query suites.
 

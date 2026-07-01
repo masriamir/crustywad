@@ -1,0 +1,44 @@
+# Living-docs anchor strings (ADR-0007).
+#
+# Each non-empty, non-comment line is a substring that must appear verbatim in
+# ALL THREE of the checked documentation files:
+#
+#   .github/copilot-instructions.md
+#   .claude/CLAUDE.md
+#   docs/design.md
+#
+# Run the detector locally with:
+#
+#   just docs-sync
+#
+# When renaming a convention phrase, update:
+#   1. All three documentation files above
+#   2. This file (anchors.txt)
+#
+# ─── Core conventions ────────────────────────────────────────────────────────
+
+# Project identity
+MSRV 1.85.0
+MIT OR Apache-2.0
+
+# Error handling
+thiserror
+
+# Documentation
+missing_docs
+
+# Safety
+deny(unsafe_code)
+
+# Lints
+clippy::pedantic
+
+# Parsing API
+ParseOptions { strictness
+
+# Testing
+proptest
+
+# Workflow
+just ci
+Conventional Commits
