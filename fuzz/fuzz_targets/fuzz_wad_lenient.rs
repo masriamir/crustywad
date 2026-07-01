@@ -9,7 +9,7 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(wad) = result {
         // Guard against unbounded warning growth
         assert!(
-            wad.warnings().len() <= wad.lump_count() * 5 + 5,
+            wad.warnings().len() <= wad.lump_count().saturating_mul(5).saturating_add(5),
             "warning count exceeded expected upper bound"
         );
         let _ = std::hint::black_box(wad);

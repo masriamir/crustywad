@@ -1,2 +1,5 @@
 [toolchain]
+# Tracking the latest nightly is intentional: cargo-fuzz requires nightly, and
+# using the current channel ensures the harness benefits from the latest LLVM
+# sanitizer improvements. A dated pin would drift and suppress those gains.
 channel = "nightly"
