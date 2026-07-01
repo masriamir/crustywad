@@ -26,7 +26,7 @@ doc = false
 
 [dependencies]
 libfuzzer-sys = "0.4"
-crustywad = { path = "../crates/crustywad", features = [] }
+crustywad = { path = "../crates/crustywad" }
 
 [profile.release]
 debug = 1
