@@ -3,6 +3,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::NamedTempFile;
+use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
 // Minimal WAD builder (mirrors common::build_wad in the library test suite)
@@ -817,4 +818,183 @@ fn missing_required_arg_exits_3() {
         .arg("info")
         .assert()
         .code(3);
+}
+
+// ---------------------------------------------------------------------------
+// `cwad extract`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn extract_all_lumps_creates_files() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3]), ("COLORMAP", &[4, 5])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(out_dir.path().join("PLAYPAL.bin").exists());
+    assert!(out_dir.path().join("COLORMAP.bin").exists());
+    assert_eq!(
+        std::fs::read(out_dir.path().join("PLAYPAL.bin")).unwrap(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        std::fs::read(out_dir.path().join("COLORMAP.bin")).unwrap(),
+        vec![4, 5]
+    );
+}
+
+#[test]
+fn extract_named_lump_only_extracts_that_lump() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3]), ("COLORMAP", &[4, 5])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+            "--lump",
+            "PLAYPAL",
+        ])
+        .assert()
+        .success();
+
+    assert!(out_dir.path().join("PLAYPAL.bin").exists());
+    assert!(!out_dir.path().join("COLORMAP.bin").exists());
+}
+
+#[test]
+fn extract_named_lump_not_found_exits_2() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+            "--lump",
+            "NOTEXIST",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn extract_missing_wad_exits_2() {
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            "/nonexistent/path/to/missing.wad",
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn extract_duplicate_lump_names_writes_unique_files() {
+    // Two lumps with the same name — second should get an occurrence-count suffix.
+    let wad = write_wad(*b"PWAD", &[("PATCH", &[0xAA]), ("PATCH", &[0xBB])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let first = out_dir.path().join("PATCH.bin");
+    let second = out_dir.path().join("PATCH_1.bin");
+    assert!(first.exists(), "PATCH.bin not written");
+    assert!(second.exists(), "PATCH_1.bin not written");
+    assert_eq!(
+        std::fs::read(&first).unwrap(),
+        vec![0xAAu8],
+        "PATCH.bin has wrong content"
+    );
+    assert_eq!(
+        std::fs::read(&second).unwrap(),
+        vec![0xBBu8],
+        "PATCH_1.bin has wrong content"
+    );
+}
+
+#[test]
+fn extract_empty_lump_creates_empty_file() {
+    // Marker/namespace lumps have zero bytes; they must still be written.
+    let wad = write_wad(*b"IWAD", &[("SS_START", &[])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let path = out_dir.path().join("SS_START.bin");
+    assert!(path.exists());
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+}
+
+#[test]
+fn extract_empty_wad_exits_0() {
+    let wad = write_wad(*b"IWAD", &[]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn extract_printed_summary_to_stdout() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PLAYPAL"));
 }

@@ -2,6 +2,9 @@
 
 mod cli;
 
+use std::collections::HashMap;
+use std::fs;
+use std::io;
 use std::process;
 
 use std::fmt::Write as _;
@@ -9,8 +12,6 @@ use std::fmt::Write as _;
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
 use crustywad::{ParseOptions, Wad};
-
-use std::collections::HashMap;
 
 use cli::{Cli, Format, SubCommand};
 
@@ -55,6 +56,29 @@ fn is_map_marker(name: &str) -> bool {
                 && bytes[4].is_ascii_digit()
         }
         _ => false,
+    }
+}
+
+/// Converts a raw lump name to a safe filename component.
+///
+/// Replaces any character that is not ASCII alphanumeric, `_`, or `-` with
+/// `_`, preventing path traversal from lump names that contain `/`, `\`, or
+/// other special characters. Returns `"UNNAMED"` for empty inputs.
+fn sanitize_lump_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if s.is_empty() {
+        String::from("UNNAMED")
+    } else {
+        s
     }
 }
 
@@ -355,6 +379,69 @@ fn run(cli: Cli) -> Result<i32> {
                     Ok(2)
                 }
             }
+        }
+
+        SubCommand::Extract { path, output, lump } => {
+            let wad = Wad::from_path_with_options(&path, options)
+                .with_context(|| format!("failed to load {}", path.display()))?;
+
+            for w in wad.warnings() {
+                eprintln!("warning: {w}");
+            }
+
+            // Collect the lumps to extract: either the named lump, or all lumps.
+            let indices: Vec<usize> = if let Some(ref name) = lump {
+                let found: Vec<usize> = wad
+                    .lumps()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.name() == name.as_str())
+                    .map(|(i, _)| i)
+                    .collect();
+                if found.is_empty() {
+                    eprintln!("error: lump {name:?} not found in {}", path.display());
+                    return Ok(2);
+                }
+                found
+            } else {
+                (0..wad.lump_count()).collect()
+            };
+
+            // Track how many times each name has already been written so we can
+            // generate unique filenames for duplicate lump names.
+            let mut name_count: HashMap<String, usize> = HashMap::new();
+
+            if matches!(cli.format, Format::Csv) {
+                println!("filename");
+            }
+
+            for index in indices {
+                let lump_meta = wad.lump(index).expect("index within range");
+                let lump_name = sanitize_lump_name(lump_meta.name());
+                let data = wad.lump_bytes(index).expect("index within range");
+
+                let count = name_count.entry(lump_name.clone()).or_insert(0);
+                let filename = if *count == 0 {
+                    format!("{lump_name}.bin")
+                } else {
+                    format!("{lump_name}_{count}.bin")
+                };
+                *count += 1;
+
+                let dest = output.join(&filename);
+                fs::write(&dest, data).map_err(|e: io::Error| {
+                    anyhow::anyhow!("failed to write {}: {e}", dest.display())
+                })?;
+                match cli.format {
+                    Format::Human => println!("{filename}"),
+                    Format::Json => {
+                        println!(r#"{{"filename":{}}}"#, json_string(&filename));
+                    }
+                    Format::Csv => println!("{}", csv_field(&filename)),
+                }
+            }
+
+            Ok(0)
         }
     }
 }

@@ -74,4 +74,21 @@ pub(crate) enum SubCommand {
         /// Path to the second WAD file.
         file2: PathBuf,
     },
+    /// Extract lumps from a WAD file to a directory.
+    ///
+    /// Each lump is written as `<NAME>.bin`. When two or more lumps share the
+    /// same name, subsequent files are suffixed with an occurrence count
+    /// (e.g. `PATCH.bin`, `PATCH_1.bin`, `PATCH_2.bin`). Exits 0 on
+    /// success, 2 on I/O or parse error.
+    Extract {
+        /// Path to the WAD file.
+        path: PathBuf,
+        /// Directory to write extracted lumps into (must already exist).
+        #[arg(short, long, value_name = "DIR")]
+        output: PathBuf,
+        /// Extract only the lump with this name. If not given, all lumps are
+        /// extracted. If the name is not found the command exits with code 2.
+        #[arg(short, long, value_name = "NAME")]
+        lump: Option<String>,
+    },
 }
