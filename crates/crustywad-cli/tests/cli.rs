@@ -691,7 +691,7 @@ fn diff_multiple_differences_all_reported() {
 #[test]
 fn diff_duplicate_lump_count_differs_exits_1() {
     // WAD1 has THINGS twice; WAD2 has THINGS once with the same data.
-    // The multiset comparison must detect the count difference and report Changed.
+    // The per-name sequence comparison must detect the count difference and report Changed.
     let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3]), ("THINGS", &[1, 2, 3])]);
     let wad2 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3])]);
     Command::cargo_bin("cwad")
