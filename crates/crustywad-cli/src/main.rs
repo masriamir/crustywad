@@ -14,6 +14,50 @@ use std::collections::HashMap;
 
 use cli::{Cli, Format, SubCommand};
 
+/// Returns the names of map marker lumps found in `wad`, in directory order.
+///
+/// A lump is treated as a map marker when its name matches the Doom 1 episode
+/// format (`E[1-9]M[1-9]`) or the Doom 2 numbered-map format (`MAP[0-9][0-9]`).
+/// The function does not check lump size — zero-size marker lumps and non-zero
+/// lumps with map names are both included, matching conventional WAD tooling
+/// behavior.
+fn detect_maps(wad: &Wad) -> Vec<&str> {
+    wad.lumps()
+        .iter()
+        .map(crustywad::Lump::name)
+        .filter(|name| is_map_marker(name))
+        .collect()
+}
+
+/// Returns `true` if `name` matches a Doom map-marker lump name.
+///
+/// Recognized patterns:
+/// - `E[1-9]M[1-9]` — Doom 1 episode/map (e.g. `E1M1`, `E3M9`).
+/// - `MAP[0-9][0-9]` — Doom 2 numbered map (e.g. `MAP01`, `MAP32`).
+fn is_map_marker(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    match bytes.len() {
+        4 => {
+            // E[1-9]M[1-9]
+            bytes[0] == b'E'
+                && bytes[1].is_ascii_digit()
+                && bytes[1] != b'0'
+                && bytes[2] == b'M'
+                && bytes[3].is_ascii_digit()
+                && bytes[3] != b'0'
+        }
+        5 => {
+            // MAP[0-9][0-9]
+            bytes[0] == b'M'
+                && bytes[1] == b'A'
+                && bytes[2] == b'P'
+                && bytes[3].is_ascii_digit()
+                && bytes[4].is_ascii_digit()
+        }
+        _ => false,
+    }
+}
+
 /// Encodes a string as a JSON string literal (including surrounding `"`).
 /// Uses standard JSON `\uXXXX` escapes for control characters, ensuring
 /// output is always valid JSON regardless of the input content.
@@ -91,22 +135,40 @@ fn run(cli: Cli) -> Result<i32> {
         SubCommand::Info { path } => {
             let wad = Wad::from_path_with_options(&path, options)
                 .with_context(|| format!("failed to load {}", path.display()))?;
+            let data_size: u64 = wad.lumps().iter().map(|l| l.size() as u64).sum();
+            let maps = detect_maps(&wad);
             match cli.format {
                 Format::Human => {
-                    println!("kind:  {:?}", wad.kind());
-                    println!("lumps: {}", wad.lump_count());
+                    println!("kind:      {:?}", wad.kind());
+                    println!("lumps:     {}", wad.lump_count());
+                    let unit = if data_size == 1 { "byte" } else { "bytes" };
+                    println!("data size: {data_size} {unit}");
+                    if !maps.is_empty() {
+                        println!("maps:      {}", maps.join(", "));
+                    }
                 }
-                Format::Json => println!(
-                    r#"{{"kind":"{:?}","lumps":{}}}"#,
-                    wad.kind(),
-                    wad.lump_count()
-                ),
-                Format::Csv => {
-                    println!("kind,lumps");
+                Format::Json => {
+                    let maps_json: String = maps
+                        .iter()
+                        .map(|m| json_string(m))
+                        .collect::<Vec<_>>()
+                        .join(",");
                     println!(
-                        "{},{}",
+                        r#"{{"kind":"{:?}","lumps":{},"data_size":{},"maps":[{}]}}"#,
+                        wad.kind(),
+                        wad.lump_count(),
+                        data_size,
+                        maps_json
+                    );
+                }
+                Format::Csv => {
+                    println!("kind,lumps,data_size,maps");
+                    println!(
+                        "{},{},{},{}",
                         csv_field(&format!("{:?}", wad.kind())),
-                        wad.lump_count()
+                        wad.lump_count(),
+                        data_size,
+                        csv_field(&maps.join(" "))
                     );
                 }
             }

@@ -43,7 +43,7 @@ pub(crate) struct Cli {
 /// Available `cwad` subcommands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SubCommand {
-    /// Print WAD metadata (kind and lump count).
+    /// Print WAD metadata: kind, lump count, total data size, and detected map names.
     Info {
         /// Path to the WAD file.
         path: PathBuf,
