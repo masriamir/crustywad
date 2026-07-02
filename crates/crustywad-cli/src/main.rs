@@ -22,14 +22,8 @@ use cli::{Cli, Format, SubCommand};
 fn detect_maps(wad: &Wad) -> Vec<&str> {
     wad.lumps()
         .iter()
-        .filter_map(|lump| {
-            let name = lump.name();
-            if is_map_marker(name) {
-                Some(name)
-            } else {
-                None
-            }
-        })
+        .map(crustywad::Lump::name)
+        .filter(|name| is_map_marker(name))
         .collect()
 }
 
