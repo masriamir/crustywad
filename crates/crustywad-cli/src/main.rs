@@ -134,7 +134,8 @@ fn run(cli: Cli) -> Result<i32> {
                 Format::Human => {
                     println!("kind:      {:?}", wad.kind());
                     println!("lumps:     {}", wad.lump_count());
-                    println!("data size: {data_size} bytes");
+                    let unit = if data_size == 1 { "byte" } else { "bytes" };
+                    println!("data size: {data_size} {unit}");
                     if !maps.is_empty() {
                         println!("maps:      {}", maps.join(", "));
                     }
