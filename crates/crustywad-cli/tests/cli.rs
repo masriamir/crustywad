@@ -77,6 +77,21 @@ fn info_csv_format() {
 }
 
 #[test]
+fn info_csv_format_with_maps() {
+    let wad = write_wad(
+        *b"IWAD",
+        &[("E1M1", &[]), ("THINGS", &[0; 4]), ("E1M2", &[])],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kind,lumps,data_size,maps"))
+        .stdout(predicate::str::contains("Iwad,3,4,E1M1 E1M2"));
+}
+
+#[test]
 fn info_iwad() {
     let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
     Command::cargo_bin("cwad")
