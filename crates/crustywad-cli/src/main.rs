@@ -79,6 +79,17 @@ fn json_string(s: &str) -> String {
     out
 }
 
+/// Groups each lump's data slice by name; duplicate names accumulate in directory order.
+fn lump_data_map(wad: &Wad) -> HashMap<String, Vec<&[u8]>> {
+    let mut map: HashMap<String, Vec<&[u8]>> = HashMap::new();
+    for lump in wad.lumps() {
+        map.entry(lump.name().to_owned())
+            .or_default()
+            .push(wad.lump_data(lump));
+    }
+    map
+}
+
 /// Classifies a single lump-level difference found by `cwad diff`.
 #[derive(Debug)]
 enum DiffKind {
@@ -226,19 +237,7 @@ fn run(cli: Cli) -> Result<i32> {
             let wad2 = Wad::from_path_with_options(&file2, options)
                 .with_context(|| format!("failed to load {}", file2.display()))?;
 
-            // Build ordered multimap: name -> Vec<lump data bytes>
-            let lump_data_map = |wad: &Wad| -> HashMap<String, Vec<Vec<u8>>> {
-                let mut map: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
-                for lump in wad.lumps() {
-                    map.entry(lump.name().to_owned())
-                        .or_default()
-                        .push(wad.lump_data(lump).to_owned());
-                }
-                map
-            };
-
-            // Collect the set of all unique lump names across both WADs,
-            // preserving insertion order from each WAD's directory.
+            // Collect each distinct lump name in first-seen order across both WADs.
             let mut all_names: Vec<String> = Vec::new();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             for lump in wad1.lumps().iter().chain(wad2.lumps().iter()) {

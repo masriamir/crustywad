@@ -660,8 +660,8 @@ fn diff_duplicate_lumps_same_count_and_data_exits_0() {
 
 #[test]
 fn diff_duplicate_lumps_order_differs_exits_1() {
-    // Both WADs have THINGS twice but in a different order — multiset comparison
-    // must detect the ordered-sequence difference.
+    // Both WADs have THINGS twice but the data vectors are in a different order —
+    // the per-name sequence comparison must detect the difference.
     let wad1 = write_wad(*b"IWAD", &[("THINGS", &[1, 2, 3]), ("THINGS", &[4, 5, 6])]);
     let wad2 = write_wad(*b"IWAD", &[("THINGS", &[4, 5, 6]), ("THINGS", &[1, 2, 3])]);
     Command::cargo_bin("cwad")
@@ -674,6 +674,24 @@ fn diff_duplicate_lumps_order_differs_exits_1() {
         .assert()
         .code(1)
         .stdout(predicate::str::contains("THINGS"));
+}
+
+#[test]
+fn diff_unique_name_reorder_exits_0() {
+    // Directory order of distinct lump names is intentionally not significant —
+    // A,B vs B,A with identical data should exit 0.
+    let wad1 = write_wad(*b"IWAD", &[("ALPHA", &[1, 2]), ("BETA", &[3, 4])]);
+    let wad2 = write_wad(*b"IWAD", &[("BETA", &[3, 4]), ("ALPHA", &[1, 2])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::is_empty());
 }
 
 // ---------------------------------------------------------------------------
