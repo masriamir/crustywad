@@ -83,9 +83,12 @@ fn json_string(s: &str) -> String {
 fn lump_data_map(wad: &Wad) -> HashMap<String, Vec<&[u8]>> {
     let mut map: HashMap<String, Vec<&[u8]>> = HashMap::new();
     for lump in wad.lumps() {
-        map.entry(lump.name().to_owned())
-            .or_default()
-            .push(wad.lump_data(lump));
+        let data = wad.lump_data(lump);
+        if let Some(vec) = map.get_mut(lump.name()) {
+            vec.push(data);
+        } else {
+            map.insert(lump.name().to_owned(), vec![data]);
+        }
     }
     map
 }
@@ -239,10 +242,11 @@ fn run(cli: Cli) -> Result<i32> {
 
             // Collect each distinct lump name in first-seen order across both WADs.
             let mut all_names: Vec<String> = Vec::new();
-            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
             for lump in wad1.lumps().iter().chain(wad2.lumps().iter()) {
-                if seen.insert(lump.name().to_owned()) {
-                    all_names.push(lump.name().to_owned());
+                let name = lump.name();
+                if seen.insert(name) {
+                    all_names.push(name.to_owned());
                 }
             }
 
