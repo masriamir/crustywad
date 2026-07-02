@@ -1000,7 +1000,10 @@ fn extract_sanitizes_path_separator_in_lump_name() {
         .success();
 
     // The sanitized file must exist inside the output directory.
-    assert!(out_dir.path().join("A_B.bin").exists(), "A_B.bin not written");
+    assert!(
+        out_dir.path().join("A_B.bin").exists(),
+        "A_B.bin not written"
+    );
     // No subdirectory should have been created by the path separator.
     assert!(
         !out_dir.path().join("A").is_dir(),
@@ -1022,6 +1025,96 @@ fn extract_output_not_a_directory_exits_2() {
         ])
         .assert()
         .code(2);
+}
+
+#[test]
+fn extract_empty_lump_name_writes_unnamed_file() {
+    // An all-null lump name sanitizes to the empty string, which falls back to
+    // "UNNAMED" so the file can be written without an empty filename.
+    let wad = write_wad(*b"IWAD", &[("", &[0x99])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let path = out_dir.path().join("UNNAMED.bin");
+    assert!(path.exists(), "UNNAMED.bin not written");
+    assert_eq!(std::fs::read(&path).unwrap(), vec![0x99u8]);
+}
+
+#[test]
+fn extract_json_format_outputs_filenames_as_json() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "json",
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"filename\""))
+        .stdout(predicate::str::contains("\"PLAYPAL.bin\""));
+}
+
+#[test]
+fn extract_csv_format_outputs_header_and_filenames() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1]), ("COLORMAP", &[2])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "csv",
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("filename"))
+        .stdout(predicate::str::contains("PLAYPAL.bin"))
+        .stdout(predicate::str::contains("COLORMAP.bin"));
+}
+
+#[test]
+fn extract_lenient_emits_warning_for_bad_magic() {
+    let mut bytes = build_wad(*b"NOPE", &[("PLAYPAL", &[1])]);
+    bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
+
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), &bytes).unwrap();
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "extract",
+            file.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"));
 }
 
 #[test]
