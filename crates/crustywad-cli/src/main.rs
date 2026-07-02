@@ -12,7 +12,7 @@ use crustywad::{ParseOptions, Wad};
 
 use cli::{Cli, Format, SubCommand};
 
-/// Returns the names of map marker lumps found in `lumps`, in directory order.
+/// Returns the names of map marker lumps found in `wad`, in directory order.
 ///
 /// A lump is treated as a map marker when its name matches the Doom 1 episode
 /// format (`E[1-9]M[1-9]`) or the Doom 2 numbered-map format (`MAP[0-9][0-9]`).
@@ -128,7 +128,7 @@ fn run(cli: Cli) -> Result<i32> {
         SubCommand::Info { path } => {
             let wad = Wad::from_path_with_options(&path, options)
                 .with_context(|| format!("failed to load {}", path.display()))?;
-            let data_size: usize = wad.lumps().iter().map(crustywad::Lump::size).sum();
+            let data_size: u64 = wad.lumps().iter().map(|l| l.size() as u64).sum();
             let maps = detect_maps(&wad);
             match cli.format {
                 Format::Human => {

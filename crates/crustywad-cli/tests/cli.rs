@@ -85,8 +85,7 @@ fn info_iwad() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Iwad"))
-        .stdout(predicate::str::contains("lumps:"))
-        .stdout(predicate::str::contains("1"))
+        .stdout(predicate::str::contains("lumps:     1"))
         .stdout(predicate::str::contains("data size: 3 bytes"));
 }
 
@@ -99,8 +98,7 @@ fn info_pwad() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Pwad"))
-        .stdout(predicate::str::contains("lumps:"))
-        .stdout(predicate::str::contains("2"))
+        .stdout(predicate::str::contains("lumps:     2"))
         .stdout(predicate::str::contains("data size: 3 bytes"));
 }
 
