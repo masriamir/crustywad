@@ -60,8 +60,9 @@ pub(crate) enum SubCommand {
     },
     /// Compare two WAD files lump by lump.
     ///
-    /// Exits 0 if both WADs contain the same set of lump names with identical
-    /// data (comparison is by name; directory order of distinct lump names is
+    /// Exits 0 if both WADs have identical per-name lump data (same lump names,
+    /// same count of each name, same data for each occurrence; directory order
+    /// of distinct lump names is
     /// not significant, but for duplicate lump names the per-name sequence of
     /// data is compared in directory order). Exits 1 if any differences are
     /// found, or 2 on I/O or parse error. JSON output is one record per line

@@ -100,7 +100,8 @@ enum DiffKind {
     OnlyInFirst,
     /// The lump exists only in the second WAD.
     OnlyInSecond,
-    /// The lump exists in both WADs but its data differs.
+    /// The lump name exists in both WADs but the per-name sequence of data slices differs
+    /// (different data, different duplicate count, or different duplicate order).
     Changed,
 }
 
