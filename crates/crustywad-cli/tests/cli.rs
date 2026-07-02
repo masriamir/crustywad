@@ -600,6 +600,71 @@ fn diff_csv_format_differences() {
 }
 
 #[test]
+fn diff_json_format_only_in_first_and_second() {
+    let wad1 = write_wad(*b"IWAD", &[("ALPHA", &[1])]);
+    let wad2 = write_wad(*b"IWAD", &[("BETA", &[2])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "json",
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("\"only_in_first\""))
+        .stdout(predicate::str::contains("\"only_in_second\""));
+}
+
+#[test]
+fn diff_csv_format_only_in_first_and_second() {
+    let wad1 = write_wad(*b"IWAD", &[("ALPHA", &[1])]);
+    let wad2 = write_wad(*b"IWAD", &[("BETA", &[2])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "csv",
+            "diff",
+            wad1.path().to_str().unwrap(),
+            wad2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("only_in_first,ALPHA"))
+        .stdout(predicate::str::contains("only_in_second,BETA"));
+}
+
+#[test]
+fn diff_lenient_emits_warning_for_bad_magic() {
+    let mut bytes1 = build_wad(*b"NOPE", &[("TEST", &[1])]);
+    bytes1[4..8].copy_from_slice(&1_i32.to_le_bytes());
+    bytes1[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
+    let mut bytes2 = build_wad(*b"NOPE", &[("TEST", &[1])]);
+    bytes2[4..8].copy_from_slice(&1_i32.to_le_bytes());
+    bytes2[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
+
+    let file1 = NamedTempFile::new().unwrap();
+    let file2 = NamedTempFile::new().unwrap();
+    std::fs::write(file1.path(), &bytes1).unwrap();
+    std::fs::write(file2.path(), &bytes2).unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "diff",
+            file1.path().to_str().unwrap(),
+            file2.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("warning"));
+}
+
+#[test]
 fn diff_multiple_differences_all_reported() {
     let wad1 = write_wad(
         *b"IWAD",

@@ -251,17 +251,13 @@ fn run(cli: Cli) -> Result<i32> {
 
             let mut diffs: Vec<(DiffKind, String)> = Vec::new();
             for name in &all_names {
-                let in1 = map1.get(name);
-                let in2 = map2.get(name);
-                match (in1, in2) {
+                match (map1.get(name), map2.get(name)) {
                     (Some(_), None) => diffs.push((DiffKind::OnlyInFirst, name.clone())),
-                    (None, Some(_)) => diffs.push((DiffKind::OnlyInSecond, name.clone())),
-                    (Some(v1), Some(v2)) => {
-                        if v1 != v2 {
-                            diffs.push((DiffKind::Changed, name.clone()));
-                        }
+                    (None, _) => diffs.push((DiffKind::OnlyInSecond, name.clone())),
+                    (Some(v1), Some(v2)) if v1 != v2 => {
+                        diffs.push((DiffKind::Changed, name.clone()));
                     }
-                    (None, None) => {}
+                    _ => {}
                 }
             }
 
