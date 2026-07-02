@@ -10,6 +10,8 @@ use anyhow::{Context as _, Result};
 use clap::Parser as _;
 use crustywad::{ParseOptions, Wad};
 
+use std::collections::HashMap;
+
 use cli::{Cli, Format, SubCommand};
 
 /// Returns the names of map marker lumps found in `wad`, in directory order.
@@ -75,6 +77,32 @@ fn json_string(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Groups each lump's data slice by name; duplicate names accumulate in directory order.
+fn lump_data_map(wad: &Wad) -> HashMap<String, Vec<&[u8]>> {
+    let mut map: HashMap<String, Vec<&[u8]>> = HashMap::new();
+    for lump in wad.lumps() {
+        let data = wad.lump_data(lump);
+        if let Some(vec) = map.get_mut(lump.name()) {
+            vec.push(data);
+        } else {
+            map.insert(lump.name().to_owned(), vec![data]);
+        }
+    }
+    map
+}
+
+/// Classifies a single lump-level difference found by `cwad diff`.
+#[derive(Debug)]
+enum DiffKind {
+    /// The lump exists only in the first WAD.
+    OnlyInFirst,
+    /// The lump exists only in the second WAD.
+    OnlyInSecond,
+    /// The lump name exists in both WADs but the per-name sequence of data slices differs
+    /// (different data, different duplicate count, or different duplicate order).
+    Changed,
 }
 
 /// Escapes a field value per RFC 4180: wraps in double-quotes if the value
@@ -205,6 +233,94 @@ fn run(cli: Cli) -> Result<i32> {
                 eprintln!("warning: {w}");
             }
             Ok(0)
+        }
+
+        SubCommand::Diff { file1, file2 } => {
+            let wad1 = Wad::from_path_with_options(&file1, options)
+                .with_context(|| format!("failed to load {}", file1.display()))?;
+            let wad2 = Wad::from_path_with_options(&file2, options)
+                .with_context(|| format!("failed to load {}", file2.display()))?;
+
+            // Collect each distinct lump name in first-seen order across both WADs.
+            let mut all_names: Vec<String> = Vec::new();
+            let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for lump in wad1.lumps().iter().chain(wad2.lumps().iter()) {
+                let name = lump.name();
+                if seen.insert(name) {
+                    all_names.push(name.to_owned());
+                }
+            }
+
+            let map1 = lump_data_map(&wad1);
+            let map2 = lump_data_map(&wad2);
+
+            let mut diffs: Vec<(DiffKind, String)> = Vec::new();
+            for name in &all_names {
+                match (map1.get(name), map2.get(name)) {
+                    (Some(_), None) => diffs.push((DiffKind::OnlyInFirst, name.clone())),
+                    (None, Some(_)) => diffs.push((DiffKind::OnlyInSecond, name.clone())),
+                    (Some(v1), Some(v2)) if v1 != v2 => {
+                        diffs.push((DiffKind::Changed, name.clone()));
+                    }
+                    _ => {}
+                }
+            }
+
+            for w in wad1.warnings() {
+                eprintln!("warning: {w}");
+            }
+            for w in wad2.warnings() {
+                eprintln!("warning: {w}");
+            }
+
+            if diffs.is_empty() {
+                return Ok(0);
+            }
+
+            match cli.format {
+                Format::Human => {
+                    for (kind, name) in &diffs {
+                        match kind {
+                            DiffKind::OnlyInFirst => {
+                                println!("Only in {}:  {name}", file1.display());
+                            }
+                            DiffKind::OnlyInSecond => {
+                                println!("Only in {}:  {name}", file2.display());
+                            }
+                            DiffKind::Changed => {
+                                println!("Changed:           {name}");
+                            }
+                        }
+                    }
+                }
+                Format::Json => {
+                    for (kind, name) in &diffs {
+                        let kind_str = match kind {
+                            DiffKind::OnlyInFirst => "only_in_first",
+                            DiffKind::OnlyInSecond => "only_in_second",
+                            DiffKind::Changed => "changed",
+                        };
+                        println!(
+                            r#"{{"kind":{kind_json},"name":{name_json}}}"#,
+                            kind_json = json_string(kind_str),
+                            name_json = json_string(name)
+                        );
+                    }
+                }
+                Format::Csv => {
+                    println!("kind,name");
+                    for (kind, name) in &diffs {
+                        let kind_str = match kind {
+                            DiffKind::OnlyInFirst => "only_in_first",
+                            DiffKind::OnlyInSecond => "only_in_second",
+                            DiffKind::Changed => "changed",
+                        };
+                        println!("{},{}", csv_field(kind_str), csv_field(name));
+                    }
+                }
+            }
+
+            Ok(1)
         }
 
         SubCommand::Validate { path } => {

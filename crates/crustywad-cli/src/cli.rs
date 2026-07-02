@@ -58,4 +58,20 @@ pub(crate) enum SubCommand {
         /// Path to the WAD file.
         path: PathBuf,
     },
+    /// Compare two WAD files lump by lump.
+    ///
+    /// Exits 0 if both WADs have identical per-name lump data (same lump names,
+    /// same count of each name, same data for each occurrence; directory order
+    /// of distinct lump names is
+    /// not significant, but for duplicate lump names the per-name sequence of
+    /// data is compared in directory order). Exits 1 if any differences are
+    /// found, or 2 on I/O or parse error. JSON output is one record per line
+    /// (NDJSON). When no differences are found, CSV output is empty (no header
+    /// row); differences produce a `kind,name` header followed by one row each.
+    Diff {
+        /// Path to the first WAD file.
+        file1: PathBuf,
+        /// Path to the second WAD file.
+        file2: PathBuf,
+    },
 }
