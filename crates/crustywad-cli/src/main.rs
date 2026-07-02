@@ -389,6 +389,10 @@ fn run(cli: Cli) -> Result<i32> {
                 eprintln!("warning: {w}");
             }
 
+            if !output.is_dir() {
+                anyhow::bail!("output path is not a directory: {}", output.display());
+            }
+
             // Collect the lumps to extract: either the named lump, or all lumps.
             let indices: Vec<usize> = if let Some(ref name) = lump {
                 let found: Vec<usize> = wad
@@ -416,9 +420,13 @@ fn run(cli: Cli) -> Result<i32> {
             }
 
             for index in indices {
-                let lump_meta = wad.lump(index).expect("index within range");
+                let lump_meta = wad
+                    .lump(index)
+                    .ok_or_else(|| anyhow::anyhow!("lump index {index} out of range"))?;
                 let lump_name = sanitize_lump_name(lump_meta.name());
-                let data = wad.lump_bytes(index).expect("index within range");
+                let data = wad
+                    .lump_bytes(index)
+                    .ok_or_else(|| anyhow::anyhow!("lump index {index} out of range"))?;
 
                 let count = name_count.entry(lump_name.clone()).or_insert(0);
                 let filename = if *count == 0 {

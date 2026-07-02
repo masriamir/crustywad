@@ -982,6 +982,49 @@ fn extract_empty_wad_exits_0() {
 }
 
 #[test]
+fn extract_sanitizes_path_separator_in_lump_name() {
+    // A lump name containing '/' must not create subdirectories or escape the
+    // output directory; the slash is replaced with '_' by sanitize_lump_name.
+    let wad = write_wad(*b"IWAD", &[("A/B", &[0x42])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // The sanitized file must exist inside the output directory.
+    assert!(out_dir.path().join("A_B.bin").exists(), "A_B.bin not written");
+    // No subdirectory should have been created by the path separator.
+    assert!(
+        !out_dir.path().join("A").is_dir(),
+        "path separator created a subdirectory"
+    );
+}
+
+#[test]
+fn extract_output_not_a_directory_exits_2() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1])]);
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            "/nonexistent/output/dir",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
 fn extract_printed_summary_to_stdout() {
     let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
     let out_dir = TempDir::new().unwrap();

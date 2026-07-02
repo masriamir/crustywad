@@ -76,8 +76,12 @@ pub(crate) enum SubCommand {
     },
     /// Extract lumps from a WAD file to a directory.
     ///
-    /// Each lump is written as `<NAME>.bin`. When two or more lumps share the
-    /// same name, subsequent files are suffixed with an occurrence count
+    /// Lump names are sanitized to safe filename components: any character that
+    /// is not ASCII alphanumeric, `_`, or `-` is replaced with `_`; an empty
+    /// name becomes `UNNAMED`. Each lump is then written as `<SAFE_NAME>.bin`.
+    /// When two or more lumps produce the same safe filename (whether from
+    /// duplicate lump names or distinct names that sanitize identically),
+    /// subsequent files are suffixed with an occurrence count
     /// (e.g. `PATCH.bin`, `PATCH_1.bin`, `PATCH_2.bin`). Exits 0 on
     /// success, 2 on I/O or parse error.
     Extract {
