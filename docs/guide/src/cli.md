@@ -20,7 +20,7 @@ cargo run -p crustywad-cli -- <subcommand> [options] <file.wad>
 ## Synopsis
 
 ```text
-cwad [OPTIONS] <SUBCOMMAND> <FILE>
+cwad [OPTIONS] <COMMAND>
 ```
 
 ## Subcommands
@@ -73,7 +73,7 @@ The error message goes to stderr in human format; the exit code is `2`.
 
 | Flag | Short | Description |
 |---|---|---|
-| `--lenient` | — | Use lenient parsing instead of strict; emits warnings to stderr instead of failing |
+| `--lenient` | — | Use lenient parsing instead of strict; attempts best-effort recovery for non-fatal issues and emits warnings to stderr |
 | `--format <FORMAT>` | `-F` | Output format: `human` (default), `json`, or `csv` |
 | `--help` | `-h` | Print help and exit `0` |
 | `--version` | `-V` | Print version and exit `0` |

@@ -33,7 +33,7 @@ fn main() -> Result<(), Error> {
     // Man page
     let man_dir = out.join("man");
     std::fs::create_dir_all(&man_dir)?;
-    let cmd = cli::Cli::command();
+    let cmd = cli::Cli::command().name("cwad");
     let man = Man::new(cmd);
     let mut buf = Vec::new();
     man.render(&mut buf)?;
