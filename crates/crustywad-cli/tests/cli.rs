@@ -1013,7 +1013,10 @@ fn extract_sanitizes_path_separator_in_lump_name() {
 
 #[test]
 fn extract_output_not_a_directory_exits_2() {
+    // Pass a regular file (not a directory) as --output to verify the upfront
+    // is_dir() check fires with exit 2 rather than a confusing write-time error.
     let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1])]);
+    let not_a_dir = NamedTempFile::new().unwrap();
 
     Command::cargo_bin("cwad")
         .unwrap()
@@ -1021,7 +1024,7 @@ fn extract_output_not_a_directory_exits_2() {
             "extract",
             wad.path().to_str().unwrap(),
             "--output",
-            "/nonexistent/output/dir",
+            not_a_dir.path().to_str().unwrap(),
         ])
         .assert()
         .code(2);

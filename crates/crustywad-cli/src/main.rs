@@ -390,7 +390,10 @@ fn run(cli: Cli) -> Result<i32> {
             }
 
             if !output.is_dir() {
-                anyhow::bail!("output path is not a directory: {}", output.display());
+                anyhow::bail!(
+                    "output path does not exist or is not a directory: {}",
+                    output.display()
+                );
             }
 
             // Collect the lumps to extract: either the named lump, or all lumps.
