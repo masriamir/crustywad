@@ -910,6 +910,42 @@ fn extract_missing_wad_exits_2() {
 }
 
 #[test]
+fn extract_windows_reserved_lump_name_gets_prefixed() {
+    // Lump names that are Windows device names (CON, NUL, COM1, LPT1, …) must
+    // be prefixed with '_' so extraction succeeds on all platforms.
+    let wad = write_wad(*b"IWAD", &[("CON", &[0xCC]), ("NUL", &[0xDD])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        out_dir.path().join("_CON.bin").exists(),
+        "_CON.bin not written"
+    );
+    assert!(
+        out_dir.path().join("_NUL.bin").exists(),
+        "_NUL.bin not written"
+    );
+    assert_eq!(
+        std::fs::read(out_dir.path().join("_CON.bin")).unwrap(),
+        vec![0xCCu8]
+    );
+    assert_eq!(
+        std::fs::read(out_dir.path().join("_NUL.bin")).unwrap(),
+        vec![0xDDu8]
+    );
+}
+
+#[test]
 fn extract_lump_flag_without_value_exits_3() {
     // `--lump` requires a NAME argument; omitting the value is a clap parse
     // error, which the main() dispatch maps to exit code 3.

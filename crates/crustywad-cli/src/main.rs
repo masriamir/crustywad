@@ -4,7 +4,6 @@ mod cli;
 
 use std::collections::HashMap;
 use std::fs;
-use std::io;
 use std::process;
 
 use std::fmt::Write as _;
@@ -59,11 +58,21 @@ fn is_map_marker(name: &str) -> bool {
     }
 }
 
+/// Windows device names that are reserved regardless of file extension.
+const WINDOWS_RESERVED: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
 /// Converts a raw lump name to a safe filename component.
 ///
 /// Replaces any character that is not ASCII alphanumeric, `_`, or `-` with
 /// `_`, preventing path traversal from lump names that contain `/`, `\`, or
 /// other special characters. Returns `"UNNAMED"` for empty inputs.
+///
+/// Windows-reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
+/// `LPT1`–`LPT9`) are prefixed with `_` so extraction succeeds on all
+/// platforms.
 fn sanitize_lump_name(name: &str) -> String {
     let s: String = name
         .chars()
@@ -76,7 +85,10 @@ fn sanitize_lump_name(name: &str) -> String {
         })
         .collect();
     if s.is_empty() {
-        String::from("UNNAMED")
+        return String::from("UNNAMED");
+    }
+    if WINDOWS_RESERVED.iter().any(|r| s.eq_ignore_ascii_case(r)) {
+        format!("_{s}")
     } else {
         s
     }
@@ -440,9 +452,8 @@ fn run(cli: Cli) -> Result<i32> {
                 *count += 1;
 
                 let dest = output.join(&filename);
-                fs::write(&dest, data).map_err(|e: io::Error| {
-                    anyhow::anyhow!("failed to write {}: {e}", dest.display())
-                })?;
+                fs::write(&dest, data)
+                    .with_context(|| format!("failed to write {}", dest.display()))?;
                 match cli.format {
                     Format::Human => println!("{filename}"),
                     Format::Json => {
@@ -454,5 +465,41 @@ fn run(cli: Cli) -> Result<i32> {
 
             Ok(0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_lump_name;
+
+    #[test]
+    fn sanitize_lump_name_reserved_windows_names_get_prefixed() {
+        for name in &[
+            "CON", "con", "Con", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9",
+        ] {
+            let result = sanitize_lump_name(name);
+            assert!(
+                result.starts_with('_'),
+                "expected '{name}' to be prefixed, got '{result}'"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_lump_name_normal_names_unchanged() {
+        assert_eq!(sanitize_lump_name("PLAYPAL"), "PLAYPAL");
+        assert_eq!(sanitize_lump_name("E1M1"), "E1M1");
+        assert_eq!(sanitize_lump_name("MY-LUMP"), "MY-LUMP");
+    }
+
+    #[test]
+    fn sanitize_lump_name_empty_returns_unnamed() {
+        assert_eq!(sanitize_lump_name(""), "UNNAMED");
+    }
+
+    #[test]
+    fn sanitize_lump_name_path_traversal_replaced() {
+        assert_eq!(sanitize_lump_name("A/B"), "A_B");
+        assert_eq!(sanitize_lump_name("../etc"), "___etc");
     }
 }

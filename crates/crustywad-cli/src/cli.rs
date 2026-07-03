@@ -83,7 +83,7 @@ pub(crate) enum SubCommand {
     /// duplicate lump names or distinct names that sanitize identically),
     /// subsequent files are suffixed with an occurrence count
     /// (e.g. `PATCH.bin`, `PATCH_1.bin`, `PATCH_2.bin`). Exits 0 on
-    /// success, 2 on I/O or parse error.
+    /// success, 2 on I/O or parse error, 3 on argument error.
     Extract {
         /// Path to the WAD file.
         path: PathBuf,
