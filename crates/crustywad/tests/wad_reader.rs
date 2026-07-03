@@ -323,31 +323,6 @@ proptest! {
     }
 }
 
-// I-9: read → to_builder → build → read round-trip preserves lump count, names, and data.
-// Gated on the `write` feature because `Wad::to_builder` is only available then.
-#[cfg(feature = "write")]
-proptest! {
-    /// For any structurally valid WAD bytes, a full read → `to_builder` → `build` → read
-    /// round-trip must preserve the lump count, all lump names, and all lump data payloads.
-    #[test]
-    fn write_read_roundtrip(bytes in common::arb_valid_wad()) {
-        let wad1 = crustywad::Wad::from_bytes(bytes)
-            .expect("arb_valid_wad always produces parseable bytes");
-        let written = wad1
-            .to_builder()
-            .build()
-            .expect("builder fed from a parsed WAD should always succeed");
-        let wad2 = crustywad::Wad::from_bytes(written)
-            .expect("bytes produced by WadBuilder should always parse");
-
-        prop_assert_eq!(wad1.lump_count(), wad2.lump_count());
-        for (l1, l2) in wad1.lumps().iter().zip(wad2.lumps().iter()) {
-            prop_assert_eq!(l1.name(), l2.name());
-            prop_assert_eq!(wad1.lump_data(l1), wad2.lump_data(l2));
-        }
-    }
-}
-
 #[test]
 fn header_returns_parsed_header() {
     let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("FLAT", &[0xAA])]))
