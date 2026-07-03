@@ -910,6 +910,24 @@ fn extract_missing_wad_exits_2() {
 }
 
 #[test]
+fn extract_lump_flag_without_value_exits_3() {
+    // `--lump` requires a NAME argument; omitting the value is a clap parse
+    // error, which the main() dispatch maps to exit code 3.
+    let out_dir = TempDir::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            "/nonexistent.wad",
+            "--output",
+            out_dir.path().to_str().unwrap(),
+            "--lump",
+        ])
+        .assert()
+        .code(3);
+}
+
+#[test]
 fn extract_duplicate_lump_names_writes_unique_files() {
     // Two lumps with the same name — second should get an occurrence-count suffix.
     let wad = write_wad(*b"PWAD", &[("PATCH", &[0xAA]), ("PATCH", &[0xBB])]);

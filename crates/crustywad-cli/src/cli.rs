@@ -90,8 +90,10 @@ pub(crate) enum SubCommand {
         /// Directory to write extracted lumps into (must already exist).
         #[arg(short, long, value_name = "DIR")]
         output: PathBuf,
-        /// Extract only the lump with this name. If not given, all lumps are
-        /// extracted. If the name is not found the command exits with code 2.
+        /// Extract all lumps with this name; if the name appears more than once
+        /// in the WAD, every occurrence is extracted. If not given, all lumps
+        /// are extracted. If the name is not found the command exits with
+        /// code 2.
         #[arg(short, long, value_name = "NAME")]
         lump: Option<String>,
     },
