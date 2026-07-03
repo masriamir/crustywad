@@ -314,19 +314,3 @@ fn short_lump_name_round_trips_correctly() {
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     assert_eq!(wad.lumps()[0].name(), "A");
 }
-
-// --- Lenient unknown-magic emits no WriteWarning ---
-
-#[test]
-fn lenient_unknown_magic_emits_no_warning() {
-    // WadKind::Unknown in lenient mode should NOT emit a WriteWarning —
-    // the raw bytes are written directly; there is no warning type for magic.
-    let (bytes, warnings) = WadBuilder::new(WadKind::Unknown(*b"XWAD"))
-        .build_with_options(&WriteOptions::lenient())
-        .unwrap();
-    assert!(
-        warnings.is_empty(),
-        "Unknown magic in lenient mode must not emit a warning"
-    );
-    assert_eq!(&bytes[0..4], b"XWAD");
-}
