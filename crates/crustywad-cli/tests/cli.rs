@@ -1030,6 +1030,24 @@ fn extract_sanitizes_path_separator_in_lump_name() {
 }
 
 #[test]
+fn extract_bad_output_checked_before_wad_io() {
+    // With a nonexistent WAD and a bad --output, the output check fires first.
+    // If the order were reversed, stderr would mention the WAD, not the output.
+    let not_a_dir = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            "/nonexistent.wad",
+            "--output",
+            not_a_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("does not exist or is not a directory"));
+}
+
+#[test]
 fn extract_output_not_a_directory_exits_2() {
     // Pass a regular file (not a directory) as --output to verify the upfront
     // is_dir() check fires with exit 2 rather than a confusing write-time error.
