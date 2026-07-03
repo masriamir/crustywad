@@ -311,6 +311,13 @@ fn short_lump_name_round_trips_correctly() {
         .add_lump("A", b"data")
         .build()
         .unwrap();
-    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes.clone()).unwrap();
     assert_eq!(wad.lumps()[0].name(), "A");
+
+    // Directory entries are 16 bytes: 4-byte filepos, 4-byte size, 8-byte
+    // NUL-padded name. Verify the on-disk name field is actually NUL-padded,
+    // not just that the parser trims it back to "A".
+    let dir_offset = wad.header().info_table_offset;
+    let name_bytes = &bytes[dir_offset + 8..dir_offset + 16];
+    assert_eq!(name_bytes, b"A\0\0\0\0\0\0\0");
 }
