@@ -382,18 +382,18 @@ fn run(cli: Cli) -> Result<i32> {
         }
 
         SubCommand::Extract { path, output, lump } => {
-            let wad = Wad::from_path_with_options(&path, options)
-                .with_context(|| format!("failed to load {}", path.display()))?;
-
-            for w in wad.warnings() {
-                eprintln!("warning: {w}");
-            }
-
             if !output.is_dir() {
                 anyhow::bail!(
                     "output path does not exist or is not a directory: {}",
                     output.display()
                 );
+            }
+
+            let wad = Wad::from_path_with_options(&path, options)
+                .with_context(|| format!("failed to load {}", path.display()))?;
+
+            for w in wad.warnings() {
+                eprintln!("warning: {w}");
             }
 
             // Collect the lumps to extract: either the named lump, or all lumps.
