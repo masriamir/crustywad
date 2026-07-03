@@ -485,13 +485,13 @@ fn run(cli: Cli) -> Result<i32> {
             for spec in &lumps {
                 let Some((name, file_path)) = spec.split_once('=') else {
                     eprintln!("error: invalid lump specification {spec:?}: expected NAME=FILE");
-                    process::exit(3);
+                    return Ok(3);
                 };
                 if name.is_empty() || file_path.is_empty() {
                     eprintln!(
                         "error: invalid lump specification {spec:?}: name and file must not be empty"
                     );
-                    process::exit(3);
+                    return Ok(3);
                 }
                 let data = std::fs::read(file_path)
                     .with_context(|| format!("failed to read lump file {file_path}"))?;
@@ -504,9 +504,15 @@ fn run(cli: Cli) -> Result<i32> {
                 crustywad::WriteOptions::strict()
             };
 
-            let (bytes, warnings) = builder
-                .build_with_options(&write_opts)
-                .with_context(|| format!("failed to build WAD {}", output.display()))?;
+            // Lump-name/size validation failures are usage errors (bad input data),
+            // distinct from the I/O failures handled via `?` elsewhere in this arm.
+            let (bytes, warnings) = match builder.build_with_options(&write_opts) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("error: failed to build WAD {}: {e}", output.display());
+                    return Ok(3);
+                }
+            };
 
             for w in &warnings {
                 eprintln!("warning: {w}");
@@ -517,16 +523,12 @@ fn run(cli: Cli) -> Result<i32> {
 
             let lump_count = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
             match cli.format {
-                Format::Human => println!(
+                Format::Human | Format::Csv => println!(
                     "wrote {}: kind={:?} lumps: {lump_count}",
                     output.display(),
                     wad_kind
                 ),
                 Format::Json => println!(r#"{{"ok":true,"lumps":{lump_count}}}"#),
-                Format::Csv => {
-                    println!("ok");
-                    println!("true");
-                }
             }
             Ok(0)
         }

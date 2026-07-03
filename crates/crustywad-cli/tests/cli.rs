@@ -1360,14 +1360,14 @@ fn build_json_output_ok_true() {
 }
 
 #[test]
-fn build_csv_output_ok_true() {
+fn build_csv_output_reports_lump_count() {
     let out = NamedTempFile::new().unwrap();
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["-F", "csv", "build", "-o", out.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout("ok\ntrue\n");
+        .stdout(predicate::str::contains("lumps: 0"));
 }
 
 #[test]
@@ -1401,6 +1401,26 @@ fn build_missing_output_arg_exits_3() {
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["build"])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_lump_name_too_long_exits_3() {
+    // A lump name over 8 bytes fails WadBuilder validation (strict mode) — this is a
+    // usage error (bad input), not an I/O failure, so it must exit 3, not 2.
+    let lump = NamedTempFile::new().unwrap();
+    std::fs::write(lump.path(), b"\x01").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("NAMEISWAYTOOLONG={}", lump.path().to_str().unwrap()),
+        ])
         .assert()
         .code(3);
 }
