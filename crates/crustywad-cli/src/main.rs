@@ -64,11 +64,14 @@ const WINDOWS_RESERVED: &[&str] = &[
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
-/// Converts a raw lump name to a safe filename component.
+/// Converts a raw lump name to a safe, uppercase filename component.
 ///
 /// Replaces any character that is not ASCII alphanumeric, `_`, or `-` with
 /// `_`, preventing path traversal from lump names that contain `/`, `\`, or
-/// other special characters. Returns `"UNNAMED"` for empty inputs.
+/// other special characters. The result is then uppercased so that lump names
+/// differing only in case (e.g. `PATCH` and `patch`) map to the same key and
+/// are correctly deduplicated on case-insensitive filesystems (Windows/macOS).
+/// Returns `"UNNAMED"` for empty inputs.
 ///
 /// Windows-reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
 /// `LPT1`–`LPT9`) are prefixed with `_` so extraction succeeds on all
@@ -83,7 +86,8 @@ fn sanitize_lump_name(name: &str) -> String {
                 '_'
             }
         })
-        .collect();
+        .collect::<String>()
+        .to_ascii_uppercase();
     if s.is_empty() {
         return String::from("UNNAMED");
     }
@@ -500,6 +504,6 @@ mod tests {
     #[test]
     fn sanitize_lump_name_path_traversal_replaced() {
         assert_eq!(sanitize_lump_name("A/B"), "A_B");
-        assert_eq!(sanitize_lump_name("../etc"), "___etc");
+        assert_eq!(sanitize_lump_name("../etc"), "___ETC");
     }
 }

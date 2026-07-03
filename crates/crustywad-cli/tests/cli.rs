@@ -910,6 +910,43 @@ fn extract_missing_wad_exits_2() {
 }
 
 #[test]
+fn extract_mixed_case_lump_names_deduplicated() {
+    // "PATCH" and "patch" differ only in case; after uppercasing they collide,
+    // so the second gets the _1 suffix instead of silently overwriting on
+    // case-insensitive filesystems (Windows/macOS).
+    let wad = write_wad(*b"PWAD", &[("PATCH", &[0xAA]), ("patch", &[0xBB])]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        out_dir.path().join("PATCH.bin").exists(),
+        "PATCH.bin not written"
+    );
+    assert!(
+        out_dir.path().join("PATCH_1.bin").exists(),
+        "PATCH_1.bin not written"
+    );
+    assert_eq!(
+        std::fs::read(out_dir.path().join("PATCH.bin")).unwrap(),
+        vec![0xAAu8]
+    );
+    assert_eq!(
+        std::fs::read(out_dir.path().join("PATCH_1.bin")).unwrap(),
+        vec![0xBBu8]
+    );
+}
+
+#[test]
 fn extract_windows_reserved_lump_name_gets_prefixed() {
     // Lump names that are Windows device names (CON, NUL, COM1, LPT1, …) must
     // be prefixed with '_' so extraction succeeds on all platforms.
