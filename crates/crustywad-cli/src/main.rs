@@ -2,6 +2,8 @@
 
 mod cli;
 
+use std::collections::HashMap;
+use std::fs;
 use std::process;
 
 use std::fmt::Write as _;
@@ -9,8 +11,6 @@ use std::fmt::Write as _;
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
 use crustywad::{ParseOptions, Wad};
-
-use std::collections::HashMap;
 
 use cli::{Cli, Format, SubCommand};
 
@@ -55,6 +55,46 @@ fn is_map_marker(name: &str) -> bool {
                 && bytes[4].is_ascii_digit()
         }
         _ => false,
+    }
+}
+
+/// Windows device names that are reserved regardless of file extension.
+const WINDOWS_RESERVED: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// Converts a raw lump name to a safe, uppercase filename component.
+///
+/// Replaces any character that is not ASCII alphanumeric, `_`, or `-` with
+/// `_`, preventing path traversal from lump names that contain `/`, `\`, or
+/// other special characters. The result is then uppercased so that lump names
+/// differing only in case (e.g. `PATCH` and `patch`) map to the same key and
+/// are correctly deduplicated on case-insensitive filesystems (Windows/macOS).
+/// Returns `"UNNAMED"` for empty inputs.
+///
+/// Windows-reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
+/// `LPT1`–`LPT9`) are prefixed with `_` so extraction succeeds on all
+/// platforms.
+fn sanitize_lump_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .to_ascii_uppercase();
+    if s.is_empty() {
+        return String::from("UNNAMED");
+    }
+    if WINDOWS_RESERVED.iter().any(|r| s.eq_ignore_ascii_case(r)) {
+        format!("_{s}")
+    } else {
+        s
     }
 }
 
@@ -356,5 +396,114 @@ fn run(cli: Cli) -> Result<i32> {
                 }
             }
         }
+
+        SubCommand::Extract { path, output, lump } => {
+            if !output.is_dir() {
+                anyhow::bail!(
+                    "output path does not exist or is not a directory: {}",
+                    output.display()
+                );
+            }
+
+            let wad = Wad::from_path_with_options(&path, options)
+                .with_context(|| format!("failed to load {}", path.display()))?;
+
+            for w in wad.warnings() {
+                eprintln!("warning: {w}");
+            }
+
+            // Collect the lumps to extract: either the named lump, or all lumps.
+            let indices: Vec<usize> = if let Some(ref name) = lump {
+                let found: Vec<usize> = wad
+                    .lumps()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.name() == name.as_str())
+                    .map(|(i, _)| i)
+                    .collect();
+                if found.is_empty() {
+                    eprintln!("error: lump {name:?} not found in {}", path.display());
+                    return Ok(2);
+                }
+                found
+            } else {
+                (0..wad.lump_count()).collect()
+            };
+
+            // Track how many times each name has already been written so we can
+            // generate unique filenames for duplicate lump names.
+            let mut name_count: HashMap<String, usize> = HashMap::new();
+
+            if matches!(cli.format, Format::Csv) {
+                println!("filename");
+            }
+
+            for index in indices {
+                let lump_meta = wad
+                    .lump(index)
+                    .ok_or_else(|| anyhow::anyhow!("lump index {index} out of range"))?;
+                let lump_name = sanitize_lump_name(lump_meta.name());
+                let data = wad
+                    .lump_bytes(index)
+                    .ok_or_else(|| anyhow::anyhow!("lump index {index} out of range"))?;
+
+                let count = name_count.entry(lump_name.clone()).or_insert(0);
+                let filename = if *count == 0 {
+                    format!("{lump_name}.bin")
+                } else {
+                    format!("{lump_name}_{count}.bin")
+                };
+                *count += 1;
+
+                let dest = output.join(&filename);
+                fs::write(&dest, data)
+                    .with_context(|| format!("failed to write {}", dest.display()))?;
+                match cli.format {
+                    Format::Human => println!("{filename}"),
+                    Format::Json => {
+                        println!(r#"{{"filename":{}}}"#, json_string(&filename));
+                    }
+                    Format::Csv => println!("{}", csv_field(&filename)),
+                }
+            }
+
+            Ok(0)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_lump_name;
+
+    #[test]
+    fn sanitize_lump_name_reserved_windows_names_get_prefixed() {
+        for name in &[
+            "CON", "con", "Con", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9",
+        ] {
+            let result = sanitize_lump_name(name);
+            assert!(
+                result.starts_with('_'),
+                "expected '{name}' to be prefixed, got '{result}'"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_lump_name_normal_names_unchanged() {
+        assert_eq!(sanitize_lump_name("PLAYPAL"), "PLAYPAL");
+        assert_eq!(sanitize_lump_name("E1M1"), "E1M1");
+        assert_eq!(sanitize_lump_name("MY-LUMP"), "MY-LUMP");
+    }
+
+    #[test]
+    fn sanitize_lump_name_empty_returns_unnamed() {
+        assert_eq!(sanitize_lump_name(""), "UNNAMED");
+    }
+
+    #[test]
+    fn sanitize_lump_name_path_traversal_replaced() {
+        assert_eq!(sanitize_lump_name("A/B"), "A_B");
+        assert_eq!(sanitize_lump_name("../etc"), "___ETC");
     }
 }
