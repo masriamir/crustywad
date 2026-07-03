@@ -113,11 +113,17 @@ fn strict_rejects_unknown_magic() {
 }
 
 #[test]
-fn lenient_allows_unknown_magic() {
-    let (bytes, _) = WadBuilder::new(WadKind::Unknown(*b"XWAD"))
+fn lenient_allows_unknown_magic_with_warning() {
+    let (bytes, warnings) = WadBuilder::new(WadKind::Unknown(*b"XWAD"))
         .build_with_options(&WriteOptions::lenient())
         .unwrap();
     assert_eq!(&bytes[0..4], b"XWAD");
+    assert!(
+        warnings.iter().any(
+            |w| matches!(w, crustywad::WriteWarning::UnknownMagic { magic } if magic == b"XWAD")
+        ),
+        "expected UnknownMagic warning, got: {warnings:?}"
+    );
 }
 
 #[test]
