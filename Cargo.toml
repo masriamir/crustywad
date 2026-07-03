@@ -19,6 +19,7 @@ assert_cmd = "2.2.2"
 binrw = "0.15.1"
 clap = { version = "4.5.39", features = ["derive"] }
 clap_complete = "4"
+clap_mangen = "0.3"
 predicates = "3.1.4"
 proptest = "1.6.0"
 tempfile = "3.20.0"
