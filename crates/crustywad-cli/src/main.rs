@@ -521,7 +521,7 @@ fn run(cli: Cli) -> Result<i32> {
             std::fs::write(&output, &bytes)
                 .with_context(|| format!("failed to write {}", output.display()))?;
 
-            let lump_count = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+            let lump_count = lumps.len();
             match cli.format {
                 Format::Human | Format::Csv => println!(
                     "wrote {}: kind={:?} lumps: {lump_count}",
