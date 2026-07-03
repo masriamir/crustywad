@@ -74,4 +74,31 @@ pub(crate) enum SubCommand {
         /// Path to the second WAD file.
         file2: PathBuf,
     },
+    /// Extract lumps from a WAD file to a directory.
+    ///
+    /// Lump names are sanitized to safe filename components: any character that
+    /// is not ASCII alphanumeric, `_`, or `-` is replaced with `_`; the result
+    /// is then normalized to uppercase (so `patch` and `PATCH` both produce
+    /// `PATCH.bin`); an empty name becomes `UNNAMED`; Windows-reserved device
+    /// names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) are
+    /// prefixed with `_` (e.g. `CON` → `_CON.bin`) so extraction succeeds on
+    /// all platforms. Each lump is written as `<SAFE_NAME>.bin`. When two or
+    /// more lumps produce the same safe filename (whether from duplicate lump
+    /// names or distinct names that sanitize identically), subsequent files are
+    /// suffixed with an occurrence count (e.g. `PATCH.bin`, `PATCH_1.bin`,
+    /// `PATCH_2.bin`). Exits 0 on success, 2 on I/O or parse error, 3 on
+    /// argument error.
+    Extract {
+        /// Path to the WAD file.
+        path: PathBuf,
+        /// Directory to write extracted lumps into (must already exist).
+        #[arg(short, long, value_name = "DIR")]
+        output: PathBuf,
+        /// Extract all lumps with this name; if the name appears more than once
+        /// in the WAD, every occurrence is extracted. If not given, all lumps
+        /// are extracted. If the name is not found the command exits with
+        /// code 2.
+        #[arg(short, long, value_name = "NAME")]
+        lump: Option<String>,
+    },
 }
