@@ -1044,7 +1044,9 @@ fn extract_bad_output_checked_before_wad_io() {
         ])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("does not exist or is not a directory"));
+        .stderr(predicate::str::contains(
+            "does not exist or is not a directory",
+        ));
 }
 
 #[test]
