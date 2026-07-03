@@ -73,7 +73,7 @@ The error message goes to stderr in human format; the exit code is `2`.
 
 | Flag | Short | Description |
 |---|---|---|
-| `--lenient` | — | Use lenient parsing instead of strict; attempts best-effort recovery for non-fatal issues and emits warnings to stderr |
+| `--lenient` | — | Use lenient parsing instead of strict when reading a WAD; attempts best-effort recovery for non-fatal issues and emits warnings to stderr. For `build`, also uses lenient instead of strict validation when writing |
 | `--format <FORMAT>` | `-F` | Output format: `human` (default), `json`, or `csv` |
 | `--help` | `-h` | Print help and exit `0` |
 | `--version` | `-V` | Print version and exit `0` |
