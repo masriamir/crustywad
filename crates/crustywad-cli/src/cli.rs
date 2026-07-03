@@ -79,12 +79,15 @@ pub(crate) enum SubCommand {
     /// Lump names are sanitized to safe filename components: any character that
     /// is not ASCII alphanumeric, `_`, or `-` is replaced with `_`; the result
     /// is then normalized to uppercase (so `patch` and `PATCH` both produce
-    /// `PATCH.bin`); an empty name becomes `UNNAMED`. Each lump is written as
-    /// `<SAFE_NAME>.bin`. When two or more lumps produce the same safe filename
-    /// (whether from duplicate lump names or distinct names that sanitize
-    /// identically), subsequent files are suffixed with an occurrence count
-    /// (e.g. `PATCH.bin`, `PATCH_1.bin`, `PATCH_2.bin`). Exits 0 on success,
-    /// 2 on I/O or parse error, 3 on argument error.
+    /// `PATCH.bin`); an empty name becomes `UNNAMED`; Windows-reserved device
+    /// names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) are
+    /// prefixed with `_` (e.g. `CON` → `_CON.bin`) so extraction succeeds on
+    /// all platforms. Each lump is written as `<SAFE_NAME>.bin`. When two or
+    /// more lumps produce the same safe filename (whether from duplicate lump
+    /// names or distinct names that sanitize identically), subsequent files are
+    /// suffixed with an occurrence count (e.g. `PATCH.bin`, `PATCH_1.bin`,
+    /// `PATCH_2.bin`). Exits 0 on success, 2 on I/O or parse error, 3 on
+    /// argument error.
     Extract {
         /// Path to the WAD file.
         path: PathBuf,
