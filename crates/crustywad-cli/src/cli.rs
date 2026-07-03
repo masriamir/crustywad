@@ -43,7 +43,7 @@ pub(crate) struct Cli {
 /// Available `cwad` subcommands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SubCommand {
-    /// Print WAD metadata (kind and lump count).
+    /// Print WAD metadata: kind, lump count, total data size, and detected map names.
     Info {
         /// Path to the WAD file.
         path: PathBuf,
@@ -57,5 +57,48 @@ pub(crate) enum SubCommand {
     Validate {
         /// Path to the WAD file.
         path: PathBuf,
+    },
+    /// Compare two WAD files lump by lump.
+    ///
+    /// Exits 0 if both WADs have identical per-name lump data (same lump names,
+    /// same count of each name, same data for each occurrence; directory order
+    /// of distinct lump names is
+    /// not significant, but for duplicate lump names the per-name sequence of
+    /// data is compared in directory order). Exits 1 if any differences are
+    /// found, or 2 on I/O or parse error. JSON output is one record per line
+    /// (NDJSON). When no differences are found, CSV output is empty (no header
+    /// row); differences produce a `kind,name` header followed by one row each.
+    Diff {
+        /// Path to the first WAD file.
+        file1: PathBuf,
+        /// Path to the second WAD file.
+        file2: PathBuf,
+    },
+    /// Extract lumps from a WAD file to a directory.
+    ///
+    /// Lump names are sanitized to safe filename components: any character that
+    /// is not ASCII alphanumeric, `_`, or `-` is replaced with `_`; the result
+    /// is then normalized to uppercase (so `patch` and `PATCH` both produce
+    /// `PATCH.bin`); an empty name becomes `UNNAMED`; Windows-reserved device
+    /// names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) are
+    /// prefixed with `_` (e.g. `CON` → `_CON.bin`) so extraction succeeds on
+    /// all platforms. Each lump is written as `<SAFE_NAME>.bin`. When two or
+    /// more lumps produce the same safe filename (whether from duplicate lump
+    /// names or distinct names that sanitize identically), subsequent files are
+    /// suffixed with an occurrence count (e.g. `PATCH.bin`, `PATCH_1.bin`,
+    /// `PATCH_2.bin`). Exits 0 on success, 2 on I/O or parse error, 3 on
+    /// argument error.
+    Extract {
+        /// Path to the WAD file.
+        path: PathBuf,
+        /// Directory to write extracted lumps into (must already exist).
+        #[arg(short, long, value_name = "DIR")]
+        output: PathBuf,
+        /// Extract all lumps with this name; if the name appears more than once
+        /// in the WAD, every occurrence is extracted. If not given, all lumps
+        /// are extracted. If the name is not found the command exits with
+        /// code 2.
+        #[arg(short, long, value_name = "NAME")]
+        lump: Option<String>,
     },
 }
