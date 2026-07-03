@@ -40,9 +40,14 @@ pub fn lump_map<'a>(pairs: &'a [(&'a str, &'a [u8])]) -> HashMap<&'a str, &'a [u
 }
 
 /// Generates an ASCII lump name (1–8 chars) and a payload (0–256 bytes).
+///
+/// The name charset covers upper- and lower-case letters, digits, and underscores —
+/// all are valid ASCII of at most 8 bytes, so `WadBuilder::build`/`build_with_options`
+/// accept them without a name-related error. Uppercase-only would also be valid, but
+/// narrowing the charset would underspecify what the write path actually accepts.
 #[allow(dead_code)]
 pub fn arb_lump_pair() -> impl Strategy<Value = (String, Vec<u8>)> {
-    let name = proptest::string::string_regex("[A-Z0-9_]{1,8}").unwrap();
+    let name = proptest::string::string_regex("[A-Za-z0-9_]{1,8}").unwrap();
     let data = proptest::collection::vec(any::<u8>(), 0..=256);
     (name, data)
 }

@@ -1,7 +1,10 @@
 //! Integration tests for WAD write support.
 #![cfg(feature = "write")]
 
+mod common;
+
 use crustywad::{WadBuilder, WadKind, WriteOptions};
+use proptest::prelude::*;
 
 #[test]
 fn builder_produces_parseable_empty_iwad() {
@@ -320,4 +323,35 @@ fn short_lump_name_round_trips_correctly() {
     let dir_offset = wad.header().info_table_offset;
     let name_bytes = &bytes[dir_offset + 8..dir_offset + 16];
     assert_eq!(name_bytes, b"A\0\0\0\0\0\0\0");
+}
+
+proptest! {
+    /// For any structurally valid WAD bytes, a full read → `to_builder` → `build` → read
+    /// round-trip must preserve the WAD kind, lump count, all lump names, and all lump
+    /// data payloads.
+    #[test]
+    fn write_read_roundtrip(bytes in common::arb_valid_wad()) {
+        let parse1 = crustywad::Wad::from_bytes(bytes);
+        prop_assert!(parse1.is_ok(), "arb_valid_wad() must produce parseable bytes: {:?}", parse1.err());
+        let wad1 = parse1.unwrap();
+
+        let build_result = wad1.to_builder().build();
+        prop_assert!(
+            build_result.is_ok(),
+            "builder fed from a parsed WAD should always succeed: {:?}",
+            build_result.err()
+        );
+        let written = build_result.unwrap();
+
+        let parse2 = crustywad::Wad::from_bytes(written);
+        prop_assert!(parse2.is_ok(), "bytes produced by WadBuilder should always parse: {:?}", parse2.err());
+        let wad2 = parse2.unwrap();
+
+        prop_assert_eq!(wad1.kind(), wad2.kind());
+        prop_assert_eq!(wad1.lump_count(), wad2.lump_count());
+        for (l1, l2) in wad1.lumps().iter().zip(wad2.lumps().iter()) {
+            prop_assert_eq!(l1.name(), l2.name());
+            prop_assert_eq!(wad1.lump_data(l1), wad2.lump_data(l2));
+        }
+    }
 }
