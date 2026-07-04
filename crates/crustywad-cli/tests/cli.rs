@@ -1248,3 +1248,235 @@ fn extract_printed_summary_to_stdout() {
         .success()
         .stdout(predicate::str::contains("PLAYPAL"));
 }
+
+// ---------------------------------------------------------------------------
+// `cwad build`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_empty_pwad_exits_0() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--kind",
+            "pwad",
+            "-o",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    // Output file must be a valid WAD.
+    let bytes = std::fs::read(out.path()).unwrap();
+    assert!(crustywad::Wad::from_bytes(bytes).is_ok());
+}
+
+#[test]
+fn build_empty_iwad_exits_0() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--kind",
+            "iwad",
+            "-o",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.kind(), crustywad::WadKind::Iwad);
+    assert_eq!(wad.lump_count(), 0);
+}
+
+#[test]
+fn build_default_kind_is_pwad() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.kind(), crustywad::WadKind::Pwad);
+}
+
+#[test]
+fn build_with_lump_files_produces_correct_lumps() {
+    // Create two lump data files.
+    let lump1 = NamedTempFile::new().unwrap();
+    std::fs::write(lump1.path(), b"\x01\x02\x03").unwrap();
+    let lump2 = NamedTempFile::new().unwrap();
+    std::fs::write(lump2.path(), b"\xAA\xBB").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--kind",
+            "pwad",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("PLAYPAL={}", lump1.path().to_str().unwrap()),
+            &format!("COLORMAP={}", lump2.path().to_str().unwrap()),
+        ])
+        .assert()
+        .success();
+
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.lump_count(), 2);
+    assert_eq!(wad.lump(0).unwrap().name(), "PLAYPAL");
+    assert_eq!(wad.lump(1).unwrap().name(), "COLORMAP");
+    assert_eq!(wad.lump_data(wad.lump(0).unwrap()), b"\x01\x02\x03");
+    assert_eq!(wad.lump_data(wad.lump(1).unwrap()), b"\xAA\xBB");
+}
+
+#[test]
+fn build_human_output_reports_lump_count() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lumps: 0"));
+}
+
+#[test]
+fn build_json_output_ok_true() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"ok\":true"));
+}
+
+#[test]
+fn build_csv_output_reports_lump_count() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "build", "-o", out.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lumps: 0"));
+}
+
+#[test]
+fn build_missing_lump_file_exits_2() {
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            "BADLUMP=/nonexistent/path/lump.bin",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn build_invalid_lump_spec_exits_3() {
+    // A lump spec without '=' is a usage error.
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap(), "NOEQUALSSIGN"])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_empty_lump_name_exits_3() {
+    // A spec with an empty name (leading '=') is a usage error.
+    let lump = NamedTempFile::new().unwrap();
+    std::fs::write(lump.path(), b"\x01").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("={}", lump.path().to_str().unwrap()),
+        ])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_empty_lump_file_path_exits_3() {
+    // A spec with an empty file path (trailing '=') is a usage error.
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap(), "PLAYPAL="])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_lenient_truncates_long_name_and_warns() {
+    // In lenient mode, a name over 8 bytes is truncated with a warning instead
+    // of rejected outright.
+    let lump = NamedTempFile::new().unwrap();
+    std::fs::write(lump.path(), b"\x01").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("NAMEISWAYTOOLONG={}", lump.path().to_str().unwrap()),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"));
+
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.lump_count(), 1);
+}
+
+#[test]
+fn build_missing_output_arg_exits_3() {
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build"])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_lump_name_too_long_exits_3() {
+    // A lump name over 8 bytes fails WadBuilder validation (strict mode) — this is a
+    // usage error (bad input), not an I/O failure, so it must exit 3, not 2.
+    let lump = NamedTempFile::new().unwrap();
+    std::fs::write(lump.path(), b"\x01").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("NAMEISWAYTOOLONG={}", lump.path().to_str().unwrap()),
+        ])
+        .assert()
+        .code(3);
+}
