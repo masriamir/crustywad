@@ -9,7 +9,7 @@ src = "src"
 build-dir = "../../target/book"
 
 [output.html]
-site-url = "/crustywad/"
+site-url = "/"
 git-repository-url = "https://github.com/masriamir/crustywad"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
