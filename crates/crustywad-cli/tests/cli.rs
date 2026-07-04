@@ -1397,6 +1397,62 @@ fn build_invalid_lump_spec_exits_3() {
 }
 
 #[test]
+fn build_empty_lump_name_exits_3() {
+    // A spec with an empty name (leading '=') is a usage error.
+    let lump = NamedTempFile::new().unwrap();
+    std::fs::write(lump.path(), b"\x01").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("={}", lump.path().to_str().unwrap()),
+        ])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_empty_lump_file_path_exits_3() {
+    // A spec with an empty file path (trailing '=') is a usage error.
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["build", "-o", out.path().to_str().unwrap(), "PLAYPAL="])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn build_lenient_truncates_long_name_and_warns() {
+    // In lenient mode, a name over 8 bytes is truncated with a warning instead
+    // of rejected outright.
+    let lump = NamedTempFile::new().unwrap();
+    std::fs::write(lump.path(), b"\x01").unwrap();
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "build",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("NAMEISWAYTOOLONG={}", lump.path().to_str().unwrap()),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"));
+
+    let bytes = std::fs::read(out.path()).unwrap();
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.lump_count(), 1);
+}
+
+#[test]
 fn build_missing_output_arg_exits_3() {
     Command::cargo_bin("cwad")
         .unwrap()
