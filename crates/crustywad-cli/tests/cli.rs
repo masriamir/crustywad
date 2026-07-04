@@ -872,7 +872,7 @@ fn merge_two_wads_contains_all_lumps_in_order() {
         .args(["info", out.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("lumps: 3"));
+        .stdout(predicate::str::contains("lumps:     3"));
 }
 
 #[test]
