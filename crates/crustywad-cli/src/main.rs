@@ -410,6 +410,9 @@ fn run(cli: Cli) -> Result<i32> {
             for path in &inputs {
                 let wad = Wad::from_path_with_options(path, options)
                     .with_context(|| format!("failed to load {}", path.display()))?;
+                for w in wad.warnings() {
+                    eprintln!("warning: {w}");
+                }
                 for lump in wad.lumps() {
                     builder.add_lump(lump.name(), wad.lump_data(lump).to_vec());
                 }

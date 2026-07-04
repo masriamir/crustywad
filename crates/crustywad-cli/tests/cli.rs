@@ -985,14 +985,12 @@ fn merge_preserves_lump_data() {
         .success();
 
     let bytes = std::fs::read(out.path()).unwrap();
-    assert!(
-        bytes.windows(4).any(|w| w == [0xDE, 0xAD, 0xBE, 0xEF]),
-        "LUMP1 data should be present in output"
-    );
-    assert!(
-        bytes.windows(2).any(|w| w == [0xCA, 0xFE]),
-        "LUMP2 data should be present in output"
-    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(wad.lump_count(), 2);
+    assert_eq!(wad.lump(0).unwrap().name(), "LUMP1");
+    assert_eq!(wad.lump(1).unwrap().name(), "LUMP2");
+    assert_eq!(wad.lump_data(wad.lump(0).unwrap()), data1);
+    assert_eq!(wad.lump_data(wad.lump(1).unwrap()), data2);
 }
 
 #[test]
@@ -1015,6 +1013,43 @@ fn merge_lenient_non_ascii_name_still_fails_write_validation_exits_3() {
         ])
         .assert()
         .code(3);
+}
+
+#[test]
+fn merge_no_inputs_exits_3() {
+    // `inputs` is required to have at least one path; omitting it entirely is
+    // a clap usage error, not a silent zero-lump merge.
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["merge", "--output", out.path().to_str().unwrap()])
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn merge_lenient_emits_warning_for_bad_magic() {
+    let mut bytes = build_wad(*b"NOPE", &[("TEST", &[1])]);
+    bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
+
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), &bytes).unwrap();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "merge",
+            file.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"));
 }
 
 // ---------------------------------------------------------------------------

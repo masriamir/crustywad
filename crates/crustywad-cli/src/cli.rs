@@ -73,6 +73,7 @@ pub(crate) enum SubCommand {
     /// Merge multiple WAD files into one.
     Merge {
         /// Input WAD files to merge (in order).
+        #[arg(required = true)]
         inputs: Vec<PathBuf>,
         /// Output WAD file path.
         #[arg(short, long)]
