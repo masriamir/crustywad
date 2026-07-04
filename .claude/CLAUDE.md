@@ -222,6 +222,20 @@ The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes f
 4. Run `just ci` before pushing
 5. Open a PR against `main`
 
+## Copilot review-comment workflow
+
+PRs are reviewed automatically by `copilot-pull-request-reviewer`. Work through its comments with this loop until a round produces no new comments, then hand off for human review:
+
+1. Fetch all unresolved review threads (GraphQL `reviewThreads`, filtering `isResolved: false`).
+2. For each thread, verify the comment against actual code and test/CI behavior before acting — Copilot comments are sometimes wrong (e.g. asserting the opposite of documented behavior) or based on a stale diff. Confirm by reading the relevant source, not just the comment text.
+3. Fix the underlying issue, or reply explaining why no change is needed if the comment doesn't hold up.
+4. Run `just ci` locally before pushing.
+5. Push, then reply on the review comment (referencing the fix commit) and resolve the thread via the GraphQL `resolveReviewThread` mutation.
+6. Once every thread from the current round is resolved, request a fresh Copilot review (`POST /pulls/{number}/requested_reviewers` with `copilot-pull-request-reviewer[bot]`).
+7. Repeat from step 1. Stop when a review round adds zero new comments.
+
+**Branch drift:** if the PR branch has `main` merged into it mid-session (e.g. by an earlier, unrelated commit), a local branch based on an older fetch will diverge and a plain `git push` will be rejected as non-fast-forward. Re-fetch the remote branch and `git rebase` onto its tip before pushing; resolve any conflicts by hand rather than force-pushing over the newer history.
+
 ## CI pipeline
 
 The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:

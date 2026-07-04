@@ -9,17 +9,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-/// The WAD kind to use when writing the output WAD.
-///
-/// Passed to `--kind` on subcommands that write a WAD file (e.g. `merge`).
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub(crate) enum WadKindArg {
-    /// Write an IWAD (main game data file).
-    Iwad,
-    /// Write a PWAD (patch/add-on WAD).
-    Pwad,
-}
-
 /// Output format for structured subcommand output.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum Format {
@@ -37,7 +26,8 @@ pub(crate) enum Format {
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: SubCommand,
-    /// Use lenient parsing instead of strict.
+    /// Use lenient parsing instead of strict when reading a WAD; for `build`,
+    /// also uses lenient instead of strict validation when writing one.
     #[arg(long, global = true)]
     pub(crate) lenient: bool,
     /// Output format.
@@ -51,10 +41,20 @@ pub(crate) struct Cli {
     pub(crate) format: Format,
 }
 
+/// WAD kind for subcommands that write a WAD file (e.g. `build`, `merge`).
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub(crate) enum WadKindArg {
+    /// IWAD — the main game data file.
+    Iwad,
+    /// PWAD — a patch or add-on WAD (default).
+    #[default]
+    Pwad,
+}
+
 /// Available `cwad` subcommands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SubCommand {
-    /// Print WAD metadata (kind and lump count).
+    /// Print WAD metadata: kind, lump count, total data size, and detected map names.
     Info {
         /// Path to the WAD file.
         path: PathBuf,
@@ -79,5 +79,65 @@ pub(crate) enum SubCommand {
         /// Output WAD kind.
         #[arg(long, default_value = "pwad")]
         kind: WadKindArg,
+    },
+    /// Compare two WAD files lump by lump.
+    ///
+    /// Exits 0 if both WADs have identical per-name lump data (same lump names,
+    /// same count of each name, same data for each occurrence; directory order
+    /// of distinct lump names is
+    /// not significant, but for duplicate lump names the per-name sequence of
+    /// data is compared in directory order). Exits 1 if any differences are
+    /// found, or 2 on I/O or parse error. JSON output is one record per line
+    /// (NDJSON). When no differences are found, CSV output is empty (no header
+    /// row); differences produce a `kind,name` header followed by one row each.
+    Diff {
+        /// Path to the first WAD file.
+        file1: PathBuf,
+        /// Path to the second WAD file.
+        file2: PathBuf,
+    },
+    /// Extract lumps from a WAD file to a directory.
+    ///
+    /// Lump names are sanitized to safe filename components: any character that
+    /// is not ASCII alphanumeric, `_`, or `-` is replaced with `_`; the result
+    /// is then normalized to uppercase (so `patch` and `PATCH` both produce
+    /// `PATCH.bin`); an empty name becomes `UNNAMED`; Windows-reserved device
+    /// names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) are
+    /// prefixed with `_` (e.g. `CON` → `_CON.bin`) so extraction succeeds on
+    /// all platforms. Each lump is written as `<SAFE_NAME>.bin`. When two or
+    /// more lumps produce the same safe filename (whether from duplicate lump
+    /// names or distinct names that sanitize identically), subsequent files are
+    /// suffixed with an occurrence count (e.g. `PATCH.bin`, `PATCH_1.bin`,
+    /// `PATCH_2.bin`). Exits 0 on success, 2 on I/O or parse error, 3 on
+    /// argument error.
+    Extract {
+        /// Path to the WAD file.
+        path: PathBuf,
+        /// Directory to write extracted lumps into (must already exist).
+        #[arg(short, long, value_name = "DIR")]
+        output: PathBuf,
+        /// Extract all lumps with this name; if the name appears more than once
+        /// in the WAD, every occurrence is extracted. If not given, all lumps
+        /// are extracted. If the name is not found the command exits with
+        /// code 2.
+        #[arg(short, long, value_name = "NAME")]
+        lump: Option<String>,
+    },
+    /// Build a new WAD file from lump data files.
+    ///
+    /// Lumps are specified as `NAME=FILE` pairs. The WAD kind defaults to PWAD.
+    Build {
+        /// Output WAD file path.
+        #[arg(short = 'o', long, value_name = "OUTPUT")]
+        output: PathBuf,
+        /// WAD kind: `iwad` or `pwad` (default: `pwad`).
+        #[arg(long, default_value = "pwad", value_name = "KIND")]
+        kind: WadKindArg,
+        /// Lump specifications as `NAME=FILE` pairs.
+        ///
+        /// Each argument must be of the form `LUMP_NAME=path/to/data.bin`.
+        /// Lumps are added to the WAD in the order they are listed.
+        #[arg(value_name = "NAME=FILE")]
+        lumps: Vec<String>,
     },
 }
