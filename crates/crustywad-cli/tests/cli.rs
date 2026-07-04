@@ -995,6 +995,28 @@ fn merge_preserves_lump_data() {
     );
 }
 
+#[test]
+fn merge_lenient_non_ascii_name_still_fails_write_validation_exits_3() {
+    // A non-ASCII lump name decodes successfully under lenient *read* (with a
+    // warning), but `WriteError::NonAsciiName` is rejected in both write
+    // strictness modes, so `--lenient merge` must still exit 3 rather than
+    // silently succeeding or falling through to the generic I/O exit code 2.
+    let wad = write_wad(*b"PWAD", &[("É", &[1])]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "merge",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(3);
+}
+
 // ---------------------------------------------------------------------------
 // `cwad extract`
 // ---------------------------------------------------------------------------

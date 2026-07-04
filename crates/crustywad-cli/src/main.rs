@@ -414,9 +414,27 @@ fn run(cli: Cli) -> Result<i32> {
                     builder.add_lump(lump.name(), wad.lump_data(lump).to_vec());
                 }
             }
-            let bytes = builder
-                .build()
-                .with_context(|| "failed to build merged WAD")?;
+
+            let write_opts = if cli.lenient {
+                crustywad::WriteOptions::lenient()
+            } else {
+                crustywad::WriteOptions::strict()
+            };
+
+            // Lump-name/size validation failures are usage errors (bad input data),
+            // distinct from the I/O failures handled via `?` elsewhere in this arm.
+            let (bytes, warnings) = match builder.build_with_options(&write_opts) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("error: failed to build merged WAD: {e}");
+                    return Ok(3);
+                }
+            };
+
+            for w in &warnings {
+                eprintln!("warning: {w}");
+            }
+
             std::fs::write(&output, &bytes)
                 .with_context(|| format!("failed to write {}", output.display()))?;
             Ok(0)

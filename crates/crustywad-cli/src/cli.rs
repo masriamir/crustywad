@@ -26,8 +26,9 @@ pub(crate) enum Format {
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: SubCommand,
-    /// Use lenient parsing instead of strict when reading a WAD; for `build`,
-    /// also uses lenient instead of strict validation when writing one.
+    /// Use lenient parsing instead of strict when reading a WAD; for `build`
+    /// and `merge`, also uses lenient instead of strict validation when
+    /// writing one.
     #[arg(long, global = true)]
     pub(crate) lenient: bool,
     /// Output format.
