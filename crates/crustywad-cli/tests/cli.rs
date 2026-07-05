@@ -1997,7 +1997,7 @@ fn hardening_info_json_corrupt_wad_exits_nonzero_not_panic() {
         .unwrap()
         .args(["-F", "json", "info", file.path().to_str().unwrap()])
         .assert()
-        .failure()
+        .code(2)
         // Must not contain raw Rust panic output.
         .stderr(predicate::str::contains("thread '").not())
         .stderr(predicate::str::contains("unwrap()").not());
@@ -2012,7 +2012,7 @@ fn hardening_list_csv_valid_wad_has_header_row() {
         .args(["-F", "csv", "list", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("index,filepos,size,name"))
+        .stdout(predicate::str::starts_with("index,filepos,size,name\n"))
         .stdout(predicate::str::contains("PLAYPAL"))
         .stdout(predicate::str::contains("COLORMAP"));
 }
@@ -2087,6 +2087,14 @@ fn hardening_extract_truncated_wad_exits_nonzero() {
         ])
         .assert()
         .failure();
+
+    let entries: Vec<_> = std::fs::read_dir(out_dir.path())
+        .expect("output dir should be readable")
+        .collect();
+    assert!(
+        entries.is_empty(),
+        "extract must not write partial output on failure"
+    );
 }
 
 #[test]
