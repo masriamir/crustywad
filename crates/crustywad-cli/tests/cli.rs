@@ -1992,16 +1992,16 @@ fn hardening_list_valid_wad_exits_0() {
 #[test]
 fn hardening_info_json_corrupt_wad_exits_nonzero_not_panic() {
     // `info --format json` on a corrupt WAD must exit non-zero without
-    // panicking or printing raw Rust debug output.  The `info` subcommand
-    // propagates parse errors through `run()` → `main()` which prints a
-    // human-readable "error: …" on stderr and exits 2.
+    // panicking. The `info` subcommand propagates parse errors through
+    // `run()` → `main()` which prints a human-readable "error: …" on stderr
+    // and exits 2; stderr must not contain a Rust panic backtrace header or
+    // an unwrap-on-error message.
     let file = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["-F", "json", "info", file.path().to_str().unwrap()])
         .assert()
         .code(2)
-        // Must not contain raw Rust panic output.
         .stderr(predicate::str::contains("thread '").not())
         .stderr(predicate::str::contains("unwrap()").not());
 }
@@ -2059,19 +2059,20 @@ fn hardening_merge_one_input_exits_0() {
         .assert()
         .code(0);
 
-    // The merged output must be a valid WAD with the same lump.
+    // The merged output must be a valid WAD with the same lump data, not just
+    // the same lump name.
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", out.path().to_str().unwrap()])
         .assert()
         .success();
 
-    Command::cargo_bin("cwad")
-        .unwrap()
-        .args(["list", out.path().to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("PLAYPAL"));
+    let bytes = std::fs::read(out.path()).unwrap();
+    let merged = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(merged.lump_count(), 1);
+    let lump = merged.lump(0).unwrap();
+    assert_eq!(lump.name(), "PLAYPAL");
+    assert_eq!(merged.lump_data(lump), &[1, 2, 3]);
 }
 
 #[test]
