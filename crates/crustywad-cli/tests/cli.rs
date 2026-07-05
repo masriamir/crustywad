@@ -1942,9 +1942,10 @@ fn hardening_zero_size_file_diff_exits_nonzero() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn hardening_validate_corrupt_exits_2_not_1() {
-    // `validate` on a structurally corrupt WAD must exit 2 (parse error),
-    // not exit 1 (semantic diff) or exit 0 (success).
+fn hardening_validate_corrupt_exits_2() {
+    // `validate` on a structurally corrupt WAD must exit 2 (parse error), not
+    // exit 0 (success). `validate` never returns 1 (unlike `diff`, which uses
+    // 1 for semantic differences) — this test only guards against 2 vs 0.
     let file = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
@@ -1955,9 +1956,11 @@ fn hardening_validate_corrupt_exits_2_not_1() {
 
 #[test]
 fn hardening_validate_nonexistent_exits_2() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("hardening_test_unique.wad");
     Command::cargo_bin("cwad")
         .unwrap()
-        .args(["validate", "/nonexistent/hardening_test_unique.wad"])
+        .args(["validate", missing.to_str().unwrap()])
         .assert()
         .code(2);
 }
