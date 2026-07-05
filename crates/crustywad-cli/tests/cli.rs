@@ -1050,7 +1050,8 @@ fn merge_lenient_emits_warning_for_bad_magic() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("warning"));
+        .stderr(predicate::str::contains("warning"))
+        .stderr(predicate::str::contains(file.path().to_str().unwrap()));
 }
 
 // ---------------------------------------------------------------------------
