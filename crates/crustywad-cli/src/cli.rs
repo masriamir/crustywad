@@ -26,8 +26,9 @@ pub(crate) enum Format {
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: SubCommand,
-    /// Use lenient parsing instead of strict when reading a WAD; for `build`,
-    /// also uses lenient instead of strict validation when writing one.
+    /// Use lenient parsing instead of strict when reading a WAD; for `build`
+    /// and `merge`, also uses lenient instead of strict validation when
+    /// writing one.
     #[arg(long, global = true)]
     pub(crate) lenient: bool,
     /// Output format.
@@ -41,7 +42,7 @@ pub(crate) struct Cli {
     pub(crate) format: Format,
 }
 
-/// WAD kind for the `build` subcommand.
+/// WAD kind for subcommands that write a WAD file (e.g. `build`, `merge`).
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
 pub(crate) enum WadKindArg {
     /// IWAD — the main game data file.
@@ -68,6 +69,18 @@ pub(crate) enum SubCommand {
     Validate {
         /// Path to the WAD file.
         path: PathBuf,
+    },
+    /// Merge multiple WAD files into one.
+    Merge {
+        /// Input WAD files to merge (in order).
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+        /// Output WAD file path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Output WAD kind.
+        #[arg(long, default_value = "pwad")]
+        kind: WadKindArg,
     },
     /// Compare two WAD files lump by lump.
     ///

@@ -397,6 +397,55 @@ fn run(cli: Cli) -> Result<i32> {
             }
         }
 
+        SubCommand::Merge {
+            inputs,
+            output,
+            kind,
+        } => {
+            let wad_kind = match kind {
+                WadKindArg::Iwad => WadKind::Iwad,
+                WadKindArg::Pwad => WadKind::Pwad,
+            };
+            let mut builder = WadBuilder::new(wad_kind);
+            for path in &inputs {
+                let wad = Wad::from_path_with_options(path, options)
+                    .with_context(|| format!("failed to load {}", path.display()))?;
+                for w in wad.warnings() {
+                    eprintln!("warning: {}: {w}", path.display());
+                }
+                for lump in wad.lumps() {
+                    builder.add_lump(lump.name(), wad.lump_data(lump));
+                }
+            }
+
+            let write_opts = if cli.lenient {
+                crustywad::WriteOptions::lenient()
+            } else {
+                crustywad::WriteOptions::strict()
+            };
+
+            // Lump-name/size validation failures are usage errors (bad input data),
+            // distinct from the I/O failures handled via `?` elsewhere in this arm.
+            let (bytes, warnings) = match builder.build_with_options(&write_opts) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!(
+                        "error: failed to build merged WAD {}: {e}",
+                        output.display()
+                    );
+                    return Ok(3);
+                }
+            };
+
+            for w in &warnings {
+                eprintln!("warning: {w}");
+            }
+
+            std::fs::write(&output, &bytes)
+                .with_context(|| format!("failed to write {}", output.display()))?;
+            Ok(0)
+        }
+
         SubCommand::Extract { path, output, lump } => {
             if !output.is_dir() {
                 anyhow::bail!(
