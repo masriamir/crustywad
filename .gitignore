@@ -56,5 +56,8 @@ Thumbs.db
 # Claude Code agent worktrees (ephemeral, created by Claude Code)
 .claude/worktrees/
 
+# Ad-hoc local git worktrees (not tracked by Claude Code)
+.worktrees/
+
 # AI agent artifacts (superpowers plans, memory files — never committed)
 docs/superpowers/
