@@ -47,6 +47,12 @@ fn write_wad(kind: [u8; 4], lumps: &[(&str, &[u8])]) -> NamedTempFile {
     file
 }
 
+fn write_bytes(data: &[u8]) -> NamedTempFile {
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), data).expect("bytes should be written");
+    file
+}
+
 // ---------------------------------------------------------------------------
 // `cwad info`
 // ---------------------------------------------------------------------------
@@ -203,8 +209,8 @@ fn info_lenient_emits_warning_for_bad_magic() {
     bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
     bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
 
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), &bytes).unwrap();
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), &bytes).expect("bytes should be written");
 
     Command::cargo_bin("cwad")
         .unwrap()
@@ -316,8 +322,8 @@ fn list_lenient_emits_warning_for_bad_magic() {
     bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
     bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
 
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), &bytes).unwrap();
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), &bytes).expect("bytes should be written");
 
     Command::cargo_bin("cwad")
         .unwrap()
@@ -344,8 +350,7 @@ fn validate_csv_format_ok() {
 
 #[test]
 fn validate_json_format_error() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), b"NOTAWAD").unwrap();
+    let file = write_bytes(b"NOTAWAD");
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["-F", "json", "validate", file.path().to_str().unwrap()])
@@ -357,8 +362,7 @@ fn validate_json_format_error() {
 
 #[test]
 fn validate_csv_format_error() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), b"NOTAWAD").unwrap();
+    let file = write_bytes(b"NOTAWAD");
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["-F", "csv", "validate", file.path().to_str().unwrap()])
@@ -410,8 +414,7 @@ fn validate_missing_file_exits_2() {
 
 #[test]
 fn validate_corrupt_wad_exits_2() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), b"NOTAWADX").unwrap();
+    let file = write_bytes(b"NOTAWADX");
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", file.path().to_str().unwrap()])
@@ -429,8 +432,8 @@ fn validate_lenient_emits_warning_for_bad_magic() {
     bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
     bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
 
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), &bytes).unwrap();
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), &bytes).expect("bytes should be written");
 
     Command::cargo_bin("cwad")
         .unwrap()
@@ -647,10 +650,10 @@ fn diff_lenient_emits_warning_for_bad_magic() {
     bytes2[4..8].copy_from_slice(&1_i32.to_le_bytes());
     bytes2[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
 
-    let file1 = NamedTempFile::new().unwrap();
-    let file2 = NamedTempFile::new().unwrap();
-    std::fs::write(file1.path(), &bytes1).unwrap();
-    std::fs::write(file2.path(), &bytes2).unwrap();
+    let file1 = NamedTempFile::new().expect("tempfile should be created");
+    let file2 = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file1.path(), &bytes1).expect("bytes should be written");
+    std::fs::write(file2.path(), &bytes2).expect("bytes should be written");
 
     Command::cargo_bin("cwad")
         .unwrap()
@@ -784,8 +787,7 @@ fn missing_file_exits_2() {
 
 #[test]
 fn invalid_magic_strict_mode_exits_2() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), b"BOGUS_DATA_NOT_A_WAD").unwrap();
+    let file = write_bytes(b"BOGUS_DATA_NOT_A_WAD");
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", file.path().to_str().unwrap()])
@@ -1035,9 +1037,9 @@ fn merge_lenient_emits_warning_for_bad_magic() {
     bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
     bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
 
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), &bytes).unwrap();
-    let out = NamedTempFile::new().unwrap();
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), &bytes).expect("bytes should be written");
+    let out = NamedTempFile::new().expect("tempfile should be created");
 
     Command::cargo_bin("cwad")
         .unwrap()
@@ -1447,8 +1449,8 @@ fn extract_lenient_emits_warning_for_bad_magic() {
     bytes[4..8].copy_from_slice(&1_i32.to_le_bytes());
     bytes[8..12].copy_from_slice(&(12_i32 + 1_i32).to_le_bytes());
 
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), &bytes).unwrap();
+    let file = NamedTempFile::new().expect("tempfile should be created");
+    std::fs::write(file.path(), &bytes).expect("bytes should be written");
     let out_dir = TempDir::new().unwrap();
 
     Command::cargo_bin("cwad")
@@ -1751,42 +1753,38 @@ fn wrong_magic_bytes() -> Vec<u8> {
 
 #[test]
 fn hardening_truncated_wad_info_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), truncated_wad_bytes()).unwrap();
+    let file = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_truncated_wad_list_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), truncated_wad_bytes()).unwrap();
+    let file = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["list", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_truncated_wad_validate_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), truncated_wad_bytes()).unwrap();
+    let file = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_truncated_wad_diff_exits_nonzero() {
     let good = write_wad(*b"IWAD", &[]);
-    let bad = NamedTempFile::new().unwrap();
-    std::fs::write(bad.path(), truncated_wad_bytes()).unwrap();
+    let bad = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
@@ -1802,42 +1800,38 @@ fn hardening_truncated_wad_diff_exits_nonzero() {
 
 #[test]
 fn hardening_header_only_no_directory_info_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), header_only_no_directory_bytes()).unwrap();
+    let file = write_bytes(&header_only_no_directory_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_header_only_no_directory_list_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), header_only_no_directory_bytes()).unwrap();
+    let file = write_bytes(&header_only_no_directory_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["list", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_header_only_no_directory_validate_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), header_only_no_directory_bytes()).unwrap();
+    let file = write_bytes(&header_only_no_directory_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_header_only_no_directory_diff_exits_nonzero() {
     let good = write_wad(*b"IWAD", &[]);
-    let bad = NamedTempFile::new().unwrap();
-    std::fs::write(bad.path(), header_only_no_directory_bytes()).unwrap();
+    let bad = write_bytes(&header_only_no_directory_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
@@ -1853,42 +1847,38 @@ fn hardening_header_only_no_directory_diff_exits_nonzero() {
 
 #[test]
 fn hardening_wrong_magic_strict_info_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), wrong_magic_bytes()).unwrap();
+    let file = write_bytes(&wrong_magic_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_wrong_magic_strict_list_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), wrong_magic_bytes()).unwrap();
+    let file = write_bytes(&wrong_magic_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["list", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_wrong_magic_strict_validate_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), wrong_magic_bytes()).unwrap();
+    let file = write_bytes(&wrong_magic_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_wrong_magic_strict_diff_exits_nonzero() {
     let good = write_wad(*b"IWAD", &[]);
-    let bad = NamedTempFile::new().unwrap();
-    std::fs::write(bad.path(), wrong_magic_bytes()).unwrap();
+    let bad = write_bytes(&wrong_magic_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
@@ -1904,43 +1894,38 @@ fn hardening_wrong_magic_strict_diff_exits_nonzero() {
 
 #[test]
 fn hardening_zero_size_file_info_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    // Write nothing — file is empty.
-    std::fs::write(file.path(), b"").unwrap();
+    let file = write_bytes(b"");
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_zero_size_file_list_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), b"").unwrap();
+    let file = write_bytes(b"");
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["list", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_zero_size_file_validate_exits_nonzero() {
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), b"").unwrap();
+    let file = write_bytes(b"");
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", file.path().to_str().unwrap()])
         .assert()
-        .failure();
+        .code(2);
 }
 
 #[test]
 fn hardening_zero_size_file_diff_exits_nonzero() {
     let good = write_wad(*b"IWAD", &[]);
-    let bad = NamedTempFile::new().unwrap();
-    std::fs::write(bad.path(), b"").unwrap();
+    let bad = write_bytes(b"");
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
@@ -1960,8 +1945,7 @@ fn hardening_zero_size_file_diff_exits_nonzero() {
 fn hardening_validate_corrupt_exits_2_not_1() {
     // `validate` on a structurally corrupt WAD must exit 2 (parse error),
     // not exit 1 (semantic diff) or exit 0 (success).
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), truncated_wad_bytes()).unwrap();
+    let file = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["validate", file.path().to_str().unwrap()])
@@ -2008,8 +1992,7 @@ fn hardening_info_json_corrupt_wad_exits_nonzero_not_panic() {
     // panicking or printing raw Rust debug output.  The `info` subcommand
     // propagates parse errors through `run()` → `main()` which prints a
     // human-readable "error: …" on stderr and exits 2.
-    let file = NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), truncated_wad_bytes()).unwrap();
+    let file = write_bytes(&truncated_wad_bytes());
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["-F", "json", "info", file.path().to_str().unwrap()])
@@ -2091,8 +2074,7 @@ fn hardening_merge_one_input_exits_0() {
 #[test]
 fn hardening_extract_truncated_wad_exits_nonzero() {
     // `extract` on a truncated WAD must fail rather than writing partial output.
-    let bad = NamedTempFile::new().unwrap();
-    std::fs::write(bad.path(), truncated_wad_bytes()).unwrap();
+    let bad = write_bytes(&truncated_wad_bytes());
     let out_dir = TempDir::new().unwrap();
 
     Command::cargo_bin("cwad")
@@ -2110,8 +2092,7 @@ fn hardening_extract_truncated_wad_exits_nonzero() {
 #[test]
 fn hardening_merge_truncated_wad_exits_nonzero() {
     // `merge` must exit non-zero when any input WAD is structurally corrupt.
-    let bad = NamedTempFile::new().unwrap();
-    std::fs::write(bad.path(), truncated_wad_bytes()).unwrap();
+    let bad = write_bytes(&truncated_wad_bytes());
     let out = NamedTempFile::new().unwrap();
 
     Command::cargo_bin("cwad")
