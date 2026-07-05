@@ -1012,7 +1012,8 @@ fn merge_lenient_non_ascii_name_still_fails_write_validation_exits_3() {
             out.path().to_str().unwrap(),
         ])
         .assert()
-        .code(3);
+        .code(3)
+        .stderr(predicate::str::contains(out.path().to_str().unwrap()));
 }
 
 #[test]

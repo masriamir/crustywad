@@ -429,7 +429,10 @@ fn run(cli: Cli) -> Result<i32> {
             let (bytes, warnings) = match builder.build_with_options(&write_opts) {
                 Ok(result) => result,
                 Err(e) => {
-                    eprintln!("error: failed to build merged WAD: {e}");
+                    eprintln!(
+                        "error: failed to build merged WAD {}: {e}",
+                        output.display()
+                    );
                     return Ok(3);
                 }
             };
