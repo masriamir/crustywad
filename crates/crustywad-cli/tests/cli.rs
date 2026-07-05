@@ -1793,7 +1793,7 @@ fn hardening_truncated_wad_diff_exits_nonzero() {
             bad.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .code(2);
 }
 
 // --- valid header but no directory bytes ---
@@ -1840,7 +1840,7 @@ fn hardening_header_only_no_directory_diff_exits_nonzero() {
             bad.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .code(2);
 }
 
 // --- wrong magic (XWAD) in strict mode ---
@@ -1887,7 +1887,7 @@ fn hardening_wrong_magic_strict_diff_exits_nonzero() {
             bad.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .code(2);
 }
 
 // --- zero-size (empty) file ---
@@ -1934,7 +1934,7 @@ fn hardening_zero_size_file_diff_exits_nonzero() {
             bad.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .code(2);
 }
 
 // ---------------------------------------------------------------------------
@@ -2089,7 +2089,7 @@ fn hardening_extract_truncated_wad_exits_nonzero() {
             out_dir.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .code(2);
 
     let entries: Vec<_> = std::fs::read_dir(out_dir.path())
         .expect("output dir should be readable")
@@ -2115,5 +2115,5 @@ fn hardening_merge_truncated_wad_exits_nonzero() {
             out.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .code(2);
 }
