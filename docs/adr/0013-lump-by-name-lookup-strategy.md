@@ -20,7 +20,7 @@ Issue #4 asked whether this O(n) scan is a bottleneck worth optimizing, with an 
 instruction to benchmark first and "only if a measurable bottleneck is confirmed, implement
 an optimization." ADR-0012 landed the Criterion infrastructure needed to answer this with
 data rather than intuition, including dedicated `lump_by_name_hit`, `lump_by_name_hit_last`,
-and `lump_by_name_miss` benchmarks in `benches/read_ops.rs`.
+and `lump_by_name_miss` benchmarks in `crates/crustywad/benches/read_ops.rs`.
 
 ## Decision drivers
 
@@ -30,10 +30,11 @@ and `lump_by_name_miss` benchmarks in `benches/read_ops.rs`.
   is only worth it if the current approach is a measured bottleneck.
 - `Wad` is immutable after construction (no `&mut self` methods exist), so an index, if ever
   added, would not need invalidation handling.
-- Real usage: nothing inside the crate calls `lump_by_name` today — it is a pure
-  downstream-consumer API. The roadmap work that would plausibly call it in a loop (graphics,
-  texture composition, audio lump lookup — issues #155, #156, #158) has not been implemented
-  yet.
+- Real usage: nothing in the crate's library or CLI production code calls `lump_by_name`
+  today (it is exercised only by the benchmarks and integration tests that measure it) — it
+  is a pure downstream-consumer API. The roadmap work that would plausibly call it in a loop
+  (graphics, texture composition, audio lump lookup — issues #156, #157, #158) has not been
+  implemented yet.
 
 ## Considered options
 
@@ -54,13 +55,13 @@ sharing one name to force worst-case behavior):
 | Case | Time |
 |---|---|
 | First-match hit | ~7.3ns |
-| Worst-case hit (last of 101 lumps) | ~44.6ns |
+| Worst-case hit (last of 100 lumps) | ~44.6ns |
 | Worst-case miss (full scan, no match) | ~53.0ns |
 
 Extrapolated linearly to a realistic full IWAD (~2,000–3,000 lumps, the rough scale of
 `doom2.wad`/`freedoom2.wad` — 20–30x this benchmark's lump count), worst case lands around
-0.9–1.6 microseconds. That is the cost of a single `lump_by_name` call; nothing in the crate
-calls it in a loop today.
+0.9–1.6 microseconds. That is the cost of a single `lump_by_name` call; no production code in
+the crate calls it in a loop today.
 
 ### Consequences
 
