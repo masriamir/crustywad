@@ -105,7 +105,7 @@ classDiagram
         +new(kind) WadBuilder
         +add_lump(name, data) &mut WadBuilder
         +build() Result~Vec~u8~, WriteError~
-        +build_with_options(opts) Result~(Vec~u8~, Vec~WriteWarning~), WriteError~
+        +build_with_options(opts: &WriteOptions) Result~(Vec~u8~, Vec~WriteWarning~), WriteError~
     }
     class WriteOptions {
         [write]

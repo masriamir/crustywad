@@ -99,7 +99,7 @@ sequenceDiagram
 
 > **Note:** requires the `write` feature flag.
 
-`WadBuilder` accumulates lumps and defers all validation to `build()` / `build_with_options()`. `build()` is a strict-mode convenience wrapper; `build_with_options` takes a `WriteOptions` and returns collected `WriteWarning`s alongside the bytes (always empty in strict mode). Offsets (`filepos`, `infotableofs`) are always recomputed by the builder — callers never supply them directly. The output layout is `[12-byte header][lump data blobs][16-byte directory entries]`.
+`WadBuilder` accumulates lumps and defers all validation to `build()` / `build_with_options()`. `build()` is a strict-mode convenience wrapper; `build_with_options` takes a `&WriteOptions` and returns collected `WriteWarning`s alongside the bytes (always empty in strict mode). Offsets (`filepos`, `infotableofs`) are always recomputed by the builder — callers never supply them directly. The output layout is `[12-byte header][lump data blobs][16-byte directory entries]`.
 
 ```mermaid
 flowchart TD
@@ -173,14 +173,14 @@ sequenceDiagram
 
     rect rgb(255, 230, 230)
         Note over Caller,Builder: Strict mode (WriteOptions::strict(), or build())
-        Caller->>Builder: build_with_options(WriteOptions::strict())
+        Caller->>Builder: build_with_options(&WriteOptions::strict())
         Builder->>Builder: name.len() == 12 > 8, Strictness::Strict
         Builder-->>Caller: Err(WriteError::NameTooLong { name, len: 12 })
     end
 
     rect rgb(230, 255, 230)
         Note over Caller,Warnings: Lenient mode (WriteOptions::lenient())
-        Caller->>Builder: build_with_options(WriteOptions::lenient())
+        Caller->>Builder: build_with_options(&WriteOptions::lenient())
         Builder->>Builder: name.len() == 12 > 8, Strictness::Lenient
         Builder->>Warnings: push WriteWarning::NameTruncated { name }
         Builder->>Builder: truncate name to first 8 bytes
