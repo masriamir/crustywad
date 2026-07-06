@@ -228,7 +228,7 @@ PRs are reviewed automatically by `copilot-pull-request-reviewer`. Use the perso
 `resolving-bot-pr-reviews` skill (`~/.claude/skills/resolving-bot-pr-reviews/`) to work
 through its comments until two consecutive clean checks, then hand off for human review.
 
-Project facts the skill needs (all stated elsewhere in this file already):
+Project facts the skill needs:
 - Bot login: `copilot-pull-request-reviewer`
 - CI command: `just ci` (see Development workflow above)
 - Owner/repo: from `git remote get-url origin`
