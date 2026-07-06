@@ -11,7 +11,7 @@ trend charts so regressions are visible before they reach a release.
 **[crustywad.dev/dev/bench/](https://crustywad.dev/dev/bench/)**
 
 The chart page shows throughput and latency trends over time for every benchmark group. Each
-data point corresponds to a push to `main`.
+data point corresponds to a CI run on `main` (push or `workflow_dispatch`).
 
 ### Benchmark groups
 
@@ -26,7 +26,7 @@ data point corresponds to a push to `main`.
 | `write/build_lenient` | `WadBuilder::build_with_options(&WriteOptions::lenient())` on the same sizes |
 | `write/build_from_scratch` | `WadBuilder` populated entirely at runtime (10 or 100 lumps) |
 | `write/roundtrip` | `Wad::from_bytes` → `Wad::to_builder` → `WadBuilder::build` end-to-end |
-| `freedoom` | `from_bytes`, `lump_by_name` (hit and miss), and `roundtrip` on real Freedoom WAD files; skipped when `CRUSTYWAD_FREEDOOM_DIR` is not set |
+| `freedoom` | `Wad::from_bytes`, `Wad::lump_by_name` (hit and miss), and `roundtrip` on real Freedoom WAD files; skipped when `CRUSTYWAD_FREEDOOM_DIR` is not set |
 
 Throughput groups report **MB/s** via `Throughput::Bytes` so results scale naturally with
 input size. Latency groups report **ns/iter**.
