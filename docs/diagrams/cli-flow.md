@@ -19,7 +19,7 @@ flowchart TD
     B -- "present" --> D
     C & D --> E{"subcommand"}
 
-    E -- "extract" --> X0{"output dir exists?"}
+    E -- "extract" --> X0{"output.is_dir()?\n(false if missing or\nan existing non-directory path)"}
     X0 -- "no" --> ERR2A["stderr: error\nexit 2"]
     X0 -- "yes" --> LOAD
 
