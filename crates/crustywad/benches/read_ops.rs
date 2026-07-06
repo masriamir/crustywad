@@ -59,6 +59,15 @@ fn bench_parse_from_path(c: &mut Criterion) {
     group.bench_function("medium_lenient", |b| {
         b.iter(|| Wad::from_path_with_options(&path, ParseOptions::lenient()).unwrap());
     });
+    #[cfg(feature = "mmap")]
+    {
+        group.bench_function("medium_strict_mmap", |b| {
+            b.iter(|| Wad::from_path_mapped(&path).unwrap());
+        });
+        group.bench_function("medium_lenient_mmap", |b| {
+            b.iter(|| Wad::from_path_mapped_with_options(&path, ParseOptions::lenient()).unwrap());
+        });
+    }
     group.finish();
 }
 
@@ -66,12 +75,22 @@ fn bench_lump_access(c: &mut Criterion) {
     let wad = Wad::from_bytes(helpers::medium_wad()).unwrap();
     let lump = wad.lump(0).unwrap();
 
+    // WAD where the target lump is last — worst-case for a linear scan.
+    let payload = vec![0u8; 4096];
+    let mut worst_lumps: Vec<(&str, &[u8])> =
+        (0..99).map(|_| ("BENCH", payload.as_slice())).collect();
+    worst_lumps.push(("LAST", payload.as_slice()));
+    let wad_last = Wad::from_bytes(helpers::build_wad(*b"PWAD", &worst_lumps)).unwrap();
+
     let mut group = c.benchmark_group("lump_access");
     group.bench_function("lump_by_index", |b| {
         b.iter(|| wad.lump(std::hint::black_box(0)));
     });
     group.bench_function("lump_by_name_hit", |b| {
         b.iter(|| wad.lump_by_name(std::hint::black_box("BENCH")));
+    });
+    group.bench_function("lump_by_name_hit_last", |b| {
+        b.iter(|| wad_last.lump_by_name(std::hint::black_box("LAST")));
     });
     group.bench_function("lump_by_name_miss", |b| {
         b.iter(|| wad.lump_by_name(std::hint::black_box("MISSING")));
@@ -84,6 +103,12 @@ fn bench_lump_access(c: &mut Criterion) {
     });
     group.bench_function("lumps_iter_count", |b| {
         b.iter(|| wad.lumps().iter().count());
+    });
+    group.bench_function("clone", |b| {
+        b.iter(|| wad.clone());
+    });
+    group.bench_function("into_bytes", |b| {
+        b.iter_batched(|| wad.clone(), Wad::into_bytes, BatchSize::LargeInput);
     });
     group.finish();
 }
