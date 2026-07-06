@@ -235,6 +235,6 @@ The current milestone (1) covers WAD directory reading and map-record scaffoldin
 3. Graphics
 4. Textures
 5. Audio
-6. Write support
+6. ✅ Write support
 
 When implementing future milestones, keep `unsafe` code confined to `mmap.rs` and ensure every public item remains documented.

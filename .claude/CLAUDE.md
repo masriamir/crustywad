@@ -267,4 +267,4 @@ CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `s
 3. Graphics
 4. Textures
 5. Audio
-6. Write support
+6. ✅ Write support
