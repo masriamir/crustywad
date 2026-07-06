@@ -2,7 +2,7 @@
 
 > **Audience:** Library users
 
-The `cwad` binary exposes seven subcommands: `info`, `list`, `validate`, `diff`, and `extract` (read-only) plus `merge` and `build` (write-path, require the `write` feature). `--lenient` and `--format` (`-F`; `human` default, `json`, or `csv`) are global flags that apply to every subcommand. Warnings are always written to stderr; normal output routes through `--format`. Argument-parsing failures (via `clap`) exit `3` before any subcommand runs, regardless of which subcommand was given.
+The `cwad` binary exposes seven subcommands: `info`, `list`, `validate`, `diff`, and `extract` (read-only) plus `merge` and `build` (write-path, backed by `crustywad`'s `write` feature). `crustywad-cli`'s `Cargo.toml` enables that feature unconditionally on its `crustywad` dependency, so `merge` and `build` are always available in `cwad` — there is no user-facing flag to opt in. `--lenient` and `--format` (`-F`; `human` default, `json`, or `csv`) are global flags that apply to every subcommand. Warnings are always written to stderr; normal output routes through `--format`. Argument-parsing failures (via `clap`) exit `3` before any subcommand runs, regardless of which subcommand was given.
 
 ## Read-path dispatch
 
@@ -41,20 +41,22 @@ flowchart TD
 
     S1 -- "info" --> OUT1["--format routed:\nkind, lump count, data size, maps\nexit 0"]
     S1 -- "list" --> OUT2["--format routed:\nlump directory\n(index, filepos, size, name)\nexit 0"]
-    S1 -- "extract" --> OUT3{"--lump NAME given\nand not found?"}
-    OUT3 -- "yes" --> ERR2C["stderr: lump not found\nexit 2"]
+    S1 -- "extract" --> WARNX["stderr: one line per ParseWarning\n(lenient mode; empty in strict)\nprinted before the --lump check below"]
+    WARNX --> OUT3{"--lump NAME given\nand not found?"}
+    OUT3 -- "yes" --> ERR2C["stderr: lump not found\nexit 2\n(ParseWarnings, if any, already printed)"]
     OUT3 -- "no" --> OUT3B["extract matching lumps,\nsanitize filenames,\n--format routed per-file output\nexit 0"]
 
-    DCALC --> DHAS{"any differences?"}
-    DHAS -- "no" --> ZERO["exit 0, no output"]
+    DCALC --> WARND["stderr: one line per ParseWarning\nfor file1, then file2\n(lenient mode; empty in strict)"]
+    WARND --> DHAS{"any differences?"}
+    DHAS -- "no" --> ZERO["exit 0\n(no diff output;\nParseWarnings, if any, already printed above)"]
     DHAS -- "yes" --> OUT4["--format routed:\nkind + name per difference\n(json = NDJSON)\nexit 1"]
 
-    OUT1 & OUT2 & FMTOKV & OUT3B --> WARN["stderr: one line per ParseWarning\n(lenient mode; empty in strict)"]
+    OUT1 & OUT2 & FMTOKV --> WARN["stderr: one line per ParseWarning\n(lenient mode; empty in strict)"]
 ```
 
 ## Write-path dispatch
 
-`merge` and `build` construct a WAD via `WadBuilder` and require the `write` feature. `--lenient` selects `WriteOptions::strict()`/`lenient()` for the build step, distinct from (but analogous to) the read-side `ParseOptions`. `WriteError` from `build_with_options` is a usage/data error and exits `3`; I/O failures (reading input files, writing the output file) still propagate via `?` and exit `2`, mirroring the read-path exit codes.
+`merge` and `build` construct a WAD via `WadBuilder`. `crustywad-cli` gets `WadBuilder` by unconditionally enabling `crustywad`'s `write` feature in its `Cargo.toml` — both subcommands are always available in `cwad`, with no user-facing flag required. `--lenient` selects `WriteOptions::strict()`/`lenient()` for the build step, distinct from (but analogous to) the read-side `ParseOptions`. `WriteError` from `build_with_options` is a usage/data error and exits `3`; I/O failures (reading input files, writing the output file) still propagate via `?` and exit `2`, mirroring the read-path exit codes. `merge` additionally reads each input WAD under `ParseOptions`, so it prints that WAD's `ParseWarning`s (path-prefixed) as each input is loaded, in addition to the `WriteWarning`s from the build step.
 
 ```mermaid
 flowchart TD
@@ -67,7 +69,7 @@ flowchart TD
     B -- "present" --> D
     C & D --> E{"subcommand"}
 
-    E -- "merge" --> M1["for each input path:\nWad::from_path_with_options(path, ParseOptions)\nadd_lump for every lump into WadBuilder"]
+    E -- "merge" --> M1["for each input path:\nWad::from_path_with_options(path, ParseOptions);\nstderr: one line per ParseWarning, path-prefixed\n(lenient mode; empty in strict);\nadd_lump for every lump into WadBuilder"]
     M1 --> M2{"all inputs Ok?"}
     M2 -- "no" --> ERR2["stderr: error\nexit 2 (propagated via anyhow ?)"]
     M2 -- "yes" --> BUILD
