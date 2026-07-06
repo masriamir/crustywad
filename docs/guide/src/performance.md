@@ -23,7 +23,7 @@ data point corresponds to a push to `main`.
 | `lump_access` | `lump(idx)`, `lump_by_name` (first-match and worst-case last-match), `lump_bytes`, `lump_data`, `lumps().iter().count()`, `clone`, `into_bytes` |
 | `map_records` | `parse_records::<T>` for all eight classic map-record types (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) against 1 000 records each |
 | `write/build_strict` | `WadBuilder::build` — strict mode — on small / medium / large synthetic WADs |
-| `write/build_lenient` | `WadBuilder::build_with_options(WriteOptions::lenient())` on the same sizes |
+| `write/build_lenient` | `WadBuilder::build_with_options(&WriteOptions::lenient())` on the same sizes |
 | `write/build_from_scratch` | `WadBuilder` populated entirely at runtime (10 or 100 lumps) |
 | `write/roundtrip` | `Wad::from_bytes` → `Wad::to_builder` → `WadBuilder::build` end-to-end |
 | `freedoom` | `from_bytes`, `lump_by_name` (hit and miss), and `roundtrip` on real Freedoom WAD files; skipped when `CRUSTYWAD_FREEDOOM_DIR` is not set |
