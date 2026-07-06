@@ -94,7 +94,8 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom just bench
 ## CI benchmark workflow
 
 The `bench.yml` workflow runs on every push to `main` and on `workflow_dispatch`. It is
-**non-blocking** — it never gates merges.
+**non-blocking** — `fail-on-alert: false` ensures benchmark regressions never fail the run
+or block a merge.
 
 Each run:
 
