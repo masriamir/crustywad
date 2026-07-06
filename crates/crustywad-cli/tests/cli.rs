@@ -405,9 +405,11 @@ fn validate_json_format_ok() {
 
 #[test]
 fn validate_missing_file_exits_2() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing.wad");
     Command::cargo_bin("cwad")
         .unwrap()
-        .args(["validate", "/nonexistent/path/to/missing.wad"])
+        .args(["validate", missing.to_str().unwrap()])
         .assert()
         .code(2);
 }
@@ -519,12 +521,14 @@ fn diff_lump_only_in_second_exits_1() {
 #[test]
 fn diff_missing_file_exits_2() {
     let wad = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing.wad");
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
             "diff",
             wad.path().to_str().unwrap(),
-            "/nonexistent/path/missing.wad",
+            missing.to_str().unwrap(),
         ])
         .assert()
         .code(2);
@@ -778,9 +782,11 @@ fn help_flag_exits_successfully() {
 
 #[test]
 fn missing_file_exits_2() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("file.wad");
     Command::cargo_bin("cwad")
         .unwrap()
-        .args(["info", "/nonexistent/path/file.wad"])
+        .args(["info", missing.to_str().unwrap()])
         .assert()
         .code(2);
 }
@@ -953,12 +959,14 @@ fn merge_kind_flag_iwad() {
 #[test]
 fn merge_missing_input_exits_2() {
     let out = NamedTempFile::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing.wad");
 
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
             "merge",
-            "/nonexistent/path/missing.wad",
+            missing.to_str().unwrap(),
             "--output",
             out.path().to_str().unwrap(),
         ])
@@ -1132,12 +1140,14 @@ fn extract_named_lump_not_found_exits_2() {
 #[test]
 fn extract_missing_wad_exits_2() {
     let out_dir = TempDir::new().unwrap();
+    let missing_dir = TempDir::new().unwrap();
+    let missing = missing_dir.path().join("missing.wad");
 
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
             "extract",
-            "/nonexistent/path/to/missing.wad",
+            missing.to_str().unwrap(),
             "--output",
             out_dir.path().to_str().unwrap(),
         ])
@@ -1223,11 +1233,13 @@ fn extract_lump_flag_without_value_exits_3() {
     // `--lump` requires a NAME argument; omitting the value is a clap parse
     // error, which the main() dispatch maps to exit code 3.
     let out_dir = TempDir::new().unwrap();
+    let missing_dir = TempDir::new().unwrap();
+    let missing = missing_dir.path().join("missing.wad");
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
             "extract",
-            "/nonexistent.wad",
+            missing.to_str().unwrap(),
             "--output",
             out_dir.path().to_str().unwrap(),
             "--lump",
@@ -1343,11 +1355,13 @@ fn extract_bad_output_checked_before_wad_io() {
     // With a nonexistent WAD and a bad --output, the output check fires first.
     // If the order were reversed, stderr would mention the WAD, not the output.
     let not_a_dir = NamedTempFile::new().unwrap();
+    let missing_dir = TempDir::new().unwrap();
+    let missing = missing_dir.path().join("missing.wad");
     Command::cargo_bin("cwad")
         .unwrap()
         .args([
             "extract",
-            "/nonexistent.wad",
+            missing.to_str().unwrap(),
             "--output",
             not_a_dir.path().to_str().unwrap(),
         ])
