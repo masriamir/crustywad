@@ -13,7 +13,6 @@
 ## Non-goals
 
 - Full map graph assembly in this milestone.
-- Write support in this milestone.
 - Async runtime integration in this milestone.
 
 ## Data model
@@ -48,9 +47,18 @@ See [Data flow](diagrams/data-flow.md) for the strict/lenient mode comparison di
 
 See [Data flow](diagrams/data-flow.md) for the map record parsing flowchart.
 
+## Write pipeline
+
+The `write` feature flag adds `WadBuilder`, a standalone type for constructing a WAD from scratch or round-tripping a parsed `Wad` via `Wad::to_builder()`. Callers accumulate lumps with `add_lump`, then call `build()` (strict mode) or `build_with_options()` (strict or lenient, per `WriteOptions`). All name and size validation, plus offset (`filepos`, `infotableofs`) computation, is deferred to `build`/`build_with_options` — callers never supply offsets directly. The output always has the layout `[12-byte header][lump data blobs][16-byte directory entries]`, per ADR-0006.
+
+`WriteOptions { strictness: Strictness }` mirrors `ParseOptions`: strict mode rejects invalid input immediately with a `WriteError`; lenient mode truncates over-length names and permits non-standard magic values unchanged, collecting `WriteWarning`s instead.
+
+See [Data flow](diagrams/data-flow.md) for the write pipeline flowchart and the strict/lenient write mode comparison, and [Data model](diagrams/data-model.md) for how `WadBuilder` and its supporting types relate to `Wad`.
+
 ## Feature plan
 
 - `mmap`: enables `Wad::from_path_mapped[_with_options]` for read-only memory-mapped file loading via `memmap2`; `from_path` always reads into memory regardless of this flag.
+- `write`: enables `WadBuilder`, `WriteError`, `WriteWarning`, `WriteOptions`, and `Wad::to_builder()` for WAD serialization.
 - `freedoom-tests`: optional integration tests that inspect downloaded Freedoom fixtures.
 - Future `async`: alternate I/O constructors without changing the in-memory parse model.
 - Future zero-copy: borrowed views over validated bytes.

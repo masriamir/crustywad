@@ -13,12 +13,14 @@ graph TD
         ers["error.rs\nParseError · ParseWarning"]
         mrs["map.rs\nThing · Linedef · Sidedef · Vertex\nSeg · Subsector · Node · Sector"]
         mmrs["mmap.rs\n(feature: mmap only)"]
+        wrs["write.rs\nWadBuilder · WriteError\nWriteWarning · WriteOptions\n(feature: write only)"]
     end
     subgraph cli["crustywad-cli  (binary crate)"]
-        mains["main.rs\ncwad — info · list subcommands"]
+        mains["main.rs\ncwad — info · list · validate\nmerge · diff · extract · build subcommands"]
     end
     cli -->|"cargo dependency"| lib
     mmrs -. "feature = mmap\nadds memmap2 dependency" .-> memmap2(["memmap2\n(external crate)"])
+    lrs -. "feature = write" .-> wrs
 ```
 
 ## Feature flags
@@ -28,4 +30,5 @@ graph LR
     lib["crustywad"]
     lib -. "mmap" .-> mmap["Wad::from_path_mapped\nWad::from_path_mapped_with_options\nzero-copy loading via memmap2"]
     lib -. "freedoom-tests" .-> ft["integration tests against\nlocal Freedoom WAD fixtures\n(test-only, no runtime dependency)"]
+    lib -. "write" .-> write["WadBuilder · WriteError · WriteWarning\nWriteOptions · Wad::to_builder()\nWAD serialization"]
 ```

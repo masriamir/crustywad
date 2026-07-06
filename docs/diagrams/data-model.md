@@ -28,7 +28,7 @@ flowchart TD
 
 ## Rust type relationships
 
-The class diagram below shows the public API types in `crustywad` and how they relate to each other. Constructors return `Result<Wad, ParseError>`; in lenient mode the returned `Wad` carries zero or more `ParseWarning` values accessible via `Wad::warnings`. Methods marked `[mmap]` are only available when the `mmap` feature flag is enabled.
+The class diagram below shows the public API types in `crustywad` and how they relate to each other. Constructors return `Result<Wad, ParseError>`; in lenient mode the returned `Wad` carries zero or more `ParseWarning` values accessible via `Wad::warnings()`. Methods marked `[mmap]` are only available when the `mmap` feature flag is enabled; types and methods marked `[write]` are only available when the `write` feature flag is enabled.
 
 ```mermaid
 classDiagram
@@ -48,6 +48,7 @@ classDiagram
         +lump_bytes(index) Option~&[u8]~
         +warnings() &[ParseWarning]
         +into_bytes() Vec~u8~
+        +to_builder() WadBuilder [write]
     }
     class WadHeader {
         +kind WadKind
@@ -99,6 +100,37 @@ classDiagram
         TrailingBytes
         Binrw
     }
+    class WadBuilder {
+        [write]
+        +new(kind) WadBuilder
+        +add_lump(name, data) &mut WadBuilder
+        +build() Result~Vec~u8~, WriteError~
+        +build_with_options(opts: &WriteOptions) Result~(Vec~u8~, Vec~WriteWarning~), WriteError~
+    }
+    class WriteOptions {
+        [write]
+        +strictness Strictness
+        +strict() WriteOptions
+        +lenient() WriteOptions
+    }
+    class WriteError {
+        <<enumeration>>
+        [write]
+        NulInName
+        NonAsciiName
+        NameTooLong
+        LumpTooLarge
+        TooManyLumps
+        OffsetOverflow
+        UnknownMagicStrict
+        Binrw
+    }
+    class WriteWarning {
+        <<enumeration>>
+        [write]
+        NameTruncated
+        UnknownMagic
+    }
 
     Wad "1" --> "1" WadHeader : has
     Wad "1" --> "0..*" Lump : contains
@@ -107,4 +139,9 @@ classDiagram
     ParseOptions --> Strictness : strictness
     Wad ..> ParseOptions : constructed with
     Wad ..> ParseError : returns on failure
+    Wad ..> WadBuilder : to_builder() [write]
+    WadBuilder ..> WriteOptions : build_with_options(opts) [write]
+    WadBuilder ..> WriteError : returns on failure [write]
+    WadBuilder ..> WriteWarning : returns via build_with_options (lenient) [write]
+    WriteOptions --> Strictness : strictness [write]
 ```
