@@ -1,0 +1,1524 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>crustywad</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="A safe Rust library for Doom WAD file I/O">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-0392ca55.css">
+        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-66f189da.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-d2ce17b8.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">crustywad</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/masriamir/crustywad" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<p><code>crustywad</code> is a safe, documented Rust library for reading Doom WAD files. A WAD
+(“Where’s All the Data?”) is the container format that id Software’s Doom engine
+uses to store maps, graphics, audio, and other game assets.</p>
+<h2 id="what-crustywad-provides"><a class="header" href="#what-crustywad-provides">What crustywad provides</a></h2>
+<ul>
+<li>Parse WAD headers and lump directories from bytes or files.</li>
+<li>Look up lumps by index or name and access their raw bytes.</li>
+<li>Decode typed map-record lumps (<code>Thing</code>, <code>Linedef</code>, <code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>,
+<code>Subsector</code>, <code>Node</code>, <code>Sector</code>).</li>
+<li>Choose between <strong>strict</strong> parsing (fail fast on bad data) and <strong>lenient</strong> parsing
+(best-effort recovery with collected warnings).</li>
+<li>Optional memory-mapped loading for large WADs via the <code>mmap</code> feature flag.</li>
+<li>A small <code>cwad</code> CLI binary for dogfooding and quick inspection.</li>
+</ul>
+<h2 id="when-to-use-it"><a class="header" href="#when-to-use-it">When to use it</a></h2>
+<p>Use <code>crustywad</code> when you need to:</p>
+<ul>
+<li>Extract lump data from IWAD or PWAD files for further processing.</li>
+<li>Build Doom map editors, converters, or analysis tools in Rust.</li>
+<li>Inspect WAD structure programmatically without a full game engine.</li>
+</ul>
+<h2 id="wad-format-overview"><a class="header" href="#wad-format-overview">WAD format overview</a></h2>
+<p>Every WAD starts with a 12-byte header:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Size</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>Magic</td><td>4 bytes</td><td><code>IWAD</code> (game data) or <code>PWAD</code> (patch)</td></tr>
+<tr><td><code>numlumps</code></td><td>4 bytes (i32 LE)</td><td>Number of lump directory entries</td></tr>
+<tr><td><code>infotableofs</code></td><td>4 bytes (i32 LE)</td><td>Byte offset of the lump directory</td></tr>
+</tbody>
+</table>
+</div>
+<p>The lump directory follows the lump data. Each directory entry is 16 bytes:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Size</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>filepos</code></td><td>4 bytes (i32 LE)</td><td>Byte offset of lump data</td></tr>
+<tr><td><code>size</code></td><td>4 bytes (i32 LE)</td><td>Byte length of lump data</td></tr>
+<tr><td><code>name</code></td><td>8 bytes</td><td>NUL-padded ASCII name</td></tr>
+</tbody>
+</table>
+</div>
+<p>See the <a href="https://doomwiki.org/wiki/WAD">Doom Wiki</a> for the full unofficial spec.</p>
+<h2 id="next-steps"><a class="header" href="#next-steps">Next steps</a></h2>
+<p>Start with <a href="#getting-started">Getting Started</a> to add <code>crustywad</code> to your project and parse your first WAD file.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
+<h2 id="adding-crustywad-to-your-project"><a class="header" href="#adding-crustywad-to-your-project">Adding crustywad to your project</a></h2>
+<p>Add the crate to your <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[dependencies]
+crustywad = "0.1"
+</code></pre>
+<p>Enable optional features as needed:</p>
+<pre><code class="language-toml">[dependencies]
+crustywad = { version = "0.1", features = ["mmap"] }
+</code></pre>
+<h2 id="basic-usage"><a class="header" href="#basic-usage">Basic usage</a></h2>
+<p>Parse a WAD from an in-memory byte slice:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+
+// Minimal valid IWAD with zero lumps.
+let bytes: &amp;[u8] = &amp;[
+    b'I', b'W', b'A', b'D',  // magic
+    0, 0, 0, 0,               // numlumps = 0
+    12, 0, 0, 0,              // infotableofs = 12
+];
+
+let wad = Wad::from_bytes(bytes)?;
+println!("kind:  {:?}", wad.kind());
+println!("lumps: {}", wad.lump_count());
+<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="loading-from-a-file"><a class="header" href="#loading-from-a-file">Loading from a file</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+
+let wad = Wad::from_path("doom.wad")?;
+println!("{} lumps", wad.lump_count());
+<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="handling-errors"><a class="header" href="#handling-errors">Handling errors</a></h2>
+<p>All parse functions return <code>Result&lt;Wad, ParseError&gt;</code>. The <code>ParseError</code> type covers
+I/O failures, invalid magic bytes, negative field values, out-of-bounds directory
+offsets, and non-ASCII lump names. See <code>crustywad::ParseError</code> in the API docs for
+the full variant list.</p>
+<h2 id="whats-next"><a class="header" href="#whats-next">What’s next?</a></h2>
+<ul>
+<li><a href="#reading-wad-files">Reading WAD Files</a> — access lumps and choose a parse mode.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="reading-wad-files"><a class="header" href="#reading-wad-files">Reading WAD Files</a></h1>
+<h2 id="constructors"><a class="header" href="#constructors">Constructors</a></h2>
+<p><code>Wad</code> provides several constructors depending on your input source:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Constructor</th><th>Source</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Wad::from_bytes(bytes)</code></td><td><code>Vec&lt;u8&gt;</code> / <code>&amp;[u8]</code> / byte array</td><td>No file I/O</td></tr>
+<tr><td><code>Wad::from_bytes_with_options(bytes, opts)</code></td><td>Same, with custom options</td><td></td></tr>
+<tr><td><code>Wad::from_path(path)</code></td><td>File path</td><td>Reads file into heap</td></tr>
+<tr><td><code>Wad::from_path_with_options(path, opts)</code></td><td>File path + options</td><td></td></tr>
+<tr><td><code>Wad::from_path_mapped(path)</code></td><td>File path</td><td>Memory-mapped; requires <code>mmap</code> feature</td></tr>
+<tr><td><code>Wad::from_path_mapped_with_options(path, opts)</code></td><td>File path + options</td><td>Requires <code>mmap</code> feature</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="accessing-lumps"><a class="header" href="#accessing-lumps">Accessing lumps</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+
+// Build a minimal IWAD with one lump for illustration.
+let mut bytes = Vec::new();
+bytes.extend_from_slice(b"IWAD");
+bytes.extend_from_slice(&amp;1_i32.to_le_bytes());   // numlumps = 1
+bytes.extend_from_slice(&amp;16_i32.to_le_bytes());  // infotableofs = 16
+bytes.extend_from_slice(&amp;[1, 2, 3, 4]);           // lump data at offset 12
+bytes.extend_from_slice(&amp;12_i32.to_le_bytes());  // directory: filepos = 12
+bytes.extend_from_slice(&amp;4_i32.to_le_bytes());   // directory: size = 4
+bytes.extend_from_slice(b"TEST\0\0\0\0");         // directory: name
+
+let wad = Wad::from_bytes(bytes)?;
+
+// By index.
+if let Some(lump) = wad.lump(0) {
+    println!("lump[0]: {} ({} bytes at {})", lump.name(), lump.size(), lump.filepos());
+}
+
+// By name.
+if let Some(lump) = wad.lump_by_name("TEST") {
+    let data: &amp;[u8] = wad.lump_data(lump);
+    println!("TEST lump is {} bytes", data.len());
+}
+
+// Iterate all lumps.
+for lump in wad.lumps() {
+    println!("{}: {} bytes", lump.name(), lump.size());
+}
+
+// Raw bytes by index (returns None if index is out of range).
+if let Some(bytes) = wad.lump_bytes(0) {
+    println!("raw bytes: {:?}", bytes);
+}
+<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="strict-vs-lenient-parsing"><a class="header" href="#strict-vs-lenient-parsing">Strict vs. lenient parsing</a></h2>
+<p>By default <code>Wad::from_bytes</code> and <code>Wad::from_path</code> use <strong>strict</strong> mode: the first
+validation error stops parsing and returns a <code>ParseError</code>.</p>
+<p>Use <strong>lenient</strong> mode when you want best-effort recovery from malformed files:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{ParseOptions, Wad};
+
+let options = ParseOptions::lenient();
+let result = Wad::from_path_with_options("questionable.wad", options)?;
+
+// Inspect any non-fatal issues collected during parsing.
+for warning in result.warnings() {
+    eprintln!("warning: {warning}");
+}
+<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p>You can also use the shorthand constructors:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::ParseOptions;
+
+let strict  = ParseOptions::strict();   // same as default
+let lenient = ParseOptions::lenient();
+<span class="boring">}</span></code></pre>
+<h3 id="what-each-mode-does"><a class="header" href="#what-each-mode-does">What each mode does</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Strict</th><th>Lenient</th></tr>
+</thead>
+<tbody>
+<tr><td>Invalid magic bytes</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, <code>WadKind::Unknown</code></td></tr>
+<tr><td>Negative <code>numlumps</code> or <code>infotableofs</code></td><td><code>ParseError</code></td><td><code>ParseWarning</code>, value clamped to 0</td></tr>
+<tr><td>Directory extends past end-of-file</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, truncated to available entries</td></tr>
+<tr><td>Lump data out of bounds</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, range clamped</td></tr>
+<tr><td>Non-ASCII lump name</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, lossy UTF-8 decoding</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="wad-kind"><a class="header" href="#wad-kind">WAD kind</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{Wad, WadKind};
+
+<span class="boring">let mut bytes = Vec::new();
+</span><span class="boring">bytes.extend_from_slice(b"IWAD");
+</span><span class="boring">bytes.extend_from_slice(&amp;1_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(&amp;16_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(&amp;[1, 2, 3, 4]);
+</span><span class="boring">bytes.extend_from_slice(&amp;12_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(&amp;4_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(b"TEST\0\0\0\0");
+</span>let wad = Wad::from_bytes(bytes)?;
+
+match wad.kind() {
+    WadKind::Iwad =&gt; println!("IWAD — base game data"),
+    WadKind::Pwad =&gt; println!("PWAD — patch or add-on"),
+    WadKind::Unknown(magic) =&gt; println!("Unknown magic: {:?}", magic),
+}
+<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="map-record-parsing"><a class="header" href="#map-record-parsing">Map Record Parsing</a></h1>
+<p>Doom maps are stored as a group of sequentially named lumps. After the marker lump
+(e.g. <code>E1M1</code>) come the parsed map data lumps. The table below covers the record lumps
+that <code>crustywad</code> decodes; classic Doom maps also include additional lumps such as
+<code>REJECT</code> and <code>BLOCKMAP</code> after <code>SECTORS</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Lump</th><th>Record type</th><th>Record size</th></tr>
+</thead>
+<tbody>
+<tr><td><code>THINGS</code></td><td><code>Thing</code></td><td>10 bytes</td></tr>
+<tr><td><code>LINEDEFS</code></td><td><code>Linedef</code></td><td>14 bytes</td></tr>
+<tr><td><code>SIDEDEFS</code></td><td><code>Sidedef</code></td><td>30 bytes</td></tr>
+<tr><td><code>VERTEXES</code></td><td><code>Vertex</code></td><td>4 bytes</td></tr>
+<tr><td><code>SEGS</code></td><td><code>Seg</code></td><td>12 bytes</td></tr>
+<tr><td><code>SSECTORS</code></td><td><code>Subsector</code></td><td>4 bytes</td></tr>
+<tr><td><code>NODES</code></td><td><code>Node</code></td><td>28 bytes</td></tr>
+<tr><td><code>SECTORS</code></td><td><code>Sector</code></td><td>26 bytes</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="parsing-records"><a class="header" href="#parsing-records">Parsing records</a></h2>
+<p><code>crustywad::map::parse_records::&lt;T&gt;</code> decodes a byte slice into a <code>Vec&lt;T&gt;</code>.
+All record types implement <code>BinRead</code> with little-endian byte order.</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::map;
+
+// Parse a raw THINGS byte slice containing a single thing.
+let thing_bytes: &amp;[u8] = &amp;[
+    100_i16.to_le_bytes()[0], 100_i16.to_le_bytes()[1],  // x = 100
+    200_i16.to_le_bytes()[0], 200_i16.to_le_bytes()[1],  // y = 200
+    0, 0,                                                  // angle = 0
+    1, 0,                                                  // type_id = 1 (player 1 start)
+    7, 0,                                                  // flags = 0x0007
+];
+
+let things: Vec&lt;map::Thing&gt; = map::parse_records(thing_bytes)?;
+let t = &amp;things[0];
+println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
+<span class="boring">Ok::&lt;(), crustywad::map::MapParseError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="available-record-types"><a class="header" href="#available-record-types">Available record types</a></h2>
+<h3 id="thing"><a class="header" href="#thing">Thing</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Thing {
+    pub x: i16,        // X coordinate in map units
+    pub y: i16,        // Y coordinate in map units
+    pub angle: u16,    // Facing angle in degrees (0-359, counter-clockwise from east)
+    pub type_id: u16,  // Editor number / thing type
+    pub flags: u16,    // Doom thing flags
+}
+<span class="boring">}</span></code></pre>
+<h3 id="linedef"><a class="header" href="#linedef">Linedef</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Linedef {
+    pub start_vertex: u16,   // Start vertex index
+    pub end_vertex: u16,     // End vertex index
+    pub flags: u16,
+    pub special_type: u16,   // Special action
+    pub sector_tag: u16,
+    pub right_sidedef: u16,  // Right sidedef index
+    pub left_sidedef: u16,   // 0xffff when absent
+}
+<span class="boring">}</span></code></pre>
+<h3 id="sidedef"><a class="header" href="#sidedef">Sidedef</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Sidedef {
+    pub x_offset: i16,
+    pub y_offset: i16,
+    pub upper_texture: Name8,   // 8-byte NUL-padded name
+    pub lower_texture: Name8,
+    pub middle_texture: Name8,
+    pub sector: u16,
+}
+<span class="boring">}</span></code></pre>
+<h3 id="vertex"><a class="header" href="#vertex">Vertex</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Vertex {
+    pub x: i16,
+    pub y: i16,
+}
+<span class="boring">}</span></code></pre>
+<h3 id="sector"><a class="header" href="#sector">Sector</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Sector {
+    pub floor_height: i16,
+    pub ceiling_height: i16,
+    pub floor_texture: Name8,
+    pub ceiling_texture: Name8,
+    pub light_level: i16,
+    pub special_type: i16,
+    pub tag: i16,
+}
+<span class="boring">}</span></code></pre>
+<p>See <code>crustywad::map</code> in the API docs for the full definitions of <code>Seg</code>,
+<code>Subsector</code>, and <code>Node</code>.</p>
+<h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
+<p><code>parse_records</code> returns <code>MapParseError</code>:</p>
+<ul>
+<li><code>MapParseError::TrailingBytes</code> — the lump length is not an exact multiple of the record
+size (e.g. a <code>THINGS</code> lump whose byte count is not divisible by 10).</li>
+<li><code>MapParseError::Binrw</code> — <code>binrw</code> failed to decode a record from the byte stream.</li>
+</ul>
+<p>Both variants implement <code>std::error::Error</code> and display a human-readable message.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-usage"><a class="header" href="#cli-usage">CLI Usage</a></h1>
+<p>The <code>cwad</code> binary ships with the <code>crustywad-cli</code> crate and provides quick WAD
+inspection from the command line.</p>
+<h2 id="installation"><a class="header" href="#installation">Installation</a></h2>
+<p>Build and install from the workspace:</p>
+<pre><code class="language-bash">cargo install --path crates/crustywad-cli
+</code></pre>
+<p>Or run directly without installing:</p>
+<pre><code class="language-bash">cargo run -p crustywad-cli -- &lt;subcommand&gt; [options] &lt;file.wad&gt;
+</code></pre>
+<h2 id="synopsis"><a class="header" href="#synopsis">Synopsis</a></h2>
+<pre><code class="language-text">cwad [OPTIONS] &lt;COMMAND&gt;
+</code></pre>
+<h2 id="subcommands"><a class="header" href="#subcommands">Subcommands</a></h2>
+<h3 id="info"><a class="header" href="#info">info</a></h3>
+<p>Print the WAD kind (<code>Iwad</code> or <code>Pwad</code>) and total lump count.</p>
+<pre><code class="language-text">$ cwad info doom.wad
+kind:  Iwad
+lumps: 1264
+</code></pre>
+<h3 id="list"><a class="header" href="#list">list</a></h3>
+<p>Print the full lump directory. Each line contains the zero-based index, the
+file offset (<code>filepos</code>), the byte size, and the lump name.</p>
+<pre><code class="language-text">$ cwad list doom.wad
+0000       12     1160 PLAYPAL
+0001     1172     4096 COLORMAP
+0002     5268        0 ENDOOM
+...
+</code></pre>
+<p>Column order: <code>index  filepos  size  name</code>.</p>
+<h3 id="validate"><a class="header" href="#validate">validate</a></h3>
+<p>Check whether a WAD file parses without errors and exits with the
+appropriate code (see <a href="#exit-codes">Exit codes</a>).</p>
+<pre><code class="language-text">$ cwad validate doom.wad
+ok: doom.wad
+</code></pre>
+<p>On a corrupt file:</p>
+<pre><code class="language-text">$ cwad validate broken.wad
+error: broken.wad: invalid WAD magic
+</code></pre>
+<p>The error message goes to stderr in human format; the exit code is <code>2</code>.</p>
+<h2 id="global-options"><a class="header" href="#global-options">Global options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Short</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--lenient</code></td><td>—</td><td>Use lenient parsing instead of strict when reading a WAD; attempts best-effort recovery for non-fatal issues and emits warnings to stderr. For <code>build</code>, also uses lenient instead of strict validation when writing</td></tr>
+<tr><td><code>--format &lt;FORMAT&gt;</code></td><td><code>-F</code></td><td>Output format: <code>human</code> (default), <code>json</code>, or <code>csv</code></td></tr>
+<tr><td><code>--help</code></td><td><code>-h</code></td><td>Print help and exit <code>0</code></td></tr>
+<tr><td><code>--version</code></td><td><code>-V</code></td><td>Print version and exit <code>0</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="lenient-mode"><a class="header" href="#lenient-mode">Lenient mode</a></h3>
+<p>In lenient mode <code>cwad</code> attempts best-effort recovery and prints warnings to
+stderr for any non-fatal issues encountered.</p>
+<pre><code class="language-bash">cwad --lenient info damaged.wad
+</code></pre>
+<p>Example output when the WAD magic is unrecognized:</p>
+<pre><code class="language-text">kind:  Unknown([88, 87, 65, 68])
+lumps: 3
+warning: unrecognized WAD magic `XWAD`
+</code></pre>
+<h2 id="output-formats"><a class="header" href="#output-formats">Output formats</a></h2>
+<p>All three subcommands support the <code>--format</code> / <code>-F</code> flag.</p>
+<h3 id="human-default"><a class="header" href="#human-default">human (default)</a></h3>
+<p>Human-readable text written to stdout. Warnings and errors go to stderr.</p>
+<h3 id="json"><a class="header" href="#json">json</a></h3>
+<p>Newline-delimited JSON (one object per record). Useful for scripting and
+piping into tools like <code>jq</code>.</p>
+<pre><code class="language-bash">cwad -F json info doom.wad
+</code></pre>
+<pre><code class="language-json">{"kind":"Iwad","lumps":1264}
+</code></pre>
+<pre><code class="language-bash">cwad -F json list doom.wad
+</code></pre>
+<pre><code class="language-json">{"index":0,"filepos":12,"size":1160,"name":"PLAYPAL"}
+{"index":1,"filepos":1172,"size":4096,"name":"COLORMAP"}
+</code></pre>
+<pre><code class="language-bash">cwad -F json validate doom.wad
+</code></pre>
+<pre><code class="language-json">{"ok":true}
+</code></pre>
+<p>On parse failure the <code>validate</code> subcommand writes <code>{"ok":false,"error":"..."}</code> to stdout and exits <code>2</code>.</p>
+<h3 id="csv"><a class="header" href="#csv">csv</a></h3>
+<p>RFC 4180 CSV with a header row. Field values that contain commas, quotes, or
+newlines are wrapped in double-quotes with internal quotes doubled.</p>
+<pre><code class="language-bash">cwad -F csv info doom.wad
+</code></pre>
+<pre><code class="language-text">kind,lumps
+Iwad,1264
+</code></pre>
+<pre><code class="language-bash">cwad -F csv list doom.wad
+</code></pre>
+<pre><code class="language-text">index,filepos,size,name
+0,12,1160,PLAYPAL
+1,1172,4096,COLORMAP
+</code></pre>
+<pre><code class="language-bash">cwad -F csv validate doom.wad
+</code></pre>
+<pre><code class="language-text">ok
+true
+</code></pre>
+<h2 id="exit-codes"><a class="header" href="#exit-codes">Exit codes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>0</code></td><td>Success</td></tr>
+<tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.)</td></tr>
+<tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="man-page"><a class="header" href="#man-page">Man page</a></h2>
+<p>A man page (<code>cwad.1</code>) is generated into <code>$OUT_DIR/man/</code> at build time via
+<code>clap_mangen</code>. To install it system-wide after building the crate, copy the
+generated file to the appropriate man directory, for example:</p>
+<pre><code class="language-bash">install -m 644 \
+  "$(cargo build -p crustywad-cli --message-format=json \
+      | jq -r 'select(.reason=="build-script-executed") | .out_dir')/man/cwad.1" \
+  /usr/local/share/man/man1/cwad.1
+mandb
+</code></pre>
+<h2 id="shell-completions"><a class="header" href="#shell-completions">Shell completions</a></h2>
+<p>Completion scripts for bash, zsh, and fish are generated into
+<code>$OUT_DIR/completions/</code> at build time via <code>clap_complete</code>. Source the
+appropriate script for your shell to enable tab completion for <code>cwad</code>
+subcommands and flags.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="feature-flags"><a class="header" href="#feature-flags">Feature Flags</a></h1>
+<p><code>crustywad</code> uses Cargo feature flags to keep the default dependency footprint small while
+allowing callers to opt in to additional capabilities.</p>
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Feature</th><th>Default</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#mmap"><code>mmap</code></a></td><td>no</td><td>Memory-mapped file loading via <code>memmap2</code></td></tr>
+<tr><td><a href="#freedoom-tests"><code>freedoom-tests</code></a></td><td>no</td><td>Integration tests against local Freedoom WAD fixtures</td></tr>
+<tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="mmap"><a class="header" href="#mmap"><code>mmap</code></a></h2>
+<p><strong>Enables:</strong> <code>Wad::from_path_mapped</code> and <code>Wad::from_path_mapped_with_options</code></p>
+<p><strong>Adds dependency:</strong> <a href="https://crates.io/crates/memmap2"><code>memmap2</code></a></p>
+<p>Memory-maps the WAD file instead of reading it into a <code>Vec&lt;u8&gt;</code>. On large WADs this avoids
+a heap allocation equal to the file size and lets the OS page in only the bytes that are
+actually accessed. The tradeoff is a small amount of <code>unsafe</code> code in <code>mmap.rs</code> (the only
+<code>unsafe</code> in the library crate) to call <code>memmap2::MmapOptions::map</code>.</p>
+<p><code>Wad::from_path</code> (the non-mapped variant) always reads the whole file into memory regardless
+of whether this feature is enabled.</p>
+<h3 id="usage"><a class="header" href="#usage">Usage</a></h3>
+<pre><code class="language-toml"># Cargo.toml
+crustywad = { version = "0.1", features = ["mmap"] }
+</code></pre>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{Wad, ParseOptions};
+
+// Zero-copy load from disk:
+let _wad = Wad::from_path_mapped("doom.wad")?;
+
+// Zero-copy load with options:
+let _wad = Wad::from_path_mapped_with_options("doom.wad", ParseOptions::lenient())?;
+<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h3 id="when-to-use-mmap"><a class="header" href="#when-to-use-mmap">When to use mmap</a></h3>
+<p>Memory-mapped loading is useful for large WADs when you only need to access a subset of
+lumps. The OS maps the file into the address space without copying all bytes into heap memory
+upfront — pages are faulted in on demand.</p>
+<p>For small WADs or when you will access most lumps, <code>Wad::from_path</code> (which reads into a
+<code>Vec&lt;u8&gt;</code>) is equally fast and has simpler lifetime semantics.</p>
+<h3 id="platform-notes"><a class="header" href="#platform-notes">Platform notes</a></h3>
+<p><code>memmap2</code> is supported on all tier-1 Rust targets (Linux, macOS, Windows). Memory-mapped
+files are read-only; there is no risk of accidentally writing to the underlying file.</p>
+<p><strong>Warning:</strong> the WAD file must not be truncated or replaced by another process while the
+<code>Wad</code> is alive. On Unix, truncation from another process triggers a <code>SIGBUS</code> on the next
+lump data access, which will abort the process. On Windows the mapping prevents truncation
+but concurrent writes by another process may expose inconsistent data. Use <code>Wad::from_path</code>
+if the file may be modified externally while in use.</p>
+<hr>
+<h2 id="freedoom-tests"><a class="header" href="#freedoom-tests"><code>freedoom-tests</code></a></h2>
+<p><strong>Enables:</strong> integration tests in <code>crates/crustywad/tests/freedoom.rs</code></p>
+<p><strong>Adds dependency:</strong> none (test-only fixture files on disk)</p>
+<p>Gates optional tests that parse real <a href="https://freedoom.github.io/">Freedoom</a> WAD files.
+Tests skip gracefully when <code>CRUSTYWAD_FREEDOOM_DIR</code> is not set or when the expected WAD files
+are not present in that directory — they do not fail.</p>
+<h3 id="fetching-fixtures"><a class="header" href="#fetching-fixtures">Fetching fixtures</a></h3>
+<pre><code class="language-sh"># Default version (configured in tests/fixtures/fetch_freedoom.py):
+just fetch-fixtures
+
+# Specific Freedoom release:
+just fetch-fixtures version=v0.14.0
+</code></pre>
+<h3 id="running-the-tests"><a class="header" href="#running-the-tests">Running the tests</a></h3>
+<pre><code class="language-sh"># Using just — defaults CRUSTYWAD_FREEDOOM_DIR to tests/fixtures/freedoom:
+just test-freedoom
+
+# Override the fixture directory:
+just test-freedoom dir=/path/to/freedoom
+
+# Or run cargo directly:
+CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom \
+  cargo test -p crustywad --features freedoom-tests
+</code></pre>
+<h3 id="ci"><a class="header" href="#ci">CI</a></h3>
+<p>CI runs <code>cargo test --workspace --all-features</code>, which enables the <code>freedoom-tests</code> feature
+flag. The tests skip gracefully when <code>CRUSTYWAD_FREEDOOM_DIR</code> is not set — and CI never sets
+it because the fixture WADs are gitignored and not downloaded in the standard CI pipeline.</p>
+<hr>
+<h2 id="write"><a class="header" href="#write"><code>write</code></a></h2>
+<p><strong>Enables:</strong> <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteWarning</code>, <code>WriteOptions</code>, and <code>Wad::to_builder</code></p>
+<p><strong>Adds dependency:</strong> none (uses <code>binrw</code> already in the dependency tree)</p>
+<p>Adds WAD serialization support. <code>WadBuilder</code> accumulates lumps and serializes them to a
+<code>Vec&lt;u8&gt;</code> in the canonical Doom WAD layout:
+<code>[12-byte header][lump data blobs][16-byte directory entries]</code>.</p>
+<h3 id="usage-1"><a class="header" href="#usage-1">Usage</a></h3>
+<pre><code class="language-toml"># Cargo.toml
+crustywad = { version = "0.1", features = ["write"] }
+</code></pre>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{WadBuilder, WadKind};
+
+// Build a new PWAD from scratch:
+let bytes = WadBuilder::new(WadKind::Pwad)
+    .add_lump("MAP01", b"data")
+    .build()
+    .unwrap();
+
+assert!(crustywad::Wad::from_bytes(bytes).is_ok());
+<span class="boring">}</span></code></pre>
+<h3 id="round-tripping-a-parsed-wad"><a class="header" href="#round-tripping-a-parsed-wad">Round-tripping a parsed WAD</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{Wad, WadBuilder, WadKind};
+
+<span class="boring">let mut source = Vec::new();
+</span><span class="boring">source.extend_from_slice(b"PWAD");
+</span><span class="boring">source.extend_from_slice(&amp;0_i32.to_le_bytes());
+</span><span class="boring">source.extend_from_slice(&amp;12_i32.to_le_bytes());
+</span>let wad = Wad::from_bytes(source).unwrap();
+let rebuilt = wad.to_builder().build().unwrap();
+<span class="boring">}</span></code></pre>
+<h3 id="validation-and-error-handling"><a class="header" href="#validation-and-error-handling">Validation and error handling</a></h3>
+<p><code>WadBuilder::build</code> uses strict mode by default. Use <code>build_with_options</code> with
+<code>WriteOptions::lenient()</code> to collect recoverable issues as <code>WriteWarning</code> values instead:</p>
+<ul>
+<li>Names with NUL bytes or non-ASCII bytes always error in both modes.</li>
+<li>Names longer than 8 bytes: strict mode returns <code>WriteError::NameTooLong</code>; lenient mode
+truncates and emits <code>WriteWarning::NameTruncated</code>.</li>
+<li><code>WadKind::Unknown</code> magic: strict mode returns <code>WriteError::UnknownMagicStrict</code>; lenient
+mode writes the raw 4-byte magic.</li>
+</ul>
+<hr>
+<h2 id="common-cargo-invocations"><a class="header" href="#common-cargo-invocations">Common <code>cargo</code> invocations</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Goal</th><th>Command</th></tr>
+</thead>
+<tbody>
+<tr><td>Build with all features</td><td><code>cargo build --workspace --all-features</code></td></tr>
+<tr><td>Build with <code>mmap</code> only</td><td><code>cargo build -p crustywad --features mmap</code></td></tr>
+<tr><td>Test with all features</td><td><code>cargo test --workspace --all-features</code></td></tr>
+<tr><td>Test with <code>mmap</code> only</td><td><code>cargo test -p crustywad --features mmap</code></td></tr>
+<tr><td>Test with Freedoom fixtures</td><td><code>CRUSTYWAD_FREEDOOM_DIR=… cargo test -p crustywad --features freedoom-tests</code></td></tr>
+<tr><td>Build with <code>write</code></td><td><code>cargo build -p crustywad --features write</code></td></tr>
+<tr><td>Test with <code>write</code></td><td><code>cargo test -p crustywad --features write</code></td></tr>
+<tr><td>Full CI check</td><td><code>just ci</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>See the <a href="https://github.com/masriamir/crustywad/blob/main/justfile"><code>justfile</code></a> for
+available <code>just</code> recipes including feature-specific aliases.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
+<blockquote>
+<p><strong>Audience:</strong> Library users and contributors</p>
+</blockquote>
+<h2 id="workspace-layout"><a class="header" href="#workspace-layout">Workspace layout</a></h2>
+<p>The workspace contains two crates. <code>crustywad-cli</code> depends on <code>crustywad</code>; the library has no dependency on the CLI.</p>
+<pre class="mermaid">graph TD
+    subgraph lib["crustywad  (library crate)"]
+        lrs["lib.rs\nWad · WadHeader · Lump\nParseOptions · Strictness"]
+        ers["error.rs\nParseError · ParseWarning"]
+        mrs["map.rs\nThing · Linedef · Sidedef · Vertex\nSeg · Subsector · Node · Sector"]
+        mmrs["mmap.rs\n(feature: mmap only)"]
+        wrs["write.rs\nWadBuilder · WriteError\nWriteWarning · WriteOptions\n(feature: write only)"]
+    end
+    subgraph cli["crustywad-cli  (binary crate)"]
+        mains["main.rs\ncwad — info · list · validate\nmerge · diff · extract · build subcommands"]
+    end
+    cli --&gt;|"cargo dependency"| lib
+    mmrs -. "feature = mmap\nadds memmap2 dependency" .-&gt; memmap2(["memmap2\n(external crate)"])
+    lrs -. "feature = write" .-&gt; wrs
+</pre>
+
+<h2 id="feature-flags-1"><a class="header" href="#feature-flags-1">Feature flags</a></h2>
+<pre class="mermaid">graph LR
+    lib["crustywad"]
+    lib -. "mmap" .-&gt; mmap["Wad::from_path_mapped\nWad::from_path_mapped_with_options\nzero-copy loading via memmap2"]
+    lib -. "freedoom-tests" .-&gt; ft["integration tests against\nlocal Freedoom WAD fixtures\n(test-only, no runtime dependency)"]
+    lib -. "write" .-&gt; write["WadBuilder · WriteError · WriteWarning\nWriteOptions · Wad::to_builder()\nWAD serialization"]
+</pre>
+
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="data-model"><a class="header" href="#data-model">Data Model</a></h1>
+<blockquote>
+<p><strong>Audience:</strong> Library users</p>
+</blockquote>
+<h2 id="wad-on-disk-layout"><a class="header" href="#wad-on-disk-layout">WAD on-disk layout</a></h2>
+<p>The header is always at offset 0 and is exactly 12 bytes. Lump data blobs can appear anywhere in the file; each directory entry’s <code>filepos</code> and <code>size</code> fields locate the blob. The lump directory sits at the byte offset stored in <code>infotableofs</code> (typically at the end of the file). Each directory entry is exactly 16 bytes and describes one lump.</p>
+<pre class="mermaid">flowchart TD
+    subgraph Header["Header - 12 bytes at offset 0"]
+        magic["magic\n4 bytes\n'IWAD' or 'PWAD'"]
+        numlumps["numlumps\n4 bytes i32\nlump count"]
+        infotableofs["infotableofs\n4 bytes i32\ndirectory offset"]
+    end
+    subgraph Data["Lump Data Blobs (variable)"]
+        lump0["lump 0 data\n(variable)"]
+        lump1["lump 1 data\n(variable)"]
+        lumpN["... lump N data\n(variable)"]
+    end
+    subgraph Dir["Lump Directory - N x 16 bytes at infotableofs"]
+        entry0["entry 0\nfilepos(4) + size(4) + name(8)"]
+        entry1["entry 1\nfilepos(4) + size(4) + name(8)"]
+        entryN["... entry N-1\nfilepos(4) + size(4) + name(8)"]
+    end
+    Header -- "infotableofs" --&gt; Dir
+</pre>
+
+<h2 id="rust-type-relationships"><a class="header" href="#rust-type-relationships">Rust type relationships</a></h2>
+<p>The class diagram below shows the public API types in <code>crustywad</code> and how they relate to each other. Constructors return <code>Result&lt;Wad, ParseError&gt;</code>; in lenient mode the returned <code>Wad</code> carries zero or more <code>ParseWarning</code> values accessible via <code>Wad::warnings()</code>. Methods marked <code>[mmap]</code> are only available when the <code>mmap</code> feature flag is enabled; types and methods marked <code>[write]</code> are only available when the <code>write</code> feature flag is enabled.</p>
+<pre class="mermaid">classDiagram
+    class Wad {
+        +from_bytes(bytes) Result~Wad, ParseError~
+        +from_bytes_with_options(bytes, opts) Result~Wad, ParseError~
+        +from_path(path) Result~Wad, ParseError~
+        +from_path_with_options(path, opts) Result~Wad, ParseError~
+        +from_path_mapped(path) Result~Wad, ParseError~ [mmap]
+        +from_path_mapped_with_options(path, opts) Result~Wad, ParseError~ [mmap]
+        +kind() WadKind
+        +header() &amp;WadHeader
+        +lump_count() usize
+        +lumps() &amp;[Lump]
+        +lump(index) Option~&amp;Lump~
+        +lump_by_name(name) Option~&amp;Lump~
+        +lump_bytes(index) Option~&amp;[u8]~
+        +warnings() &amp;[ParseWarning]
+        +into_bytes() Vec~u8~
+        +to_builder() WadBuilder [write]
+    }
+    class WadHeader {
+        +kind WadKind
+        +num_lumps usize
+        +info_table_offset usize
+    }
+    class Lump {
+        +name() &amp;str
+        +filepos() usize
+        +size() usize
+    }
+    class WadKind {
+        &lt;&lt;enumeration&gt;&gt;
+        Iwad
+        Pwad
+        Unknown([u8; 4])
+    }
+    class ParseOptions {
+        +strictness Strictness
+        +strict() ParseOptions
+        +lenient() ParseOptions
+    }
+    class Strictness {
+        &lt;&lt;enumeration&gt;&gt;
+        Strict
+        Lenient
+    }
+    class ParseError {
+        &lt;&lt;enumeration&gt;&gt;
+        Io
+        Header
+        Directory
+        InvalidMagic
+        NegativeValue
+        OutOfBounds
+        NonAsciiName
+        Overflow
+    }
+    class ParseWarning {
+        &lt;&lt;enumeration&gt;&gt;
+        InvalidMagic
+        NegativeValue
+        OutOfBounds
+        NonAsciiName
+        Overflow
+    }
+    class MapParseError {
+        &lt;&lt;enumeration&gt;&gt;
+        TrailingBytes
+        Binrw
+    }
+    class WadBuilder {
+        [write]
+        +new(kind) WadBuilder
+        +add_lump(name, data) &amp;mut WadBuilder
+        +build() Result~Vec~u8~, WriteError~
+        +build_with_options(opts: &amp;WriteOptions) Result~(Vec~u8~, Vec~WriteWarning~), WriteError~
+    }
+    class WriteOptions {
+        [write]
+        +strictness Strictness
+        +strict() WriteOptions
+        +lenient() WriteOptions
+    }
+    class WriteError {
+        &lt;&lt;enumeration&gt;&gt;
+        [write]
+        NulInName
+        NonAsciiName
+        NameTooLong
+        LumpTooLarge
+        TooManyLumps
+        OffsetOverflow
+        UnknownMagicStrict
+        Binrw
+    }
+    class WriteWarning {
+        &lt;&lt;enumeration&gt;&gt;
+        [write]
+        NameTruncated
+        UnknownMagic
+    }
+
+    Wad "1" --&gt; "1" WadHeader : has
+    Wad "1" --&gt; "0..*" Lump : contains
+    Wad "1" --&gt; "0..*" ParseWarning : collects
+    WadHeader --&gt; WadKind : kind
+    ParseOptions --&gt; Strictness : strictness
+    Wad ..&gt; ParseOptions : constructed with
+    Wad ..&gt; ParseError : returns on failure
+    Wad ..&gt; WadBuilder : to_builder() [write]
+    WadBuilder ..&gt; WriteOptions : build_with_options(opts) [write]
+    WadBuilder ..&gt; WriteError : returns on failure [write]
+    WadBuilder ..&gt; WriteWarning : returns via build_with_options (lenient) [write]
+    WriteOptions --&gt; Strictness : strictness [write]
+</pre>
+
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-flow"><a class="header" href="#cli-flow">CLI Flow</a></h1>
+<blockquote>
+<p><strong>Audience:</strong> Library users</p>
+</blockquote>
+<p>The <code>cwad</code> binary exposes seven subcommands: <code>info</code>, <code>list</code>, <code>validate</code>, <code>diff</code>, and <code>extract</code> (read-only) plus <code>merge</code> and <code>build</code> (write-path, backed by <code>crustywad</code>’s <code>write</code> feature). <code>crustywad-cli</code>’s <code>Cargo.toml</code> enables that feature unconditionally on its <code>crustywad</code> dependency, so <code>merge</code> and <code>build</code> are always available in <code>cwad</code> — there is no user-facing flag to opt in. <code>--lenient</code> and <code>--format</code> (<code>-F</code>; <code>human</code> default, <code>json</code>, or <code>csv</code>) are global flags that apply to every subcommand. Warnings are always written to stderr; normal output routes through <code>--format</code>. Argument-parsing failures (via <code>clap</code>) exit <code>3</code> before any subcommand runs, regardless of which subcommand was given.</p>
+<h2 id="read-path-dispatch"><a class="header" href="#read-path-dispatch">Read-path dispatch</a></h2>
+<p><code>info</code>, <code>list</code>, <code>validate</code>, <code>diff</code>, and <code>extract</code> all read one or more WADs via <code>Wad::from_path_with_options</code> under <code>ParseOptions::strict()</code>/<code>lenient()</code>. <code>validate</code> handles its load <code>Result</code> explicitly so it can route both outcomes through <code>--format</code>; the other read subcommands propagate load failures via <code>anyhow</code>’s <code>?</code>, which <code>main</code> catches and turns into exit <code>2</code>. <code>extract</code> additionally exits <code>2</code> if a requested <code>--lump NAME</code> isn’t found in the WAD (a separate explicit check after a successful load).</p>
+<pre class="mermaid">flowchart TD
+    A["cwad [--lenient] [--format FMT] &lt;subcommand&gt;"]
+    B{"--lenient flag?"}
+    C["ParseOptions::strict()\n(default)"]
+    D["ParseOptions::lenient()"]
+    A --&gt; B
+    B -- "absent" --&gt; C
+    B -- "present" --&gt; D
+    C &amp; D --&gt; E{"subcommand"}
+
+    E -- "extract" --&gt; X0{"output.is_dir()?\n(false if missing or\nan existing non-directory path)"}
+    X0 -- "no" --&gt; ERR2A["stderr: error\nexit 2"]
+    X0 -- "yes" --&gt; LOAD
+
+    E -- "info / list" --&gt; LOAD["Wad::from_path_with_options(path, opts)"]
+    E -- "validate" --&gt; LOADV["Wad::from_path_with_options(path, opts)\n(Result handled explicitly, not via ?)"]
+    E -- "diff" --&gt; LOAD2["Wad::from_path_with_options\nfor file1, then file2"]
+
+    LOAD --&gt; R1{"Ok?"}
+    R1 -- "no" --&gt; ERR2B["stderr: error message\nexit 2 (propagated via anyhow ?)"]
+    R1 -- "yes" --&gt; S1{"subcommand"}
+
+    LOADV --&gt; RV{"Ok?"}
+    RV -- "no" --&gt; FMTERRV["--format routed:\nhuman -&gt; stderr\njson/csv -&gt; stdout ok:false\nexit 2"]
+    RV -- "yes" --&gt; FMTOKV["--format routed:\nhuman/json/csv ok:true\nexit 0"]
+
+    LOAD2 --&gt; R2{"both Ok?"}
+    R2 -- "no" --&gt; ERR2B
+    R2 -- "yes" --&gt; DCALC["diff lumps by name\n(per-name data-sequence comparison)"]
+
+    S1 -- "info" --&gt; OUT1["--format routed:\nkind, lump count, data size, maps\nexit 0"]
+    S1 -- "list" --&gt; OUT2["--format routed:\nlump directory\n(index, filepos, size, name)\nexit 0"]
+    S1 -- "extract" --&gt; WARNX["stderr: one line per ParseWarning\n(lenient mode; empty in strict)\nprinted before the --lump check below"]
+    WARNX --&gt; OUT3{"--lump NAME given\nand not found?"}
+    OUT3 -- "yes" --&gt; ERR2C["stderr: lump not found\nexit 2\n(ParseWarnings, if any, already printed)"]
+    OUT3 -- "no" --&gt; OUT3B["extract matching lumps,\nsanitize filenames,\n--format routed per-file output\nexit 0"]
+
+    DCALC --&gt; WARND["stderr: one line per ParseWarning\nfor file1, then file2\n(lenient mode; empty in strict)"]
+    WARND --&gt; DHAS{"any differences?"}
+    DHAS -- "no" --&gt; ZERO["exit 0\n(no diff output;\nParseWarnings, if any, already printed above)"]
+    DHAS -- "yes" --&gt; OUT4["--format routed:\nkind + name per difference\n(json = NDJSON)\nexit 1"]
+
+    OUT1 &amp; OUT2 &amp; FMTOKV --&gt; WARN["stderr: one line per ParseWarning\n(lenient mode; empty in strict)"]
+</pre>
+
+<h2 id="write-path-dispatch"><a class="header" href="#write-path-dispatch">Write-path dispatch</a></h2>
+<p><code>merge</code> and <code>build</code> construct a WAD via <code>WadBuilder</code>. <code>crustywad-cli</code> gets <code>WadBuilder</code> by unconditionally enabling <code>crustywad</code>’s <code>write</code> feature in its <code>Cargo.toml</code> — both subcommands are always available in <code>cwad</code>, with no user-facing flag required. <code>--lenient</code> selects <code>WriteOptions::strict()</code>/<code>lenient()</code> for the build step, distinct from (but analogous to) the read-side <code>ParseOptions</code>. <code>WriteError</code> from <code>build_with_options</code> is a usage/data error and exits <code>3</code>; I/O failures (reading input files, writing the output file) still propagate via <code>?</code> and exit <code>2</code>, mirroring the read-path exit codes. <code>merge</code> additionally reads each input WAD under <code>ParseOptions</code>, so it prints that WAD’s <code>ParseWarning</code>s (path-prefixed) as each input is loaded, in addition to the <code>WriteWarning</code>s from the build step.</p>
+<pre class="mermaid">flowchart TD
+    A["cwad [--lenient] [--format FMT] merge|build ..."]
+    B{"--lenient flag?"}
+    C["WriteOptions::strict()\n(default)"]
+    D["WriteOptions::lenient()"]
+    A --&gt; B
+    B -- "absent" --&gt; C
+    B -- "present" --&gt; D
+    C &amp; D --&gt; E{"subcommand"}
+
+    E -- "merge" --&gt; M1["for each input path:\nWad::from_path_with_options(path, ParseOptions);\nstderr: one line per ParseWarning, path-prefixed\n(lenient mode; empty in strict);\nadd_lump for every lump into WadBuilder"]
+    M1 --&gt; M2{"all inputs Ok?"}
+    M2 -- "no" --&gt; ERR2["stderr: error\nexit 2 (propagated via anyhow ?)"]
+    M2 -- "yes" --&gt; BUILD
+
+    E -- "build" --&gt; B1["for each NAME=FILE spec:\nsplit on '=', read file, add_lump"]
+    B1 --&gt; B2{"spec malformed or\nname/file empty?"}
+    B2 -- "yes" --&gt; ERR3A["stderr: invalid lump spec\nexit 3"]
+    B2 -- "no" --&gt; B3{"file read Ok?"}
+    B3 -- "no" --&gt; ERR2
+    B3 -- "yes" --&gt; BUILD
+
+    BUILD["builder.build_with_options(write_opts)"]
+    BUILD --&gt; BOK{"Ok((bytes, warnings))?"}
+    BOK -- "no, Err(WriteError)" --&gt; ERR3B["stderr: build error\nexit 3 (usage/data error, not I/O)"]
+    BOK -- "yes" --&gt; WARN["stderr: one line per WriteWarning\n(lenient mode; empty in strict)"]
+    WARN --&gt; WFILE["fs::write(output, bytes)"]
+    WFILE --&gt; WOK{"Ok?"}
+    WOK -- "no" --&gt; ERR2
+    WOK -- "yes" --&gt; DONE{"subcommand"}
+
+    DONE -- "merge" --&gt; M_EXIT["exit 0\n(no confirmation output)"]
+    DONE -- "build" --&gt; B_EXIT["--format routed:\nhuman/csv 'wrote ... lumps: N'\njson ok:true,lumps:N\nexit 0"]
+</pre>
+
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="data-flow"><a class="header" href="#data-flow">Data Flow</a></h1>
+<blockquote>
+<p><strong>Audience:</strong> Contributors</p>
+</blockquote>
+<h2 id="read-pipeline"><a class="header" href="#read-pipeline">Read pipeline</a></h2>
+<p><code>Strictness</code> only affects semantic validation: strict mode returns <code>Err(ParseError)</code> immediately; lenient mode pushes a <code>ParseWarning</code> and continues. Binary decode errors from <code>binrw</code> — for both the header and directory entries — are always fatal regardless of mode.</p>
+<pre class="mermaid">flowchart TD
+    A["Input bytes\n(from_bytes / from_path / from_path_mapped [mmap])"]
+    B["binrw reads RawHeader\n(12 bytes, little-endian)"]
+    C{Header OK?}
+    D["Err(ParseError::Header)"]
+    E{Magic valid?\n'IWAD' / 'PWAD'}
+    F{Strictness?}
+    G["Err(ParseError::InvalidMagic)"]
+    H["warn ParseWarning::InvalidMagic\nkind = WadKind::Unknown"]
+    I["Validate numlumps / infotableofs\n(coerce_i32: negative values → error or clamp)"]
+    J{Values non-negative?}
+    K["Err(ParseError::NegativeValue)"]
+    L["warn ParseWarning::NegativeValue\nclamp to 0"]
+    M["Compute directory span\n(numlumps x 16 bytes)"]
+    MOVF{dir_span overflows?}
+    F4{Strictness?}
+    OVF_E["Err(ParseError::Overflow)"]
+    OVF_W["warn ParseWarning::Overflow\ndir_span saturated"]
+    N{Directory within buffer?}
+    O["Err(ParseError::OutOfBounds)"]
+    P["warn ParseWarning::OutOfBounds\ntruncate to available entries"]
+    Q["Parse N x RawDirectoryEntry\n(16 bytes each, little-endian)"]
+    R["validate_entry: check filepos/size/name\nlump-directory overlap\nper-entry strict/lenient branch"]
+    S["Ok(Wad)\n+ warnings (may be empty)"]
+
+    A --&gt; B
+    B --&gt; C
+    C -- "binrw error" --&gt; D
+    C -- "ok" --&gt; E
+    E -- "yes" --&gt; I
+    E -- "no" --&gt; F
+    F -- "Strict" --&gt; G
+    F -- "Lenient" --&gt; H
+    H --&gt; I
+    I --&gt; J
+    J -- "yes" --&gt; M
+    J -- "no" --&gt; F2{Strictness?}
+    F2 -- "Strict" --&gt; K
+    F2 -- "Lenient" --&gt; L
+    L --&gt; M
+    M --&gt; MOVF
+    MOVF -- "yes" --&gt; F4
+    F4 -- "Strict" --&gt; OVF_E
+    F4 -- "Lenient" --&gt; OVF_W
+    OVF_W --&gt; N
+    MOVF -- "no" --&gt; N
+    N -- "yes" --&gt; Q
+    N -- "no" --&gt; F3{Strictness?}
+    F3 -- "Strict" --&gt; O
+    F3 -- "Lenient" --&gt; P
+    P --&gt; Q
+    Q --&gt; R
+    R --&gt; S
+</pre>
+
+<h2 id="strict-vs-lenient-mode"><a class="header" href="#strict-vs-lenient-mode">Strict vs. lenient mode</a></h2>
+<p>The sequence diagram below shows how the same malformed WAD (bad magic bytes) flows through each mode. Strict mode returns an error immediately; lenient mode records a warning and proceeds to produce a usable <code>Wad</code>.</p>
+<pre class="mermaid">sequenceDiagram
+    participant Caller
+    participant Parser
+    participant Warnings
+
+    Note over Caller,Warnings: Input: WAD bytes with magic = XWAD (not IWAD/PWAD)
+
+    rect rgb(255, 230, 230)
+        Note over Caller,Parser: Strict mode (ParseOptions::strict())
+        Caller-&gt;&gt;Parser: Wad::from_bytes_with_options(bytes, ParseOptions::strict())
+        Parser-&gt;&gt;Parser: read RawHeader, magic = XWAD
+        Parser-&gt;&gt;Parser: magic != IWAD/PWAD, Strictness::Strict
+        Parser--&gt;&gt;Caller: Err(ParseError::InvalidMagic)
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Caller,Warnings: Lenient mode (ParseOptions::lenient())
+        Caller-&gt;&gt;Parser: Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
+        Parser-&gt;&gt;Parser: read RawHeader, magic = XWAD
+        Parser-&gt;&gt;Parser: magic != IWAD/PWAD, Strictness::Lenient
+        Parser-&gt;&gt;Warnings: push ParseWarning::InvalidMagic
+        Parser-&gt;&gt;Parser: kind = WadKind::Unknown
+        Parser-&gt;&gt;Parser: continue parsing numlumps, infotableofs, directory
+        Parser--&gt;&gt;Caller: Ok(Wad) with warnings
+        Caller-&gt;&gt;Caller: wad.warnings() includes InvalidMagic
+    end
+</pre>
+
+<h2 id="write-pipeline"><a class="header" href="#write-pipeline">Write pipeline</a></h2>
+<blockquote>
+<p><strong>Note:</strong> requires the <code>write</code> feature flag.</p>
+</blockquote>
+<p><code>WadBuilder</code> accumulates lumps and defers all validation to <code>build()</code> / <code>build_with_options()</code>. <code>build()</code> is a strict-mode convenience wrapper; <code>build_with_options</code> takes a <code>&amp;WriteOptions</code> and returns collected <code>WriteWarning</code>s alongside the bytes (always empty in strict mode). Offsets (<code>filepos</code>, <code>infotableofs</code>) are always recomputed by the builder — callers never supply them directly. The output layout is <code>[12-byte header][lump data blobs][16-byte directory entries]</code>.</p>
+<pre class="mermaid">flowchart TD
+    A["WadBuilder::new(kind)\n.add_lump(name, data) *"]
+    B["build() / build_with_options(opts)"]
+    C{"kind is WadKind::Unknown?"}
+    D{"Strictness?"}
+    E["Err(WriteError::UnknownMagicStrict)"]
+    F["warn WriteWarning::UnknownMagic\nwrite raw magic bytes"]
+    G{"lumps.len() &gt; i32::MAX?"}
+    H["Err(WriteError::TooManyLumps)"]
+    I["For each lump: validate name and data"]
+    J{"name contains NUL?"}
+    K["Err(WriteError::NulInName)"]
+    L{"name is ASCII?"}
+    M["Err(WriteError::NonAsciiName)"]
+    N{"name.len() &gt; 8?"}
+    O{"Strictness?"}
+    P["Err(WriteError::NameTooLong)"]
+    Q["warn WriteWarning::NameTruncated\ntruncate to 8 bytes"]
+    R{"data.len() &gt; i32::MAX?"}
+    S["Err(WriteError::LumpTooLarge)"]
+    T["Compute filepos per lump\n(offset starts at 12, the header size)"]
+    U{"any filepos / infotableofs\nexceeds i32::MAX?"}
+    V["Err(WriteError::OffsetOverflow)"]
+    W["BinWrite RawHeader\n(magic, numlumps, infotableofs)"]
+    X["Append lump data blobs\nin insertion order"]
+    Y["BinWrite RawDirectoryEntry per lump\n(filepos, size, name)"]
+    Z["build_with_options: Ok((bytes, warnings))\nbuild(): Ok(bytes)\nwarnings empty in strict mode"]
+
+    A --&gt; B
+    B --&gt; C
+    C -- "no" --&gt; G
+    C -- "yes" --&gt; D
+    D -- "Strict" --&gt; E
+    D -- "Lenient" --&gt; F
+    F --&gt; G
+    G -- "yes" --&gt; H
+    G -- "no" --&gt; I
+    I --&gt; J
+    J -- "yes" --&gt; K
+    J -- "no" --&gt; L
+    L -- "no" --&gt; M
+    L -- "yes" --&gt; N
+    N -- "no" --&gt; R
+    N -- "yes" --&gt; O
+    O -- "Strict" --&gt; P
+    O -- "Lenient" --&gt; Q
+    Q --&gt; R
+    R -- "yes" --&gt; S
+    R -- "no" --&gt; T
+    T --&gt; U
+    U -- "yes" --&gt; V
+    U -- "no" --&gt; W
+    W --&gt; X
+    X --&gt; Y
+    Y --&gt; Z
+</pre>
+
+<h2 id="strict-vs-lenient-write-mode"><a class="header" href="#strict-vs-lenient-write-mode">Strict vs. lenient write mode</a></h2>
+<p>The sequence diagram below shows a lump name longer than 8 bytes flowing through both modes of <code>build_with_options</code>. Strict mode returns an error immediately; lenient mode truncates the name, records a warning, and produces a valid WAD.</p>
+<pre class="mermaid">sequenceDiagram
+    participant Caller
+    participant Builder
+    participant Warnings
+
+    Note over Caller,Warnings: Input: add_lump("VERYLONGNAME", data) — 12-byte name
+
+    rect rgb(255, 230, 230)
+        Note over Caller,Builder: Strict mode (WriteOptions::strict(), or build())
+        Caller-&gt;&gt;Builder: build_with_options(&amp;WriteOptions::strict())
+        Builder-&gt;&gt;Builder: name.len() == 12 &gt; 8, Strictness::Strict
+        Builder--&gt;&gt;Caller: Err(WriteError::NameTooLong { name, len: 12 })
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Caller,Warnings: Lenient mode (WriteOptions::lenient())
+        Caller-&gt;&gt;Builder: build_with_options(&amp;WriteOptions::lenient())
+        Builder-&gt;&gt;Builder: name.len() == 12 &gt; 8, Strictness::Lenient
+        Builder-&gt;&gt;Warnings: push WriteWarning::NameTruncated { name }
+        Builder-&gt;&gt;Builder: truncate name to first 8 bytes
+        Builder-&gt;&gt;Builder: compute filepos/infotableofs, serialize header + lumps + directory
+        Builder--&gt;&gt;Caller: Ok((bytes, warnings))
+        Caller-&gt;&gt;Caller: warnings includes NameTruncated
+    end
+</pre>
+
+<h2 id="map-record-parsing-1"><a class="header" href="#map-record-parsing-1">Map record parsing</a></h2>
+<p><code>parse_records::&lt;T&gt;</code> turns raw lump bytes into a typed vector using <code>binrw</code>. The generic parameter <code>T</code> may be any map record type (<code>Thing</code>, <code>Linedef</code>, <code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>, <code>Subsector</code>, <code>Node</code>, <code>Sector</code>) that implements <code>BinRead&lt;Args&lt;'_&gt; = ()&gt;</code>. An empty buffer always yields an empty <code>Vec</code>. Otherwise the function parses the first record and measures how many bytes <code>BinRead</code> consumed (<code>record_size = cursor.position()</code>); this avoids relying on <code>size_of::&lt;T&gt;()</code>, which reflects in-memory layout rather than on-disk size. If <code>record_size == 0</code> the type has no on-disk representation and any non-empty input is a <code>TrailingBytes</code> error. If the total length is not an exact multiple of <code>record_size</code>, the remaining partial bytes are a <code>TrailingBytes</code> error.</p>
+<pre class="mermaid">flowchart TD
+    A["Input: raw lump bytes\ne.g. THINGS lump data"]
+    B["Caller specifies record type T\nfor parse_records, e.g. T = Thing"]
+    EMPTY{bytes is empty?}
+    OK_EMPTY["Ok, empty Vec"]
+    FIRST["BinRead parses first T\nrecord_size = cursor.position()"]
+    BINRW1{BinRead ok?}
+    BINRW1_ERR["Err(MapParseError::Binrw)"]
+    ZSZ{record_size == 0?}
+    ZSZ_ERR["Err(MapParseError::TrailingBytes)\noffset = 0"]
+    C{"bytes.len() %\nrecord_size == 0?"}
+    D["Err(MapParseError::TrailingBytes)\noffset = last complete record end"]
+    E["Allocate Vec\ncapacity = bytes.len() / record_size\npush first record"]
+    F{more bytes\nto read?}
+    G["binrw reads one T\nlittle-endian fixed-size struct"]
+    H{binrw ok?}
+    I["Err(MapParseError::Binrw)"]
+    J["push T into Vec"]
+    K["Ok, Vec of T\ne.g. Vec of Thing or Vec of Linedef"]
+
+    A --&gt; B
+    B --&gt; EMPTY
+    EMPTY -- "yes" --&gt; OK_EMPTY
+    EMPTY -- "no" --&gt; FIRST
+    FIRST --&gt; BINRW1
+    BINRW1 -- "error" --&gt; BINRW1_ERR
+    BINRW1 -- "ok" --&gt; ZSZ
+    ZSZ -- "yes" --&gt; ZSZ_ERR
+    ZSZ -- "no" --&gt; C
+    C -- "no" --&gt; D
+    C -- "yes" --&gt; E
+    E --&gt; F
+    F -- "yes" --&gt; G
+    G --&gt; H
+    H -- "error" --&gt; I
+    H -- "ok" --&gt; J
+    J --&gt; F
+    F -- "no" --&gt; K
+
+    subgraph examples["Concrete T examples"]
+        T1["Thing\n10 bytes: x i16, y i16, angle u16\ntype_id u16, flags u16"]
+        T2["Linedef\n14 bytes: 7 x u16"]
+        T3["Vertex\n4 bytes: x i16, y i16"]
+        T4["Sector\n26 bytes: floor_height i16, ceiling_height i16\nfloor_texture Name8, ceiling_texture Name8\nlight_level i16, special_type i16, tag i16"]
+    end
+
+    K --&gt; T1
+    K --&gt; T2
+    K --&gt; T3
+    K --&gt; T4
+</pre>
+
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="lump-hierarchy"><a class="header" href="#lump-hierarchy">Lump Hierarchy</a></h1>
+<blockquote>
+<p><strong>Audience:</strong> Contributors</p>
+</blockquote>
+<p>Lumps in a WAD file are undifferentiated byte blobs at the format level — each identified only by an 8-byte name, a file offset, and a size. This diagram shows the conventional taxonomy used by the Doom engine and followed by <code>crustywad</code>’s typed structs.</p>
+<p>The root node represents the <strong>on-disk directory entry</strong> (raw fields as stored in the WAD). The public <code>Lump</code> API type exposes these as a decoded <code>&amp;str</code> name and <code>usize</code> offsets.</p>
+<pre class="mermaid">graph TD
+    Lump["WAD directory entry (on-disk)\nfilepos: i32 · size: i32 · name: [u8; 8]"]
+
+    Lump --&gt; Map["Map group\n(follows a map-marker lump, e.g. E1M1 / MAP01)"]
+    Lump --&gt; NS["Namespace markers\n(delimit resource namespaces)"]
+    Lump --&gt; Special["Special lumps\n(global resources)"]
+    Lump --&gt; Raw["Untyped lumps\n(passthrough blobs)"]
+
+    Map --&gt; THINGS["THINGS → Thing\n10 bytes per record"]
+    Map --&gt; LINEDEFS["LINEDEFS → Linedef\n14 bytes per record"]
+    Map --&gt; SIDEDEFS["SIDEDEFS → Sidedef\n30 bytes per record"]
+    Map --&gt; VERTEXES["VERTEXES → Vertex\n4 bytes per record"]
+    Map --&gt; SEGS["SEGS → Seg\n12 bytes per record"]
+    Map --&gt; SSECTORS["SSECTORS → Subsector\n4 bytes per record"]
+    Map --&gt; NODES["NODES → Node\n28 bytes per record"]
+    Map --&gt; SECTORS["SECTORS → Sector\n26 bytes per record"]
+    Map --&gt; REJECT["REJECT → RejectLump\n(stub — not yet parsed)"]
+    Map --&gt; BLOCKMAP["BLOCKMAP → BlockmapLump\n(stub — not yet parsed)"]
+
+    NS --&gt; SS["S_START / S_END\n(sprite namespace)"]
+    NS --&gt; PP["P_START / P_END\n(patch namespace)"]
+    NS --&gt; FF["F_START / F_END\n(flat / floor texture namespace)"]
+
+    Special --&gt; PLAYPAL["PLAYPAL\n(color palettes — planned)"]
+    Special --&gt; COLORMAP["COLORMAP\n(light level tables — planned)"]
+    Special --&gt; TEXTURE["TEXTURE1 / TEXTURE2\n(wall texture definitions — planned)"]
+    Special --&gt; PNAMES["PNAMES\n(patch name list — planned)"]
+</pre>
+
+<p>Record-based map lump types (<code>Thing</code>, <code>Linedef</code>, <code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>, <code>Subsector</code>, <code>Node</code>, <code>Sector</code>) are defined in <code>crates/crustywad/src/map.rs</code> and decoded via <code>parse_records::&lt;T&gt;</code>. Items marked <strong>stub</strong> (<code>RejectLump</code>, <code>BlockmapLump</code>) have zero-sized placeholder types and are not parsed via <code>parse_records</code>. Items marked <strong>planned</strong> are future milestones with no current typed struct.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="versioning-and-release-policy"><a class="header" href="#versioning-and-release-policy">Versioning and Release Policy</a></h1>
+<p>This page documents the SemVer guarantees, MSRV policy, versioning model, and release
+cadence for <code>crustywad</code> and <code>crustywad-cli</code>.</p>
+<hr>
+<h2 id="semantic-versioning"><a class="header" href="#semantic-versioning">Semantic Versioning</a></h2>
+<p>Both crates follow <a href="https://semver.org/">Semantic Versioning 2.0.0</a>. While the crates are
+currently at <code>0.y.z</code> — which SemVer treats as explicitly unstable — this project uses
+patch, minor, and major increments as compatibility signals as documented on this page.
+A <code>0.y.z</code> version is not a license to make arbitrary breaking changes in patches.</p>
+<h3 id="patch-releases-0minorpatch"><a class="header" href="#patch-releases-0minorpatch">Patch releases (<code>0.MINOR.PATCH</code>)</a></h3>
+<p>A patch release fixes a bug without changing any public API. It is safe for all existing
+callers to upgrade without modification.</p>
+<p>Examples of patch changes:</p>
+<ul>
+<li>Correcting incorrect byte offsets in a parser</li>
+<li>Fixing a panic or incorrect error variant in an existing code path</li>
+<li>Updating documentation without changing behavior</li>
+<li>Updating a dependency to a compatible patch version</li>
+</ul>
+<h3 id="minor-releases-0minor0"><a class="header" href="#minor-releases-0minor0">Minor releases (<code>0.MINOR.0</code>)</a></h3>
+<p>A minor release adds new functionality in a backward-compatible way. Existing callers
+compile and run without modification on the same or a newer supported toolchain. (MSRV
+bumps are also minor releases — callers on a compiler older than the new MSRV will need
+to upgrade their toolchain.)</p>
+<p>Examples of minor changes:</p>
+<ul>
+<li>Adding a new public type, function, or method</li>
+<li>Adding a new feature flag that is off by default</li>
+<li>Adding a new variant to a non-exhaustive enum</li>
+<li>Raising the MSRV (see <a href="#msrv-policy">MSRV policy</a> below)</li>
+</ul>
+<h3 id="major-releases-major00"><a class="header" href="#major-releases-major00">Major releases (<code>MAJOR.0.0</code>)</a></h3>
+<p>A major release contains at least one breaking change. Callers may need to update their
+code after upgrading.</p>
+<blockquote>
+<p><strong>Pre-1.0 note:</strong> While this crate is at <code>0.y.z</code>, there is no <code>1.0.0</code> to bump to.
+Breaking changes are instead signaled by a <strong>minor</strong> bump (e.g. <code>0.1.0</code> → <code>0.2.0</code>).
+The breaking-change examples below apply regardless of whether the release is <code>0.MINOR.0</code>
+or a future <code>MAJOR.0.0</code>.</p>
+</blockquote>
+<p>Examples of breaking changes:</p>
+<ul>
+<li>Removing or renaming a public type, function, method, or field</li>
+<li>Changing a function signature (parameter types, return type, added required parameter)</li>
+<li>Adding a variant to an exhaustive enum</li>
+<li>Changing the behavior of an existing function in a way that violates the previous contract</li>
+<li>Changing a feature flag that is on by default</li>
+<li>Implementing a foreign trait (from <code>std</code> or a dependency) on an existing public type
+(may cause coherence conflicts in downstream code)</li>
+</ul>
+<h3 id="what-is-not-a-breaking-change"><a class="header" href="#what-is-not-a-breaking-change">What is not a breaking change</a></h3>
+<ul>
+<li>Adding new public items (types, functions, methods)</li>
+<li>Adding new trait impls for traits defined in this crate</li>
+<li>Adding variants to enums marked <code>#[non_exhaustive]</code></li>
+<li>Adding optional feature flags</li>
+<li>Internal implementation changes with identical observable behavior</li>
+<li>Updating dependencies to compatible versions (patch or minor per their own SemVer)</li>
+</ul>
+<hr>
+<h2 id="msrv-policy"><a class="header" href="#msrv-policy">MSRV Policy</a></h2>
+<p>The current minimum supported Rust version (MSRV) is <strong>1.85.0</strong>, set via <code>rust-version</code> in
+<code>Cargo.toml</code>. The project targets the Rust 2024 edition.</p>
+<p>Rules:</p>
+<ul>
+<li><strong>An MSRV bump is a minor version change</strong>, never a patch. A caller pinned to the old
+compiler will fail to build after an MSRV bump, so it is treated as a backward-incompatible
+change to the build environment even though the public API is unchanged.</li>
+<li><strong>MSRV bumps are need-driven.</strong> The MSRV will only be raised when there is a concrete need
+(for example, a required dependency or language feature), and only to a toolchain version
+that has been stable for a reasonable period.</li>
+<li><strong>CI enforces the declared MSRV.</strong> The <code>msrv</code> job in CI builds and tests the workspace on
+the declared MSRV on every PR. The toolchain version is pinned explicitly in
+<code>.github/workflows/ci.yml</code> and does not auto-track <code>[workspace.package].rust-version</code>. A
+PR that raises the MSRV must update both the <code>rust-version</code> field in <code>Cargo.toml</code> and the
+<code>toolchain:</code> pin in the workflow file, then bump the workspace version (a minor
+bump, since all workspace crates share a single version via <code>version.workspace = true</code>).</li>
+</ul>
+<hr>
+<h2 id="versioning-model"><a class="header" href="#versioning-model">Versioning Model</a></h2>
+<h3 id="current-state-shared-workspace-version"><a class="header" href="#current-state-shared-workspace-version">Current state: shared workspace version</a></h3>
+<p>Both crates currently use <code>version.workspace = true</code>, inheriting their version from
+<code>[workspace.package]</code> in the root <code>Cargo.toml</code>. A single version bump increments the
+version for both crates simultaneously.</p>
+<p><strong>Dependency constraint:</strong> <code>crates/crustywad-cli/Cargo.toml</code> pins the library with an explicit
+caret requirement (e.g., <code>crustywad = { version = "0.1.0", ... }</code>), required by
+<code>cargo-deny</code>’s <code>wildcards = "deny"</code> setting (which disallows <code>*</code> version requirements).
+<code>version = "0.1.0"</code> resolves as <code>^0.1.0</code> (<code>&gt;=0.1.0, &lt;0.2.0</code>), so patch bumps within
+the same minor series are satisfied automatically. When the workspace version moves outside
+that range (e.g., to <code>0.2.0</code>), this field must be updated manually before merging —
+otherwise <code>cargo build</code> and crates.io publishing will fail.</p>
+<h3 id="planned-independent-per-crate-versioning"><a class="header" href="#planned-independent-per-crate-versioning">Planned: independent per-crate versioning</a></h3>
+<p>Per <a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md">ADR-0011</a>,
+the chosen long-term strategy is independent per-crate versioning: each crate will carry
+its own explicit <code>version</code> field rather than inheriting from the workspace. This migration
+is a required step before enabling crates.io publishing. Until then, both crates share the
+workspace version as described above.</p>
+<hr>
+<h2 id="release-cadence"><a class="header" href="#release-cadence">Release Cadence</a></h2>
+<p>Releases are automated by <a href="https://release-plz.dev/">release-plz</a>, which monitors
+<code>main</code> for Conventional Commits and opens a release PR whenever releasable changes
+accumulate.</p>
+<p>The workflow:</p>
+<ol>
+<li>Commits land on <code>main</code> via merged PRs, following the
+<a href="https://www.conventionalcommits.org/">Conventional Commits</a> format (<code>feat:</code>, <code>fix:</code>,
+<code>docs:</code>, etc.).</li>
+<li><code>release-plz</code> inspects the commit history and proposes a release PR with a version bump
+and an updated <code>CHANGELOG.md</code>.</li>
+<li>The maintainer reviews and merges the release PR.</li>
+<li>Once publishing is enabled, <code>release-plz</code> runs <code>cargo publish</code> automatically after the
+release PR merges, in dependency order (<code>crustywad</code> before <code>crustywad-cli</code>).</li>
+</ol>
+<p>There is no fixed release schedule. Releases happen when meaningful changes have
+accumulated. The <code>release-plz</code> release PR is the signal that a release is ready.</p>
+<p><strong>Publishing status:</strong> Publishing to crates.io is currently disabled while credentials and
+release infrastructure are being finalized (see
+<a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md">ADR-0011</a>
+for the full publish workflow design).</p>
+<hr>
+<h2 id="version-compatibility-table"><a class="header" href="#version-compatibility-table">Version Compatibility Table</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scenario</th><th>Patch</th><th>Minor</th><th>Major</th></tr>
+</thead>
+<tbody>
+<tr><td>Bug fix, no API change</td><td>yes</td><td></td><td></td></tr>
+<tr><td>New public type or function</td><td></td><td>yes</td><td></td></tr>
+<tr><td>New optional feature flag</td><td></td><td>yes</td><td></td></tr>
+<tr><td>MSRV raised</td><td></td><td>yes</td><td></td></tr>
+<tr><td>Public type removed or renamed</td><td></td><td></td><td>yes</td></tr>
+<tr><td>Function signature changed</td><td></td><td></td><td>yes</td></tr>
+<tr><td>Exhaustive enum variant added</td><td></td><td></td><td>yes</td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid-eefea253.min.js"></script>
+        <script src="mermaid-init-ccf746f1.js"></script>
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>
