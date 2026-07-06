@@ -1,0 +1,49 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialize with pages.yml so both workflows can write to gh-pages without conflicts.
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run benchmarks
+        # --output-format bencher emits libtest-compatible output consumed by
+        # github-action-benchmark. 2>&1 routes Criterion's stderr (progress lines)
+        # into stdout so tee captures everything; the action filters to bench lines.
+        run: |
+          cargo bench --all-features -- --output-format bencher 2>&1 | tee bench_output.txt
+
+      - name: Upload Criterion HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-html-report
+          path: target/criterion/
+          retention-days: 90
+        if: always()
+
+      - name: Store benchmark trend data
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: cargo
+          output-file-path: bench_output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          comment-on-alert: false
+          fail-on-alert: false

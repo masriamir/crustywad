@@ -6,16 +6,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
+# Serialize guide and bench deployments so both can write to gh-pages safely.
 concurrency:
-  group: pages
+  group: gh-pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,18 +31,12 @@ jobs:
         run: mdbook-mermaid install docs/guide
       - name: Build guide
         run: mdbook build docs/guide
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
+      - name: Deploy guide to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          path: target/book
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+          folder: target/book
+          branch: gh-pages
+          clean: true
+          # Preserve benchmark data written by bench.yml — never delete dev/bench/.
+          clean-exclude: |
+            dev/
