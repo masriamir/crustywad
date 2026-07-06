@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting Started - crustywad</title>
+        <title>Performance - crustywad</title>
 
 
         <!-- Custom HTML head -->
@@ -177,62 +177,102 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
-<h2 id="adding-crustywad-to-your-project"><a class="header" href="#adding-crustywad-to-your-project">Adding crustywad to your project</a></h2>
-<p>Add the crate to your <code>Cargo.toml</code>:</p>
-<pre><code class="language-toml">[dependencies]
-crustywad = "0.1"
+                        <h1 id="performance"><a class="header" href="#performance">Performance</a></h1>
+<p><code>crustywad</code> tracks performance via <a href="https://bheisler.github.io/criterion.rs/book/">Criterion</a>
+micro-benchmarks that run in CI on every push to <code>main</code>. Results are published as interactive
+trend charts so regressions are visible before they reach a release.</p>
+<hr>
+<h2 id="live-benchmark-charts"><a class="header" href="#live-benchmark-charts">Live benchmark charts</a></h2>
+<p><strong><a href="https://crustywad.dev/dev/bench/">crustywad.dev/dev/bench/</a></strong></p>
+<p>The chart page shows throughput and latency trends over time for every benchmark group. Each
+data point corresponds to a CI run on <code>main</code> (push or <code>workflow_dispatch</code>).</p>
+<h3 id="benchmark-groups"><a class="header" href="#benchmark-groups">Benchmark groups</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Group</th><th>What is measured</th></tr>
+</thead>
+<tbody>
+<tr><td><code>parse/from_bytes_strict</code></td><td><code>Wad::from_bytes</code> — strict mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs</td></tr>
+<tr><td><code>parse/from_bytes_lenient</code></td><td><code>Wad::from_bytes_with_options</code> — lenient mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs</td></tr>
+<tr><td><code>parse/from_path</code></td><td><code>Wad::from_path</code> and <code>Wad::from_path_with_options</code> on a tempfile-backed medium WAD; mmap variants when the <code>mmap</code> feature is enabled</td></tr>
+<tr><td><code>lump_access</code></td><td><code>lump(idx)</code>, <code>lump_by_name</code> (first-match and worst-case last-match), <code>lump_bytes</code>, <code>lump_data</code>, <code>lumps().iter().count()</code>, <code>clone</code>, <code>into_bytes</code></td></tr>
+<tr><td><code>map_records</code></td><td><code>parse_records::&lt;T&gt;</code> for all eight classic map-record types (<code>Thing</code>, <code>Linedef</code>, <code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>, <code>Subsector</code>, <code>Node</code>, <code>Sector</code>) against 1 000 records each</td></tr>
+<tr><td><code>write/build_strict</code></td><td><code>WadBuilder::build</code> — strict mode — on small / medium / large synthetic WADs</td></tr>
+<tr><td><code>write/build_lenient</code></td><td><code>WadBuilder::build_with_options(&amp;WriteOptions::lenient())</code> on the same sizes</td></tr>
+<tr><td><code>write/build_from_scratch</code></td><td><code>WadBuilder</code> populated entirely at runtime (10 or 100 lumps)</td></tr>
+<tr><td><code>write/roundtrip</code></td><td><code>Wad::from_bytes</code> → <code>Wad::to_builder</code> → <code>WadBuilder::build</code> end-to-end</td></tr>
+<tr><td><code>freedoom</code></td><td><code>Wad::from_bytes</code>, <code>Wad::lump_by_name</code> (hit and miss), and <code>roundtrip</code> on real Freedoom WAD files; skipped when <code>CRUSTYWAD_FREEDOOM_DIR</code> is not set</td></tr>
+</tbody>
+</table>
+</div>
+<p>Throughput groups report <strong>MB/s</strong> via <code>Throughput::Bytes</code> so results scale naturally with
+input size. Latency groups report <strong>ns/iter</strong>.</p>
+<hr>
+<h2 id="running-benchmarks-locally"><a class="header" href="#running-benchmarks-locally">Running benchmarks locally</a></h2>
+<h3 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h3>
+<p>Benchmarks are part of the standard workspace and require a stable Rust toolchain. The
+<code>just bench</code> / <code>just bench-open</code> recipes also require
+<a href="https://github.com/casey/just"><code>just</code></a>; if you prefer not to install it, use the
+equivalent <code>cargo</code> command directly:</p>
+<pre><code class="language-sh">cargo bench --all-features --benches
 </code></pre>
-<p>Enable optional features as needed:</p>
-<pre><code class="language-toml">[dependencies]
-crustywad = { version = "0.1", features = ["mmap"] }
+<h3 id="quick-run"><a class="header" href="#quick-run">Quick run</a></h3>
+<pre><code class="language-sh"># Run all benchmarks and print the path to the HTML report:
+just bench
+
+# Run benchmarks and open the HTML report in the default browser:
+just bench-open
 </code></pre>
-<h2 id="basic-usage"><a class="header" href="#basic-usage">Basic usage</a></h2>
-<p>Parse a WAD from an in-memory byte slice:</p>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use crustywad::Wad;
+<p><code>just bench-open</code> uses <code>open</code> on macOS, <code>xdg-open</code> on Linux, and <code>explorer</code> on Windows.</p>
+<p>The Criterion HTML report is written to:</p>
+<pre><code>target/criterion/report/index.html
+</code></pre>
+<p>Open it to see per-benchmark violin plots, regression detection, and historical comparisons
+between the last two runs on your machine.</p>
+<h3 id="running-a-specific-group"><a class="header" href="#running-a-specific-group">Running a specific group</a></h3>
+<p>Pass a filter after <code>--</code> to run only matching benchmarks:</p>
+<pre><code class="language-sh"># Only the lump_access group:
+cargo bench --all-features --benches -- lump_access
 
-// Minimal valid IWAD with zero lumps.
-let bytes: &amp;[u8] = &amp;[
-    b'I', b'W', b'A', b'D',  // magic
-    0, 0, 0, 0,               // numlumps = 0
-    12, 0, 0, 0,              // infotableofs = 12
-];
-
-let wad = Wad::from_bytes(bytes)?;
-println!("kind:  {:?}", wad.kind());
-println!("lumps: {}", wad.lump_count());
-<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
-</span><span class="boring">}</span></code></pre>
-<h2 id="loading-from-a-file"><a class="header" href="#loading-from-a-file">Loading from a file</a></h2>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use crustywad::Wad;
-
-let wad = Wad::from_path("doom.wad")?;
-println!("{} lumps", wad.lump_count());
-<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
-</span><span class="boring">}</span></code></pre>
-<h2 id="handling-errors"><a class="header" href="#handling-errors">Handling errors</a></h2>
-<p>All parse functions return <code>Result&lt;Wad, ParseError&gt;</code>. The <code>ParseError</code> type covers
-I/O failures, invalid magic bytes, negative field values, out-of-bounds directory
-offsets, and non-ASCII lump names. See <code>crustywad::ParseError</code> in the API docs for
-the full variant list.</p>
-<h2 id="whats-next"><a class="header" href="#whats-next">What’s next?</a></h2>
-<ul>
-<li><a href="reading-wads.html">Reading WAD Files</a> — access lumps and choose a parse mode.</li>
-</ul>
+# Only the write/roundtrip benchmarks:
+cargo bench --all-features --benches -- "write/roundtrip"
+</code></pre>
+<h3 id="freedoom-real-world-benchmarks"><a class="header" href="#freedoom-real-world-benchmarks">Freedoom real-world benchmarks</a></h3>
+<p>The <code>freedoom</code> group is skipped by default. To enable it, fetch the fixtures first and point
+the environment variable at the directory:</p>
+<pre><code class="language-sh">just fetch-fixtures                         # downloads freedoom1.wad / freedoom2.wad
+CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom just bench
+</code></pre>
+<hr>
+<h2 id="ci-benchmark-workflow"><a class="header" href="#ci-benchmark-workflow">CI benchmark workflow</a></h2>
+<p>The <code>bench.yml</code> workflow runs on every push to <code>main</code> and on <code>workflow_dispatch</code>. It is
+<strong>non-blocking</strong> — <code>fail-on-alert: false</code> ensures benchmark regressions never fail the run
+or block a merge.</p>
+<p>Each run:</p>
+<ol>
+<li>Compiles and runs all Criterion bench targets with <code>--output-format bencher</code>.</li>
+<li>Uploads the Criterion HTML report as a downloadable GitHub Actions artifact
+(90-day retention) named <code>criterion-html-report</code>.</li>
+<li>Appends trend data to the <code>gh-pages</code> branch at <code>dev/bench/</code> via
+<a href="https://github.com/benchmark-action/github-action-benchmark"><code>github-action-benchmark</code></a>,
+which powers the chart page at <code>crustywad.dev/dev/bench/</code>.</li>
+</ol>
+<p>The bench workflow and the guide deploy workflow share a <code>concurrency: group: gh-pages</code> so
+they never write to the branch simultaneously.</p>
+<p>To trigger a benchmark run manually without pushing to <code>main</code>:</p>
+<pre><code class="language-sh">gh workflow run bench.yml
+</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="introduction.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="features.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="reading-wads.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="architecture.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -242,11 +282,11 @@ the full variant list.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="introduction.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="features.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="reading-wads.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="architecture.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-66f189da.js";
+            window.path_to_searchindex_js = "searchindex-302498c0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-d2ce17b8.js"></script>
+        <script src="toc-62eceb1a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -691,6 +691,9 @@ lumps. The OS maps the file into the address space without copying all bytes int
 upfront — pages are faulted in on demand.</p>
 <p>For small WADs or when you will access most lumps, <code>Wad::from_path</code> (which reads into a
 <code>Vec&lt;u8&gt;</code>) is equally fast and has simpler lifetime semantics.</p>
+<p>The <code>parse/from_path</code> benchmark group measures both variants side by side. See the
+<a href="#performance">Performance</a> page for live throughput data and how to run the benchmarks
+locally.</p>
 <h3 id="platform-notes"><a class="header" href="#platform-notes">Platform notes</a></h3>
 <p><code>memmap2</code> is supported on all tier-1 Rust targets (Linux, macOS, Windows). Memory-mapped
 files are read-only; there is no risk of accidentally writing to the underlying file.</p>
@@ -794,6 +797,93 @@ mode writes the raw 4-byte magic.</li>
 </div>
 <p>See the <a href="https://github.com/masriamir/crustywad/blob/main/justfile"><code>justfile</code></a> for
 available <code>just</code> recipes including feature-specific aliases.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="performance"><a class="header" href="#performance">Performance</a></h1>
+<p><code>crustywad</code> tracks performance via <a href="https://bheisler.github.io/criterion.rs/book/">Criterion</a>
+micro-benchmarks that run in CI on every push to <code>main</code>. Results are published as interactive
+trend charts so regressions are visible before they reach a release.</p>
+<hr>
+<h2 id="live-benchmark-charts"><a class="header" href="#live-benchmark-charts">Live benchmark charts</a></h2>
+<p><strong><a href="https://crustywad.dev/dev/bench/">crustywad.dev/dev/bench/</a></strong></p>
+<p>The chart page shows throughput and latency trends over time for every benchmark group. Each
+data point corresponds to a CI run on <code>main</code> (push or <code>workflow_dispatch</code>).</p>
+<h3 id="benchmark-groups"><a class="header" href="#benchmark-groups">Benchmark groups</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Group</th><th>What is measured</th></tr>
+</thead>
+<tbody>
+<tr><td><code>parse/from_bytes_strict</code></td><td><code>Wad::from_bytes</code> — strict mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs</td></tr>
+<tr><td><code>parse/from_bytes_lenient</code></td><td><code>Wad::from_bytes_with_options</code> — lenient mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs</td></tr>
+<tr><td><code>parse/from_path</code></td><td><code>Wad::from_path</code> and <code>Wad::from_path_with_options</code> on a tempfile-backed medium WAD; mmap variants when the <code>mmap</code> feature is enabled</td></tr>
+<tr><td><code>lump_access</code></td><td><code>lump(idx)</code>, <code>lump_by_name</code> (first-match and worst-case last-match), <code>lump_bytes</code>, <code>lump_data</code>, <code>lumps().iter().count()</code>, <code>clone</code>, <code>into_bytes</code></td></tr>
+<tr><td><code>map_records</code></td><td><code>parse_records::&lt;T&gt;</code> for all eight classic map-record types (<code>Thing</code>, <code>Linedef</code>, <code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>, <code>Subsector</code>, <code>Node</code>, <code>Sector</code>) against 1 000 records each</td></tr>
+<tr><td><code>write/build_strict</code></td><td><code>WadBuilder::build</code> — strict mode — on small / medium / large synthetic WADs</td></tr>
+<tr><td><code>write/build_lenient</code></td><td><code>WadBuilder::build_with_options(&amp;WriteOptions::lenient())</code> on the same sizes</td></tr>
+<tr><td><code>write/build_from_scratch</code></td><td><code>WadBuilder</code> populated entirely at runtime (10 or 100 lumps)</td></tr>
+<tr><td><code>write/roundtrip</code></td><td><code>Wad::from_bytes</code> → <code>Wad::to_builder</code> → <code>WadBuilder::build</code> end-to-end</td></tr>
+<tr><td><code>freedoom</code></td><td><code>Wad::from_bytes</code>, <code>Wad::lump_by_name</code> (hit and miss), and <code>roundtrip</code> on real Freedoom WAD files; skipped when <code>CRUSTYWAD_FREEDOOM_DIR</code> is not set</td></tr>
+</tbody>
+</table>
+</div>
+<p>Throughput groups report <strong>MB/s</strong> via <code>Throughput::Bytes</code> so results scale naturally with
+input size. Latency groups report <strong>ns/iter</strong>.</p>
+<hr>
+<h2 id="running-benchmarks-locally"><a class="header" href="#running-benchmarks-locally">Running benchmarks locally</a></h2>
+<h3 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h3>
+<p>Benchmarks are part of the standard workspace and require a stable Rust toolchain. The
+<code>just bench</code> / <code>just bench-open</code> recipes also require
+<a href="https://github.com/casey/just"><code>just</code></a>; if you prefer not to install it, use the
+equivalent <code>cargo</code> command directly:</p>
+<pre><code class="language-sh">cargo bench --all-features --benches
+</code></pre>
+<h3 id="quick-run"><a class="header" href="#quick-run">Quick run</a></h3>
+<pre><code class="language-sh"># Run all benchmarks and print the path to the HTML report:
+just bench
+
+# Run benchmarks and open the HTML report in the default browser:
+just bench-open
+</code></pre>
+<p><code>just bench-open</code> uses <code>open</code> on macOS, <code>xdg-open</code> on Linux, and <code>explorer</code> on Windows.</p>
+<p>The Criterion HTML report is written to:</p>
+<pre><code>target/criterion/report/index.html
+</code></pre>
+<p>Open it to see per-benchmark violin plots, regression detection, and historical comparisons
+between the last two runs on your machine.</p>
+<h3 id="running-a-specific-group"><a class="header" href="#running-a-specific-group">Running a specific group</a></h3>
+<p>Pass a filter after <code>--</code> to run only matching benchmarks:</p>
+<pre><code class="language-sh"># Only the lump_access group:
+cargo bench --all-features --benches -- lump_access
+
+# Only the write/roundtrip benchmarks:
+cargo bench --all-features --benches -- "write/roundtrip"
+</code></pre>
+<h3 id="freedoom-real-world-benchmarks"><a class="header" href="#freedoom-real-world-benchmarks">Freedoom real-world benchmarks</a></h3>
+<p>The <code>freedoom</code> group is skipped by default. To enable it, fetch the fixtures first and point
+the environment variable at the directory:</p>
+<pre><code class="language-sh">just fetch-fixtures                         # downloads freedoom1.wad / freedoom2.wad
+CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom just bench
+</code></pre>
+<hr>
+<h2 id="ci-benchmark-workflow"><a class="header" href="#ci-benchmark-workflow">CI benchmark workflow</a></h2>
+<p>The <code>bench.yml</code> workflow runs on every push to <code>main</code> and on <code>workflow_dispatch</code>. It is
+<strong>non-blocking</strong> — <code>fail-on-alert: false</code> ensures benchmark regressions never fail the run
+or block a merge.</p>
+<p>Each run:</p>
+<ol>
+<li>Compiles and runs all Criterion bench targets with <code>--output-format bencher</code>.</li>
+<li>Uploads the Criterion HTML report as a downloadable GitHub Actions artifact
+(90-day retention) named <code>criterion-html-report</code>.</li>
+<li>Appends trend data to the <code>gh-pages</code> branch at <code>dev/bench/</code> via
+<a href="https://github.com/benchmark-action/github-action-benchmark"><code>github-action-benchmark</code></a>,
+which powers the chart page at <code>crustywad.dev/dev/bench/</code>.</li>
+</ol>
+<p>The bench workflow and the guide deploy workflow share a <code>concurrency: group: gh-pages</code> so
+they never write to the branch simultaneously.</p>
+<p>To trigger a benchmark run manually without pushing to <code>main</code>:</p>
+<pre><code class="language-sh">gh workflow run bench.yml
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
 <blockquote>
