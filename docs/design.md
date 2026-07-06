@@ -51,7 +51,7 @@ See [Data flow](diagrams/data-flow.md) for the map record parsing flowchart.
 
 The `write` feature flag adds `WadBuilder`, a standalone type for constructing a WAD from scratch or round-tripping a parsed `Wad` via `Wad::to_builder()`. Callers accumulate lumps with `add_lump`, then call `build()` (strict mode) or `build_with_options()` (strict or lenient, per `WriteOptions`). All name and size validation, plus offset (`filepos`, `infotableofs`) computation, is deferred to `build`/`build_with_options` — callers never supply offsets directly. The output always has the layout `[12-byte header][lump data blobs][16-byte directory entries]`, per ADR-0006.
 
-`WriteOptions { strictness: Strictness }` mirrors `ParseOptions`: strict mode rejects invalid input immediately with a `WriteError`; lenient mode truncates over-length names and non-standard magic values, collecting `WriteWarning`s instead.
+`WriteOptions { strictness: Strictness }` mirrors `ParseOptions`: strict mode rejects invalid input immediately with a `WriteError`; lenient mode truncates over-length names and permits non-standard magic values unchanged, collecting `WriteWarning`s instead.
 
 See [Data flow](diagrams/data-flow.md) for the write pipeline flowchart and the strict/lenient write mode comparison, and [Data model](diagrams/data-model.md) for how `WadBuilder` and its supporting types relate to `Wad`.
 

@@ -140,8 +140,8 @@ classDiagram
     Wad ..> ParseOptions : constructed with
     Wad ..> ParseError : returns on failure
     Wad ..> WadBuilder : to_builder() [write]
-    WadBuilder --> WriteOptions : constructed with [write]
+    WadBuilder ..> WriteOptions : build_with_options(opts) [write]
     WadBuilder ..> WriteError : returns on failure [write]
-    WadBuilder "1" --> "0..*" WriteWarning : collects (lenient) [write]
+    WadBuilder ..> WriteWarning : returns via build_with_options (lenient) [write]
     WriteOptions --> Strictness : strictness [write]
 ```
