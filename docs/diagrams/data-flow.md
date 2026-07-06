@@ -128,7 +128,7 @@ flowchart TD
     W["BinWrite RawHeader\n(magic, numlumps, infotableofs)"]
     X["Append lump data blobs\nin insertion order"]
     Y["BinWrite RawDirectoryEntry per lump\n(filepos, size, name)"]
-    Z["Ok((bytes, warnings))\nwarnings empty in strict mode"]
+    Z["build_with_options: Ok((bytes, warnings))\nbuild(): Ok(bytes)\nwarnings empty in strict mode"]
 
     A --> B
     B --> C

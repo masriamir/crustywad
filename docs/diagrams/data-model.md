@@ -28,7 +28,7 @@ flowchart TD
 
 ## Rust type relationships
 
-The class diagram below shows the public API types in `crustywad` and how they relate to each other. Constructors return `Result<Wad, ParseError>`; in lenient mode the returned `Wad` carries zero or more `ParseWarning` values accessible via `Wad::warnings`. Methods marked `[mmap]` are only available when the `mmap` feature flag is enabled; types and methods marked `[write]` are only available when the `write` feature flag is enabled.
+The class diagram below shows the public API types in `crustywad` and how they relate to each other. Constructors return `Result<Wad, ParseError>`; in lenient mode the returned `Wad` carries zero or more `ParseWarning` values accessible via `Wad::warnings()`. Methods marked `[mmap]` are only available when the `mmap` feature flag is enabled; types and methods marked `[write]` are only available when the `write` feature flag is enabled.
 
 ```mermaid
 classDiagram
