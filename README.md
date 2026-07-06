@@ -98,12 +98,12 @@ The minimum supported Rust version is **1.85.0**, matching the first stable rele
 
 ## Roadmap
 
-1. Directory reading
-2. Map lump parsing
+1. ✅ Directory reading
+2. 🔜 Map lump parsing
 3. Graphics
 4. Textures
 5. Audio
-6. Write support
+6. ✅ Write support
 
 ## Contributing
 
