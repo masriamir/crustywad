@@ -9,6 +9,7 @@
 - [Map Record Parsing](map-records.md)
 - [CLI Usage](cli.md)
 - [Feature Flags](features.md)
+- [Performance](performance.md)
 
 # Reference
 
