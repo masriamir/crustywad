@@ -147,6 +147,10 @@ fn bench_freedoom(c: &mut Criterion) {
     let Ok(bytes) = std::fs::read(&path) else {
         return;
     };
+    // Validate up-front; skip gracefully if the fixture is corrupt or incompatible.
+    let Ok(wad) = Wad::from_bytes(bytes.clone()) else {
+        return;
+    };
     let mut group = c.benchmark_group("freedoom");
     group.throughput(Throughput::Bytes(bytes.len() as u64));
     group.bench_function("from_bytes", |b| {
@@ -156,7 +160,6 @@ fn bench_freedoom(c: &mut Criterion) {
             BatchSize::LargeInput,
         );
     });
-    let wad = Wad::from_bytes(bytes).unwrap();
     group.bench_function("lump_by_name_hit", |b| {
         b.iter(|| wad.lump_by_name(std::hint::black_box("E1M1")));
     });

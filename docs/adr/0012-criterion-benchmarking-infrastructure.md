@@ -180,7 +180,7 @@ bench:
 
 bench-open:
     cargo bench --all-features
-    open target/criterion/report/index.html
+    {{ if os() == "macos" { "open" } else if os_family() == "windows" { "explorer" } else { "xdg-open" } }} target/criterion/report/index.html
 ```
 
 ### GitHub Pages migration

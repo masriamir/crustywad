@@ -126,6 +126,13 @@ fn bench_freedoom_roundtrip(c: &mut Criterion) {
     let Ok(bytes) = std::fs::read(&path) else {
         return;
     };
+    // Validate parse and write paths up-front; skip gracefully if the fixture is corrupt.
+    let Ok(wad) = Wad::from_bytes(bytes.clone()) else {
+        return;
+    };
+    if wad.to_builder().build().is_err() {
+        return;
+    }
     let mut group = c.benchmark_group("freedoom");
     group.throughput(Throughput::Bytes(bytes.len() as u64));
     group.bench_function("roundtrip", |b| {
