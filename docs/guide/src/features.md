@@ -54,6 +54,10 @@ upfront — pages are faulted in on demand.
 For small WADs or when you will access most lumps, `Wad::from_path` (which reads into a
 `Vec<u8>`) is equally fast and has simpler lifetime semantics.
 
+The `parse/from_path` benchmark group measures both variants side by side. See the
+[Performance](performance.md) page for live throughput data and how to run the benchmarks
+locally.
+
 ### Platform notes
 
 `memmap2` is supported on all tier-1 Rust targets (Linux, macOS, Windows). Memory-mapped
