@@ -56,10 +56,10 @@ bench:
     cargo bench --all-features
     @echo "Criterion HTML report: target/criterion/report/index.html"
 
-# Run benchmarks then open the HTML report in the default browser (macOS).
+# Run benchmarks then open the HTML report in the default browser.
 bench-open:
     cargo bench --all-features
-    open target/criterion/report/index.html
+    {{ if os() == "macos" { "open" } else if os_family() == "windows" { "explorer" } else { "xdg-open" } }} target/criterion/report/index.html
 
 # Check that living-doc anchor strings are present in all three doc files (ADR-0007).
 docs-sync:
