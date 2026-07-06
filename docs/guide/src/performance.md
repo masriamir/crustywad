@@ -18,7 +18,7 @@ data point corresponds to a push to `main`.
 | Group | What is measured |
 |---|---|
 | `parse/from_bytes_strict` | `Wad::from_bytes` — strict mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs |
-| `parse/from_bytes_lenient` | Same sizes, lenient mode (`ParseOptions::lenient()`) |
+| `parse/from_bytes_lenient` | `Wad::from_bytes_with_options` — lenient mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs |
 | `parse/from_path` | `Wad::from_path` and `Wad::from_path_with_options` on a tempfile-backed medium WAD; mmap variants when the `mmap` feature is enabled |
 | `lump_access` | `lump(idx)`, `lump_by_name` (first-match and worst-case last-match), `lump_bytes`, `lump_data`, `lumps().iter().count()`, `clone`, `into_bytes` |
 | `map_records` | `parse_records::<T>` for all eight classic map-record types (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) against 1 000 records each |

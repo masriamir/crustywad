@@ -53,12 +53,12 @@ fuzz target="fuzz_wad_strict":
 
 # Run all benchmarks with all features enabled.
 bench:
-    cargo bench --all-features
+    cargo bench --all-features --benches
     @echo "Criterion HTML report: target/criterion/report/index.html"
 
 # Run benchmarks then open the HTML report in the default browser.
 bench-open:
-    cargo bench --all-features
+    cargo bench --all-features --benches
     {{ if os() == "macos" { "open" } else if os_family() == "windows" { "explorer" } else { "xdg-open" } }} target/criterion/report/index.html
 
 # Check that living-doc anchor strings are present in all three doc files (ADR-0007).
