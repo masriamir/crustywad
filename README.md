@@ -3,6 +3,8 @@
 [![CI](https://github.com/masriamir/crustywad/actions/workflows/ci.yml/badge.svg)](https://github.com/masriamir/crustywad/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/masriamir/crustywad/actions/workflows/codeql.yml/badge.svg)](https://github.com/masriamir/crustywad/actions/workflows/codeql.yml)
 [![Coverage](https://codecov.io/gh/masriamir/crustywad/graph/badge.svg)](https://codecov.io/gh/masriamir/crustywad)
+[![Benchmarks](https://img.shields.io/badge/benchmarks-Criterion-informational)](https://crustywad.dev/dev/bench/)
+[![dependency status](https://deps.rs/repo/github/masriamir/crustywad/status.svg)](https://deps.rs/repo/github/masriamir/crustywad)
 [![docs.rs](https://img.shields.io/badge/docs.rs-pending-blue)](https://docs.rs/crustywad)
 [![crates.io](https://img.shields.io/badge/crates.io-pending-inactive)](https://crates.io/crates/crustywad)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
@@ -58,6 +60,7 @@ cargo run -p crustywad-cli -- list path/to/file.wad
 | Feature | Default | Description |
 | --- | --- | --- |
 | `mmap` | no | Enables `Wad::from_path_mapped` and `Wad::from_path_mapped_with_options` for memory-mapped file loading via `memmap2` — no heap copy on load. `Wad::from_path` always reads into memory regardless of this flag. |
+| `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization. |
 | `freedoom-tests` | no | Enables optional integration tests that inspect locally downloaded Freedoom fixtures. |
 
 ## Development
