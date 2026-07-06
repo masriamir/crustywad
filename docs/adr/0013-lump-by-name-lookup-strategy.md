@@ -49,8 +49,9 @@ Chosen option: **keep the existing linear scan (option 1)**, because the benchma
 no measurable bottleneck and the crate has no current caller that would benefit from a faster
 path.
 
-Measured on the existing `lump_access` Criterion group (100-lump synthetic WAD, all lumps
-sharing one name to force worst-case behavior):
+Measured on the existing `lump_access` Criterion group: a 100-lump `medium_wad()` fixture
+(all lumps named `"BENCH"`) for the hit and miss cases, plus a separate 100-lump variant (99
+`"BENCH"` lumps followed by one `"LAST"` lump) to force worst-case behavior for the hit case:
 
 | Case | Time |
 |---|---|
@@ -59,9 +60,10 @@ sharing one name to force worst-case behavior):
 | Worst-case miss (full scan, no match) | ~53.0ns |
 
 Extrapolated linearly to a realistic full IWAD (~2,000–3,000 lumps, the rough scale of
-`doom2.wad`/`freedoom2.wad` — 20–30x this benchmark's lump count), worst case lands around
-0.9–1.6 microseconds. That is the cost of a single `lump_by_name` call; no production code in
-the crate calls it in a loop today.
+`doom2.wad`/`freedoom2.wad` — 20–30x this benchmark's lump count), the worst-case hit lands
+around 0.9–1.3 microseconds (~44.6ns × 20–30) and the worst-case miss around 1.1–1.6
+microseconds (~53.0ns × 20–30). Either way, that is the cost of a single `lump_by_name` call;
+no production code in the crate calls it in a loop today.
 
 ### Consequences
 
