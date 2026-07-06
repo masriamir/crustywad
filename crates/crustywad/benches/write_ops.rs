@@ -2,7 +2,7 @@
 
 mod helpers;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use crustywad::{Wad, WadBuilder, WadKind, WriteOptions};
 
 fn bench_build_strict(c: &mut Criterion) {
@@ -104,10 +104,14 @@ fn bench_roundtrip(c: &mut Criterion) {
             BenchmarkId::from_parameter(label),
             src_bytes,
             |b, src_bytes| {
-                b.iter(|| {
-                    let wad = Wad::from_bytes(src_bytes.clone()).unwrap();
-                    wad.to_builder().build().unwrap()
-                });
+                b.iter_batched(
+                    || src_bytes.clone(),
+                    |input| {
+                        let wad = Wad::from_bytes(input).unwrap();
+                        wad.to_builder().build().unwrap()
+                    },
+                    BatchSize::LargeInput,
+                );
             },
         );
     }
@@ -119,8 +123,10 @@ fn bench_freedoom_roundtrip(c: &mut Criterion) {
         return;
     };
 
-    let wad_path = std::fs::read_dir(&dir)
-        .unwrap()
+    let Ok(read_dir) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let wad_path = read_dir
         .filter_map(Result::ok)
         .find(|e| {
             e.path()
@@ -134,14 +140,20 @@ fn bench_freedoom_roundtrip(c: &mut Criterion) {
         return;
     };
 
-    let bytes = std::fs::read(&path).unwrap();
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
     let mut group = c.benchmark_group("freedoom");
     group.throughput(Throughput::Bytes(bytes.len() as u64));
     group.bench_function("roundtrip", |b| {
-        b.iter(|| {
-            let wad = Wad::from_bytes(bytes.clone()).unwrap();
-            wad.to_builder().build().unwrap()
-        });
+        b.iter_batched(
+            || bytes.clone(),
+            |input| {
+                let wad = Wad::from_bytes(input).unwrap();
+                wad.to_builder().build().unwrap()
+            },
+            BatchSize::LargeInput,
+        );
     });
     group.finish();
 }

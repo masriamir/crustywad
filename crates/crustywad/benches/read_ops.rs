@@ -4,7 +4,7 @@ mod helpers;
 
 use std::io::Write as _;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use crustywad::map::{
     Linedef, Node, Sector, Seg, Sidedef, Subsector, Thing, Vertex, parse_records,
 };
@@ -21,7 +21,11 @@ fn bench_parse_from_bytes(c: &mut Criterion) {
     for (label, bytes) in &cases {
         group.throughput(Throughput::Bytes(bytes.len() as u64));
         group.bench_with_input(BenchmarkId::from_parameter(label), bytes, |b, bytes| {
-            b.iter(|| Wad::from_bytes(bytes.clone()).unwrap());
+            b.iter_batched(
+                || bytes.clone(),
+                |input| Wad::from_bytes(input).unwrap(),
+                BatchSize::LargeInput,
+            );
         });
     }
     group.finish();
@@ -30,9 +34,11 @@ fn bench_parse_from_bytes(c: &mut Criterion) {
     for (label, bytes) in &cases {
         group.throughput(Throughput::Bytes(bytes.len() as u64));
         group.bench_with_input(BenchmarkId::from_parameter(label), bytes, |b, bytes| {
-            b.iter(|| {
-                Wad::from_bytes_with_options(bytes.clone(), ParseOptions::lenient()).unwrap()
-            });
+            b.iter_batched(
+                || bytes.clone(),
+                |input| Wad::from_bytes_with_options(input, ParseOptions::lenient()).unwrap(),
+                BatchSize::LargeInput,
+            );
         });
     }
     group.finish();
@@ -84,7 +90,7 @@ fn bench_lump_access(c: &mut Criterion) {
 
 fn bench_map_records(c: &mut Criterion) {
     // Each record type is benchmarked against 1 000 zero-byte records.
-    // All on-disk fields are integer types; zeroed bytes parse without error.
+    // Zeroed bytes parse without error for all record types (integer fields and Name8 fields alike).
     const N: usize = 1000;
 
     // Sizes in bytes: derived from on-disk format (little-endian packed, no padding).
@@ -138,8 +144,10 @@ fn bench_freedoom(c: &mut Criterion) {
         return;
     };
 
-    let wad_path = std::fs::read_dir(&dir)
-        .unwrap()
+    let Ok(read_dir) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let wad_path = read_dir
         .filter_map(Result::ok)
         .find(|e| {
             e.path()
@@ -153,11 +161,17 @@ fn bench_freedoom(c: &mut Criterion) {
         return;
     };
 
-    let bytes = std::fs::read(&path).unwrap();
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
     let mut group = c.benchmark_group("freedoom");
     group.throughput(Throughput::Bytes(bytes.len() as u64));
     group.bench_function("from_bytes", |b| {
-        b.iter(|| Wad::from_bytes(bytes.clone()).unwrap());
+        b.iter_batched(
+            || bytes.clone(),
+            |input| Wad::from_bytes(input).unwrap(),
+            BatchSize::LargeInput,
+        );
     });
     let wad = Wad::from_bytes(bytes).unwrap();
     group.bench_function("lump_by_name_hit", |b| {

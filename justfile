@@ -56,7 +56,7 @@ bench:
     cargo bench --all-features
     @echo "Criterion HTML report: target/criterion/report/index.html"
 
-# Run benchmarks then open the HTML report in the default browser (macOS/Linux).
+# Run benchmarks then open the HTML report in the default browser (macOS).
 bench-open:
     cargo bench --all-features
     open target/criterion/report/index.html

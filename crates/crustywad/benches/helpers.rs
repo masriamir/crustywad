@@ -39,7 +39,7 @@ pub fn build_wad(kind: [u8; 4], lumps: &[(&str, &[u8])]) -> Vec<u8> {
 
 /// Returns the path to a Freedoom WAD directory, or `None` when the env var is unset.
 ///
-/// Tests skip gracefully when this returns `None`.
+/// Benchmarks skip gracefully when this returns `None`.
 pub fn freedoom_wad_path() -> Option<PathBuf> {
     std::env::var_os("CRUSTYWAD_FREEDOOM_DIR").map(PathBuf::from)
 }
