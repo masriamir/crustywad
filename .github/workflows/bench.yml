@@ -22,11 +22,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run benchmarks
+        # --benches restricts execution to Criterion bench targets; without it, cargo bench
+        # also runs the library's libtest unit-test binary, which rejects --output-format.
         # --output-format bencher emits libtest-compatible output consumed by
         # github-action-benchmark. 2>&1 routes Criterion's stderr (progress lines)
         # into stdout so tee captures everything; the action filters to bench lines.
         run: |
-          cargo bench --all-features -- --output-format bencher 2>&1 | tee bench_output.txt
+          cargo bench --all-features --benches -- --output-format bencher 2>&1 | tee bench_output.txt
 
       - name: Upload Criterion HTML report
         uses: actions/upload-artifact@v4
