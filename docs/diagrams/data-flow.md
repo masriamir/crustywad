@@ -95,6 +95,101 @@ sequenceDiagram
     end
 ```
 
+## Write pipeline
+
+> **Note:** requires the `write` feature flag.
+
+`WadBuilder` accumulates lumps and defers all validation to `build()` / `build_with_options()`. `build()` is a strict-mode convenience wrapper; `build_with_options` takes a `WriteOptions` and returns collected `WriteWarning`s alongside the bytes (always empty in strict mode). Offsets (`filepos`, `infotableofs`) are always recomputed by the builder — callers never supply them directly. The output layout is `[12-byte header][lump data blobs][16-byte directory entries]`.
+
+```mermaid
+flowchart TD
+    A["WadBuilder::new(kind)\n.add_lump(name, data) *"]
+    B["build() / build_with_options(opts)"]
+    C{"kind is WadKind::Unknown?"}
+    D{"Strictness?"}
+    E["Err(WriteError::UnknownMagicStrict)"]
+    F["warn WriteWarning::UnknownMagic\nwrite raw magic bytes"]
+    G{"lumps.len() > i32::MAX?"}
+    H["Err(WriteError::TooManyLumps)"]
+    I["For each lump: validate name and data"]
+    J{"name contains NUL?"}
+    K["Err(WriteError::NulInName)"]
+    L{"name is ASCII?"}
+    M["Err(WriteError::NonAsciiName)"]
+    N{"name.len() > 8?"}
+    O{"Strictness?"}
+    P["Err(WriteError::NameTooLong)"]
+    Q["warn WriteWarning::NameTruncated\ntruncate to 8 bytes"]
+    R{"data.len() > i32::MAX?"}
+    S["Err(WriteError::LumpTooLarge)"]
+    T["Compute filepos per lump\n(offset starts at 12, the header size)"]
+    U{"any filepos / infotableofs\nexceeds i32::MAX?"}
+    V["Err(WriteError::OffsetOverflow)"]
+    W["BinWrite RawHeader\n(magic, numlumps, infotableofs)"]
+    X["Append lump data blobs\nin insertion order"]
+    Y["BinWrite RawDirectoryEntry per lump\n(filepos, size, name)"]
+    Z["Ok((bytes, warnings))\nwarnings empty in strict mode"]
+
+    A --> B
+    B --> C
+    C -- "no" --> G
+    C -- "yes" --> D
+    D -- "Strict" --> E
+    D -- "Lenient" --> F
+    F --> G
+    G -- "yes" --> H
+    G -- "no" --> I
+    I --> J
+    J -- "yes" --> K
+    J -- "no" --> L
+    L -- "no" --> M
+    L -- "yes" --> N
+    N -- "no" --> R
+    N -- "yes" --> O
+    O -- "Strict" --> P
+    O -- "Lenient" --> Q
+    Q --> R
+    R -- "yes" --> S
+    R -- "no" --> T
+    T --> U
+    U -- "yes" --> V
+    U -- "no" --> W
+    W --> X
+    X --> Y
+    Y --> Z
+```
+
+## Strict vs. lenient write mode
+
+The sequence diagram below shows a lump name longer than 8 bytes flowing through both modes of `build_with_options`. Strict mode returns an error immediately; lenient mode truncates the name, records a warning, and produces a valid WAD.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Builder
+    participant Warnings
+
+    Note over Caller,Warnings: Input: add_lump("VERYLONGNAME", data) — 12-byte name
+
+    rect rgb(255, 230, 230)
+        Note over Caller,Builder: Strict mode (WriteOptions::strict(), or build())
+        Caller->>Builder: build_with_options(WriteOptions::strict())
+        Builder->>Builder: name.len() == 12 > 8, Strictness::Strict
+        Builder-->>Caller: Err(WriteError::NameTooLong { name, len: 12 })
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Caller,Warnings: Lenient mode (WriteOptions::lenient())
+        Caller->>Builder: build_with_options(WriteOptions::lenient())
+        Builder->>Builder: name.len() == 12 > 8, Strictness::Lenient
+        Builder->>Warnings: push WriteWarning::NameTruncated { name }
+        Builder->>Builder: truncate name to first 8 bytes
+        Builder->>Builder: compute filepos/infotableofs, serialize header + lumps + directory
+        Builder-->>Caller: Ok((bytes, warnings))
+        Caller->>Caller: warnings includes NameTruncated
+    end
+```
+
 ## Map record parsing
 
 `parse_records::<T>` turns raw lump bytes into a typed vector using `binrw`. The generic parameter `T` may be any map record type (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) that implements `BinRead<Args<'_> = ()>`. An empty buffer always yields an empty `Vec`. Otherwise the function parses the first record and measures how many bytes `BinRead` consumed (`record_size = cursor.position()`); this avoids relying on `size_of::<T>()`, which reflects in-memory layout rather than on-disk size. If `record_size == 0` the type has no on-disk representation and any non-empty input is a `TrailingBytes` error. If the total length is not an exact multiple of `record_size`, the remaining partial bytes are a `TrailingBytes` error.
