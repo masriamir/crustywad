@@ -89,7 +89,7 @@ fn bench_lump_access(c: &mut Criterion) {
 }
 
 fn bench_map_records(c: &mut Criterion) {
-    // Each record type is benchmarked against 1 000 zero-byte records.
+    // Each record type is benchmarked against 1 000 all-zero records.
     // Zeroed bytes parse without error for all record types (integer fields and Name8 fields alike).
     const N: usize = 1000;
 
