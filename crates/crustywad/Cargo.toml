@@ -28,8 +28,18 @@ memmap2 = { version = "0.9.5", optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
 proptest.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "read_ops"
+harness = false
+
+[[bench]]
+name = "write_ops"
+harness = false
+required-features = ["write"]
 
 [lints]
 workspace = true
