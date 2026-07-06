@@ -231,7 +231,7 @@ through its comments until two consecutive clean checks, then hand off for human
 Project facts the skill needs:
 - Bot login: `copilot-pull-request-reviewer`
 - CI command: `just ci` (see Development workflow above)
-- Owner/repo: from `git remote get-url origin`
+- Owner/repo: parsed from the `git remote get-url origin` URL
 - Timing: skill defaults (60s poll / 5min dwell / 15min stall) apply — no override needed
 
 ## CI pipeline
