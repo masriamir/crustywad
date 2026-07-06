@@ -624,6 +624,9 @@ impl Wad {
     ///   Iterate [`lumps()`][Wad::lumps()] directly if you need all matches.
     /// - Matching is exact and case-sensitive.  Pass the name in the correct
     ///   case (conventionally uppercase in WAD files, e.g. `"E1M1"`, `"THINGS"`).
+    ///
+    /// This performs a linear scan; see ADR-0013 for why that is the right
+    /// tradeoff today, and the conditions under which it should be revisited.
     #[must_use]
     pub fn lump_by_name(&self, name: &str) -> Option<&Lump> {
         self.lumps.iter().find(|lump| lump.name() == name)
