@@ -119,24 +119,7 @@ fn bench_roundtrip(c: &mut Criterion) {
 }
 
 fn bench_freedoom_roundtrip(c: &mut Criterion) {
-    let Some(dir) = helpers::freedoom_wad_path() else {
-        return;
-    };
-
-    let Ok(read_dir) = std::fs::read_dir(&dir) else {
-        return;
-    };
-    let wad_path = read_dir
-        .filter_map(Result::ok)
-        .find(|e| {
-            e.path()
-                .extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("wad"))
-        })
-        .map(|e| e.path());
-
-    let Some(path) = wad_path else {
+    let Some(path) = helpers::freedoom_wad_file() else {
         return;
     };
 

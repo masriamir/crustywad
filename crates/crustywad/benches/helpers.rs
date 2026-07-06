@@ -44,6 +44,22 @@ pub fn freedoom_wad_path() -> Option<PathBuf> {
     std::env::var_os("CRUSTYWAD_FREEDOOM_DIR").map(PathBuf::from)
 }
 
+/// Returns the path to a Freedoom WAD file, or `None` when unavailable.
+///
+/// Tries `freedoom1.wad` then `freedoom2.wad` — the names produced by `just fetch-fixtures`
+/// — matching the convention used by the integration tests. Benchmarks skip gracefully when
+/// this returns `None`.
+pub fn freedoom_wad_file() -> Option<PathBuf> {
+    let dir = freedoom_wad_path()?;
+    for name in ["freedoom1.wad", "freedoom2.wad"] {
+        let path = dir.join(name);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// 10 PWAD lumps × 256 bytes each (~2.6 KB total).
 pub fn small_wad() -> Vec<u8> {
     let payload = vec![0u8; 256];
