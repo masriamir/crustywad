@@ -16,6 +16,10 @@ crates/
       error.rs         # ParseError (thiserror) and ParseWarning types
       map.rs           # Typed map-record structs and parse_records<T>
       mmap.rs          # Read-only memmap2-backed file loading (feature = "mmap")
+    benches/
+      helpers.rs       # Synthetic WAD builder + Freedoom loader for bench use
+      read_ops.rs      # Criterion benchmarks for parsing, lump access, and map records
+      write_ops.rs     # Criterion benchmarks for write/build/round-trip (feature = "write")
     tests/
       common/mod.rs    # Shared WAD-building helpers (build_wad, lump_map)
       wad_reader.rs    # Integration tests for the main WAD reader API
@@ -63,6 +67,8 @@ Install [just](https://github.com/casey/just), then:
 | Dependency audit | `just deny` (requires `cargo-deny`) |
 | Fetch Freedoom fixtures | `just fetch-fixtures` |
 | Anchor drift check | `just docs-sync` |
+| Benchmarks | `just bench` (criterion; HTML report in `target/criterion/`) |
+| Benchmarks + open report | `just bench-open` |
 | Full CI check | `just ci` |
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
@@ -255,6 +261,8 @@ The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:
 | `docs-sync` | `python3 scripts/check_doc_anchors.py` — verifies anchor strings are present in all three main doc files |
 
 CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `security-extended` and `security-and-quality` query suites.
+
+`bench` (`.github/workflows/bench.yml`) runs on push to `main` and `workflow_dispatch`. It is **non-blocking** (never gates merges). On each run it uploads a downloadable Criterion HTML artifact (90-day retention) and commits benchmark trend data to the `gh-pages` branch at `dev/bench/`. The `pages.yml` guide deploy and `bench.yml` share the `gh-pages` concurrency group so they never write to the branch simultaneously.
 
 `release-plz` (`.github/workflows/release-plz.yml`) creates release PRs on push to `main`. Publishing to crates.io is intentionally disabled until credentials and release policy are ready.
 
