@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-730cf8d9.js";
+            window.path_to_searchindex_js = "searchindex-468732dd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-62eceb1a.js"></script>
+        <script src="toc-ed427db4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -398,6 +398,97 @@ match wad.kind() {
 <span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
 </span><span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="writing-wad-files"><a class="header" href="#writing-wad-files">Writing WAD Files</a></h1>
+<p><code>WadBuilder</code>, behind the <code>write</code> feature flag, builds a new WAD from scratch
+or re-serializes an existing one.</p>
+<pre><code class="language-toml">crustywad = { version = "0.1", features = ["write"] }
+</code></pre>
+<h2 id="building-from-scratch"><a class="header" href="#building-from-scratch">Building from scratch</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{WadBuilder, WadKind};
+
+let bytes = WadBuilder::new(WadKind::Pwad)
+    .add_lump("MAP01", b"")
+    .add_lump("TEST", vec![1, 2, 3, 4])
+    .build()
+    .unwrap();
+
+assert!(crustywad::Wad::from_bytes(bytes).is_ok());
+<span class="boring">}</span></code></pre>
+<p>Lumps are added in order with <code>add_lump(name, data)</code>. Name and size
+validation, along with offset (<code>filepos</code>, <code>infotableofs</code>) computation, are
+deferred entirely to <code>build()</code> / <code>build_with_options()</code> — callers never
+supply offsets directly.</p>
+<h2 id="round-tripping-an-existing-wad"><a class="header" href="#round-tripping-an-existing-wad">Round-tripping an existing WAD</a></h2>
+<p>Use <code>Wad::to_builder()</code> to load a WAD, modify it, and re-serialize:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+
+<span class="boring">let mut bytes = Vec::new();
+</span><span class="boring">bytes.extend_from_slice(b"IWAD");
+</span><span class="boring">bytes.extend_from_slice(&amp;1_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(&amp;16_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(&amp;[1, 2, 3, 4]);
+</span><span class="boring">bytes.extend_from_slice(&amp;12_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(&amp;4_i32.to_le_bytes());
+</span><span class="boring">bytes.extend_from_slice(b"TEST\0\0\0\0");
+</span>let wad = Wad::from_bytes(bytes)?;
+
+let mut builder = wad.to_builder();
+builder.add_lump("EXTRA", b"more data");
+let rebuilt = builder.build()?;
+
+assert_eq!(Wad::from_bytes(rebuilt)?.lump_count(), 2);
+<span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p>All lump data is copied into the builder during the conversion, so memory
+usage roughly doubles for the duration.</p>
+<h2 id="strict-vs-lenient-write-validation"><a class="header" href="#strict-vs-lenient-write-validation">Strict vs. lenient write validation</a></h2>
+<p><code>build()</code> always uses strict validation. <code>build_with_options()</code> takes a
+<code>WriteOptions</code> for either mode, and returns any collected <code>WriteWarning</code>s
+alongside the bytes:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{WadBuilder, WadKind, WriteOptions};
+
+let (bytes, warnings) = WadBuilder::new(WadKind::Pwad)
+    .add_lump("VERYLONGNAME", b"data")
+    .build_with_options(&amp;WriteOptions::lenient())
+    .unwrap();
+
+assert!(!warnings.is_empty()); // name was truncated to 8 bytes
+assert!(crustywad::Wad::from_bytes(bytes).is_ok());
+<span class="boring">}</span></code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Strict</th><th>Lenient</th></tr>
+</thead>
+<tbody>
+<tr><td>Lump name longer than 8 bytes</td><td><code>WriteError::NameTooLong</code></td><td><code>WriteWarning::NameTruncated</code>, truncated to 8 bytes</td></tr>
+<tr><td>Name contains a NUL byte</td><td><code>WriteError::NulInName</code></td><td>Same (both modes)</td></tr>
+<tr><td>Non-ASCII name</td><td><code>WriteError::NonAsciiName</code></td><td>Same (both modes)</td></tr>
+<tr><td><code>WadKind::Unknown</code> magic</td><td><code>WriteError::UnknownMagicStrict</code></td><td><code>WriteWarning::UnknownMagic</code>, written unchanged</td></tr>
+<tr><td>Lump data larger than <code>i32::MAX</code> bytes</td><td><code>WriteError::LumpTooLarge</code></td><td>Same (both modes)</td></tr>
+<tr><td>Lump count exceeds <code>i32::MAX</code></td><td><code>WriteError::TooManyLumps</code></td><td>Same (both modes)</td></tr>
+<tr><td>Computed offset exceeds <code>i32::MAX</code></td><td><code>WriteError::OffsetOverflow</code></td><td>Same (both modes)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
+<p><code>build()</code> returns <code>Result&lt;Vec&lt;u8&gt;, WriteError&gt;</code>. <code>build_with_options()</code>
+returns <code>Result&lt;(Vec&lt;u8&gt;, Vec&lt;WriteWarning&gt;), WriteError&gt;</code> — the warnings
+vector is only ever non-empty in lenient mode.</p>
+<p>See <a href="#data-flow">Data flow</a> for the write pipeline flowchart and the
+strict/lenient write mode comparison, and <a href="#data-model">Data model</a> for how
+<code>WadBuilder</code> and its supporting types relate to <code>Wad</code>.</p>
+<h2 id="runnable-example"><a class="header" href="#runnable-example">Runnable example</a></h2>
+<p><code>crates/crustywad/examples/write_wad.rs</code> runs the scenarios above end to end:</p>
+<pre><code class="language-bash">cargo run -p crustywad --example write_wad --features write
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="map-record-parsing"><a class="header" href="#map-record-parsing">Map Record Parsing</a></h1>
 <p>Doom maps are stored as a group of sequentially named lumps. After the marker lump
 (e.g. <code>E1M1</code>) come the parsed map data lumps. The table below covers the record lumps
@@ -501,7 +592,7 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
 <span class="boring">}</span></code></pre>
 <p>See <code>crustywad::map</code> in the API docs for the full definitions of <code>Seg</code>,
 <code>Subsector</code>, and <code>Node</code>.</p>
-<h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
+<h2 id="error-handling-1"><a class="header" href="#error-handling-1">Error handling</a></h2>
 <p><code>parse_records</code> returns <code>MapParseError</code>:</p>
 <ul>
 <li><code>MapParseError::TrailingBytes</code> — the lump length is not an exact multiple of the record
