@@ -10,24 +10,43 @@
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85.0-blue)](https://www.rust-lang.org)
 
-WAD file I/O implemented in Rust.
+Performant, safe, typed Doom WAD file I/O in Rust.
 
 A Doom WAD is a container format that stores a header plus a directory of named "lumps" containing maps, graphics, audio, and other game data. The [Doom Wiki](https://doomwiki.org/wiki/WAD) is a good starting point for the unofficial format specification.
 
+**Full guide, API usage, and CLI reference: [crustywad.dev](https://crustywad.dev)**
+
 ## Status
 
-`crustywad` currently provides a safe, documented foundation for reading WAD headers and lump directories, plus typed map-record scaffolding for the classic Doom map lumps.
+`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
 
 Integration tests for each layer live in `crates/crustywad/tests/`:
 - `wad_reader.rs` — WAD header and directory parsing
 - `map_records.rs` — typed map-record decoding (`Thing`, `Linedef`, `Sector`, etc.)
+- `write.rs` — WAD write support (`WadBuilder`)
+- `e2e.rs` — end-to-end read → modify → write → verify pipeline
+- `malformed_wads.rs` — synthetic corpus of malformed and large WAD inputs
 - `freedoom.rs` — optional tests against real Freedoom WAD fixtures
+
+## Installation
+
+```toml
+[dependencies]
+crustywad = "0.1"
+```
+
+Enable optional features as needed (see [Feature flags](#feature-flags) below):
+
+```toml
+[dependencies]
+crustywad = { version = "0.1", features = ["write", "mmap"] }
+```
 
 ## Workspace layout
 
-- `crates/crustywad` — core library for safe WAD parsing.
-- `crates/crustywad-cli` — small CLI binary (`cwad`) for dogfooding the parser.
-- `docs/` — design notes and ADRs.
+- `crates/crustywad` — core library for safe WAD reading and writing.
+- `crates/crustywad-cli` — `cwad`, a CLI for inspecting, validating, merging, diffing, extracting, and building WAD files.
+- `docs/` — design notes, ADRs, and the [mdBook user guide](https://crustywad.dev).
 - `.github/` — CI, release automation, issue templates, and repository policy files.
 
 ## Quickstart
@@ -48,12 +67,16 @@ assert_eq!(wad.lump_count(), 0);
 # Ok::<(), crustywad::ParseError>(())
 ```
 
+See [Reading WAD Files](https://crustywad.dev/reading-wads.html) and [Writing WAD Files](https://crustywad.dev/writing-wads.html) in the guide for the full API, or `crates/crustywad/examples/` for runnable examples (`cargo run -p crustywad --example read_wad`).
+
 ### CLI
 
 ```text
 cargo run -p crustywad-cli -- info path/to/file.wad
 cargo run -p crustywad-cli -- list path/to/file.wad
 ```
+
+`cwad` also has `validate`, `merge`, `diff`, `extract`, and `build` subcommands — see [CLI Usage](https://crustywad.dev/cli.html) in the guide for the full reference.
 
 ## Feature flags
 
