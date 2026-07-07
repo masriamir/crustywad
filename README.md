@@ -23,6 +23,9 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 Integration tests for each layer live in `crates/crustywad/tests/`:
 - `wad_reader.rs` — WAD header and directory parsing
 - `map_records.rs` — typed map-record decoding (`Thing`, `Linedef`, `Sector`, etc.)
+- `write.rs` — WAD write support (`WadBuilder`)
+- `e2e.rs` — end-to-end read → modify → write → verify pipeline
+- `malformed_wads.rs` — synthetic corpus of malformed and large WAD inputs
 - `freedoom.rs` — optional tests against real Freedoom WAD fixtures
 
 ## Installation
