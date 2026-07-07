@@ -20,6 +20,9 @@ bench = false
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[package.metadata.dist]
+dist = false
+
 [features]
 default = []
 mmap = ["dep:memmap2"]
