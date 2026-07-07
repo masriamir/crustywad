@@ -16,6 +16,15 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Verify release-automation secrets are configured
+        env:
+          APP_ID: ${{ secrets.RELEASE_PLZ_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
+            echo "::error::RELEASE_PLZ_APP_ID and RELEASE_PLZ_APP_PRIVATE_KEY secrets must be set (create + install the release GitHub App). See issue #184 / PR #185." >&2
+            exit 1
+          fi
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -44,6 +53,15 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Verify release-automation secrets are configured
+        env:
+          APP_ID: ${{ secrets.RELEASE_PLZ_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
+            echo "::error::RELEASE_PLZ_APP_ID and RELEASE_PLZ_APP_PRIVATE_KEY secrets must be set (create + install the release GitHub App). See issue #184 / PR #185." >&2
+            exit 1
+          fi
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
