@@ -37,11 +37,11 @@ implementation begins.**
 | [0004](0004-parse-api-and-safety-contracts.md) | Parse API and safety contracts for `Wad` and map records | Accepted |
 | [0005](0005-isolate-unsafe-code-in-platform-crate.md) | Isolate unsafe code in a dedicated `crustywad-platform` workspace crate | Proposed |
 | [0006](0006-wad-write-design.md) | WAD write design | Accepted |
-| [0007](0007-living-docs-automation.md) | Living-docs automation strategy | Proposed |
-| [0008](0008-cli-ux-architecture.md) | `cwad` CLI UX and architecture | Proposed |
-| [0009](0009-cargo-fuzz-harness.md) | `cargo-fuzz` harness for WAD parser | Proposed |
-| [0010](0010-proptest-strategy.md) | Proptest invariant testing strategy | Proposed |
-| [0011](0011-publish-workflow.md) | crates.io publish workflow | Proposed |
+| [0007](0007-living-docs-automation.md) | Living-docs automation strategy | Accepted |
+| [0008](0008-cli-ux-architecture.md) | `cwad` CLI UX and architecture | Accepted |
+| [0009](0009-cargo-fuzz-harness.md) | `cargo-fuzz` harness for WAD parser | Accepted |
+| [0010](0010-proptest-strategy.md) | Proptest invariant testing strategy | Accepted |
+| [0011](0011-publish-workflow.md) | crates.io publish workflow | Accepted |
 | [0012](0012-criterion-benchmarking-infrastructure.md) | Criterion benchmarking infrastructure, GitHub Pages trend reporting, and CI integration | Accepted |
 | [0013](0013-lump-by-name-lookup-strategy.md) | `lump_by_name` lookup strategy | Accepted |
 
