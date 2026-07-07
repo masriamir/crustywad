@@ -22,7 +22,7 @@ jobs:
           APP_KEY: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
-            echo "::error::RELEASE_PLZ_APP_ID and RELEASE_PLZ_APP_PRIVATE_KEY secrets must be set (create + install the release GitHub App). See issue #184 / PR #185." >&2
+            echo "::error::RELEASE_PLZ_APP_ID and RELEASE_PLZ_APP_PRIVATE_KEY secrets must be set: create and install the release GitHub App (Contents + Pull requests: write), then add both secrets. See issue #184." >&2
             exit 1
           fi
       - name: Generate GitHub App token
@@ -59,7 +59,7 @@ jobs:
           APP_KEY: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
-            echo "::error::RELEASE_PLZ_APP_ID and RELEASE_PLZ_APP_PRIVATE_KEY secrets must be set (create + install the release GitHub App). See issue #184 / PR #185." >&2
+            echo "::error::RELEASE_PLZ_APP_ID and RELEASE_PLZ_APP_PRIVATE_KEY secrets must be set: create and install the release GitHub App (Contents + Pull requests: write), then add both secrets. See issue #184." >&2
             exit 1
           fi
       - name: Generate GitHub App token
