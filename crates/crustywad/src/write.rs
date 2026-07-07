@@ -230,6 +230,22 @@ impl WadBuilder {
     /// Does not panic. The internal `expect` calls on `i32::try_from` are
     /// preceded by explicit bounds checks that return [`WriteError`] before any
     /// overflow can reach them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crustywad::{WadBuilder, WadKind, WriteOptions};
+    ///
+    /// // A name longer than 8 bytes is a hard error in strict mode, but is
+    /// // truncated with a warning in lenient mode.
+    /// let (bytes, warnings) = WadBuilder::new(WadKind::Pwad)
+    ///     .add_lump("VERYLONGNAME", b"data")
+    ///     .build_with_options(&WriteOptions::lenient())
+    ///     .unwrap();
+    ///
+    /// assert!(!warnings.is_empty());
+    /// assert!(crustywad::Wad::from_bytes(bytes).is_ok());
+    /// ```
     pub fn build_with_options(
         &self,
         opts: &WriteOptions,
