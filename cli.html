@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-302498c0.js";
+            window.path_to_searchindex_js = "searchindex-730cf8d9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62eceb1a.js"></script>
@@ -218,6 +218,42 @@ ok: doom.wad
 error: broken.wad: invalid WAD magic
 </code></pre>
 <p>The error message goes to stderr in human format; the exit code is <code>2</code>.</p>
+<h3 id="merge"><a class="header" href="#merge">merge</a></h3>
+<p>Combine multiple WAD files into one, writing lumps in the order the input
+files are given.</p>
+<pre><code class="language-text">$ cwad merge base.wad patch.wad --output combined.wad
+</code></pre>
+<p>Use <code>--kind</code> to set the output WAD kind (<code>iwad</code> or <code>pwad</code>; default <code>pwad</code>).
+Lump-name or size validation failures during the write exit <code>3</code>.</p>
+<h3 id="diff"><a class="header" href="#diff">diff</a></h3>
+<p>Compare two WAD files lump by lump: same lump names, same count of each name,
+and same data for each occurrence. Directory order of distinct lump names
+does not matter; for a name that appears more than once, the sequence of
+occurrences is compared in directory order. Exits <code>0</code> if identical, <code>1</code> if
+any differences are found, or <code>2</code> on I/O or parse error.</p>
+<pre><code class="language-text">$ cwad diff doom.wad doom-modified.wad
+Only in doom.wad:  DEMO1
+Changed:           E1M1
+</code></pre>
+<h3 id="extract"><a class="header" href="#extract">extract</a></h3>
+<p>Extract lumps from a WAD file into a directory (which must already exist).
+Extracts every lump by default, or only the occurrences of one lump name via
+<code>--lump</code>/<code>-l</code>. Each lump is written as <code>&lt;SANITIZED_NAME&gt;.bin</code>; when two or
+more lumps sanitize to the same filename, later ones get a <code>_1</code>, <code>_2</code>, …
+suffix.</p>
+<pre><code class="language-text">$ cwad extract doom.wad --output ./out
+PLAYPAL.bin
+COLORMAP.bin
+...
+</code></pre>
+<h3 id="build"><a class="header" href="#build">build</a></h3>
+<p>Build a new WAD file from <code>NAME=FILE</code> lump specifications, added to the
+output in the order listed.</p>
+<pre><code class="language-text">$ cwad build --output custom.wad E1M1=e1m1.lmp PLAYPAL=playpal.lmp
+wrote custom.wad: kind=Pwad lumps: 2
+</code></pre>
+<p>Use <code>--kind iwad</code> to build an IWAD instead of the default PWAD. Lump-name or
+size validation failures exit <code>3</code>.</p>
 <h2 id="global-options"><a class="header" href="#global-options">Global options</a></h2>
 <div class="table-wrapper">
 <table>
@@ -243,7 +279,9 @@ lumps: 3
 warning: unrecognized WAD magic `XWAD`
 </code></pre>
 <h2 id="output-formats"><a class="header" href="#output-formats">Output formats</a></h2>
-<p>All three subcommands support the <code>--format</code> / <code>-F</code> flag.</p>
+<p>All subcommands accept the <code>--format</code> / <code>-F</code> flag, but <code>merge</code> does not
+currently produce any structured stdout output — it only writes the merged
+file, and warnings/errors still go to stderr regardless of format.</p>
 <h3 id="human-default"><a class="header" href="#human-default">human (default)</a></h3>
 <p>Human-readable text written to stdout. Warnings and errors go to stderr.</p>
 <h3 id="json"><a class="header" href="#json">json</a></h3>
@@ -290,8 +328,9 @@ true
 </thead>
 <tbody>
 <tr><td><code>0</code></td><td>Success</td></tr>
-<tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.)</td></tr>
-<tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument)</td></tr>
+<tr><td><code>1</code></td><td>Differences found (<code>diff</code> only)</td></tr>
+<tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.); for <code>extract</code>, also a nonexistent <code>--output</code> directory or a <code>--lump</code> name not found</td></tr>
+<tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for <code>build</code>/<code>merge</code>)</td></tr>
 </tbody>
 </table>
 </div>
