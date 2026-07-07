@@ -4,6 +4,7 @@ resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
+description = "Safe, documented Doom WAD file I/O"
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
