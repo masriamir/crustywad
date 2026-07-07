@@ -84,8 +84,10 @@ Lump-name or size validation failures during the write exit `3`.
 ### diff
 
 Compare two WAD files lump by lump: same lump names, same count of each name,
-and same data for each occurrence. Exits `0` if identical, `1` if any
-differences are found, or `2` on I/O or parse error.
+and same data for each occurrence. Directory order of distinct lump names
+does not matter; for a name that appears more than once, the sequence of
+occurrences is compared in directory order. Exits `0` if identical, `1` if
+any differences are found, or `2` on I/O or parse error.
 
 ```text
 $ cwad diff doom.wad doom-modified.wad

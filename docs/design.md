@@ -67,7 +67,7 @@ See [Data flow](diagrams/data-flow.md) for the write pipeline flowchart and the 
 ## Milestones
 
 1. ✅ Header and directory parsing
-2. 🔜 Map lump record parsing
+2. 🔜 Map lump parsing: full graph assembly
 3. Graphics and patches
 4. Texture composition
 5. Audio lumps
