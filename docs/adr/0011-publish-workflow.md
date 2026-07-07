@@ -232,14 +232,14 @@ The following steps must be completed **before** setting `publish = true` in
 
 ## Consequences
 
-- Enabling publishing requires several one-time changes beyond toggling
-  `release-plz.toml` and adding the `CARGO_REGISTRY_TOKEN` secret: both crates
-  must switch from `version.workspace = true` to explicit `version` fields (§3
-  migration), per-crate `CHANGELOG.md` files must be created and seeded (§4
-  migration), and the `description` field must be added to `[workspace.package]`
-  with `description.workspace = true` in each crate (checklist item 3). None of
-  these touch library source code, but they do require `Cargo.toml` and
-  documentation file changes before the first publish succeeds.
+- The one-time prerequisite changes are now complete: both crates use explicit
+  `version` fields instead of `version.workspace = true` (§3, PR #171),
+  per-crate `CHANGELOG.md` files exist with `changelog_path` configured (§4),
+  and `description` is set in `[workspace.package]` with
+  `description.workspace = true` in each crate (checklist item 3). What
+  remains before the first publish is toggling `publish = true` in
+  `release-plz.toml`, adding the `release` job with `CARGO_REGISTRY_TOKEN`,
+  and completing the rest of the pre-publish checklist (§5).
 - The version requirement in `crustywad-cli/Cargo.toml` must be updated
   manually whenever `crustywad` bumps beyond the caret range (e.g., `0.1.x` →
   `0.2.0`). A bump outside that range breaks Cargo dependency resolution —
