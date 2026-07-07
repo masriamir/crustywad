@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783398403715,
+  "lastUpdate": 1783437110002,
   "repoUrl": "https://github.com/masriamir/crustywad",
   "entries": {
     "Benchmark": [
@@ -1763,6 +1763,258 @@ window.BENCHMARK_DATA = {
             "name": "write/roundtrip/large",
             "value": 2407310,
             "range": "± 65646",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41898282+github-actions[bot]@users.noreply.github.com",
+            "name": "github-actions[bot]",
+            "username": "github-actions[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9bca2440976f1f6539f98159f88169249937fa15",
+          "message": "chore: release v0.1.0 (#7)",
+          "timestamp": "2026-07-07T11:03:16-04:00",
+          "tree_id": "1f418e3e61b3cfb48c2100ff46678f8ae27bec00",
+          "url": "https://github.com/masriamir/crustywad/commit/9bca2440976f1f6539f98159f88169249937fa15"
+        },
+        "date": 1783437109315,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "parse/from_bytes_strict/small",
+            "value": 368,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/medium",
+            "value": 4353,
+            "range": "± 55",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/large",
+            "value": 37486,
+            "range": "± 1264",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/small",
+            "value": 384,
+            "range": "± 11",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/medium",
+            "value": 4346,
+            "range": "± 77",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/large",
+            "value": 37938,
+            "range": "± 1160",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict",
+            "value": 28622,
+            "range": "± 277",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient",
+            "value": 28722,
+            "range": "± 989",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict_mmap",
+            "value": 22071,
+            "range": "± 2502",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient_mmap",
+            "value": 22110,
+            "range": "± 276",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_index",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit",
+            "value": 5,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit_last",
+            "value": 44,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_miss",
+            "value": 41,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_bytes",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_data",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lumps_iter_count",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/clone",
+            "value": 18988,
+            "range": "± 145",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/into_bytes",
+            "value": 1061,
+            "range": "± 64",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Thing_x1000",
+            "value": 10534,
+            "range": "± 69",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Linedef_x1000",
+            "value": 17425,
+            "range": "± 40",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sidedef_x1000",
+            "value": 24822,
+            "range": "± 1115",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Vertex_x1000",
+            "value": 4729,
+            "range": "± 70",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Seg_x1000",
+            "value": 10689,
+            "range": "± 226",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Subsector_x1000",
+            "value": 4717,
+            "range": "± 784",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Node_x1000",
+            "value": 20200,
+            "range": "± 97",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sector_x1000",
+            "value": 22650,
+            "range": "± 40",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/small",
+            "value": 315,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/medium",
+            "value": 16565,
+            "range": "± 94",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/large",
+            "value": 774045,
+            "range": "± 13179",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/small",
+            "value": 313,
+            "range": "± 8",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/medium",
+            "value": 15744,
+            "range": "± 449",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/large",
+            "value": 713820,
+            "range": "± 16153",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/10_lumps_256b",
+            "value": 932,
+            "range": "± 4",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/100_lumps_4kib",
+            "value": 35813,
+            "range": "± 541",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/small",
+            "value": 1358,
+            "range": "± 18",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/medium",
+            "value": 47990,
+            "range": "± 1246",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/large",
+            "value": 2278062,
+            "range": "± 166454",
             "unit": "ns/iter"
           }
         ]
