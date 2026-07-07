@@ -149,7 +149,9 @@ warning: unrecognized WAD magic `XWAD`
 
 ## Output formats
 
-All subcommands support the `--format` / `-F` flag.
+All subcommands accept the `--format` / `-F` flag, but `merge` does not
+currently produce any structured stdout output — it only writes the merged
+file, and warnings/errors still go to stderr regardless of format.
 
 ### human (default)
 
