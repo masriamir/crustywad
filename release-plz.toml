@@ -1,6 +1,8 @@
 [workspace]
 release = true
 publish = true
+git_tag_enable = true
+git_release_enable = false
 changelog_update = true
 allow_dirty = false
 semver_check = false
