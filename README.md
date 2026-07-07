@@ -64,6 +64,8 @@ Windows PowerShell:
 irm https://github.com/masriamir/crustywad/releases/latest/download/crustywad-cli-installer.ps1 | iex
 ```
 
+> **Note:** The prebuilt-binary options (`cargo binstall` and the installer scripts) require a release produced by the binary-release pipeline, available from **v0.1.1 onward**. For **v0.1.0**, install from source with `cargo install crustywad-cli`.
+
 ## Workspace layout
 
 - `crates/crustywad` — core library for safe WAD reading and writing.
