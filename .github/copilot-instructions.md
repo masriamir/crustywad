@@ -56,7 +56,7 @@ tools/
     bench.yml          # Criterion benchmark trend reporting to GitHub Pages
     fuzz.yml           # cargo-fuzz targets
     pages.yml          # mdBook guide deployment to GitHub Pages
-    release-artifacts.yml # Cross-platform binary release artifacts
+    release.yml        # dist: cross-platform cwad binaries + installers (CLI releases)
 ```
 
 ## Development workflow
@@ -230,6 +230,8 @@ The main CI pipeline (`.github/workflows/ci.yml`) runs:
 - `docs-sync` — anchor drift check via `python3 scripts/check_doc_anchors.py`
 
 CodeQL static analysis (`.github/workflows/codeql.yml`) runs on push, pull request, and weekly on a schedule. It uses the advanced configuration in `.github/codeql/codeql-config.yml` which enables the `security-extended` and `security-and-quality` query suites.
+
+`release-plz` (`.github/workflows/release-plz.yml`) runs two jobs on push to `main`, authenticated as a **GitHub App** (`RELEASE_PLZ_APP_ID` / `RELEASE_PLZ_APP_PRIVATE_KEY`) so its PRs and tags trigger downstream workflows. `release-pr` opens/updates the release PR; `release` publishes to crates.io via Trusted Publishing (OIDC — no stored `CARGO_REGISTRY_TOKEN`) and pushes tags. It does **not** create GitHub Releases (`git_release_enable = false`). Binary releases of the `cwad` CLI are handled by **dist** (`.github/workflows/release.yml`), which triggers on the `crustywad-cli-v*` tag and creates the GitHub Release with cross-platform binaries and installers. The library crate is excluded from dist (`[package.metadata.dist] dist = false`).
 
 **Version bump:** `crates/crustywad-cli/Cargo.toml` declares the `crustywad` path dependency with an explicit `version` field (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`), which Cargo treats as a caret requirement — patch/compatible bumps to `crustywad`'s version need no change here. `cargo-deny` enforces `wildcards = "deny"` and requires this field, but it does not inherit `crustywad`'s version automatically. Crates are versioned independently (ADR-0011 §3, no `version.workspace = true`); update this field only when `crustywad`'s version moves outside the current caret range (e.g. `0.1.z` → `0.2.0`), or the `security-deny` CI job will fail.
 
