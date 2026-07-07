@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85.0-blue)](https://www.rust-lang.org)
 
-Safe, documented Doom WAD file I/O in Rust.
+Performant, safe, typed Doom WAD file I/O in Rust.
 
 A Doom WAD is a container format that stores a header plus a directory of named "lumps" containing maps, graphics, audio, and other game data. The [Doom Wiki](https://doomwiki.org/wiki/WAD) is a good starting point for the unofficial format specification.
 
