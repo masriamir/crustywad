@@ -145,9 +145,8 @@ deferred along with man-page generation and is not added until that work begins.
 - Every new subcommand must implement the `--format` flag and route output through the
   shared format helper before merging.
 - The exit-code convention is a public API contract; breaking changes to codes 0–3 require
-  a semver-major bump of `crustywad-cli`. Because `crustywad-cli` currently uses
-  `version.workspace = true`, this bump is shared with the library crate; decoupling the
-  versions would be a prerequisite for independent CLI releases.
+  a semver-major bump of `crustywad-cli`. Crates are versioned independently (ADR-0011 §3),
+  so this bump does not force a library version change.
 - The flat subcommand namespace reserves the verbs listed above; adding a conflicting verb
   requires updating this ADR.
 - `build.rs` is added to `crustywad-cli`, which is currently build-script-free; CI must
