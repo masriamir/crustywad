@@ -19,14 +19,12 @@ fn main() {
     let mut builder = wad.to_builder();
     builder.add_lump("EXTRA", b"more data");
     let rebuilt = builder.build().expect("still valid");
-    let rebuilt_lump_count = Wad::from_bytes(rebuilt.clone())
+    let rebuilt_len = rebuilt.len();
+    let rebuilt_lump_count = Wad::from_bytes(rebuilt)
         .expect("rebuilt WAD parses")
         .lump_count();
 
-    println!(
-        "rebuilt {} bytes with {rebuilt_lump_count} lumps",
-        rebuilt.len()
-    );
+    println!("rebuilt {rebuilt_len} bytes with {rebuilt_lump_count} lumps");
 
     // Lenient mode tolerates an over-length name, truncating it and returning a warning.
     let (_, warnings) = WadBuilder::new(WadKind::Pwad)
