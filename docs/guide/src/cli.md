@@ -230,7 +230,7 @@ true
 |---|---|
 | `0` | Success |
 | `1` | Differences found (`diff` only) |
-| `2` | I/O error or parse error (malformed WAD, missing file, etc.) |
+| `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found |
 | `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`/`merge`) |
 
 ## Man page

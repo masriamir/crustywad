@@ -78,7 +78,7 @@ See [Data flow](diagrams/data-flow.md) for the write pipeline flowchart and the 
 - Synthetic WAD builders for offline unit and integration tests.
 - Optional Freedoom fixture coverage for real-world inputs.
 - `proptest` for parser invariants (ADR-0010).
-- `cargo-fuzz` targets for the read and write parsers (ADR-0009).
+- `cargo-fuzz` targets for the read parser and map-record parsing (ADR-0009).
 - Criterion benchmarks for read and write hot paths, with trend reporting on GitHub Pages (ADR-0012).
 
 ## Code conventions
