@@ -5,8 +5,8 @@
 [![Coverage](https://codecov.io/gh/masriamir/crustywad/graph/badge.svg)](https://codecov.io/gh/masriamir/crustywad)
 [![Benchmarks](https://img.shields.io/badge/benchmarks-Criterion-informational)](https://crustywad.dev/dev/bench/)
 [![dependency status](https://deps.rs/repo/github/masriamir/crustywad/status.svg)](https://deps.rs/repo/github/masriamir/crustywad)
-[![docs.rs](https://img.shields.io/badge/docs.rs-pending-blue)](https://docs.rs/crustywad)
-[![crates.io](https://img.shields.io/badge/crates.io-pending-inactive)](https://crates.io/crates/crustywad)
+[![docs.rs](https://img.shields.io/docsrs/crustywad)](https://docs.rs/crustywad)
+[![crates.io](https://img.shields.io/crates/v/crustywad.svg)](https://crates.io/crates/crustywad)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85.0-blue)](https://www.rust-lang.org)
 
