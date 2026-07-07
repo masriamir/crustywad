@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-468732dd.js";
+            window.path_to_searchindex_js = "searchindex-39d48fee.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -1627,28 +1627,25 @@ that has been stable for a reasonable period.</li>
 the declared MSRV on every PR. The toolchain version is pinned explicitly in
 <code>.github/workflows/ci.yml</code> and does not auto-track <code>[workspace.package].rust-version</code>. A
 PR that raises the MSRV must update both the <code>rust-version</code> field in <code>Cargo.toml</code> and the
-<code>toolchain:</code> pin in the workflow file, then bump the workspace version (a minor
-bump, since all workspace crates share a single version via <code>version.workspace = true</code>).</li>
+<code>toolchain:</code> pin in the workflow file, then bump the version of each affected crate (a
+minor bump) — both crates currently share <code>rust-version.workspace = true</code>, so an MSRV
+bump affects both. If <code>crustywad</code>’s version moves outside <code>crustywad-cli</code>’s pinned caret
+range as a result, update that pin too.</li>
 </ul>
 <hr>
 <h2 id="versioning-model"><a class="header" href="#versioning-model">Versioning Model</a></h2>
-<h3 id="current-state-shared-workspace-version"><a class="header" href="#current-state-shared-workspace-version">Current state: shared workspace version</a></h3>
-<p>Both crates currently use <code>version.workspace = true</code>, inheriting their version from
-<code>[workspace.package]</code> in the root <code>Cargo.toml</code>. A single version bump increments the
-version for both crates simultaneously.</p>
+<h3 id="independent-per-crate-versioning"><a class="header" href="#independent-per-crate-versioning">Independent per-crate versioning</a></h3>
+<p>Per <a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md">ADR-0011</a>,
+each crate carries its own explicit <code>version</code> field in its <code>[package]</code> block rather than
+inheriting from <code>[workspace.package]</code>. <code>release-plz</code> manages each package independently,
+proposing version bumps only for crates whose content has changed since the last release.</p>
 <p><strong>Dependency constraint:</strong> <code>crates/crustywad-cli/Cargo.toml</code> pins the library with an explicit
 caret requirement (e.g., <code>crustywad = { version = "0.1.0", ... }</code>), required by
 <code>cargo-deny</code>’s <code>wildcards = "deny"</code> setting (which disallows <code>*</code> version requirements).
-<code>version = "0.1.0"</code> resolves as <code>^0.1.0</code> (<code>&gt;=0.1.0, &lt;0.2.0</code>), so patch bumps within
-the same minor series are satisfied automatically. When the workspace version moves outside
-that range (e.g., to <code>0.2.0</code>), this field must be updated manually before merging —
+<code>version = "0.1.0"</code> resolves as <code>^0.1.0</code> (<code>&gt;=0.1.0, &lt;0.2.0</code>), so patch bumps to <code>crustywad</code>
+within the same minor series are satisfied automatically. When <code>crustywad</code>’s version moves
+outside that range (e.g., to <code>0.2.0</code>), this field must be updated manually before merging —
 otherwise <code>cargo build</code> and crates.io publishing will fail.</p>
-<h3 id="planned-independent-per-crate-versioning"><a class="header" href="#planned-independent-per-crate-versioning">Planned: independent per-crate versioning</a></h3>
-<p>Per <a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md">ADR-0011</a>,
-the chosen long-term strategy is independent per-crate versioning: each crate will carry
-its own explicit <code>version</code> field rather than inheriting from the workspace. This migration
-is a required step before enabling crates.io publishing. Until then, both crates share the
-workspace version as described above.</p>
 <hr>
 <h2 id="release-cadence"><a class="header" href="#release-cadence">Release Cadence</a></h2>
 <p>Releases are automated by <a href="https://release-plz.dev/">release-plz</a>, which monitors
