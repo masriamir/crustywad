@@ -1,6 +1,6 @@
 [workspace]
 release = true
-publish = false
+publish = true
 changelog_update = true
 allow_dirty = false
 semver_check = false
@@ -8,11 +8,11 @@ semver_check = false
 [[package]]
 name = "crustywad"
 release = true
-publish = false
+publish = true
 changelog_path = "crates/crustywad/CHANGELOG.md"
 
 [[package]]
 name = "crustywad-cli"
 release = true
-publish = false
+publish = true
 changelog_path = "crates/crustywad-cli/CHANGELOG.md"
