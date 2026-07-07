@@ -1,6 +1,6 @@
 # ADR-0009: `cargo-fuzz` harness for WAD parser
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-14
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/44

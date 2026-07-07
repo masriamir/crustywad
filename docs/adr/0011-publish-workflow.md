@@ -1,6 +1,6 @@
 # ADR-0011: crates.io publish workflow
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-14
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/48
