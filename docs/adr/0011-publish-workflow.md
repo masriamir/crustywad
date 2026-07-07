@@ -129,10 +129,10 @@ Under independent versioning, each crate has its own `version` field in its
 each package independently, proposing version bumps only for crates whose
 content has changed since the last release.
 
-**Required migration:** Both crates currently inherit the workspace version via
-`version.workspace = true`. Before enabling publishing, replace this with an
+**Migration:** completed in PR #171. Both crates previously inherited the
+workspace version via `version.workspace = true`; this was replaced with an
 explicit `version` field in each crate's `[package]` block, starting from the
-current workspace version:
+then-current workspace version:
 
 ```toml
 # in crates/crustywad/Cargo.toml and crates/crustywad-cli/Cargo.toml:

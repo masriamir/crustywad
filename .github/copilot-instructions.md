@@ -224,7 +224,7 @@ The main CI pipeline (`.github/workflows/ci.yml`) runs:
 
 CodeQL static analysis (`.github/workflows/codeql.yml`) runs on push, pull request, and weekly on a schedule. It uses the advanced configuration in `.github/codeql/codeql-config.yml` which enables the `security-extended` and `security-and-quality` query suites.
 
-**Version bump:** `crates/crustywad-cli/Cargo.toml` declares the `crustywad` path dependency with an explicit `version` field (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`). `cargo-deny` enforces `wildcards = "deny"` and requires this, but it does not inherit `crustywad`'s version automatically. Crates are versioned independently (ADR-0011 §3, no `version.workspace = true`), so when bumping `version` in `crates/crustywad/Cargo.toml`, update this field to match or the `security-deny` CI job will fail.
+**Version bump:** `crates/crustywad-cli/Cargo.toml` declares the `crustywad` path dependency with an explicit `version` field (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`), which Cargo treats as a caret requirement — patch/compatible bumps to `crustywad`'s version need no change here. `cargo-deny` enforces `wildcards = "deny"` and requires this field, but it does not inherit `crustywad`'s version automatically. Crates are versioned independently (ADR-0011 §3, no `version.workspace = true`); update this field only when `crustywad`'s version moves outside the current caret range (e.g. `0.1.z` → `0.2.0`), or the `security-deny` CI job will fail.
 
 ## Roadmap context
 

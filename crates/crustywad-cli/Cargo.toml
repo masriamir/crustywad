@@ -21,8 +21,9 @@ mmap = ["crustywad/mmap"]
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-# version must match crustywad's own version (crates are versioned independently,
-# per ADR-0011 §3) — cargo-deny enforces wildcards = "deny"
+# version is a caret requirement; update only when crustywad's version moves
+# outside the allowed range (e.g. 0.1.z -> 0.2.0), per ADR-0011 §3 (crates are
+# versioned independently) — cargo-deny enforces wildcards = "deny"
 # write feature required for WadBuilder
 crustywad = { path = "../crustywad", version = "0.1.0", features = ["write"] }
 
