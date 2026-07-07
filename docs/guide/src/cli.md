@@ -69,6 +69,58 @@ error: broken.wad: invalid WAD magic
 
 The error message goes to stderr in human format; the exit code is `2`.
 
+### merge
+
+Combine multiple WAD files into one, writing lumps in the order the input
+files are given.
+
+```text
+$ cwad merge base.wad patch.wad --output combined.wad
+```
+
+Use `--kind` to set the output WAD kind (`iwad` or `pwad`; default `pwad`).
+Lump-name or size validation failures during the write exit `3`.
+
+### diff
+
+Compare two WAD files lump by lump: same lump names, same count of each name,
+and same data for each occurrence. Exits `0` if identical, `1` if any
+differences are found, or `2` on I/O or parse error.
+
+```text
+$ cwad diff doom.wad doom-modified.wad
+Only in doom.wad:  DEMO1
+Changed:           E1M1
+```
+
+### extract
+
+Extract lumps from a WAD file into a directory (which must already exist).
+Extracts every lump by default, or only the occurrences of one lump name via
+`--lump`/`-l`. Each lump is written as `<SANITIZED_NAME>.bin`; when two or
+more lumps sanitize to the same filename, later ones get a `_1`, `_2`, ...
+suffix.
+
+```text
+$ cwad extract doom.wad --output ./out
+PLAYPAL.bin
+COLORMAP.bin
+...
+```
+
+### build
+
+Build a new WAD file from `NAME=FILE` lump specifications, added to the
+output in the order listed.
+
+```text
+$ cwad build --output custom.wad E1M1=e1m1.lmp PLAYPAL=playpal.lmp
+wrote custom.wad: kind=Pwad lumps: 2
+```
+
+Use `--kind iwad` to build an IWAD instead of the default PWAD. Lump-name or
+size validation failures exit `3`.
+
 ## Global options
 
 | Flag | Short | Description |
@@ -97,7 +149,7 @@ warning: unrecognized WAD magic `XWAD`
 
 ## Output formats
 
-All three subcommands support the `--format` / `-F` flag.
+All subcommands support the `--format` / `-F` flag.
 
 ### human (default)
 
@@ -173,8 +225,9 @@ true
 | Code | Meaning |
 |---|---|
 | `0` | Success |
+| `1` | Differences found (`diff` only) |
 | `2` | I/O error or parse error (malformed WAD, missing file, etc.) |
-| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument) |
+| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`/`merge`) |
 
 ## Man page
 

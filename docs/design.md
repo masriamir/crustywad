@@ -8,7 +8,8 @@
 
 - Provide a small, safe Rust library for Doom WAD file I/O.
 - Start with reliable header and lump-directory reading.
-- Keep the API ready for future write support, async I/O, zero-copy parsing, and optional memory mapping.
+- Provide write support (`WadBuilder`, behind the `write` feature) and optional zero-copy memory mapping (behind the `mmap` feature).
+- Keep the API ready for future async I/O and borrowed-view zero-copy parsing.
 
 ## Non-goals
 
@@ -65,19 +66,20 @@ See [Data flow](diagrams/data-flow.md) for the write pipeline flowchart and the 
 
 ## Milestones
 
-1. Header and directory parsing
-2. Map lump record parsing
+1. ✅ Header and directory parsing
+2. 🔜 Map lump record parsing
 3. Graphics and patches
 4. Texture composition
 5. Audio lumps
-6. Writing support
+6. ✅ Writing support
 
 ## Testing strategy
 
 - Synthetic WAD builders for offline unit and integration tests.
 - Optional Freedoom fixture coverage for real-world inputs.
-- `proptest` for parser invariants.
-- Future fuzzing and criterion benchmarks once the API surface expands.
+- `proptest` for parser invariants (ADR-0010).
+- `cargo-fuzz` targets for the read and write parsers (ADR-0009).
+- Criterion benchmarks for read and write hot paths, with trend reporting on GitHub Pages (ADR-0012).
 
 ## Code conventions
 

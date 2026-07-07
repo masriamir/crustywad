@@ -4,7 +4,7 @@
 
 `crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is dual-licensed under MIT OR Apache-2.0.
 
-**Current milestone (1):** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, and a small CLI binary for dogfooding.
+**Current state:** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, WAD serialization (`write` feature), zero-copy memory-mapped loading (`mmap` feature), a `cwad` CLI with `info`/`list`/`validate`/`merge`/`diff`/`extract`/`build` subcommands, `cargo-fuzz` targets, and Criterion benchmarking infrastructure.
 
 ## Workspace layout
 
@@ -26,7 +26,8 @@ crates/
       map_records.rs   # Integration tests for typed map-record parsing
       freedoom.rs      # Optional Freedoom fixture tests (feature = "freedoom-tests")
   crustywad-cli/       # CLI binary crate (`cwad`)
-    src/main.rs        # `info` and `list` subcommands via clap
+    src/main.rs        # `info`/`list`/`validate`/`merge`/`diff`/`extract`/`build` subcommands via clap
+    src/cli.rs         # CLI argument types (also included by build.rs for shell completions)
 docs/
   design.md            # Goals, data model, read pipeline, feature plan
   adr/                 # Architecture decision records
@@ -49,6 +50,10 @@ tools/
   workflows/ci.yml            # Main CI pipeline
   workflows/codeql.yml        # CodeQL security analysis
   workflows/release-plz.yml  # Automated release PR workflow
+  workflows/bench.yml         # Criterion benchmark trend reporting to GitHub Pages
+  workflows/fuzz.yml          # cargo-fuzz targets
+  workflows/pages.yml         # mdBook guide deployment to GitHub Pages
+  workflows/release-artifacts.yml # Cross-platform binary release artifacts
 ```
 
 ## Development workflow
