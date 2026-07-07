@@ -86,34 +86,29 @@ Rules:
   the declared MSRV on every PR. The toolchain version is pinned explicitly in
   `.github/workflows/ci.yml` and does not auto-track `[workspace.package].rust-version`. A
   PR that raises the MSRV must update both the `rust-version` field in `Cargo.toml` and the
-  `toolchain:` pin in the workflow file, then bump the workspace version (a minor
-  bump, since all workspace crates share a single version via `version.workspace = true`).
+  `toolchain:` pin in the workflow file, then bump the version of each affected crate (a
+  minor bump) — both crates currently share `rust-version.workspace = true`, so an MSRV
+  bump affects both. If `crustywad`'s version moves outside `crustywad-cli`'s pinned caret
+  range as a result, update that pin too.
 
 ---
 
 ## Versioning Model
 
-### Current state: shared workspace version
+### Independent per-crate versioning
 
-Both crates currently use `version.workspace = true`, inheriting their version from
-`[workspace.package]` in the root `Cargo.toml`. A single version bump increments the
-version for both crates simultaneously.
+Per [ADR-0011](https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md),
+each crate carries its own explicit `version` field in its `[package]` block rather than
+inheriting from `[workspace.package]`. `release-plz` manages each package independently,
+proposing version bumps only for crates whose content has changed since the last release.
 
 **Dependency constraint:** `crates/crustywad-cli/Cargo.toml` pins the library with an explicit
 caret requirement (e.g., `crustywad = { version = "0.1.0", ... }`), required by
 `cargo-deny`'s `wildcards = "deny"` setting (which disallows `*` version requirements).
-`version = "0.1.0"` resolves as `^0.1.0` (`>=0.1.0, <0.2.0`), so patch bumps within
-the same minor series are satisfied automatically. When the workspace version moves outside
-that range (e.g., to `0.2.0`), this field must be updated manually before merging —
+`version = "0.1.0"` resolves as `^0.1.0` (`>=0.1.0, <0.2.0`), so patch bumps to `crustywad`
+within the same minor series are satisfied automatically. When `crustywad`'s version moves
+outside that range (e.g., to `0.2.0`), this field must be updated manually before merging —
 otherwise `cargo build` and crates.io publishing will fail.
-
-### Planned: independent per-crate versioning
-
-Per [ADR-0011](https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md),
-the chosen long-term strategy is independent per-crate versioning: each crate will carry
-its own explicit `version` field rather than inheriting from the workspace. This migration
-is a required step before enabling crates.io publishing. Until then, both crates share the
-workspace version as described above.
 
 ---
 
