@@ -1,6 +1,6 @@
 [package]
 name = "crustywad-cli"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -21,7 +21,8 @@ mmap = ["crustywad/mmap"]
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-# version must match workspace version — cargo-deny enforces wildcards = "deny"
+# version must match crustywad's own version (crates are versioned independently,
+# per ADR-0011 §3) — cargo-deny enforces wildcards = "deny"
 # write feature required for WadBuilder
 crustywad = { path = "../crustywad", version = "0.1.0", features = ["write"] }
 
