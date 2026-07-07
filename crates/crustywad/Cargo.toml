@@ -36,6 +36,10 @@ criterion = { version = "0.7", features = ["html_reports"] }
 proptest.workspace = true
 tempfile.workspace = true
 
+[[example]]
+name = "write_wad"
+required-features = ["write"]
+
 [[bench]]
 name = "read_ops"
 harness = false

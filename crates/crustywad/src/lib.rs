@@ -699,6 +699,30 @@ impl Wad {
     ///
     /// All lump data is copied into the builder. Memory usage roughly doubles
     /// during the conversion.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crustywad::Wad;
+    ///
+    /// # let mut bytes = Vec::new();
+    /// # bytes.extend_from_slice(b"IWAD");
+    /// # bytes.extend_from_slice(&1_i32.to_le_bytes());
+    /// # bytes.extend_from_slice(&16_i32.to_le_bytes());
+    /// # bytes.extend_from_slice(&[1, 2, 3, 4]);
+    /// # bytes.extend_from_slice(&12_i32.to_le_bytes());
+    /// # bytes.extend_from_slice(&4_i32.to_le_bytes());
+    /// # bytes.extend_from_slice(b"TEST\0\0\0\0");
+    /// let wad = Wad::from_bytes(bytes)?;
+    ///
+    /// let mut builder = wad.to_builder();
+    /// builder.add_lump("EXTRA", b"more data");
+    /// let rebuilt = builder.build()?;
+    ///
+    /// let reparsed = Wad::from_bytes(rebuilt)?;
+    /// assert_eq!(reparsed.lump_count(), 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[cfg(feature = "write")]
     #[must_use]
     pub fn to_builder(&self) -> write::WadBuilder {
