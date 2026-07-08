@@ -224,17 +224,17 @@ Typical flow: pick a `Ready` + `Now` item → branch by its issue number (below)
 
 ## Git branching workflow
 
-All feature and bugfix work branches from `main` after a `git pull`. Branches are tied to GitHub issue numbers.
+All work branches from `main` after a `git pull`. A branch is named `<type>/<slug>`; the slug is descriptive (never a bare issue number) and is prefixed with the issue number when a tracking issue exists.
 
 | Branch type | Template | Example |
 |---|---|---|
-| Feature | `feature/###-short-desc` | `feature/42-mmap-support` |
-| Bugfix | `bugfix/###-short-desc` | `bugfix/17-header-parse` |
-| Hotfix | `hotfix/###-short-desc` | `hotfix/55-oob-read` |
-| Docs | `docs/###-short-desc` or `docs/short-desc` | `docs/197-project-workflow` |
-| Chore | `chore/###-short-desc` or `chore/short-desc` | `chore/tidy-ci` |
+| Feature | `feature/###-short-desc` (or `feature/short-desc`) | `feature/42-mmap-support` |
+| Bugfix | `bugfix/###-short-desc` (or `bugfix/short-desc`) | `bugfix/17-header-parse` |
+| Hotfix | `hotfix/###-short-desc` (or `hotfix/short-desc`) | `hotfix/55-oob-read` |
+| Docs | `docs/###-short-desc` (or `docs/short-desc`) | `docs/197-project-workflow` |
+| Chore | `chore/###-short-desc` (or `chore/short-desc`) | `chore/tidy-ci` |
 
-`###` is the GitHub issue number, included when a tracking issue exists (encouraged for traceability); a descriptive slug is required. The number may be omitted (the `lefthook.yml` pre-push hook accepts a bare slug), which is common for small `docs/` and `chore/` branches.
+`###` is the GitHub issue number. It is optional in the pre-push hook but strongly encouraged for `feature`/`bugfix`/`hotfix` branches, which are issue-driven; `docs`/`chore` branches commonly omit it. A descriptive slug is always required — a bare number such as `feature/42` is rejected.
 
 **Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`vX.Y.Z`) from Conventional Commits on `main`. When publishing is enabled, merge the `release-plz` release PR to ship.
 

@@ -3,7 +3,7 @@ pre-push:
     branch-name:
       run: |
         branch=$(git rev-parse --abbrev-ref HEAD)
-        pattern='^(main|(feature|bugfix|hotfix|docs|chore)/[a-z0-9][a-z0-9_-]*)$'
+        pattern='^(main|(feature|bugfix|hotfix|docs|chore)/([a-z][a-z0-9_-]*|[0-9][a-z0-9_-]*[a-z][a-z0-9_-]*))$'
         if ! echo "$branch" | grep -qE "$pattern"; then
           echo "Branch '$branch' does not follow naming conventions."
           echo "Use: <type>/<slug> where type is feature|bugfix|hotfix|docs|chore (issue number optional, e.g. feature/42-mmap), or main"
