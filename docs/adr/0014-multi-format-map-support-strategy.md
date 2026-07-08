@@ -1,6 +1,6 @@
 # ADR-0014: Multi-format map support strategy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-08
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/53
