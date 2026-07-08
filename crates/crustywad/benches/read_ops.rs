@@ -21,13 +21,15 @@ fn bench_parse_from_bytes(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse/from_bytes_strict");
     for (label, bytes) in &cases {
         group.throughput(Throughput::Bytes(bytes.len() as u64));
-        // The 16 MB `large` case can't fit its samples in the default 5s
-        // measurement window because setup re-clones the buffer each
-        // iteration (Wad::from_bytes takes ownership); give it more time
-        // instead of shrinking the other cases' sample size.
-        if *label == "large" {
-            group.measurement_time(Duration::from_secs(10));
-        }
+        // BenchmarkGroup::measurement_time is a sticky group-level setting,
+        // so it's set explicitly on every case (not just `large`) rather
+        // than relying on `large` being last in `cases` — otherwise a
+        // reorder or a new case appended after `large` would silently
+        // inherit its 10s window. The 16 MB `large` case can't fit its
+        // samples in the default 5s window because setup re-clones the
+        // buffer each iteration (Wad::from_bytes takes ownership).
+        let measurement_secs = if *label == "large" { 10 } else { 5 };
+        group.measurement_time(Duration::from_secs(measurement_secs));
         group.bench_with_input(BenchmarkId::from_parameter(label), bytes, |b, bytes| {
             b.iter_batched(
                 || bytes.clone(),
@@ -41,9 +43,8 @@ fn bench_parse_from_bytes(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse/from_bytes_lenient");
     for (label, bytes) in &cases {
         group.throughput(Throughput::Bytes(bytes.len() as u64));
-        if *label == "large" {
-            group.measurement_time(Duration::from_secs(10));
-        }
+        let measurement_secs = if *label == "large" { 10 } else { 5 };
+        group.measurement_time(Duration::from_secs(measurement_secs));
         group.bench_with_input(BenchmarkId::from_parameter(label), bytes, |b, bytes| {
             b.iter_batched(
                 || bytes.clone(),
