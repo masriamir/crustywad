@@ -53,7 +53,7 @@ tools/
   workflows/bench.yml         # Criterion benchmark trend reporting to GitHub Pages
   workflows/fuzz.yml          # cargo-fuzz targets
   workflows/pages.yml         # mdBook guide deployment to GitHub Pages
-  workflows/release-artifacts.yml # Cross-platform binary release artifacts
+  workflows/release.yml # dist: cross-platform cwad binaries + installers (CLI releases)
 ```
 
 ## Development workflow
@@ -264,7 +264,7 @@ CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `s
 
 `bench` (`.github/workflows/bench.yml`) runs on push to `main` and `workflow_dispatch`. It is **non-blocking** (never gates merges). On each run it uploads a downloadable Criterion HTML artifact (90-day retention) and commits benchmark trend data to the `gh-pages` branch at `dev/bench/`. The `pages.yml` guide deploy and `bench.yml` share the `gh-pages` concurrency group so they never write to the branch simultaneously.
 
-`release-plz` (`.github/workflows/release-plz.yml`) runs two jobs on push to `main`: `release-pr` opens/updates the release PR, and `release` publishes any crate whose version is not yet on crates.io (then tags and creates GitHub releases). Publishing authenticates via crates.io Trusted Publishing (OIDC) — there is no stored `CARGO_REGISTRY_TOKEN` secret. The `release` job only succeeds once both crates exist on crates.io and the repo is linked as a Trusted Publisher; the initial `v0.1.0` publish is bootstrapped manually.
+`release-plz` (`.github/workflows/release-plz.yml`) runs two jobs on push to `main`, authenticated as a **GitHub App** (`RELEASE_PLZ_APP_ID` / `RELEASE_PLZ_APP_PRIVATE_KEY`) so its PRs and tags trigger downstream workflows. `release-pr` opens/updates the release PR; `release` publishes to crates.io via Trusted Publishing (OIDC — no stored `CARGO_REGISTRY_TOKEN`) and pushes tags. It does **not** create GitHub Releases (`git_release_enable = false`). Binary releases of the `cwad` CLI are handled by **dist** (`.github/workflows/release.yml`), which triggers on the `crustywad-cli-v*` tag and creates the GitHub Release with cross-platform binaries and installers. The library crate is excluded from dist (`[package.metadata.dist] dist = false`).
 
 **Version bump:** `crates/crustywad-cli/Cargo.toml` pins the `crustywad` path dependency with an explicit version (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`), which Cargo treats as a caret requirement — patch/compatible bumps to `crustywad`'s version need no change here. `cargo-deny` requires this field (`wildcards = "deny"`) but it does not inherit `crustywad`'s version automatically. Crates are versioned independently (ADR-0011 §3, no `version.workspace = true`); update this field only when `crustywad`'s version moves outside the current caret range (e.g. `0.1.z` → `0.2.0`), or `cargo deny check` will fail.
 

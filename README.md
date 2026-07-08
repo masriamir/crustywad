@@ -30,6 +30,8 @@ Integration tests for each layer live in `crates/crustywad/tests/`:
 
 ## Installation
 
+Library:
+
 ```toml
 [dependencies]
 crustywad = "0.1"
@@ -41,6 +43,28 @@ Enable optional features as needed (see [Feature flags](#feature-flags) below):
 [dependencies]
 crustywad = { version = "0.1", features = ["write", "mmap"] }
 ```
+
+CLI (`cwad`) — any of:
+
+```bash
+# From source via cargo
+cargo install crustywad-cli
+
+# Prebuilt binary via cargo-binstall (falls back to source if unavailable)
+cargo binstall crustywad-cli
+
+# Prebuilt binary via the platform installer script (from the GitHub Release)
+# Linux/macOS:
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/masriamir/crustywad/releases/latest/download/crustywad-cli-installer.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://github.com/masriamir/crustywad/releases/latest/download/crustywad-cli-installer.ps1 | iex
+```
+
+> **Note:** The prebuilt-binary options (`cargo binstall` and the installer scripts) require a release produced by the binary-release pipeline, available from **v0.1.1 onward**. For **v0.1.0**, install from source with `cargo install crustywad-cli`.
 
 ## Workspace layout
 
