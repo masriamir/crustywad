@@ -44,5 +44,6 @@ implementation begins.**
 | [0011](0011-publish-workflow.md) | crates.io publish workflow | Accepted |
 | [0012](0012-criterion-benchmarking-infrastructure.md) | Criterion benchmarking infrastructure, GitHub Pages trend reporting, and CI integration | Accepted |
 | [0013](0013-lump-by-name-lookup-strategy.md) | `lump_by_name` lookup strategy | Accepted |
+| [0016](0016-parser-hardening-policy.md) | Parser and assembly hardening policy | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
