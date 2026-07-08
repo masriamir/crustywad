@@ -37,7 +37,7 @@ These do not line up one-to-one. The clearest example: **Heretic maps use the
 exact same binary layout as Doom maps** — 10-byte things, 14-byte linedefs, and
 identical `Vertex`/`Sidedef`/`Sector` records. Heretic is a different *game* but
 not a different *map format*. Conversely, a single Hexen IWAD can contain both
-Hexen-binary maps and (in modern ports) UDMF maps. `WadKind` (`lib.rs:96`) sits
+Hexen-binary maps and (in modern ports) UDMF maps. `WadKind` (`lib.rs:97`) sits
 on a third axis entirely — it is the container kind (`Iwad`/`Pwad`/`Unknown`) and
 identifies neither game nor map format.
 
@@ -87,8 +87,10 @@ UDMF sidesteps the helper entirely because it is text.
 
 Two independent implementations of "trim an 8-byte NUL-padded Doom name" exist:
 `Lump::name` / `decode_name` in `lib.rs` (strict-validates ASCII, used for
-directory names) and `Name8::as_str_lossy` in `map.rs` (always lossy, used for
-in-record texture names). Every new format that references texture/flat names
+directory names) and `Name8::as_str_lossy` in `map.rs` (always decodes via
+`String::from_utf8_lossy` — lossless for pure ASCII, replacing only non-ASCII
+bytes — used for in-record texture names). Every new format that references
+texture/flat names
 will reach for `Name8`, so this fork is worth resolving before it spreads.
 
 ## Decision drivers
