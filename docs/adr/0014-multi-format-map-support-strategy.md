@@ -76,12 +76,16 @@ definitions they extend.
 ### Current parsing entry point
 
 `parse_records::<T>(bytes) -> Result<Vec<T>, MapParseError>` is constrained to
-`T: for<'a> BinRead<Args<'a> = ()>`. This constraint is **sufficient for every
-binary map format**: Doom, Hexen, and Doom 64 records are all fixed-size,
-context-free `binrw` structs, so the same helper decodes all of them without
-change. The `Args<'a> = ()` bound only becomes a limitation for formats that need
-runtime-parameterized record parsing — which none of the binary map formats do.
-UDMF sidesteps the helper entirely because it is text.
+`T: for<'a> BinRead<Args<'a> = ()>`. This constraint is **sufficient for the
+binary map formats whose layouts are settled**: Doom and Hexen records are
+fixed-size, context-free `binrw` structs, so the same helper decodes both without
+change. Doom 64 is *expected* to fit the same mould, but its record layouts are
+not settled by this ADR (see the Doom 64 note above) — the `Args<'a> = ()`
+assumption for it is contingent on confirmation in #54. The `Args<'a> = ()` bound
+only becomes a limitation for a format that needs runtime-parameterized record
+parsing, which none of the confirmed binary map formats require; if #54 finds
+Doom 64 needs parse context, that is the trigger to revisit the bound (see the
+revisit condition). UDMF sidesteps the helper entirely because it is text.
 
 ### Name handling duplication
 
