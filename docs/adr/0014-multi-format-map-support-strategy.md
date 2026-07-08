@@ -79,7 +79,7 @@ definitions they extend.
 `T: for<'a> BinRead<Args<'a> = ()>`. This constraint is **sufficient for the
 binary map formats whose layouts are settled**: Doom and Hexen records are
 fixed-size, context-free `binrw` structs, so the same helper decodes both without
-change. Doom 64 is *expected* to fit the same mould, but its record layouts are
+change. Doom 64 is *expected* to fit the same mold, but its record layouts are
 not settled by this ADR (see the Doom 64 note above) — the `Args<'a> = ()`
 assumption for it is contingent on confirmation in #54. The `Args<'a> = ()` bound
 only becomes a limitation for a format that needs runtime-parameterized record
