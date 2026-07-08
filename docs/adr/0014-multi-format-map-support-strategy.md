@@ -137,9 +137,9 @@ layout.
 
 ## Decision drivers
 
-- **ADR-0015 (map-graph assembly, issue #155) is the agreed prerequisite for #17** (see the
-  recommended foundation sequence). Formats must converge on a single assembled
-  map model, not each invent their own.
+- **ADR-0015 (map-graph assembly, issue #155) is the agreed prerequisite for #17.**
+  Formats must converge on a single assembled map model, not each invent their
+  own (see the *Dependency* note under Consequences).
 - **Pre-1.0 is the cheapest window for a breaking reorganization** — only eight
   record types and a handful of consumers exist today.
 - **Reuse where layouts are identical** (Heretic == Doom) and **isolate where
