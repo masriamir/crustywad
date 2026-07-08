@@ -92,10 +92,10 @@ revisit condition). UDMF sidesteps the helper entirely because it is text.
 Two independent implementations of "trim an 8-byte NUL-padded Doom name" exist:
 `Lump::name` / `decode_name` in `lib.rs` (strict-validates ASCII, used for
 directory names) and `Name8::as_str_lossy` in `map.rs` (always decodes via
-`String::from_utf8_lossy` — lossless for pure ASCII, replacing only non-ASCII
-bytes — used for in-record texture names). Every new format that references
-texture/flat names
-will reach for `Name8`, so this fork is worth resolving before it spreads.
+`String::from_utf8_lossy`, which replaces invalid UTF-8 byte sequences with
+U+FFFD and preserves any valid UTF-8, including pure ASCII — used for in-record
+texture names). Every new format that references texture/flat names will reach
+for `Name8`, so this fork is worth resolving before it spreads.
 
 ## Non-goals
 
