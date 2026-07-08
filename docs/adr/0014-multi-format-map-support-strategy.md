@@ -242,10 +242,12 @@ change, taken now while the surface is small.
 
 ### 4. Keep `parse_records` for all binary formats; give UDMF its own path
 
-`parse_records::<T>` is retained unchanged and is the decoder for every binary
-record type across Doom, Hexen, and Doom 64 (all satisfy
-`BinRead<Args<'a> = ()>`). UDMF does **not** use it. UDMF gets a dedicated text
-entry point and a dedicated error type, introduced in #57/#58:
+`parse_records::<T>` is retained unchanged and is the decoder for the binary
+record types whose layouts are settled — Doom and Hexen, which satisfy
+`BinRead<Args<'a> = ()>` — and is expected to cover Doom 64 on the same terms,
+contingent on confirmation of its layouts (and thus the `Args<'a> = ()`
+assumption) in #54. UDMF does **not** use it. UDMF gets a dedicated text entry
+point and a dedicated error type, introduced in #57/#58:
 
 ```rust
 // map::udmf (illustrative; finalized in #57/#58)
