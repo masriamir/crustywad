@@ -37,7 +37,7 @@ These do not line up one-to-one. The clearest example: **Heretic maps use the
 exact same binary layout as Doom maps** — 10-byte things, 14-byte linedefs, and
 identical `Vertex`/`Sidedef`/`Sector` records. Heretic is a different *game* but
 not a different *map format*. Conversely, a single Hexen IWAD can contain both
-Hexen-binary maps and (in modern ports) UDMF maps. `WadKind` (`lib.rs:97`) sits
+Hexen-binary maps and (in modern ports) UDMF maps. `WadKind` (in `lib.rs`) sits
 on a third axis entirely — it is the container kind (`Iwad`/`Pwad`/`Unknown`) and
 identifies neither game nor map format.
 
