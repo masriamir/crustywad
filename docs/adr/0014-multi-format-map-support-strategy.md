@@ -137,7 +137,7 @@ layout.
 
 ## Decision drivers
 
-- **`#155` map-graph assembly is the agreed prerequisite for #17** (see the
+- **ADR-0015 (map-graph assembly, issue #155) is the agreed prerequisite for #17** (see the
   recommended foundation sequence). Formats must converge on a single assembled
   map model, not each invent their own.
 - **Pre-1.0 is the cheapest window for a breaking reorganization** — only eight
@@ -154,7 +154,7 @@ layout.
    keep single `Thing`/`Linedef` types, widen them to hold every format's fields,
    and thread a `format` flag through parsing to decide which fields are valid.
 2. **Per-format record modules unified by a `MapFormat` enum and a detection
-   layer, all converging on the `#155` assembled-map graph** — reorganize `map`
+   layer, all converging on the ADR-0015 assembled-map graph** — reorganize `map`
    into `common` (shared records) plus one submodule per divergent format.
 3. **Fully separate, self-contained modules (or crates) per game with no shared
    record types** — duplicate `Vertex`/`Sidedef`/`Sector`/etc. into each.
@@ -165,7 +165,7 @@ Chosen option: **Option 2 — per-format record modules unified by a `MapFormat`
 enum and a detection layer.** It is the only option that both reuses the
 byte-identical records (Heretic, and Hexen's six unchanged records) and cleanly
 isolates the genuinely divergent pieces, while keeping a single convergence point
-(the `#155` graph) for all downstream consumers.
+(the ADR-0015 graph) for all downstream consumers.
 
 Concretely:
 
@@ -213,9 +213,9 @@ The public detection entry point has the shape:
 pub fn detect_map_format(group: &MapGroup) -> MapFormat;
 ```
 
-where `MapGroup` is the "one map's lumps" type **defined by ADR #155**, not by
-this ADR. Until #155 lands, detection is exercised against a provisional
-slice-of-lumps input; the final signature binds to `MapGroup` when #155 is
+where `MapGroup` is the "one map's lumps" type **defined by ADR-0015** (the map-graph ADR for issue #155), not by
+this ADR. Until ADR-0015 lands, detection is exercised against a provisional
+slice-of-lumps input; the final signature binds to `MapGroup` when ADR-0015 is
 accepted. Heretic is deliberately *not* a `MapFormat` value: it is
 indistinguishable from Doom by map bytes alone, so game identity (if ever needed)
 is tracked separately (see Non-goals).
@@ -264,9 +264,9 @@ pub enum UdmfParseError {
 `UdmfParseError` is separate from both `ParseError` (container-level) and
 `MapParseError` (binary-record-level) because neither models a text position, and
 folding text errors into a binary error enum would misrepresent both. UDMF's
-float coordinates mean the `#155` assembled-map model must accommodate
+float coordinates mean the ADR-0015 assembled-map model must accommodate
 floating-point geometry, not only `i16`; this ADR flags that requirement for
-#155 rather than resolving it here.
+ADR-0015 rather than resolving it here.
 
 ### 5. Consolidate Doom-name decoding
 
@@ -299,7 +299,7 @@ recovery rules, consistent with ADR-0003.
 - **Neutral** — `MapFormat` is `#[non_exhaustive]`; downstream `match`es must
   carry a wildcard arm, which is the intended forward-compatibility trade-off.
 - **Dependency** — `detect_map_format` and any per-map API bind to the `MapGroup`
-  type from ADR #155. **#155 must be accepted before this ADR's detection surface
+  type from ADR-0015. **ADR-0015 must be accepted before this ADR's detection surface
   is finalized;** the record reorganization (items 3, 5) has no such dependency
   and can land first.
 - **Hardening** — UDMF adds a text parser (a new, unbounded-input attack surface:
@@ -350,14 +350,14 @@ recovery rules, consistent with ADR-0003.
 - Bad, because `Vertex`/`Sidedef`/`Sector`/`Seg`/`Subsector`/`Node` are identical
   across Doom, Heretic, and Hexen, so this duplicates six record types (and their
   tests and docs) several times over.
-- Bad, because downstream consumers (the `#155` graph, a future renderer) would
+- Bad, because downstream consumers (the ADR-0015 graph, a future renderer) would
   need per-game conversions for records that are literally the same bytes.
 
 ## More information
 
 - Tracking spike: #53. Blocks #54 (Doom 64), #55 (Hexen), #56 (Heretic),
   #57–#60 (UDMF spike/read/convert/write).
-- Prerequisite: ADR for #155 (map-graph assembly) — defines the `MapGroup` /
+- Prerequisite: ADR-0015 (map-graph assembly, issue #155) — defines the `MapGroup` /
   assembled-map model that `detect_map_format` and per-map APIs bind to, and must
   accommodate UDMF floating-point geometry.
 - Related ADRs: ADR-0002 (binrw and typed errors), ADR-0003 (default to strict
