@@ -97,6 +97,44 @@ bytes — used for in-record texture names). Every new format that references
 texture/flat names
 will reach for `Name8`, so this fork is worth resolving before it spreads.
 
+## Non-goals
+
+This ADR decides the **map data format** axis (byte/text layout). It deliberately
+does **not** decide two adjacent concerns:
+
+- **Game/engine semantic tables** — the *meaning* of a record's `special` / `type`
+  values (thing-type IDs, linedef and sector special tables). These differ by
+  game (Doom vs Heretic) and by engine, and are handled by later per-format /
+  per-game work, not by this format-layout decision.
+- **Engine / compatibility level** — a *third* axis, distinct from both
+  `WadKind` (container) and `MapFormat` (layout): the source-port compatibility a
+  map targets, e.g. **vanilla → Boom → MBF/MBF21 → ZDoom-in-Doom-format**. It
+  governs which `special` numbers are valid and how they are interpreted, but it
+  does **not** change byte layout.
+
+  **Boom is the worked example.** A Boom-compatible map uses the *byte-identical
+  vanilla Doom binary layout* (10-byte `THINGS`, 14-byte `LINEDEFS`, unchanged
+  `VERTEXES`/`SIDEDEFS`/`SECTORS`). Boom adds only *new values* in the existing
+  `special`/`type` fields (generalized linedef types, extra sector effects, deep
+  water, friction, scrollers). Therefore Boom is **`MapFormat::Doom` plus
+  extended engine semantics — never a new `MapFormat` variant.** Like Heretic,
+  it is **not auto-detectable from the map lumps** (a Boom map carries no
+  `BEHAVIOR` or `TEXTMAP` marker; compatibility is declared by the author /
+  complevel), which is the same lesson `detect_map_format` already draws for
+  Heretic. Implementers should model Boom/MBF on the engine-level axis, not by
+  extending `MapFormat`.
+
+  Boom-era **auxiliary lumps** (`ANIMATED`, `SWITCHES`, `TRANMAP`, `COLORMAP`)
+  are new binary formats, but they belong to the graphics/texture/animation
+  domain (later milestones, ~#156/#157), not to map geometry, and are out of
+  scope here too.
+
+The engine-level axis does not need a representation *now* (semantics are
+deferred), but it is named here so it is not later mistaken for a `MapFormat`
+variant. `MapFormat` being `#[non_exhaustive]` is for genuinely new *layouts*
+(a future port's on-disk format), not for compatibility levels over the Doom
+layout.
+
 ## Decision drivers
 
 - **`#155` map-graph assembly is the agreed prerequisite for #17** (see the
