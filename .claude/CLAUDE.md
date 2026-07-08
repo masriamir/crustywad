@@ -210,17 +210,31 @@ Scope is encouraged: `feat(map):`, `fix(cli):`, etc.
 
 The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
 
+## Project tracking
+
+Work is tracked on the **[Crustywad](https://github.com/users/masriamir/projects/5)** GitHub Project board — the single source of "what to pick up next". Every roadmap issue lives there with three planning dimensions:
+
+- **Status** (workflow stage): `Backlog` → `Ready` → `In progress` → `In review` → `Done`. Pull work from the `Ready` column; the board moves items to `In review` when their PR opens and to `Done` on merge/close.
+- **Horizon** (priority bucket): `Now` / `Next` / `Later`. This carries planning intent for issues that have no milestone yet (e.g. the editor epic #18 and its long-horizon spikes); it replaces the former `Short Term` / `Future` milestones.
+- **Milestone** (release scope): milestones are **release-scoped** (`v0.2.0`, `v0.3.0`, …), each the set of epics/issues intended to ship together. `release-plz` derives the actual version tags from Conventional Commits on `main`; the milestone only groups scope.
+
+**Epics** (the `epic` label, e.g. #17, #18) use GitHub **native sub-issues**, so they show automatic progress rollup — attach each new format/feature issue as a sub-issue of its epic.
+
+Typical flow: pick a `Ready` + `Now` item → branch by its issue number (below) → open a PR → board shows it `In review` → merge closes the issue and sets `Done`.
+
 ## Git branching workflow
 
 All feature and bugfix work branches from `main` after a `git pull`. Branches are tied to GitHub issue numbers.
 
 | Branch type | Template | Example |
 |---|---|---|
-| Feature | `feature/###` or `feature/###-short-desc` | `feature/42-mmap-support` |
-| Bugfix | `bugfix/###` or `bugfix/###-short-desc` | `bugfix/17-header-parse` |
-| Hotfix | `hotfix/###` or `hotfix/###-short-desc` | `hotfix/55-oob-read` |
+| Feature | `feature/###-short-desc` | `feature/42-mmap-support` |
+| Bugfix | `bugfix/###-short-desc` | `bugfix/17-header-parse` |
+| Hotfix | `hotfix/###-short-desc` | `hotfix/55-oob-read` |
+| Docs | `docs/###-short-desc` or `docs/short-desc` | `docs/197-project-workflow` |
+| Chore | `chore/###-short-desc` or `chore/short-desc` | `chore/tidy-ci` |
 
-`###` is the GitHub issue number. A short slug after the number is optional but encouraged for readability.
+`###` is the GitHub issue number, included when a tracking issue exists (encouraged for traceability); a descriptive slug is required. The number may be omitted (the `lefthook.yml` pre-push hook accepts a bare slug), which is common for small `docs/` and `chore/` branches.
 
 **Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`vX.Y.Z`) from Conventional Commits on `main`. When publishing is enabled, merge the `release-plz` release PR to ship.
 
