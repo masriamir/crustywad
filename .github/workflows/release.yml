@@ -269,16 +269,25 @@ jobs:
           # Remove the granular manifests
           rm -f artifacts/*-dist-manifest.json
       - name: Create GitHub Release
+        # Force bash: the title-from-tag rewrite below uses bash parameter expansion.
+        shell: bash
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
-          ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
           ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
           RELEASE_COMMIT: "${{ github.sha }}"
+          RELEASE_TAG: "${{ needs.plan.outputs.tag }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          # Hand-edit (tolerated via `allow-dirty = ["ci"]`): derive a
+          # "<crate> <version>" title from the tag (crustywad-cli-v0.1.1 ->
+          # crustywad-cli 0.1.1) instead of dist's changelog-derived
+          # "<version> - <date>" announcement_title. Keeps release names
+          # consistent with the pre-dist scheme.
+          RELEASE_TITLE="${RELEASE_TAG/-v/ }"
+
+          gh release create "$RELEASE_TAG" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$RELEASE_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   announce:
     needs:
