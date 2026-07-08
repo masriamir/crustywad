@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.1.0...crustywad-cli-v0.1.1) - 2026-07-08
+
+### Other
+
+- *(release)* ship cwad binaries via dist + GitHub App ([#185](https://github.com/masriamir/crustywad/pull/185))
+- *(release)* enable crates.io publishing via Trusted Publishing (OIDC) ([#182](https://github.com/masriamir/crustywad/pull/182))
+
 ## [0.1.0](https://github.com/masriamir/crustywad/releases/tag/crustywad-cli-v0.1.0) - 2026-07-07
 
 ### Added
