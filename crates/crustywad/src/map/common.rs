@@ -41,7 +41,7 @@ impl Name8 {
 /// A single record from the `SIDEDEFS` lump, associating wall textures with a
 /// linedef face.
 ///
-/// Each sidedef belongs to one face of a [`Linedef`](super::doom::Linedef) and references up to
+/// Each sidedef belongs to one face of a linedef and references up to
 /// three textures: upper (above a portal opening), lower (below a portal
 /// opening), and middle (the main solid wall texture).  For one-sided walls
 /// only `middle_texture` is relevant.  Texture names that begin with `"-"`
@@ -85,7 +85,7 @@ pub struct Sidedef {
 
 /// A single record from the `VERTEXES` lump, representing a 2D map point.
 ///
-/// Vertices are the endpoints of [`Linedef`](super::doom::Linedef)s and the control points for
+/// Vertices are the endpoints of linedefs and the control points for
 /// [`Seg`]s.  All map geometry is built from them.  The `VERTEXES` lump
 /// contains `N` records of exactly 4 bytes each.
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
@@ -100,7 +100,7 @@ pub struct Vertex {
 /// A single record from the `SEGS` lump, representing a wall segment produced
 /// by the BSP builder.
 ///
-/// Segs are the BSP-split fragments of [`Linedef`](super::doom::Linedef)s used by the Doom renderer.
+/// Segs are the BSP-split fragments of linedefs used by the Doom renderer.
 /// The BSP builder may split a linedef into multiple segs when a partition line
 /// crosses it.  Each seg references its parent linedef and which side of that
 /// linedef it belongs to.
@@ -246,7 +246,7 @@ pub struct Sector {
     /// flickering lights (`1`), blinking lights (`2`), damaging floor (`5`,
     /// `7`, `16`), and exit triggers (`11`).
     pub special_type: i16,
-    /// Sector tag, matching the `sector_tag` of [`Linedef`](super::doom::Linedef)s that trigger
+    /// Sector tag, matching the `sector_tag` of linedefs that trigger
     /// actions on this sector.
     ///
     /// `0` means untagged (no linedef will trigger actions on this sector via
