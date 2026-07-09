@@ -38,12 +38,13 @@ The header/directory path is already overflow- and allocation-safe:
 - Header field coercion rejects or clamps negative `numlumps` / `infotableofs`
   (`coerce_i32`), and directory-span multiplication is `checked_mul` with a
   strict-error / lenient-`usize::MAX`-warning fallback (`lib.rs`).
-- The directory allocation `Vec::with_capacity(lump_count)` (`lib.rs:817`) is
-  bounded: in strict mode it is only reached after the out-of-bounds check proves
-  `numlumps * 16 <= len`, and in lenient mode `lump_count` is capped at
-  `available_entries` (`len / 16`). Either way capacity is `O(input length)`.
+- The directory allocation `Vec::with_capacity(lump_count)` (in `parse_bytes`)
+  is bounded: in strict mode it is only reached after the out-of-bounds check
+  proves the directory fits — `info_table_offset + numlumps * 16 <= len` — and in
+  lenient mode `lump_count` is capped at `available_entries`, i.e.
+  `(len - info_table_offset) / 16`. Either way capacity is `O(input length)`.
 - `parse_records`'s `Vec::with_capacity(bytes.len() / record_size)`
-  (`map.rs:484`) is likewise bounded by the input slice length.
+  (in `map.rs`) is likewise bounded by the input slice length.
 - The parser is fully **iterative** — there is no recursion in any current parse
   path, so no stack-overflow surface exists today.
 - ADR-0009's `fuzz_wad_lenient` target already asserts a bound on warning-vector
