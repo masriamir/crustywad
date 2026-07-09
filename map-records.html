@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-fc63cdd5.js";
+            window.path_to_searchindex_js = "searchindex-2a7fb5c9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -288,6 +288,128 @@ size (e.g. a <code>THINGS</code> lump whose byte count is not divisible by 10).<
 <li><code>MapParseError::Binrw</code> — <code>binrw</code> failed to decode a record from the byte stream.</li>
 </ul>
 <p>Both variants implement <code>std::error::Error</code> and display a human-readable message.</p>
+<h2 id="assembling-a-map-graph"><a class="header" href="#assembling-a-map-graph">Assembling a map graph</a></h2>
+<p>The record types above are flat and unresolved — a <code>Linedef</code>’s <code>start_vertex</code> is just a
+<code>u16</code> index. <code>crustywad::map</code> also assembles those flat records into a normalized <code>Map</code>
+graph, resolving cross-references between vertices, sidedefs, and sectors so callers don’t
+have to index arenas by hand.</p>
+<blockquote>
+<p><strong>Doom binary format only (for now).</strong> <code>Map::assemble</code> decodes the classic Doom
+binary map records. <code>wad.map_groups()</code> will happily detect non-Doom map runs
+(Hexen, marked by a <code>BEHAVIOR</code> lump, or UDMF, marked by <code>TEXTMAP</code>), but assembling
+one returns <code>MapAssembleError::UnsupportedFormat</code> rather than mis-decoding it.
+Hexen and UDMF support is planned as part of multi-format maps (Epic #17).</p>
+</blockquote>
+<h3 id="finding-a-maps-lumps"><a class="header" href="#finding-a-maps-lumps">Finding a map’s lumps</a></h3>
+<p>A WAD stores maps as a marker lump (e.g. <code>E1M1</code>, <code>MAP01</code>) followed by a run of data lumps
+(<code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>VERTEXES</code>, <code>SECTORS</code>, and friends). <code>Wad::map_groups</code>
+and <code>Wad::map_group</code> locate these runs and return one <code>MapGroup</code> per map:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct MapGroup {
+    pub marker_index: usize,   // directory index of the marker lump
+    pub name: String,          // the map's name, e.g. "E1M1"
+    pub data_indices: Vec&lt;usize&gt;,  // directory indices of the map's data lumps, in order
+}
+<span class="boring">}</span></code></pre>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+
+<span class="boring">let wad = Wad::from_bytes(Vec::&lt;u8&gt;::new()).unwrap();
+</span>// All maps in the WAD.
+for group in wad.map_groups() {
+    println!("found map {}", group.name);
+}
+
+// A single named map.
+if let Some(group) = wad.map_group("E1M1") {
+    println!("E1M1 has {} data lumps", group.data_indices.len());
+}
+<span class="boring">}</span></code></pre>
+<h3 id="assembling-a-map"><a class="header" href="#assembling-a-map">Assembling a <code>Map</code></a></h3>
+<p><code>Map::assemble</code> builds a graph from a <code>MapGroup</code>’s <code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>,
+<code>VERTEXES</code>, and <code>SECTORS</code> lumps, decoding the flat records and validating every
+cross-reference between them:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+use crustywad::map::Map;
+
+<span class="boring">let wad = Wad::from_bytes(Vec::&lt;u8&gt;::new()).unwrap();
+</span>if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&amp;wad, &amp;group)?;
+
+    for linedef in map.linedefs() {
+        let (start, end) = map.linedef_vertices(linedef);
+        let right = map.linedef_right(linedef);
+        println!(
+            "line ({}, {}) -&gt; ({}, {}), front sector floor {}",
+            start.x, start.y, end.x, end.y,
+            map.sidedef_sector(right).floor_height
+        );
+    }
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p><code>Map</code> exposes each normalized arena — <code>vertices()</code>, <code>linedefs()</code>, <code>sidedefs()</code>,
+<code>sectors()</code>, <code>things()</code> — plus infallible resolvers that follow indices between them:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Resolver</th><th>Follows</th></tr>
+</thead>
+<tbody>
+<tr><td><code>map.linedef_vertices(linedef)</code></td><td><code>(start, end)</code> vertex pair</td></tr>
+<tr><td><code>map.linedef_right(linedef)</code></td><td>right (front) sidedef</td></tr>
+<tr><td><code>map.linedef_left(linedef)</code></td><td>left (back) sidedef, or <code>None</code></td></tr>
+<tr><td><code>map.sidedef_sector(sidedef)</code></td><td>the sidedef’s sector</td></tr>
+</tbody>
+</table>
+</div>
+<p>The resolvers are total for elements obtained from this map’s own accessors
+(<code>map.linedefs()</code>, <code>map.sidedefs()</code>, …): they never panic or return an out-of-range
+index, because assembly validated every cross-reference before <code>Map</code> was constructed.
+(Because <code>MapLinedef</code>/<code>MapSidedef</code> have public index fields, passing a hand-constructed
+value with an out-of-range index can still panic.)</p>
+<h3 id="one-sided-lines"><a class="header" href="#one-sided-lines">One-sided lines</a></h3>
+<p>On disk, a <code>Linedef</code>’s <code>left_sidedef</code> field uses the sentinel value <code>0xffff</code> to mean “no
+back sidedef” (a one-sided line, such as an outer wall). Assembly translates that sentinel
+into <code>MapLinedef.left: Option&lt;SidedefIdx&gt;</code> — <code>None</code> for one-sided lines, <code>Some(idx)</code> for
+two-sided lines. <code>map.linedef_left(linedef)</code> mirrors this: it returns <code>None</code> for a
+one-sided line rather than an error.</p>
+<h3 id="strict-vs-lenient-assembly"><a class="header" href="#strict-vs-lenient-assembly">Strict vs. lenient assembly</a></h3>
+<p><code>Map::assemble(wad, group)</code> is a convenience wrapper that always uses strict mode.
+<code>Map::assemble_with_options(wad, group, options)</code> takes a <code>ParseOptions</code> and honors its
+<code>strictness</code>, the same as the raw <code>Wad</code> and <code>parse_records</code> APIs:</p>
+<ul>
+<li><strong>Strict</strong> (<code>Map::assemble</code>, or <code>assemble_with_options</code> with <code>Strictness::Strict</code>): the
+first out-of-range cross-reference (e.g. a linedef’s vertex index past the end of
+<code>VERTEXES</code>) aborts assembly with <code>MapAssembleError::DanglingReference</code>. A missing
+required lump or an undecodable record lump also aborts, in both modes, with
+<code>MapAssembleError::MissingLump</code> or <code>MapAssembleError::Records</code>.</li>
+<li><strong>Lenient</strong> (<code>assemble_with_options</code> with <code>Strictness::Lenient</code>): an out-of-range
+cross-reference is clamped to a valid fallback index instead of failing, and a
+<code>MapWarning::DanglingReference</code> is recorded. Structural failures (missing lump,
+undecodable records, or a required target arena that is empty) still return
+<code>MapAssembleError</code> even in lenient mode.</li>
+</ul>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::map::Map;
+use crustywad::{ParseOptions, Wad};
+
+<span class="boring">let wad = Wad::from_bytes(Vec::&lt;u8&gt;::new()).unwrap();
+</span><span class="boring">let group = wad.map_group("E1M1").unwrap();
+</span>let map = Map::assemble_with_options(&amp;wad, &amp;group, ParseOptions::lenient())?;
+for warning in map.warnings() {
+    eprintln!("{warning}");
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p><code>map.warnings()</code> returns the <code>MapWarning</code>s collected during a lenient assembly (empty for
+a clean map, and always empty after a strict <code>Map::assemble</code>, since strict mode returns an
+error instead of recording a warning).</p>
 
                     </main>
 
