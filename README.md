@@ -93,6 +93,50 @@ assert_eq!(wad.lump_count(), 0);
 
 See [Reading WAD Files](https://crustywad.dev/reading-wads.html) and [Writing WAD Files](https://crustywad.dev/writing-wads.html) in the guide for the full API, or `crates/crustywad/examples/` for runnable examples (`cargo run -p crustywad --example read_wad`).
 
+### Assembling a map
+
+`crustywad::map` can go beyond raw lump records and assemble a normalized, index-addressed
+`Map` graph for a single map, resolving vertex/sidedef/sector cross-references along the way:
+
+```rust
+use crustywad::Wad;
+use crustywad::map::Map;
+
+let wad = Wad::from_path("DOOM1.WAD")?;
+
+if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&wad, &group)?;
+
+    for linedef in map.linedefs() {
+        let (start, end) = map.linedef_vertices(linedef);
+        let right = map.linedef_right(linedef);
+        let front_sector = map.sidedef_sector(right);
+
+        match map.linedef_left(linedef) {
+            Some(left) => {
+                let back_sector = map.sidedef_sector(left);
+                println!(
+                    "two-sided line ({:.0},{:.0})-({:.0},{:.0}): front floor {}, back floor {}",
+                    start.x, start.y, end.x, end.y,
+                    front_sector.floor_height, back_sector.floor_height
+                );
+            }
+            None => println!(
+                "one-sided line ({:.0},{:.0})-({:.0},{:.0})",
+                start.x, start.y, end.x, end.y
+            ),
+        }
+    }
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`Wad::map_groups()` / `Wad::map_group(name)` locate a map's marker lump and its associated data
+lumps within the flat directory; `Map::assemble` (strict) and `Map::assemble_with_options`
+(honors `ParseOptions::strictness`) build the graph. See
+[Map Record Parsing](https://crustywad.dev/map-records.html) in the guide for the full API,
+including lenient-mode dangling-reference handling and the one-sided-line sentinel.
+
 ### CLI
 
 ```text
