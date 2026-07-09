@@ -20,11 +20,13 @@ use std::io::Cursor;
 use binrw::{BinRead, BinReaderExt};
 use thiserror::Error;
 
+pub mod assemble;
 pub mod common;
 pub mod doom;
 pub mod graph;
 pub mod group;
 
+pub use assemble::MapAssembleError;
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
 pub use graph::{
     LineSpecial, LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing,
