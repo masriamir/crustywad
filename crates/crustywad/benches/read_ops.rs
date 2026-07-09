@@ -6,9 +6,8 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use crustywad::map::{
-    Linedef, Node, Sector, Seg, Sidedef, Subsector, Thing, Vertex, parse_records,
-};
+use crustywad::map::doom::{Linedef, Thing};
+use crustywad::map::{Node, Sector, Seg, Sidedef, Subsector, Vertex, parse_records};
 use crustywad::{ParseOptions, Wad};
 
 fn bench_parse_from_bytes(c: &mut Criterion) {

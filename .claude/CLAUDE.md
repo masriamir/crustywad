@@ -14,7 +14,10 @@ crates/
     src/
       lib.rs           # Public API — Wad, WadKind, WadHeader, Lump, ParseOptions, Strictness
       error.rs         # ParseError (thiserror) and ParseWarning types
-      map.rs           # Typed map-record structs and parse_records<T>
+      map/             # Map-record structs, organized by format
+        mod.rs         #   parse_records<T>, MapParseError, shared re-exports
+        common.rs      #   records identical across formats (Vertex, Sidedef, Sector, Seg, Subsector, Node, Name8) + trim_nul
+        doom.rs        #   Doom/Heretic layout (Thing, Linedef)
       mmap.rs          # Read-only memmap2-backed file loading (feature = "mmap")
     benches/
       helpers.rs       # Synthetic WAD builder + Freedoom loader for bench use
@@ -169,7 +172,7 @@ Before opening a PR for a new or updated ADR, run through this checklist. The it
 
 ## Adding a new lump type
 
-1. Add a `binrw`-derived struct to `crates/crustywad/src/map.rs` with full doc comments on every field.
+1. Add a `binrw`-derived struct to the appropriate `crates/crustywad/src/map/` module — `doom.rs` for a Doom/Heretic-format record, or `common.rs` for a record whose on-disk byte layout is identical across formats — with full doc comments on every field.
 2. Ensure the struct uses `#[br(little)]` and implements `BinRead` with `Args<'a> = ()`.
 3. Check the Doom WAD spec for correct field types (signed vs unsigned matters — e.g., `Thing.angle` is `u16`, coords are `i16`).
 4. Add integration tests in `crates/crustywad/tests/map_records.rs` with a hand-crafted byte sequence and at least one field assertion per field.

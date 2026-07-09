@@ -36,4 +36,4 @@ graph TD
     Special --> PNAMES["PNAMES\n(patch name list — planned)"]
 ```
 
-Record-based map lump types (`Thing`, `Linedef`, `Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) are defined in `crates/crustywad/src/map.rs` and decoded via `parse_records::<T>`. Items marked **stub** (`RejectLump`, `BlockmapLump`) have zero-sized placeholder types and are not parsed via `parse_records`. Items marked **planned** are future milestones with no current typed struct.
+Record-based map lump types are defined in `crates/crustywad/src/map/` — format-specific records (`Thing`, `Linedef`) in `doom.rs`, and records whose byte layout is shared across formats (`Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) in `common.rs` — and decoded via `parse_records::<T>`. Items marked **stub** (`RejectLump`, `BlockmapLump`) have zero-sized placeholder types and are not parsed via `parse_records`. Items marked **planned** are future milestones with no current typed struct.
