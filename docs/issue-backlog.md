@@ -113,7 +113,7 @@ Labels: `epic`, `testing`, `enhancement` · Milestone: `v1.0`
 - [ ] 🔬 **Spike: `proptest` strategy** for parser invariants. Deliverable: ADR.
   `spike`, `testing` — **blocks** the proptest implementation below.
 - [ ] Implement `proptest` invariant/property tests. `testing` · ⛓️ proptest
-  spike. Refs: `crates/crustywad/src/map.rs` `parse_records` L196-225.
+  spike. Refs: `crates/crustywad/src/map/mod.rs` `parse_records`.
 
 ## 🗂️ Epic #16 — Release engineering: crates.io, CI/CD, docs.rs (`v1.0`)
 
@@ -141,7 +141,7 @@ Labels: `epic`, `format-support`, `enhancement` · Milestone: `Short Term`
   Refs: `crates/crustywad/src/lib.rs` `WadKind` L46-55.
 - [ ] Doom 64 format support. `format-support` · ⛓️ format spike.
 - [ ] Hexen format support. `format-support` · ⛓️ format spike.
-  Refs: `crates/crustywad/src/map.rs` `Thing` L33-46 (Hexen extends THINGS).
+  Refs: `crates/crustywad/src/map/doom.rs` `Thing` (Hexen extends THINGS).
 - [ ] Heretic format support. `format-support` · ⛓️ format spike.
 - [ ] 🔬 **Spike: UDMF design/representation**. Deliverable: ADR. `spike`,
   `format-support` — **blocks** UDMF read/convert/write below.
@@ -162,7 +162,7 @@ Labels: `epic`, `future`, `enhancement` · Milestone: `Future`
   version control). Deliverable: ADR. `spike`, `future` — **blocks** the
   resource manager and live preview.
 - [ ] Visual map viewer core. `future` · ⛓️ GUI spike, ⛓️ renderer spike.
-  Refs: `crates/crustywad/src/map.rs`.
+  Refs: `crates/crustywad/src/map/`.
 - [ ] Lump/resource manager. `future` · ⛓️ GUI spike, ⛓️ editor spike.
 - [ ] Live preview / test integration. `future` · ⛓️ GUI spike, ⛓️ editor spike.
 

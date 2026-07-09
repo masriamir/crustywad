@@ -1,8 +1,7 @@
 //! Integration tests for typed Doom map record parsing.
 
-use crustywad::map::{
-    Linedef, Name8, Node, Sector, Seg, Sidedef, Subsector, Thing, Vertex, parse_records,
-};
+use crustywad::map::doom::{Linedef, Thing};
+use crustywad::map::{Name8, Node, Sector, Seg, Sidedef, Subsector, Vertex, parse_records};
 use proptest::prelude::*;
 
 #[test]

@@ -64,6 +64,7 @@ mod error;
 pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
+mod util;
 #[cfg(feature = "write")]
 pub mod write;
 
@@ -951,11 +952,7 @@ fn decode_name(
     strictness: Strictness,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<String, ParseError> {
-    let end = bytes
-        .iter()
-        .position(|&byte| byte == 0)
-        .unwrap_or(bytes.len());
-    let trimmed = &bytes[..end];
+    let trimmed = crate::util::trim_nul(&bytes);
     if !trimmed.is_ascii() {
         return match strictness {
             Strictness::Strict => Err(ParseError::NonAsciiName { index }),

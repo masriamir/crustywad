@@ -33,7 +33,7 @@ let thing_bytes: &[u8] = &[
     7, 0,                                                  // flags = 0x0007
 ];
 
-let things: Vec<map::Thing> = map::parse_records(thing_bytes)?;
+let things: Vec<map::doom::Thing> = map::parse_records(thing_bytes)?;
 let t = &things[0];
 println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
 # Ok::<(), crustywad::map::MapParseError>(())

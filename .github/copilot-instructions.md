@@ -156,7 +156,7 @@ Before opening a PR for a new or updated ADR, run through this checklist. The it
 
 ## Adding a new lump type
 
-1. Add a `binrw`-derived struct to `crates/crustywad/src/map.rs` with full doc comments on every field.
+1. Add a `binrw`-derived struct to the appropriate `crates/crustywad/src/map/` module — `doom.rs` for a Doom/Heretic-format record, or `common.rs` for a record whose on-disk byte layout is identical across formats — with full doc comments on every field.
 2. Ensure the struct implements `BinRead` with `#[br(little)]`.
 3. Add integration tests in `crates/crustywad/tests/map_records.rs`.
 4. Update `README.md` if the new lump type is user-visible.
