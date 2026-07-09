@@ -214,13 +214,26 @@ The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and vali
 
 Work is tracked on the **[Crustywad](https://github.com/users/masriamir/projects/5)** GitHub Project board — the single source of "what to pick up next". Every roadmap issue lives there with three planning dimensions:
 
-- **Status** (workflow stage): `Backlog` → `Ready` → `In progress` → `In review` → `Done`. Pull work from the `Ready` column; the board moves items to `In review` when their PR opens and to `Done` on merge/close.
+- **Status** (workflow stage): `Backlog` → `Ready` → `In progress` → `In review` → `Done`. Pull work from the `Ready` column. Most transitions are **agent-driven** — see [Issue status transitions](#issue-status-transitions-agent-driven) below; only `Done` is set automatically by the board on merge/close.
 - **Horizon** (priority bucket): `Now` / `Next` / `Later`. This carries planning intent for issues that have no milestone yet (e.g. the editor epic #18 and its long-horizon spikes); it replaces the former `Short Term` / `Future` milestones.
 - **Milestone** (release scope): milestones are **release-scoped** (`v0.2.0`, `v0.3.0`, …), each the set of epics/issues intended to ship together. `release-plz` derives the actual version tags from Conventional Commits on `main`; the milestone only groups scope.
 
 **Epics** (the `epic` label, e.g. #17, #18) use GitHub **native sub-issues**, so they show automatic progress rollup — attach each new format/feature issue as a sub-issue of its epic.
 
-Typical flow: pick a `Ready` + `Now` item → branch by its issue number (below) → open a PR → board shows it `In review` → merge closes the issue and sets `Done`.
+Typical flow: pick a `Ready` + `Now` item → begin planning (`In progress`) → branch by its issue number (below) → open a PR (`In review`) → merge closes the issue and sets `Done`.
+
+### Issue status transitions (agent-driven)
+
+I move the board myself as work progresses and **announce each change** in my reply (e.g. "moved #201 → In progress") rather than asking first — board edits are internal and easily reversed. The transitions:
+
+| Transition | Trigger |
+|---|---|
+| `Backlog → Ready` | The user says they want to start work on an issue |
+| `Ready → In progress` | I begin brainstorming or drafting an implementation plan for the issue — **before** any branch or code |
+| `In progress → In review` | The PR opens |
+| `In review → Done` | PR merges/closes — **board-automated**, not manual |
+
+`In review` holds through the entire Copilot review loop, until human review and merge. Transitions apply only to a tracked issue that is on the board; if an issue exists but isn't on the board, add it first. The `gh project item-edit` recipe (Status field + option IDs) lives in the `reference-project-board` memory; it needs the `read:project,project` scope — if that scope is missing, surface it and ask the user to grant it rather than silently skipping the transition.
 
 ## Git branching workflow
 
