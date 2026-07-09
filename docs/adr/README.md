@@ -46,5 +46,6 @@ implementation begins.**
 | [0013](0013-lump-by-name-lookup-strategy.md) | `lump_by_name` lookup strategy | Accepted |
 | [0014](0014-multi-format-map-support-strategy.md) | Multi-format map support strategy | Accepted |
 | [0015](0015-assembled-map-graph-model.md) | Assembled map graph model | Proposed |
+| [0016](0016-parser-hardening-policy.md) | Parser and assembly hardening policy | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
