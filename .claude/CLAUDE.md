@@ -16,9 +16,10 @@ crates/
       error.rs         # ParseError (thiserror) and ParseWarning types
       map/             # Map-record structs, organized by format
         mod.rs         #   parse_records<T>, MapParseError, shared re-exports
-        common.rs      #   records identical across formats (Vertex, Sidedef, Sector, Seg, Subsector, Node, Name8) + trim_nul
+        common.rs      #   records identical across formats (Vertex, Sidedef, Sector, Seg, Subsector, Node, Name8)
         doom.rs        #   Doom/Heretic layout (Thing, Linedef)
       mmap.rs          # Read-only memmap2-backed file loading (feature = "mmap")
+      util.rs          # Crate-internal helpers (trim_nul: NUL-padding trim for 8-byte names)
     benches/
       helpers.rs       # Synthetic WAD builder + Freedoom loader for bench use
       read_ops.rs      # Criterion benchmarks for parsing, lump access, and map records
