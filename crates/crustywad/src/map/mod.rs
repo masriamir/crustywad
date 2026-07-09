@@ -22,8 +22,10 @@ use thiserror::Error;
 
 pub mod common;
 pub mod doom;
+pub mod group;
 
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
+pub use group::MapGroup;
 
 /// Errors returned when decoding typed map records from a lump byte slice.
 #[derive(Debug, Error)]

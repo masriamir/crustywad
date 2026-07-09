@@ -39,6 +39,38 @@ pub fn lump_map<'a>(pairs: &'a [(&'a str, &'a [u8])]) -> HashMap<&'a str, &'a [u
     pairs.iter().copied().collect()
 }
 
+/// Builds a PWAD whose lumps are the given `(name, data)` pairs in order.
+/// Names longer than 8 bytes are rejected by the caller's test setup.
+#[allow(dead_code)]
+pub fn build_named_lumps(lumps: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    let refs: Vec<(&str, &[u8])> = lumps
+        .iter()
+        .map(|(name, data)| (*name, data.as_slice()))
+        .collect();
+    build_wad(*b"PWAD", &refs)
+}
+
+/// Builds a single classic-Doom map: marker `name` followed by THINGS,
+/// LINEDEFS, SIDEDEFS, VERTEXES, SECTORS lumps carrying the given raw bytes.
+#[allow(dead_code)]
+pub fn build_doom_map_wad(
+    name: &str,
+    things: Vec<u8>,
+    linedefs: Vec<u8>,
+    sidedefs: Vec<u8>,
+    vertexes: Vec<u8>,
+    sectors: Vec<u8>,
+) -> Vec<u8> {
+    build_named_lumps(&[
+        (name, Vec::new()),
+        ("THINGS", things),
+        ("LINEDEFS", linedefs),
+        ("SIDEDEFS", sidedefs),
+        ("VERTEXES", vertexes),
+        ("SECTORS", sectors),
+    ])
+}
+
 /// Generates an ASCII lump name (1–8 chars) and a payload (0–256 bytes).
 ///
 /// The name charset covers upper- and lower-case letters, digits, and underscores —
