@@ -57,7 +57,7 @@ proptest! {
 }
 
 use crustywad::ParseOptions;
-use crustywad::map::{Map, MapAssembleError};
+use crustywad::map::{Map, MapAssembleError, MapFormat};
 
 // Little-endian record encoders kept local to the test.
 fn le_u16(v: u16) -> [u8; 2] {
@@ -101,6 +101,53 @@ fn linedef(sv: u16, ev: u16, right: u16, left: u16) -> Vec<u8> {
         le_u16(left),
     ]
     .concat()
+}
+fn thing(type_id: u16) -> Vec<u8> {
+    // 10 bytes: x, y (i16), angle, type_id, flags (u16)
+    let mut b = Vec::new();
+    b.extend(32i16.to_le_bytes());
+    b.extend(48i16.to_le_bytes());
+    b.extend(90u16.to_le_bytes());
+    b.extend(type_id.to_le_bytes());
+    b.extend(7u16.to_le_bytes());
+    b
+}
+
+// A fully populated map: one thing and a *two-sided* linedef, exercising
+// `normalize_things`, the `resolve_left` in-range (Some) branch, and every
+// `Map` accessor (name/format/vertices/linedefs/sidedefs/sectors/things).
+#[test]
+fn assembles_two_sided_map_and_exposes_all_accessors() {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        thing(3001),                            // one thing (an imp)
+        linedef(0, 1, 0, 1),                    // two-sided: right=0, left=1
+        [sidedef(0), sidedef(0)].concat(),      // two sidedefs
+        [vertex(0, 0), vertex(64, 0)].concat(), // two vertices
+        sector(),                               // one sector
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let map = Map::assemble(&wad, &group).unwrap();
+
+    assert_eq!(map.name(), "E1M1");
+    assert_eq!(map.format(), MapFormat::Doom);
+    assert_eq!(map.vertices().len(), 2);
+    assert_eq!(map.linedefs().len(), 1);
+    assert_eq!(map.sidedefs().len(), 2);
+    assert_eq!(map.sectors().len(), 1);
+    assert_eq!(map.things().len(), 1);
+    assert_eq!(map.things()[0].type_id, 3001);
+    assert_eq!(map.sectors()[0].ceiling_height, 128);
+    assert!(map.warnings().is_empty());
+
+    // Two-sided line: `left` resolves to `Some`, exercising the resolver's
+    // in-range branch.
+    let l = &map.linedefs()[0];
+    let left = map
+        .linedef_left(l)
+        .expect("two-sided line has a left sidedef");
+    assert_eq!(map.sidedef_sector(left).floor_flat, "FLOOR");
 }
 
 #[test]
