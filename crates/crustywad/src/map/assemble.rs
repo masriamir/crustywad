@@ -48,7 +48,7 @@ fn lump_bytes<'w>(wad: &'w Wad, group: &MapGroup, lump: &str) -> Option<&'w [u8]
         .data_indices
         .iter()
         .copied()
-        .find(|&i| wad.lumps()[i].name() == lump)
+        .find(|&i| wad.lumps().get(i).is_some_and(|l| l.name() == lump))
         .and_then(|i| wad.lump_bytes(i))
 }
 

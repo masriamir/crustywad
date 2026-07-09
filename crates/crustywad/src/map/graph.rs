@@ -121,6 +121,7 @@ pub struct MapThing {
 /// Non-fatal issues collected during lenient assembly (see Task 3). Defined
 /// here because `Map` owns the `warnings` vec; `assemble.rs` imports it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MapWarning {
     /// A reference from one arena to another (e.g. a linedef's vertex index)
     /// pointed past the end of the referenced arena, and was clamped during
@@ -206,25 +207,34 @@ impl Map {
         &self.warnings
     }
 
-    /// Resolves a linedef's start/end vertices. Total — assembly validated the indices.
+    /// Resolves a linedef's start/end vertices. Total for elements produced by
+    /// this map's own assembly; a linedef carrying an out-of-range index (e.g.
+    /// hand-constructed, since `MapLinedef`'s fields are public) may panic.
     #[must_use]
     pub fn linedef_vertices(&self, l: &MapLinedef) -> (&MapVertex, &MapVertex) {
         (&self.vertices[l.start.0], &self.vertices[l.end.0])
     }
 
-    /// Resolves a linedef's right (front) sidedef. Total — assembly validated the index.
+    /// Resolves a linedef's right (front) sidedef. Total for elements produced
+    /// by this map's own assembly; a linedef carrying an out-of-range index
+    /// (e.g. hand-constructed, since `MapLinedef`'s fields are public) may panic.
     #[must_use]
     pub fn linedef_right(&self, l: &MapLinedef) -> &MapSidedef {
         &self.sidedefs[l.right.0]
     }
 
-    /// Resolves a linedef's left (back) sidedef, if two-sided. Total — assembly validated the index.
+    /// Resolves a linedef's left (back) sidedef, if two-sided. Total for
+    /// elements produced by this map's own assembly; a linedef carrying an
+    /// out-of-range index (e.g. hand-constructed, since `MapLinedef`'s fields
+    /// are public) may panic.
     #[must_use]
     pub fn linedef_left(&self, l: &MapLinedef) -> Option<&MapSidedef> {
         l.left.map(|i| &self.sidedefs[i.0])
     }
 
-    /// Resolves a sidedef's sector. Total — assembly validated the index.
+    /// Resolves a sidedef's sector. Total for elements produced by this map's
+    /// own assembly; a sidedef carrying an out-of-range index (e.g.
+    /// hand-constructed, since `MapSidedef`'s fields are public) may panic.
     #[must_use]
     pub fn sidedef_sector(&self, s: &MapSidedef) -> &MapSector {
         &self.sectors[s.sector.0]

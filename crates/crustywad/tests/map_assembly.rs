@@ -226,3 +226,80 @@ fn assemble_is_strict_by_default() {
     let group = wad.map_group("E1M1").unwrap();
     assert!(Map::assemble(&wad, &group).is_err());
 }
+
+#[test]
+fn strict_rejects_dangling_left_sidedef() {
+    // left=5 is a non-sentinel out-of-range left sidedef; only 1 sidedef exists.
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0, 5),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "sidedef",
+            index: 5,
+            count: 1,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn records_error_on_undecodable_linedefs_lump() {
+    // Valid VERTEXES/SECTORS/SIDEDEFS, but a LINEDEFS lump whose length (13
+    // bytes) is not a multiple of the 14-byte record size.
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", vec![]),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SECTORS", sector()),
+        ("SIDEDEFS", sidedef(0)),
+        ("LINEDEFS", vec![0; 13]),
+        ("THINGS", vec![]),
+    ]);
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::Records {
+            lump: "LINEDEFS",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn hand_built_map_group_with_out_of_range_data_index_does_not_panic() {
+    use crustywad::map::MapGroup;
+
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+
+    // Replace the real data indices with a single out-of-range index, so the
+    // required-lump search (Fix 1's `.get(i)`) must skip it rather than
+    // panic, and every required lump ends up "not present".
+    let bad_group = MapGroup {
+        marker_index: group.marker_index,
+        name: group.name.clone(),
+        data_indices: vec![wad.lump_count()], // one past the end: out of range
+    };
+
+    let err = Map::assemble(&wad, &bad_group).unwrap_err();
+    assert!(matches!(err, MapAssembleError::MissingLump { .. }));
+}
