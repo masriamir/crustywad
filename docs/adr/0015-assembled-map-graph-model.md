@@ -123,6 +123,8 @@ impl Wad {
     pub fn map_groups(&self) -> Vec<MapGroup>;
 
     /// Returns the first map group whose marker lump is named `name`.
+    /// Matching is exact and case-sensitive, consistent with
+    /// [`Wad::lump_by_name`] (ADR-0013).
     #[must_use]
     pub fn map_group(&self, name: &str) -> Option<MapGroup>;
 }
