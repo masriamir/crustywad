@@ -45,7 +45,7 @@ implementation begins.**
 | [0012](0012-criterion-benchmarking-infrastructure.md) | Criterion benchmarking infrastructure, GitHub Pages trend reporting, and CI integration | Accepted |
 | [0013](0013-lump-by-name-lookup-strategy.md) | `lump_by_name` lookup strategy | Accepted |
 | [0014](0014-multi-format-map-support-strategy.md) | Multi-format map support strategy | Accepted |
-| [0015](0015-assembled-map-graph-model.md) | Assembled map graph model | Proposed |
-| [0016](0016-parser-hardening-policy.md) | Parser and assembly hardening policy | Proposed |
+| [0015](0015-assembled-map-graph-model.md) | Assembled map graph model | Accepted |
+| [0016](0016-parser-hardening-policy.md) | Parser and assembly hardening policy | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->

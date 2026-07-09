@@ -1,6 +1,6 @@
 # ADR-0015: Assembled map graph model
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-08
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/155
@@ -383,5 +383,5 @@ slices (or a dedicated `Option`) rather than failing assembly.
   `0xffff` one-sided sentinel), `crates/crustywad/src/lib.rs` (`Wad`, `Lump`,
   `ParseOptions`, `Strictness`).
 - Revisit condition: reopen when #18 introduces map mutation (a mutable arena
-  layer), or when a new node format (GL nodes / extended ZDBSP nodes) needs
-  representation beyond the classic `NODES` encoding.
+  layer), or when a new node format (GL nodes / extended ZDBSP nodes, tracked in
+  #199) needs representation beyond the classic `NODES` encoding.
