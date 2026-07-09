@@ -118,8 +118,12 @@ pub struct MapThing {
     pub flags: u32,
 }
 
-/// Non-fatal issues collected during lenient assembly (see Task 3). Defined
-/// here because `Map` owns the `warnings` vec; `assemble.rs` imports it.
+/// A non-fatal issue recorded during lenient map assembly.
+///
+/// Produced by [`Map::assemble_with_options`] in [`Strictness::Lenient`] mode
+/// and collected on the resulting map; retrieve them via [`Map::warnings`].
+///
+/// [`Strictness::Lenient`]: crate::Strictness::Lenient
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum MapWarning {
@@ -144,8 +148,9 @@ pub enum MapWarning {
 /// An assembled Doom map graph: normalized elements addressed by index,
 /// with infallible resolvers for following references between arenas.
 ///
-/// `Map` is constructed by map assembly (see Task 3); its arena fields are
-/// crate-private so only assembly code can build one directly.
+/// `Map` is constructed by map assembly ([`Map::assemble`] /
+/// [`Map::assemble_with_options`]); its arena fields are crate-private so only
+/// assembly builds one directly.
 #[derive(Debug, Clone)]
 pub struct Map {
     pub(crate) name: String,
