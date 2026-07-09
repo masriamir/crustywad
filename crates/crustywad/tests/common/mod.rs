@@ -40,7 +40,8 @@ pub fn lump_map<'a>(pairs: &'a [(&'a str, &'a [u8])]) -> HashMap<&'a str, &'a [u
 }
 
 /// Builds a PWAD whose lumps are the given `(name, data)` pairs in order.
-/// Names longer than 8 bytes are rejected by the caller's test setup.
+/// Lump names are written into the fixed 8-byte on-disk name field; names
+/// longer than 8 bytes are truncated to 8 bytes by `build_wad`.
 #[allow(dead_code)]
 pub fn build_named_lumps(lumps: &[(&str, Vec<u8>)]) -> Vec<u8> {
     let refs: Vec<(&str, &[u8])> = lumps

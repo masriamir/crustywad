@@ -189,8 +189,11 @@ if let Some(group) = wad.map_group("E1M1") {
 | `map.linedef_left(linedef)` | left (back) sidedef, or `None` |
 | `map.sidedef_sector(sidedef)` | the sidedef's sector |
 
-The resolvers are total (never panic, never return an out-of-range index) because
-assembly already validated every cross-reference before `Map` was constructed.
+The resolvers are total for elements obtained from this map's own accessors
+(`map.linedefs()`, `map.sidedefs()`, …): they never panic or return an out-of-range
+index, because assembly validated every cross-reference before `Map` was constructed.
+(Because `MapLinedef`/`MapSidedef` have public index fields, passing a hand-constructed
+value with an out-of-range index can still panic.)
 
 ### One-sided lines
 
@@ -223,7 +226,7 @@ use crustywad::{ParseOptions, Wad};
 
 # let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
 # let group = wad.map_group("E1M1").unwrap();
-let map = Map::assemble_with_options(&wad, &group, ParseOptions::default().lenient())?;
+let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())?;
 for warning in map.warnings() {
     eprintln!("{warning}");
 }

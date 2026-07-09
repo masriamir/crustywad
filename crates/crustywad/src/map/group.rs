@@ -25,25 +25,38 @@ pub struct MapGroup {
     pub data_indices: Vec<usize>,
 }
 
-pub(crate) fn map_groups(wad: &Wad) -> Vec<MapGroup> {
+/// If the lump at `i` is a map marker (its successor is a recognized data
+/// lump), returns the directory index just past its contiguous data-lump run;
+/// otherwise `None`. Allocates nothing.
+fn marker_run_end(wad: &Wad, i: usize) -> Option<usize> {
     let lumps = wad.lumps();
+    if !lumps.get(i + 1).is_some_and(|l| is_map_data_lump(l.name())) {
+        return None;
+    }
+    let mut j = i + 1;
+    while j < lumps.len() && is_map_data_lump(lumps[j].name()) {
+        j += 1;
+    }
+    Some(j)
+}
+
+/// Builds the group for the marker at `i` whose data lumps span `i + 1..end`.
+fn build_group(wad: &Wad, i: usize, end: usize) -> MapGroup {
+    MapGroup {
+        marker_index: i,
+        name: wad.lumps()[i].name().to_string(),
+        data_indices: (i + 1..end).collect(),
+    }
+}
+
+pub(crate) fn map_groups(wad: &Wad) -> Vec<MapGroup> {
+    let len = wad.lumps().len();
     let mut groups = Vec::new();
     let mut i = 0;
-    while i < lumps.len() {
-        let next_is_data = lumps.get(i + 1).is_some_and(|l| is_map_data_lump(l.name()));
-        if next_is_data {
-            let mut j = i + 1;
-            let mut data_indices = Vec::new();
-            while j < lumps.len() && is_map_data_lump(lumps[j].name()) {
-                data_indices.push(j);
-                j += 1;
-            }
-            groups.push(MapGroup {
-                marker_index: i,
-                name: lumps[i].name().to_string(),
-                data_indices,
-            });
-            i = j; // skip past the consumed run so data lumps aren't seen as markers
+    while i < len {
+        if let Some(end) = marker_run_end(wad, i) {
+            groups.push(build_group(wad, i, end));
+            i = end; // skip past the consumed run so data lumps aren't seen as markers
         } else {
             i += 1;
         }
@@ -52,5 +65,18 @@ pub(crate) fn map_groups(wad: &Wad) -> Vec<MapGroup> {
 }
 
 pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
-    map_groups(wad).into_iter().find(|g| g.name == name)
+    let len = wad.lumps().len();
+    let mut i = 0;
+    while i < len {
+        if let Some(end) = marker_run_end(wad, i) {
+            // Build (and allocate) only the matching group, returning early.
+            if wad.lumps()[i].name() == name {
+                return Some(build_group(wad, i, end));
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    None
 }

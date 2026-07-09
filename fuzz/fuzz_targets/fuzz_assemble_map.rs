@@ -13,7 +13,13 @@ fuzz_target!(|data: &[u8]| {
                 // right/left sidedef) and normalize_sidedefs at most 1 per
                 // sidedef (sector reference).
                 let warning_count = map.warnings().len();
-                let bound = map.linedefs().len() * 4 + map.sidedefs().len();
+                // Saturating arithmetic keeps the bound meaningful even for a
+                // pathologically large synthesized map (no overflow).
+                let bound = map
+                    .linedefs()
+                    .len()
+                    .saturating_mul(4)
+                    .saturating_add(map.sidedefs().len());
                 assert!(
                     warning_count <= bound,
                     "warning count {warning_count} exceeded upper bound {bound}"
