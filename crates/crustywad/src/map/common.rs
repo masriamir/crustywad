@@ -29,9 +29,9 @@ pub struct Name8(
 impl Name8 {
     /// Returns the name as a `String` with trailing `\0` padding removed.
     ///
-    /// Non-ASCII bytes (which should not appear in well-formed WADs) are
-    /// replaced with U+FFFD rather than returning an error.  The result is
-    /// at most 8 characters long.
+    /// Decoding uses `String::from_utf8_lossy`: any invalid UTF-8 byte sequence
+    /// is replaced with U+FFFD, while valid UTF-8 (including pure ASCII) is
+    /// preserved.  The result is at most 8 characters long.
     #[must_use]
     pub fn as_str_lossy(&self) -> String {
         String::from_utf8_lossy(trim_nul(&self.0)).into_owned()
