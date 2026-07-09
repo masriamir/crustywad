@@ -1,6 +1,6 @@
 # ADR-0016: Parser and assembly hardening policy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-08
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/195
