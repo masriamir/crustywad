@@ -115,3 +115,130 @@ See `crustywad::map` in the API docs for the full definitions of `Seg`,
 - `MapParseError::Binrw` — `binrw` failed to decode a record from the byte stream.
 
 Both variants implement `std::error::Error` and display a human-readable message.
+
+## Assembling a map graph
+
+The record types above are flat and unresolved — a `Linedef`'s `start_vertex` is just a
+`u16` index. `crustywad::map` also assembles those flat records into a normalized `Map`
+graph, resolving cross-references between vertices, sidedefs, and sectors so callers don't
+have to index arenas by hand.
+
+> **Doom binary format only (for now).** `Map::assemble` decodes the classic Doom
+> binary map records. `wad.map_groups()` will happily detect non-Doom map runs
+> (Hexen, marked by a `BEHAVIOR` lump, or UDMF, marked by `TEXTMAP`), but assembling
+> one returns `MapAssembleError::UnsupportedFormat` rather than mis-decoding it.
+> Hexen and UDMF support is planned as part of multi-format maps (Epic #17).
+
+### Finding a map's lumps
+
+A WAD stores maps as a marker lump (e.g. `E1M1`, `MAP01`) followed by a run of data lumps
+(`THINGS`, `LINEDEFS`, `SIDEDEFS`, `VERTEXES`, `SECTORS`, and friends). `Wad::map_groups`
+and `Wad::map_group` locate these runs and return one `MapGroup` per map:
+
+```rust
+pub struct MapGroup {
+    pub marker_index: usize,   // directory index of the marker lump
+    pub name: String,          // the map's name, e.g. "E1M1"
+    pub data_indices: Vec<usize>,  // directory indices of the map's data lumps, in order
+}
+```
+
+```rust
+use crustywad::Wad;
+
+# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+// All maps in the WAD.
+for group in wad.map_groups() {
+    println!("found map {}", group.name);
+}
+
+// A single named map.
+if let Some(group) = wad.map_group("E1M1") {
+    println!("E1M1 has {} data lumps", group.data_indices.len());
+}
+```
+
+### Assembling a `Map`
+
+`Map::assemble` builds a graph from a `MapGroup`'s `THINGS`, `LINEDEFS`, `SIDEDEFS`,
+`VERTEXES`, and `SECTORS` lumps, decoding the flat records and validating every
+cross-reference between them:
+
+```rust
+use crustywad::Wad;
+use crustywad::map::Map;
+
+# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&wad, &group)?;
+
+    for linedef in map.linedefs() {
+        let (start, end) = map.linedef_vertices(linedef);
+        let right = map.linedef_right(linedef);
+        println!(
+            "line ({}, {}) -> ({}, {}), front sector floor {}",
+            start.x, start.y, end.x, end.y,
+            map.sidedef_sector(right).floor_height
+        );
+    }
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
+
+`Map` exposes each normalized arena — `vertices()`, `linedefs()`, `sidedefs()`,
+`sectors()`, `things()` — plus infallible resolvers that follow indices between them:
+
+| Resolver | Follows |
+|---|---|
+| `map.linedef_vertices(linedef)` | `(start, end)` vertex pair |
+| `map.linedef_right(linedef)` | right (front) sidedef |
+| `map.linedef_left(linedef)` | left (back) sidedef, or `None` |
+| `map.sidedef_sector(sidedef)` | the sidedef's sector |
+
+The resolvers are total for elements obtained from this map's own accessors
+(`map.linedefs()`, `map.sidedefs()`, …): they never panic or return an out-of-range
+index, because assembly validated every cross-reference before `Map` was constructed.
+(Because `MapLinedef`/`MapSidedef` have public index fields, passing a hand-constructed
+value with an out-of-range index can still panic.)
+
+### One-sided lines
+
+On disk, a `Linedef`'s `left_sidedef` field uses the sentinel value `0xffff` to mean "no
+back sidedef" (a one-sided line, such as an outer wall). Assembly translates that sentinel
+into `MapLinedef.left: Option<SidedefIdx>` — `None` for one-sided lines, `Some(idx)` for
+two-sided lines. `map.linedef_left(linedef)` mirrors this: it returns `None` for a
+one-sided line rather than an error.
+
+### Strict vs. lenient assembly
+
+`Map::assemble(wad, group)` is a convenience wrapper that always uses strict mode.
+`Map::assemble_with_options(wad, group, options)` takes a `ParseOptions` and honors its
+`strictness`, the same as the raw `Wad` and `parse_records` APIs:
+
+- **Strict** (`Map::assemble`, or `assemble_with_options` with `Strictness::Strict`): the
+  first out-of-range cross-reference (e.g. a linedef's vertex index past the end of
+  `VERTEXES`) aborts assembly with `MapAssembleError::DanglingReference`. A missing
+  required lump or an undecodable record lump also aborts, in both modes, with
+  `MapAssembleError::MissingLump` or `MapAssembleError::Records`.
+- **Lenient** (`assemble_with_options` with `Strictness::Lenient`): an out-of-range
+  cross-reference is clamped to a valid fallback index instead of failing, and a
+  `MapWarning::DanglingReference` is recorded. Structural failures (missing lump,
+  undecodable records, or a required target arena that is empty) still return
+  `MapAssembleError` even in lenient mode.
+
+```rust
+use crustywad::map::Map;
+use crustywad::{ParseOptions, Wad};
+
+# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+# let group = wad.map_group("E1M1").unwrap();
+let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())?;
+for warning in map.warnings() {
+    eprintln!("{warning}");
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
+
+`map.warnings()` returns the `MapWarning`s collected during a lenient assembly (empty for
+a clean map, and always empty after a strict `Map::assemble`, since strict mode returns an
+error instead of recording a warning).

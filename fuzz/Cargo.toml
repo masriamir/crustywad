@@ -24,9 +24,18 @@ path = "fuzz_targets/fuzz_parse_records_thing.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_assemble_map"
+path = "fuzz_targets/fuzz_assemble_map.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 crustywad = { path = "../crates/crustywad" }
 
 [profile.release]
 debug = 1
+
+[package.metadata]
+cargo-fuzz = true

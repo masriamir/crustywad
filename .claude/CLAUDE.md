@@ -16,8 +16,11 @@ crates/
       error.rs         # ParseError (thiserror) and ParseWarning types
       map/             # Map-record structs, organized by format
         mod.rs         #   parse_records<T>, MapParseError, shared re-exports
+        assemble.rs    #   Map::assemble/assemble_with_options, MapAssembleError
         common.rs      #   records identical across formats (Vertex, Sidedef, Sector, Seg, Subsector, Node, Name8)
         doom.rs        #   Doom/Heretic layout (Thing, Linedef)
+        graph.rs       #   assembled Map graph — MapVertex/MapLinedef/MapSidedef/MapSector/MapThing, index newtypes, MapWarning
+        group.rs       #   MapGroup — identifying one map's lumps (Wad::map_groups/map_group)
       mmap.rs          # Read-only memmap2-backed file loading (feature = "mmap")
       util.rs          # Crate-internal helpers (trim_nul: NUL-padding trim for 8-byte names)
     benches/

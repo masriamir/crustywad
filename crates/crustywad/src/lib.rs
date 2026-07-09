@@ -633,6 +633,19 @@ impl Wad {
         self.lumps.iter().find(|lump| lump.name() == name)
     }
 
+    /// Identifies every map lump group in the directory, in order.
+    #[must_use]
+    pub fn map_groups(&self) -> Vec<crate::map::MapGroup> {
+        crate::map::group::map_groups(self)
+    }
+
+    /// Returns the first map group whose marker lump is named `name`
+    /// (exact, case-sensitive — consistent with [`Wad::lump_by_name`]).
+    #[must_use]
+    pub fn map_group(&self, name: &str) -> Option<crate::map::MapGroup> {
+        crate::map::group::map_group(self, name)
+    }
+
     /// Returns the raw bytes for the lump at the given zero-based index, or
     /// `None` if the index is out of range.
     ///
