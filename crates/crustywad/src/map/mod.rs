@@ -22,9 +22,14 @@ use thiserror::Error;
 
 pub mod common;
 pub mod doom;
+pub mod graph;
 pub mod group;
 
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
+pub use graph::{
+    LineSpecial, LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing,
+    MapVertex, MapWarning, SectorIdx, SidedefIdx, VertexIdx,
+};
 pub use group::MapGroup;
 
 /// Errors returned when decoding typed map records from a lump byte slice.
