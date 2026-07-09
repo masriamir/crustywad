@@ -267,6 +267,19 @@ fn normalize_linedefs(
 }
 
 impl Map {
+    /// Assembles a map from a WAD and one of its groups, using strict rules.
+    ///
+    /// This is a convenience wrapper over [`Map::assemble_with_options`] with
+    /// [`ParseOptions::default()`], which is strict: the first out-of-range
+    /// cross-reference or structural failure aborts assembly.
+    ///
+    /// # Errors
+    /// Returns [`MapAssembleError`] if a required lump is missing, a record lump
+    /// fails to decode, or any cross-reference is out of range.
+    pub fn assemble(wad: &Wad, group: &MapGroup) -> Result<Map, MapAssembleError> {
+        Map::assemble_with_options(wad, group, ParseOptions::default())
+    }
+
     /// Assembles a map under explicit options (ADR-0015 §3).
     ///
     /// # Errors

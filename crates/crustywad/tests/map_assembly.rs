@@ -157,3 +157,72 @@ fn strict_errors_on_missing_required_lump() {
     let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
     assert!(matches!(err, MapAssembleError::MissingLump { .. }));
 }
+
+#[test]
+fn lenient_clamps_dangling_and_warns() {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 9, 0, 0xffff), // vertex 9 out of range (only 2 exist)
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.linedefs()[0].end, crustywad::map::VertexIdx(0)); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}
+
+#[test]
+fn lenient_out_of_range_left_becomes_none() {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0, 5), // left=5 non-sentinel, only 1 sidedef
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.linedefs()[0].left.is_none());
+    assert_eq!(map.warnings().len(), 1);
+}
+
+#[test]
+fn empty_required_arena_errors_even_in_lenient() {
+    // SIDEDEFS present but zero-length → sidedef arena empty; a linedef needs a right side.
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0, 0xffff),
+        /*sidedefs*/ vec![],
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference { count: 0, .. }
+    ));
+}
+
+#[test]
+fn assemble_is_strict_by_default() {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 9, 0, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    assert!(Map::assemble(&wad, &group).is_err());
+}
