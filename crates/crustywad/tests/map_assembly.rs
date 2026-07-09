@@ -150,6 +150,42 @@ fn assembles_two_sided_map_and_exposes_all_accessors() {
     assert_eq!(map.sidedef_sector(left).floor_flat, "FLOOR");
 }
 
+// Assembly must refuse a non-Doom map rather than silently mis-decoding its
+// lumps as Doom records (whose byte lengths can coincidentally align).
+#[test]
+fn refuses_non_doom_formats() {
+    // UDMF: a TEXTMAP lump holds text, not Doom binary records.
+    let udmf = common::build_named_lumps(&[
+        ("MAP01", vec![]),
+        ("TEXTMAP", b"namespace = \"zdoom\";".to_vec()),
+    ]);
+    let wad = Wad::from_bytes(udmf).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::UnsupportedFormat { lump: "TEXTMAP" }
+    ));
+    assert!(err.to_string().contains("TEXTMAP"));
+
+    // Hexen: a BEHAVIOR lump alongside otherwise Doom-shaped lumps.
+    let hexen = common::build_named_lumps(&[
+        ("MAP02", vec![]),
+        ("THINGS", vec![0; 10]),
+        ("LINEDEFS", vec![0; 16]), // Hexen linedefs are 16 bytes, not 14
+        ("SIDEDEFS", vec![0; 30]),
+        ("VERTEXES", vec![0; 4]),
+        ("SECTORS", vec![0; 26]),
+        ("BEHAVIOR", vec![0; 8]),
+    ]);
+    let wad = Wad::from_bytes(hexen).unwrap();
+    let group = wad.map_group("MAP02").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::UnsupportedFormat { lump: "BEHAVIOR" }
+    ));
+}
+
 #[test]
 fn assembles_valid_doom_map_strict() {
     let bytes = common::build_doom_map_wad(

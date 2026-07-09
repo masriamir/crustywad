@@ -40,6 +40,18 @@ pub enum MapAssembleError {
         /// The number of elements actually available in the referenced arena.
         count: usize,
     },
+    /// The map group is not in the classic Doom binary format that assembly
+    /// supports, detected from a format-specific marker lump (`BEHAVIOR` =
+    /// Hexen, `TEXTMAP` = UDMF). Decoding such a map as Doom records would
+    /// silently mis-decode it, so assembly refuses it. Multi-format assembly is
+    /// planned (Epic #17).
+    #[error(
+        "unsupported map format: found a {lump} lump; assembly supports the classic Doom binary layout only"
+    )]
+    UnsupportedFormat {
+        /// The format-specific marker lump detected (`"BEHAVIOR"` or `"TEXTMAP"`).
+        lump: &'static str,
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.
@@ -294,6 +306,16 @@ impl Map {
     ) -> Result<Map, MapAssembleError> {
         let s = options.strictness;
         let mut warnings = Vec::new();
+
+        // Format-dispatch seam: assembly decodes the classic Doom binary layout
+        // only. A BEHAVIOR (Hexen) or TEXTMAP (UDMF) lump marks a different
+        // format whose records would otherwise silently mis-decode as Doom, so
+        // refuse it up front. Full format detection is Epic #17.
+        for marker in ["TEXTMAP", "BEHAVIOR"] {
+            if lump_bytes(wad, group, marker).is_some() {
+                return Err(MapAssembleError::UnsupportedFormat { lump: marker });
+            }
+        }
 
         let raw_verts = decode_required::<common::Vertex>(wad, group, "VERTEXES")?;
         let raw_sectors = decode_required::<common::Sector>(wad, group, "SECTORS")?;

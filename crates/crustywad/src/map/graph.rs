@@ -128,10 +128,11 @@ pub struct MapThing {
 #[non_exhaustive]
 pub enum MapWarning {
     /// A reference from one arena to another (e.g. a linedef's vertex index)
-    /// pointed past the end of the referenced arena, and was clamped during
-    /// lenient assembly.
+    /// pointed past the end of the referenced arena and was recovered during
+    /// lenient assembly — clamped to an in-range index for a required
+    /// reference, or dropped to `None` for an optional left sidedef.
     #[error(
-        "{referent} index {index} referenced from {from} is out of range ({count} available); reference clamped"
+        "{referent} index {index} referenced from {from} is out of range ({count} available); recovered during lenient assembly"
     )]
     DanglingReference {
         /// The name of the arena the out-of-range index referred to (e.g. `"vertex"`).

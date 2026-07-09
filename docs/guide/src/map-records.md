@@ -125,8 +125,9 @@ have to index arenas by hand.
 
 > **Doom binary format only (for now).** `Map::assemble` decodes the classic Doom
 > binary map records. `wad.map_groups()` will happily detect non-Doom map runs
-> (Hexen, or a UDMF `TEXTMAP` marker), but assembling those formats is not yet
-> implemented — Hexen and UDMF are planned as part of multi-format support (Epic #17).
+> (Hexen, marked by a `BEHAVIOR` lump, or UDMF, marked by `TEXTMAP`), but assembling
+> one returns `MapAssembleError::UnsupportedFormat` rather than mis-decoding it.
+> Hexen and UDMF support is planned as part of multi-format maps (Epic #17).
 
 ### Finding a map's lumps
 
