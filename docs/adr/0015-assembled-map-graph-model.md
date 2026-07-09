@@ -262,6 +262,8 @@ pub enum MapAssembleError {
     MissingLump { lump: &'static str },
     #[error("failed to decode {lump} records: {source}")]
     Records { lump: &'static str, #[source] source: MapParseError },
+    #[error("failed to parse UDMF text map: {source}")]
+    Udmf { #[source] source: UdmfParseError },
     #[error("{referent} index {index} referenced from {from} is out of range ({count} available)")]
     DanglingReference { referent: &'static str, index: usize, from: &'static str, count: usize },
 }
@@ -273,6 +275,12 @@ pub enum MapWarning {
 }
 ```
 
+The two decode paths surface distinct error sources: binary formats
+(Doom/Hexen/Doom 64) report record-decode failures via `Records` (a
+`MapParseError`), while UDMF reports text-parse failures via `Udmf` (a
+`UdmfParseError`, defined in ADR-0014) — the byte-level and line/column failure
+modes are kept as separate variants rather than force-fit into one source type.
+
 Validation rules:
 
 - The `0xffff` `left_sidedef` sentinel maps to `left: None` and is **never** an
@@ -282,9 +290,16 @@ Validation rules:
   - **Strict:** return `MapAssembleError::DanglingReference`.
   - **Lenient:** push `MapWarning::DanglingReference` and keep the graph
     structurally valid — a required reference (e.g. a linedef's right sidedef) is
-    clamped to a safe in-range fallback, and a non-sentinel out-of-range *left*
-    reference becomes `None`. Lenient assembly therefore always yields a
-    traversable `Map` a renderer can walk without panicking.
+    clamped to a safe in-range fallback *when its target arena is non-empty*, and
+    a non-sentinel out-of-range *left* reference becomes `None`. Lenient assembly
+    thus yields a traversable `Map` a renderer can walk without panicking, except
+    in the empty-arena case below.
+  - **Empty required arena:** clamping presumes a valid fallback exists. If a
+    *required* referent's target arena is empty (`count == 0` — e.g. a linedef
+    references a sidedef but `SIDEDEFS` decoded to zero records), there is no
+    in-range index to clamp to, so this is a structural failure returned as
+    `MapAssembleError::DanglingReference` (with `count: 0`) **even in lenient
+    mode**. An empty arena behind an *optional* reference simply yields `None`.
 
 ### 5. Required vs optional lumps
 
@@ -315,9 +330,9 @@ slices (or a dedicated `Option`) rather than failing assembly.
   here.
 - **Hardening** — assembly is a new parse/allocation surface: crafted
   `seg_count` / record counts must be validated against actual lump sizes, and
-  arena allocation must be bounded. This ADR's work adds a `cargo-fuzz` target
-  for assembly and resource limits, per the parser-hardening pass (ADR-0009
-  lineage).
+  arena allocation must be bounded. This ADR's implementation will add a
+  `cargo-fuzz` target for assembly and resource limits, per the parser-hardening
+  pass (ADR-0009 lineage).
 - **`lump_by_name` interaction** — map-group identification scans the directory
   positionally (not by `lump_by_name`), so it is unaffected by ADR-0013's
   first-match lookup semantics.
