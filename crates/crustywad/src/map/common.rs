@@ -4,17 +4,6 @@
 
 use binrw::BinRead;
 
-/// Returns the slice of `bytes` up to the first NUL byte (exclusive), or the
-/// whole slice if there is none.
-///
-/// Doom stores fixed-width names NUL-padded on the right; this strips that
-/// padding without allocating. Shared by the directory-name path
-/// (`Lump::name`) and the in-record texture path ([`Name8::as_str_lossy`]).
-pub(crate) fn trim_nul(bytes: &[u8]) -> &[u8] {
-    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    &bytes[..end]
-}
-
 /// A fixed-width 8-byte Doom name field, as used for texture and flat names.
 ///
 /// Doom stores texture and flat names in 8-byte fields padded with `\0` bytes.
@@ -34,7 +23,7 @@ impl Name8 {
     /// preserved.  The result is at most 8 characters long.
     #[must_use]
     pub fn as_str_lossy(&self) -> String {
-        String::from_utf8_lossy(trim_nul(&self.0)).into_owned()
+        String::from_utf8_lossy(crate::util::trim_nul(&self.0)).into_owned()
     }
 }
 
