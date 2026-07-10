@@ -112,8 +112,8 @@ pub fn iwad_dir(env_var: &str) -> Option<PathBuf> {
 /// Existing `candidates` files inside `iwad_dir(env_var)`, in listed order.
 ///
 /// Returns an empty `Vec` — the caller should skip its test — when `env_var`
-/// is unset or none of the candidates exist; prints a skip note to stderr in
-/// either case.
+/// is unset, points to a non-directory, or contains none of the candidates;
+/// prints a skip note to stderr in each case.
 #[allow(dead_code)]
 pub fn iwad_files(env_var: &str, candidates: &[&str]) -> Vec<PathBuf> {
     let Some(dir) = iwad_dir(env_var) else {
