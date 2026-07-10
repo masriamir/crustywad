@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-30fc122d.js";
+            window.path_to_searchindex_js = "searchindex-250b1b13.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -188,7 +188,9 @@ allowing callers to opt in to additional capabilities.</p>
 </thead>
 <tbody>
 <tr><td><a href="#mmap"><code>mmap</code></a></td><td>no</td><td>Memory-mapped file loading via <code>memmap2</code></td></tr>
-<tr><td><a href="#freedoom-tests"><code>freedoom-tests</code></a></td><td>no</td><td>Integration tests against local Freedoom WAD fixtures</td></tr>
+<tr><td><a href="#freedoom-tests"><code>freedoom-tests</code></a></td><td>no</td><td>Integration tests against local Freedoom WAD fixtures (auto-fetchable)</td></tr>
+<tr><td><a href="#hexen-tests"><code>hexen-tests</code></a></td><td>no</td><td>Integration tests against a local Hexen IWAD (not auto-fetchable)</td></tr>
+<tr><td><a href="#doom64-tests"><code>doom64-tests</code></a></td><td>no</td><td>Integration tests against a local Doom 64 IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
 </tbody>
 </table>
@@ -265,6 +267,32 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom \
 flag. The tests skip gracefully when <code>CRUSTYWAD_FREEDOOM_DIR</code> is not set — and CI never sets
 it because the fixture WADs are gitignored and not downloaded in the standard CI pipeline.</p>
 <hr>
+<h2 id="hexen-tests"><a class="header" href="#hexen-tests"><code>hexen-tests</code></a></h2>
+<p><strong>Enables:</strong> integration tests in <code>crates/crustywad/tests/hexen.rs</code></p>
+<h3 id="purpose"><a class="header" href="#purpose">Purpose</a></h3>
+<p>Gates an optional smoke test that parses a real Hexen IWAD. Unlike Freedoom, Hexen’s IWAD
+is <strong>not freely redistributable</strong>, so there is no fetch script and no committed fixture —
+supply your own copy locally.</p>
+<h3 id="running-the-tests-1"><a class="header" href="#running-the-tests-1">Running the tests</a></h3>
+<p>Point <code>CRUSTYWAD_HEXEN_DIR</code> at a directory containing <code>hexen.wad</code>:</p>
+<pre><code class="language-bash">CRUSTYWAD_HEXEN_DIR=/path/to/hexen \
+  cargo test -p crustywad --features hexen-tests
+</code></pre>
+<p>The test skips gracefully when <code>CRUSTYWAD_HEXEN_DIR</code> is unset or the file is missing.</p>
+<hr>
+<h2 id="doom64-tests"><a class="header" href="#doom64-tests"><code>doom64-tests</code></a></h2>
+<p><strong>Enables:</strong> integration tests in <code>crates/crustywad/tests/doom64.rs</code></p>
+<h3 id="purpose-1"><a class="header" href="#purpose-1">Purpose</a></h3>
+<p>Gates an optional smoke test that parses a real Doom 64 IWAD. Like Hexen, the Doom 64 IWAD
+is <strong>not freely redistributable</strong> — no fetch script, no committed fixture; supply your own
+copy locally.</p>
+<h3 id="running-the-tests-2"><a class="header" href="#running-the-tests-2">Running the tests</a></h3>
+<p>Point <code>CRUSTYWAD_DOOM64_DIR</code> at a directory containing <code>doom64.wad</code>:</p>
+<pre><code class="language-bash">CRUSTYWAD_DOOM64_DIR=/path/to/doom64 \
+  cargo test -p crustywad --features doom64-tests
+</code></pre>
+<p>The test skips gracefully when <code>CRUSTYWAD_DOOM64_DIR</code> is unset or the file is missing.</p>
+<hr>
 <h2 id="write"><a class="header" href="#write"><code>write</code></a></h2>
 <p><strong>Enables:</strong> <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteWarning</code>, <code>WriteOptions</code>, and <code>Wad::to_builder</code></p>
 <p><strong>Adds dependency:</strong> none (uses <code>binrw</code> already in the dependency tree)</p>
@@ -322,6 +350,8 @@ mode writes the raw 4-byte magic.</li>
 <tr><td>Test with all features</td><td><code>cargo test --workspace --all-features</code></td></tr>
 <tr><td>Test with <code>mmap</code> only</td><td><code>cargo test -p crustywad --features mmap</code></td></tr>
 <tr><td>Test with Freedoom fixtures</td><td><code>CRUSTYWAD_FREEDOOM_DIR=… cargo test -p crustywad --features freedoom-tests</code></td></tr>
+<tr><td>Test with Hexen fixture</td><td><code>CRUSTYWAD_HEXEN_DIR=… cargo test -p crustywad --features hexen-tests</code></td></tr>
+<tr><td>Test with Doom 64 fixture</td><td><code>CRUSTYWAD_DOOM64_DIR=… cargo test -p crustywad --features doom64-tests</code></td></tr>
 <tr><td>Build with <code>write</code></td><td><code>cargo build -p crustywad --features write</code></td></tr>
 <tr><td>Test with <code>write</code></td><td><code>cargo test -p crustywad --features write</code></td></tr>
 <tr><td>Full CI check</td><td><code>just ci</code></td></tr>
