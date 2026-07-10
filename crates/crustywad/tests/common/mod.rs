@@ -109,7 +109,7 @@ pub fn iwad_dir(env_var: &str) -> Option<PathBuf> {
     std::env::var_os(env_var).map(PathBuf::from)
 }
 
-/// Existing `candidates` files inside `iwad_dir(env_var)`, in listed order.
+/// Files from `candidates` that exist inside `iwad_dir(env_var)`, returned in listed order.
 ///
 /// Returns an empty `Vec` — the caller should skip its test — when `env_var`
 /// is unset, points to a non-directory, or contains none of the candidates;
