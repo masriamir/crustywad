@@ -298,11 +298,11 @@ The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes f
 
 PRs are reviewed automatically by `copilot-pull-request-reviewer`. Use the personal
 `resolving-bot-pr-reviews` skill (`~/.claude/skills/resolving-bot-pr-reviews/`) to work
-through its comments until two consecutive clean checks, then hand off for human review.
+through its comments across as many rounds as needed.
 
 A PR is ready for human review only when **all** automated review threads are resolved **and**
-all required CI checks pass (`gh pr checks`). Resolved threads over any red required check
-do not make a PR ready — verify CI is green before handing off.
+all required CI checks pass (`gh pr checks`) — resolved threads over any red required check do
+not make a PR ready. Only then hand off for human review.
 
 Project facts the skill needs:
 - Bot login: `copilot-pull-request-reviewer`
