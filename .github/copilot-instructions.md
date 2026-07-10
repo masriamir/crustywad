@@ -79,7 +79,7 @@ Install [just](https://github.com/casey/just) then run these recipes:
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
-**Match your local toolchain to CI.** Most CI jobs install the current `stable` toolchain via `dtolnay/rust-toolchain` (only the `msrv` job pins Rust 1.85.0), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version — a stale local toolchain can pass locally yet fail CI on the same code. Run `rustup update stable` before trusting a local pass, and treat `gh pr checks` (all required checks green on the PR) as the source of truth, not local results.
+**Match your local toolchain to CI.** CI's Rust jobs install the current `stable` toolchain via `dtolnay/rust-toolchain` (the `msrv` job pins Rust 1.85.0 instead), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version — a stale local toolchain can pass locally yet fail CI on the same code. Run `rustup update stable` before trusting a local pass, and treat `gh pr checks` (all required checks green on the PR) as the source of truth, not local results.
 
 Core Rust commands run by CI:
 
