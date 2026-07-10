@@ -288,9 +288,9 @@ pub struct Special {
 ```
 
 This **removes `LineSpecial.tag`** and renames the type (breaking; the type
-is currently named `LineSpecial` and re-exported from `map::mod`, so both
-the name and the field change ripple to every re-export and call site). The
-Doom normalizer becomes:
+is currently named `LineSpecial` and re-exported at the `map` module root
+(`crate::map`, in `map/mod.rs`), so both the name and the field change ripple
+to every re-export and call site). The Doom normalizer becomes:
 
 ```rust
 Special {
