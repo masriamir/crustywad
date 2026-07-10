@@ -13,5 +13,5 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-mdbook = "=0.5.3"
+mdbook = "=0.5.4"
 mdbook-mermaid = "=0.17.0"
