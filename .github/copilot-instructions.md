@@ -168,10 +168,11 @@ The full feature flag reference (usage examples, platform notes, cargo invocatio
 [`docs/guide/src/features.md`](../docs/guide/src/features.md), which is published via the
 mdBook guide to GitHub Pages. That file is the single source of truth.
 
-**Sync rule:** when a feature flag is added, removed, or renamed, update **all three** of:
+**Sync rule:** when a feature flag is added, removed, or renamed, update **all four** of:
 1. `docs/guide/src/features.md` — detailed docs, usage examples, and the summary table
 2. The summary table in `.claude/CLAUDE.md` (Feature flags section)
 3. The summary table below in this file
+4. The summary table in `README.md`
 
 | Feature | Default | Purpose |
 |---|---|---|

@@ -8,7 +8,7 @@ allowing callers to opt in to additional capabilities.
 | Feature | Default | Purpose |
 |---|---|---|
 | [`mmap`](#mmap) | no | Memory-mapped file loading via `memmap2` |
-| [`freedoom-tests`](#freedoom-tests) | no | Integration tests against local Freedoom WAD fixtures |
+| [`freedoom-tests`](#freedoom-tests) | no | Integration tests against local Freedoom WAD fixtures (auto-fetchable) |
 | [`hexen-tests`](#hexen-tests) | no | Integration tests against a local Hexen IWAD (not auto-fetchable) |
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
