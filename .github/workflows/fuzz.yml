@@ -10,7 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: dtolnay/rust-toolchain@efcb852328a9f50117170cc43094fb6f09eaf1ae # nightly
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch pin
+        with:
+          toolchain: nightly # cargo-fuzz requires nightly; set explicitly so the pinned SHA can't swap the channel
       - name: Install cargo-fuzz
         run: cargo install --locked cargo-fuzz
       - name: Fuzz fuzz_wad_strict

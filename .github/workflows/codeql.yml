@@ -41,7 +41,7 @@ jobs:
       # Provide a stable Rust toolchain matching the project MSRV so the
       # compiler artefacts produced for CodeQL are consistent.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch pin; toolchain set explicitly below
         with:
           toolchain: 1.85.0
 
