@@ -120,6 +120,13 @@ pub fn iwad_files(env_var: &str, candidates: &[&str]) -> Vec<PathBuf> {
         eprintln!("skipping fixture test: {env_var} not set");
         return Vec::new();
     };
+    if !dir.is_dir() {
+        eprintln!(
+            "skipping fixture test: {env_var} ({}) is not a directory",
+            dir.display()
+        );
+        return Vec::new();
+    }
     let found: Vec<PathBuf> = candidates
         .iter()
         .map(|name| dir.join(name))
@@ -127,7 +134,7 @@ pub fn iwad_files(env_var: &str, candidates: &[&str]) -> Vec<PathBuf> {
         .collect();
     if found.is_empty() {
         eprintln!(
-            "skipping fixture test: no fixtures found in {}",
+            "skipping fixture test: {env_var}: no fixtures found in {}",
             dir.display()
         );
     }
