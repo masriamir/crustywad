@@ -47,6 +47,6 @@ implementation begins.**
 | [0014](0014-multi-format-map-support-strategy.md) | Multi-format map support strategy | Accepted |
 | [0015](0015-assembled-map-graph-model.md) | Assembled map graph model | Accepted |
 | [0016](0016-parser-hardening-policy.md) | Parser and assembly hardening policy | Accepted |
-| [0017](0017-udmf-representation.md) | UDMF representation and parsing strategy | Proposed |
+| [0017](0017-udmf-representation.md) | UDMF representation and parsing strategy | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->

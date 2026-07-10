@@ -1,6 +1,6 @@
 # ADR-0017: UDMF representation and parsing strategy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-10
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/57
@@ -91,10 +91,11 @@ checklist):
 - `crates/crustywad/src/map/graph.rs`: `MapFormat` has one variant today
   (`Doom`, `#[non_exhaustive]`); `Map { name, format, vertices, linedefs,
   sidedefs, sectors, things, warnings }` (all arena fields `pub(crate)`);
-  `LineSpecial { special: u16, tag: u16 }`; `MapThing { x: f64, y: f64,
-  angle: u16, type_id: u16, flags: u32 }` — **no `z`/`height` or `id`/`tid`
-  field exists yet**, despite ADR-0015's sketch comment anticipating "Hexen
-  tid/args."
+  `LineSpecial { special: u16, tag: u16 }` (the type is *currently* named
+  `LineSpecial`; this ADR renames it to `Special` — see §1); `MapThing {
+  x: f64, y: f64, angle: u16, type_id: u16, flags: u32 }` — **no `z`/`height`
+  or `id`/`tid` field exists yet**, despite ADR-0015's sketch comment
+  anticipating "Hexen tid/args."
 - `crates/crustywad/src/map/assemble.rs`: `Map::assemble_with_options`
   currently refuses any group containing a `TEXTMAP` or `BEHAVIOR` lump via
   `MapAssembleError::UnsupportedFormat` — there is no `MapAssembleError::Udmf`
@@ -135,8 +136,8 @@ checklist):
   namespace-specific fields; it must give a genuine, motivated answer to
   "what does *not* enter `Map`."
 - **Pre-1.0 is still the cheapest window for breaking changes** (ADR-0014's
-  driver, still true) — `LineSpecial` and `ParseOptions` can still change
-  shape without a deprecation cycle.
+  driver, still true) — `LineSpecial` (renamed to `Special` by this ADR) and
+  `ParseOptions` can still change shape without a deprecation cycle.
 - **This is a read-design spike.** Game/engine semantics (#59) and the write
   path (#60) are out of scope; decisions here should not foreclose either but
   must not attempt to resolve them.
@@ -252,7 +253,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
 | `linedef.sideback` | int, default `-1` | `MapLinedef.left` — `-1` (explicit or defaulted) means one-sided, the direct UDMF analog of Doom's `0xffff` sentinel (ADR-0015 §4); any other out-of-range value is a dangling reference under the same strict/lenient rules |
 | `linedef.blocking, blockmonsters, twosided, dontpegtop, dontpegbottom, secret, blocksound, dontdraw, mapped` | bool ×9, default `false` | `MapLinedef.flags` bits 0–8 — these 9 names correspond 1:1 to the 9 documented bit positions of the *existing* Doom on-disk `Linedef.flags` (`doom.rs`), so `flags` keeps a single, format-agnostic meaning across Doom and UDMF |
 | `linedef.passuse`, SPAC flags (`playercross`, …), Strife flags (`translucent`, `jumpover`, `blockfloaters`), and all port-extension flags (ZDoom `blockplayers`, `blocksight`, …) | bool | **not modeled in `Map` yet** — see "What is deferred" below |
-| `linedef.special`, `arg0`–`arg4`, `id` | int, default 0 / -1 | folds into an extended `LineSpecial` (below) |
+| `linedef.special`, `arg0`–`arg4`, `id` | int, default 0 / -1 | folds into the extended `Special` type (below) |
 | `sidedef.offsetx`, `.offsety` | int, default 0 | `MapSidedef.x_offset`/`.y_offset` |
 | `sidedef.texturetop`, `.texturebottom`, `.texturemiddle` | string, default `"-"` | `MapSidedef.upper`/`.lower`/`.middle` |
 | `sidedef.sector` | int, no default | `MapSidedef.sector` via `resolve_required` |
@@ -265,38 +266,44 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
 | `thing.type` | int (DoomedNum), no default | `MapThing.type_id` — narrowed to `u16` with strict-reject / lenient-clamp+warning if out of range (new `MapWarning::FieldOutOfRange`, below) |
 | `thing.angle` | int degrees, default 0 | `MapThing.angle` — normalized via `rem_euclid(360)` then cast to `u16`; Doom's existing on-disk `u16` is unaffected (always already in range) |
 | `thing.height` | float, default 0 | **new** `MapThing.height: f64` field (also needed by Hexen's `z: i16`, per ADR-0014 §"Hexen" — this ADR adds the field; #55 populates it for Hexen) |
-| `thing.id` | int, default 0 | **new** `MapThing.id: i32` field (the Hexen/UDMF `tid`; Doom-format things always populate `0`, matching the existing "0 = untagged" convention used by `MapSector.tag` and `LineSpecial`) |
-| `thing.special`, `arg0`–`arg4` | int, default 0 | **new** `MapThing.special: LineSpecial` (reuses the same extended type as linedefs — see below) |
+| `thing.id` | int, default 0 | **new** `MapThing.id: i32` field (the Hexen/UDMF `tid`; Doom-format things always populate `0`, matching the existing "0 = untagged" convention used by `MapSector.tag` and `Special`) |
+| `thing.special`, `arg0`–`arg4` | int, default 0 | **new** `MapThing.special: Special` (reuses the same extended type as linedefs — see below) |
 | `thing.skill1`–`5`, `single`, `dm`, `coop`, `ambush`, `friend`, `dormant`, `class1`–`3`, Strife flags | bool | **not modeled in `Map` yet** — see below (Doom's on-disk 5-bit `flags` and UDMF's ~15 discrete booleans are not a 1:1 bit-for-bit shape, unlike linedef flags) |
 | `namespace` | string | `Map.namespace: Option<String>` |
 | `*.comment`, `user_*` fields | string / any | not modeled — parsed for syntax validity only, then dropped (no write path yet to round-trip them) |
 
-**Extended `LineSpecial` (closes ADR-0015's forward reference for both
-Hexen and UDMF, which share the same special+args shape):**
+**Extended, renamed `Special` type (closes ADR-0015's forward reference for
+both Hexen and UDMF, which share the same special+args shape).** This ADR
+**renames `LineSpecial` → `Special`**, because the type is now carried by
+both `MapLinedef` and `MapThing`, so a linedef-flavored name is a misnomer.
+The rename plus the field change is a single breaking change taken now,
+pre-1.0:
 
 ```rust
-pub struct LineSpecial {
+pub struct Special {
     pub special: i32,     // widened from u16 — Doom/Hexen/UDMF specials all fit
     pub args: [i32; 5],   // Hexen/UDMF-style args; args[0] carries the
                            // tag/id where Doom used a standalone `tag` field
 }
 ```
 
-This **removes** `LineSpecial.tag` (breaking; `LineSpecial` is currently
-re-exported from `map::mod`). The Doom normalizer becomes:
+This **removes `LineSpecial.tag`** and renames the type (breaking; the type
+is currently named `LineSpecial` and re-exported from `map::mod`, so both
+the name and the field change ripple to every re-export and call site). The
+Doom normalizer becomes:
 
 ```rust
-LineSpecial {
+Special {
     special: i32::from(ld.special_type),
     args: [i32::from(ld.sector_tag), 0, 0, 0, 0],
 }
 ```
 
-`MapThing` gains `pub special: LineSpecial`, reusing the type for thing
-specials (Hexen/UDMF give things the identical `special`+`arg0..4` shape as
-linedefs). The type's name (`LineSpecial`) becomes a misnomer once it is
-also used on `MapThing` — renaming it (e.g. to `Special`) is flagged as an
-open question rather than decided here (see Open questions).
+`MapThing` gains `pub special: Special`, reusing the type for thing specials
+(Hexen/UDMF give things the identical `special`+`arg0..4` shape as linedefs).
+The rename to `Special` (rather than keeping the now-misleading `LineSpecial`
+name) is a decided part of this ADR, since pre-1.0 is the cheapest window for
+it (see Decisions resolved during spike review, below).
 
 **What is deferred (explicit, motivated non-goals of this pass):**
 
@@ -309,13 +316,17 @@ open question rather than decided here (see Open questions).
   Sidedef,Linedef,Thing}` remain available pre-normalization for a caller
   needing full text-level fidelity (e.g. a future editor, #18); the
   assembled `Map` only gets the fields listed in the table above.
-- `MapThing.flags`'s UDMF synthesis. Doom's on-disk `Thing.flags` packs skill
-  into a coarse 3-bit triplet and a single "multiplayer-only" bit; UDMF
-  exposes 5 independent `skill1..skill5` booleans plus separate `single`/
-  `dm`/`coop` booleans. These are not the same bit shape, so — unlike
-  linedef flags — there is no clean 1:1 synthesis. This ADR does not commit
-  to a bit layout; it is flagged as an open question (below) for the
-  implementation issue.
+- `MapThing.flags`'s UDMF synthesis is **deferred** (decided). Doom's on-disk
+  `Thing.flags` packs skill into a coarse 3-bit triplet and a single
+  "multiplayer-only" bit; UDMF exposes 5 independent `skill1..skill5`
+  booleans plus separate `single`/`dm`/`coop` booleans. These are not the
+  same bit shape, so — unlike linedef flags — there is no clean 1:1
+  synthesis. `MapThing.flags` therefore keeps its current Doom-raw meaning,
+  and the discrete UDMF thing booleans stay in `UdmfThing` (available to a
+  full-fidelity consumer) rather than being force-fit into a normalized bit
+  layout. A crustywad-normalized thing-flag representation is left for a
+  concrete future consumer to motivate (see Decisions resolved during spike
+  review, below).
 - `*.comment` and `user_*` fields: parsed (so they don't cause a syntax
   error) but not retained. Lossless round-trip is a write-path (#60)
   concern, not decided here.
@@ -397,8 +408,10 @@ pub enum UdmfParseError {
 
 `TEXTMAP` bytes are decoded as UTF-8 only (`std::str::from_utf8`); the
 spec's alternative encodings (ISO-8859-1, Windows-1252) are not decoded in
-this pass — flagged as an open question below, not a silent gap, since real
-UDMF content is overwhelmingly ASCII (a subset of all three).
+this pass — this is a **decided deferral** (see Decisions resolved during
+spike review, below), not a silent gap: anything non-UTF-8 is a clean
+`UdmfParseError::InvalidEncoding` in both modes, and real UDMF content is
+overwhelmingly ASCII (a subset of all three encodings).
 
 **Strict vs. lenient (ADR-0014 §6, applied to text):** structural failures
 (bad token, unbalanced braces, exceeded depth, a required field with no
@@ -430,16 +443,35 @@ Context, `group.rs`'s `marker_run_end` stops the data-lump run at the first
 name outside `MAP_DATA_LUMPS`, which cannot reach `ENDMAP` past any
 port-specific auxiliary lump. This ADR proposes a UDMF-specific branch,
 landing with #58: when the lump immediately after a marker is `TEXTMAP`, the
-run is bounded by the first subsequent lump literally named `ENDMAP` (or the
-end of the directory, if absent — a missing `ENDMAP` is a malformed UDMF
-map, not a hidden crash: the scan is a single bounded pass over the
-directory, preserving ADR-0016 §1's `O(input)` invariant), rather than by
-`MAP_DATA_LUMPS` membership. `ENDMAP` is deliberately **not** added to
-`MAP_DATA_LUMPS` itself — that would not fix the gap, since the
+run is bounded by the first subsequent lump literally named `ENDMAP` rather
+than by `MAP_DATA_LUMPS` membership. `ENDMAP` is deliberately **not** added
+to `MAP_DATA_LUMPS` itself — that would not fix the gap, since the
 contiguous-recognized-name rule still cannot skip over intervening
 unrecognized (port-specific) lump names to reach it. `MapGroup`'s *shape*
 (`marker_index`/`name`/`data_indices`) is unchanged; only the algorithm that
 populates `data_indices` for the `TEXTMAP` case changes.
+
+**Missing `ENDMAP` is strictness-aware (decided).** The spec makes `ENDMAP`
+a required closing lump, so its absence means a malformed/truncated UDMF map.
+This ADR resolves the two modes differently, mirroring the strict/lenient
+contract (ADR-0003) rather than failing closed in both:
+
+- **Strict:** a `TEXTMAP` run with no subsequent `ENDMAP` is a hard failure —
+  the group is not recognized as a valid UDMF map (and assembly, if invoked
+  on such a group, errors rather than silently guessing where the map ends).
+- **Lenient:** the run is recovered best-effort — bounded by the next real
+  map marker (the next lump whose successor is a recognized map data lump) or
+  end-of-directory, whichever comes first — and a warning is recorded so the
+  truncated map is still inspectable, consistent with how lenient mode
+  recovers elsewhere.
+
+This makes the `ENDMAP`-scan path (whether in `marker_run_end`/group
+detection or in the UDMF assembly branch) **strictness-aware**; today's
+`map_groups`/`marker_run_end` take no `ParseOptions`, so threading strictness
+into group detection (or performing the missing-`ENDMAP` decision at the
+assembly boundary where options are already available) is a plumbing choice
+left to #58. Either way the scan remains a single bounded pass over the
+directory, preserving ADR-0016 §1's `O(input)` invariant.
 
 **Assembly dispatch.** `Map::assemble_with_options` drops `"TEXTMAP"` from
 the current blanket `UnsupportedFormat` refusal loop (`"BEHAVIOR"` stays
@@ -497,13 +529,14 @@ forward references, not decided here:
   `UdmfSidedef`, `UdmfSector`, `UdmfThing`, `parse_udmf`), `UdmfParseError`,
   `Limits` + `ParseOptions.limits`, `MapAssembleError::Udmf`,
   `MapWarning::FieldOutOfRange`, `detect_map_format`.
-- **Breaking (pre-1.0, intentional):** `LineSpecial.tag` is removed in favor
-  of `args[0]`; `LineSpecial.special` widens `u16` → `i32`. `MapThing` gains
-  `height: f64`, `id: i32`, and `special: LineSpecial`. `ParseOptions` gains
-  a `limits` field (mitigated by the `strict()`/`lenient()` constructors,
-  per ADR-0016). `MapThing.angle`'s Doom-derived meaning ("exactly the
-  on-disk bits") becomes "degrees, normalized into `0..360`" — a documented
-  behavior change with no effect on any value Doom itself can produce.
+- **Breaking (pre-1.0, intentional):** `LineSpecial` is renamed to `Special`;
+  its `tag` field is removed in favor of `args[0]` and its `special` field
+  widens `u16` → `i32`. `MapThing` gains `height: f64`, `id: i32`, and
+  `special: Special`. `ParseOptions` gains a `limits` field (mitigated by the
+  `strict()`/`lenient()` constructors, per ADR-0016). `MapThing.angle`'s
+  Doom-derived meaning ("exactly the on-disk bits") becomes "degrees,
+  normalized into `0..360`" — a documented behavior change with no effect on
+  any value Doom itself can produce.
 - **Good** — UDMF converges cleanly onto the existing `Map` model; no
   consumer branches on `MapFormat`.
 - **Good** — the parser/normalize split mirrors `map::doom` +
@@ -519,10 +552,11 @@ forward references, not decided here:
   seeded with valid and malformed `TEXTMAP` samples plus pathological brace
   runs) is required per ADR-0016 §3, landing with #58; `fuzz_assemble_map`'s
   corpus gains UDMF-bearing synthetic WADs.
-- **Deferred, flagged (not decided here)** — the ~20 non-bit-mappable
-  boolean fields, `MapThing.flags`'s UDMF synthesis, comment/custom-field
-  retention, non-UTF-8 `TEXTMAP` decoding, namespace-gated semantics (#59),
-  and the write path (#60).
+- **Deferred (decided — see Decisions resolved during spike review)** — the
+  ~20 non-bit-mappable boolean fields, `MapThing.flags`'s UDMF synthesis,
+  comment/custom-field retention, and non-UTF-8 `TEXTMAP` decoding.
+  Namespace-gated semantics (#59) and the write path (#60) remain out of
+  scope by forward reference (§4).
 
 ## Pros and cons of the options
 
@@ -595,44 +629,44 @@ forward references, not decided here:
   (ZDoom namespace extensions); <https://doomwiki.org/wiki/UDMF> and
   <https://zdoom.org/wiki/UDMF> for cross-port summary and namespace list.
 
-### Open questions
+### Decisions resolved during spike review (#57)
 
-1. **`LineSpecial`/`MapThing.special` sequencing against Hexen (#55).** This
-   ADR defines the extended `special: i32, args: [i32; 5]` shape ahead of
-   #55 landing, since ADR-0015 tied the two together ("finalized alongside
-   the Hexen/UDMF work"). If #55 lands first with a different shape, this
-   ADR's normalizer needs reconciling. Maintainer judgment needed: bind the
-   shape now (this ADR), or keep `LineSpecial`'s Hexen-facing fields
-   provisional until #55 actually lands?
-2. **Rename `LineSpecial` → `Special`?** Once `MapThing` also carries one,
-   the linedef-flavored name is a minor but real misnomer. Pre-1.0 is cheap
-   for renames; deferring costs nothing but a later breaking change.
-3. **`MapThing.flags` UDMF synthesis.** Doom's on-disk 5-bit thing flags and
-   UDMF's ~15 discrete skill/mode/AI booleans are not a 1:1 bit shape (unlike
-   linedef flags, which are). Options: (a) leave `MapThing.flags` at its
-   current Doom-only meaning and add a separate UDMF-only field/struct for
-   the discrete booleans, (b) define a new crustywad-normalized bit layout
-   both formats populate, accepting the bit-table design work that entails,
-   or (c) defer entirely until a concrete consumer needs it. Needs
-   maintainer input on how much of this to settle now vs. in #58.
-4. **Missing `ENDMAP`.** If no `ENDMAP` is found, this ADR's proposed
-   `marker_run_end` branch returns `None`, so the marker is not
-   recognized as a map group at all (fails closed, in both strictness
-   modes). Should lenient mode instead recover a best-effort group (e.g.
-   ending at EOF or the next real marker) so a truncated/corrupt UDMF map is
-   still inspectable, consistent with how lenient mode recovers elsewhere?
-5. **Non-UTF-8 `TEXTMAP` (ISO-8859-1 / Windows-1252).** The spec permits
-   these; this ADR decodes UTF-8 only and treats anything else as
-   `UdmfParseError::InvalidEncoding` in both modes. Real-world UDMF content
-   is overwhelmingly ASCII, but is a lenient-mode lossy fallback (e.g.
-   `String::from_utf8_lossy`, matching `Name8`'s existing lossy-decode
-   precedent) worth adding now, or should this wait for an actual reported
-   fixture that needs it?
+The five questions raised by the draft were resolved by @masriamir (sole
+decider) during spike review and are folded into the sections above; recorded
+here with one-line rationale each:
 
-- **Revisit condition:** reopen if #55 (Hexen) lands a `LineSpecial`/
-  `MapThing.special` shape incompatible with this ADR's (#1 above); if a
-  concrete UDMF fixture needs any of the deferred boolean fields, slope
-  fields, or non-UTF-8 decoding; or if #59's namespace-semantic work finds
-  that namespace-gated field *parsing* (not just interpretation) is actually
+1. **Bind the `special`/`args[5]` shape now (don't wait for #55).** The
+   extended `Special { special: i32, args: [i32; 5] }` shape in §1 is the
+   decision, not a provisional sketch — Hexen (#55) must conform to it.
+   Rationale: ADR-0015 tied the Hexen and UDMF special encodings to one
+   normalized type, so fixing it once here avoids two half-designs racing.
+2. **Rename `LineSpecial` → `Special`.** Since `MapThing` now also carries
+   one, the linedef-flavored name is a misnomer; the rename is applied in §1
+   and Consequences. Rationale: pre-1.0 is the cheapest window for the rename;
+   deferring only banks a later breaking change.
+3. **Defer `MapThing.flags` UDMF synthesis.** `MapThing.flags` keeps its
+   Doom-raw meaning and the discrete UDMF thing booleans stay in `UdmfThing`
+   (§1). Rationale: Doom's coarse bit-packing and UDMF's ~15 independent
+   booleans have no clean 1:1 mapping (unlike linedef flags), so a normalized
+   thing-flag layout waits for a concrete consumer to motivate it.
+4. **Missing `ENDMAP`: strict fails closed, lenient recovers best-effort.**
+   §3 now specifies that a `TEXTMAP` run without a following `ENDMAP` is a
+   hard failure in strict mode, but in lenient mode the run is recovered
+   bounded by the next real marker or end-of-directory with a warning.
+   Rationale: consistent with the strict/lenient contract (ADR-0003) — strict
+   surfaces the malformed map, lenient keeps a truncated map inspectable.
+5. **Defer non-UTF-8 `TEXTMAP` decoding.** UTF-8 only for now, with
+   `UdmfParseError::InvalidEncoding` for anything else in both modes (§2). A
+   lenient lossy fallback (the `Name8` `from_utf8_lossy` precedent) waits for
+   a real fixture. Rationale: real UDMF content is overwhelmingly ASCII, a
+   subset of all permitted encodings, so the fallback is speculative until
+   demonstrated needed (ADR-0013 restraint).
+
+- **Revisit condition:** reopen if a concrete UDMF fixture needs any of the
+  deferred boolean fields, the `MapThing.flags` normalization, slope fields,
+  or non-UTF-8 decoding; or if #59's namespace-semantic work finds that
+  namespace-gated field *parsing* (not just interpretation) is actually
   required, contradicting this ADR's "accept standardized fields uniformly
-  regardless of namespace" choice in §4.
+  regardless of namespace" choice in §4. Note that #55 (Hexen) does **not**
+  trigger a revisit of the `Special`/`args[5]` shape: per decision 1 above,
+  #55 must conform to the shape this ADR fixes, not the other way around.
