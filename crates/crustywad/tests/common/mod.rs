@@ -123,7 +123,7 @@ pub fn iwad_files(env_var: &str, candidates: &[&str]) -> Vec<PathBuf> {
     let found: Vec<PathBuf> = candidates
         .iter()
         .map(|name| dir.join(name))
-        .filter(|path| path.exists())
+        .filter(|path| path.is_file())
         .collect();
     if found.is_empty() {
         eprintln!(
