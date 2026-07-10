@@ -123,11 +123,14 @@ The record types above are flat and unresolved — a `Linedef`'s `start_vertex` 
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don't
 have to index arenas by hand.
 
-> **Doom binary format only (for now).** `Map::assemble` decodes the classic Doom
-> binary map records. `wad.map_groups()` will happily detect non-Doom map runs
-> (Hexen, marked by a `BEHAVIOR` lump, or UDMF, marked by `TEXTMAP`), but assembling
-> one returns `MapAssembleError::UnsupportedFormat` rather than mis-decoding it.
-> Hexen and UDMF support is planned as part of multi-format maps (Epic #17).
+> **Doom-family binary formats (for now).** `Map::assemble` decodes the classic Doom
+> binary map records — which **Doom II** and **Heretic** maps use unchanged. They differ
+> only in map-marker naming (`MAP01` vs `E1M1`), which `wad.map_groups()` detects
+> positionally, so all three assemble through the same path as `MapFormat::Doom`.
+> `map_groups()` also detects *other* non-Doom runs (Hexen, marked by a `BEHAVIOR` lump,
+> or UDMF, marked by `TEXTMAP`), but assembling one returns
+> `MapAssembleError::UnsupportedFormat` rather than mis-decoding it — Hexen and UDMF
+> support is planned as part of multi-format maps (Epic #17).
 
 ### Finding a map's lumps
 
