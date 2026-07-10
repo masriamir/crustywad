@@ -265,6 +265,8 @@ I move the board myself as work progresses and **announce each change** in my re
 
 `In review` holds through the entire Copilot review loop, until human review and merge. Transitions apply only to a tracked issue that is on the board; if an issue exists but isn't on the board, add it first. The `gh project item-edit` recipe (Status field + option IDs) lives in the `reference-project-board` memory; it needs the `read:project,project` scope — if that scope is missing, surface it and ask the user to grant it rather than silently skipping the transition.
 
+**Epics** (the `epic` label, e.g. #17, #18) carry an **aggregate** Status distinct from the per-issue flow above: an epic moves to `In progress` when its **first** sub-issue starts work, and stays there until **all** its sub-issues close (only then does the board automate it to `Done`). GitHub does not propagate a sub-issue's board **Status** field up to the epic (only completion progress rolls up automatically), so I set the epic's Status myself and announce it. An epic's Horizon (`Now`/`Next`/`Later`) still carries its planning intent; sub-issue rollup shows its completion progress.
+
 ## Git branching workflow
 
 All work branches from `main` after a `git pull`. A branch is named `<type>/<slug>`; the slug is descriptive (never a bare issue number) and is prefixed with the issue number when a tracking issue exists.
