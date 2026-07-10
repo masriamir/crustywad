@@ -184,6 +184,29 @@ Before opening a PR for a new or updated ADR, run through this checklist. The it
 6. Update `README.md` if the new type is user-visible.
 7. Run `just lint` and `just doc` before committing.
 
+### Parser/assembly hardening checklist (ADR-0016)
+
+Every PR that adds a parse or assembly surface — a new lump type, a new map
+format, or a new decode/assembly path — must satisfy **and state in its PR
+description** all of:
+
+1. **Bounded allocation.** Memory use is `O(input length)` (record/element counts
+   bounded by `input_len / min_record_size`). For structured *text* formats (UDMF),
+   allocation is instead explicitly depth-/count-limited via `Limits` (introduced
+   with UDMF, #57–#58).
+2. **No unbounded recursion.** The path is iterative, or recursive with an explicit
+   depth counter that fails cleanly against `Limits::max_depth` rather than risking
+   stack overflow.
+3. **A `cargo-fuzz` target** exists for the surface, with the no-panic oracle, an
+   output-size (`O(input)`) assertion per item 1, and a committed seed corpus — and
+   is wired into `.github/workflows/fuzz.yml`.
+4. **Both `Strictness` modes** reject or recover from malformed input without
+   panicking.
+
+The threat model is denial of service (unexpected panic/abort, OOM, unbounded work,
+stack overflow), not memory safety — the core crate is `#![deny(unsafe_code)]`. See
+ADR-0016 for the full rationale.
+
 ## Feature flags
 
 See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations. That file is the single source of truth — it is published via the mdBook guide to GitHub Pages.

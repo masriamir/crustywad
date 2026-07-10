@@ -24,6 +24,24 @@ fuzz_target!(|data: &[u8]| {
                     warning_count <= bound,
                     "warning count {warning_count} exceeded upper bound {bound}"
                 );
+                // O(input) allocation invariant (ADR-0016 §1): each arena is
+                // decoded from one fixed-size-record lump whose bytes are a
+                // subset of the WAD input, so each element count is bounded by
+                // input_len / record_size. Bounded per-arena (not summed) so
+                // the invariant holds even if a malicious WAD overlaps lumps.
+                for (count, record_size, arena) in [
+                    (map.vertices().len(), 4, "vertices"),
+                    (map.linedefs().len(), 14, "linedefs"),
+                    (map.sidedefs().len(), 30, "sidedefs"),
+                    (map.sectors().len(), 26, "sectors"),
+                    (map.things().len(), 10, "things"),
+                ] {
+                    assert!(
+                        count <= data.len() / record_size,
+                        "{arena} count {count} exceeds O(input) bound {}",
+                        data.len() / record_size
+                    );
+                }
                 std::hint::black_box(&map);
             }
         }
