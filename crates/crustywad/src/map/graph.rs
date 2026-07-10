@@ -5,7 +5,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {
-    /// Classic Doom binary layout (also Heretic).
+    /// The classic Doom binary layout — also used, unchanged, by **Doom II** and
+    /// **Heretic** (which differ only in map-marker naming, not record format).
     Doom,
 }
 
