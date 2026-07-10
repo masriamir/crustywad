@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2a7fb5c9.js";
+            window.path_to_searchindex_js = "searchindex-7157620a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -294,11 +294,14 @@ size (e.g. a <code>THINGS</code> lump whose byte count is not divisible by 10).<
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don’t
 have to index arenas by hand.</p>
 <blockquote>
-<p><strong>Doom binary format only (for now).</strong> <code>Map::assemble</code> decodes the classic Doom
-binary map records. <code>wad.map_groups()</code> will happily detect non-Doom map runs
-(Hexen, marked by a <code>BEHAVIOR</code> lump, or UDMF, marked by <code>TEXTMAP</code>), but assembling
-one returns <code>MapAssembleError::UnsupportedFormat</code> rather than mis-decoding it.
-Hexen and UDMF support is planned as part of multi-format maps (Epic #17).</p>
+<p><strong>Doom-family binary formats (for now).</strong> <code>Map::assemble</code> decodes the classic Doom
+binary map records — which <strong>Doom II</strong> and <strong>Heretic</strong> maps use unchanged. They differ
+only in map-marker naming (<code>MAP01</code> vs <code>E1M1</code>), which <code>wad.map_groups()</code> detects
+positionally, so all three assemble through the same path as <code>MapFormat::Doom</code>.
+<code>map_groups()</code> also detects <em>other</em> non-Doom runs (Hexen, marked by a <code>BEHAVIOR</code> lump,
+or UDMF, marked by <code>TEXTMAP</code>), but assembling one returns
+<code>MapAssembleError::UnsupportedFormat</code> rather than mis-decoding it — Hexen and UDMF
+support is planned as part of multi-format maps (Epic #17).</p>
 </blockquote>
 <h3 id="finding-a-maps-lumps"><a class="header" href="#finding-a-maps-lumps">Finding a map’s lumps</a></h3>
 <p>A WAD stores maps as a marker lump (e.g. <code>E1M1</code>, <code>MAP01</code>) followed by a run of data lumps
