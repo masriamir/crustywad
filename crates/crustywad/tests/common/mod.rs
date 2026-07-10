@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use proptest::prelude::*;
 
@@ -97,4 +98,38 @@ pub fn arb_valid_wad() -> impl Strategy<Value = Vec<u8>> {
             .collect();
         build_wad(k, &refs)
     })
+}
+
+/// Directory named by `env_var`, if that environment variable is set.
+///
+/// Used by the optional real-IWAD fixture tests to locate a caller-supplied
+/// WAD directory (e.g. `CRUSTYWAD_FREEDOOM_DIR`, `CRUSTYWAD_HEXEN_DIR`).
+#[allow(dead_code)]
+pub fn iwad_dir(env_var: &str) -> Option<PathBuf> {
+    std::env::var_os(env_var).map(PathBuf::from)
+}
+
+/// Existing `candidates` files inside `iwad_dir(env_var)`, in listed order.
+///
+/// Returns an empty `Vec` — the caller should skip its test — when `env_var`
+/// is unset or none of the candidates exist; prints a skip note to stderr in
+/// either case.
+#[allow(dead_code)]
+pub fn iwad_files(env_var: &str, candidates: &[&str]) -> Vec<PathBuf> {
+    let Some(dir) = iwad_dir(env_var) else {
+        eprintln!("skipping fixture test: {env_var} not set");
+        return Vec::new();
+    };
+    let found: Vec<PathBuf> = candidates
+        .iter()
+        .map(|name| dir.join(name))
+        .filter(|path| path.exists())
+        .collect();
+    if found.is_empty() {
+        eprintln!(
+            "skipping fixture test: no fixtures found in {}",
+            dir.display()
+        );
+    }
+    found
 }
