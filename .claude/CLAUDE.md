@@ -85,6 +85,8 @@ Install [just](https://github.com/casey/just), then:
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
+**Match your local toolchain to CI, and treat CI as the source of truth.** CI installs the current `stable` toolchain (via `dtolnay/rust-toolchain`), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version. A lagging local toolchain can make `just ci` pass locally while CI's `fmt`/`clippy` fail on the same code — run `rustup update stable` before trusting a local pass. A change is not green until `gh pr checks` shows every required check passing on the PR; local results are a fast pre-filter, not the verdict.
+
 Core Rust commands run by CI:
 
 ```bash
@@ -297,6 +299,10 @@ The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes f
 PRs are reviewed automatically by `copilot-pull-request-reviewer`. Use the personal
 `resolving-bot-pr-reviews` skill (`~/.claude/skills/resolving-bot-pr-reviews/`) to work
 through its comments until two consecutive clean checks, then hand off for human review.
+
+A PR is ready for human review only when **both** its bot threads are resolved **and** all
+required CI checks pass (`gh pr checks`). Resolved threads over a red `fmt`/`clippy`/`test`
+do not make a PR ready — verify CI is green before handing off.
 
 Project facts the skill needs:
 - Bot login: `copilot-pull-request-reviewer`
