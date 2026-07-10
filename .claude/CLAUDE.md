@@ -85,7 +85,7 @@ Install [just](https://github.com/casey/just), then:
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
-**Match your local toolchain to CI, and treat CI as the source of truth.** CI installs the current `stable` toolchain (via `dtolnay/rust-toolchain`), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version. A lagging local toolchain can make `just ci` pass locally while CI's `fmt`/`clippy` fail on the same code — run `rustup update stable` before trusting a local pass. A change is not green until `gh pr checks` shows every required check passing on the PR; local results are a fast pre-filter, not the verdict.
+**Match your local toolchain to CI, and treat CI as the source of truth.** Most CI jobs (`fmt`, `clippy`, `test`, `docs`) install the current `stable` toolchain via `dtolnay/rust-toolchain` — only the `msrv` job pins Rust 1.85.0 — so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version. A lagging local toolchain can make `just ci` pass locally while CI's `fmt`/`clippy` fail on the same code — run `rustup update stable` before trusting a local pass. A change is not green until `gh pr checks` shows every required check passing on the PR; local results are a fast pre-filter, not the verdict.
 
 Core Rust commands run by CI:
 
@@ -300,8 +300,8 @@ PRs are reviewed automatically by `copilot-pull-request-reviewer`. Use the perso
 `resolving-bot-pr-reviews` skill (`~/.claude/skills/resolving-bot-pr-reviews/`) to work
 through its comments until two consecutive clean checks, then hand off for human review.
 
-A PR is ready for human review only when **both** its bot threads are resolved **and** all
-required CI checks pass (`gh pr checks`). Resolved threads over a red `fmt`/`clippy`/`test`
+A PR is ready for human review only when **all** automated review threads are resolved **and**
+all required CI checks pass (`gh pr checks`). Resolved threads over a red `fmt`/`clippy`/`test`
 do not make a PR ready — verify CI is green before handing off.
 
 Project facts the skill needs:
