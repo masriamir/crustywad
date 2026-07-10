@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.1.1...crustywad-v0.2.0) - 2026-07-10
+
+### Added
+
+- *(map)* assemble Doom map records into a validated Map graph ([#155](https://github.com/masriamir/crustywad/pull/155)) ([#205](https://github.com/masriamir/crustywad/pull/205))
+
+### Fixed
+
+- *(bench)* give large-input parse benchmarks more measurement time ([#191](https://github.com/masriamir/crustywad/pull/191))
+
+### Other
+
+- *(map)* [**breaking**] split records into map::doom / map::common; consolidate name decode ([#201](https://github.com/masriamir/crustywad/pull/201)) ([#202](https://github.com/masriamir/crustywad/pull/202))
+
 ## [0.1.1](https://github.com/masriamir/crustywad/compare/crustywad-v0.1.0...crustywad-v0.1.1) - 2026-07-08
 
 ### Other

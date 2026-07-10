@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.1.1...crustywad-cli-v0.1.2) - 2026-07-10
+
+### Added
+
+- *(map)* assemble Doom map records into a validated Map graph ([#155](https://github.com/masriamir/crustywad/pull/155)) ([#205](https://github.com/masriamir/crustywad/pull/205))
+
 ## [0.1.1](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.1.0...crustywad-cli-v0.1.1) - 2026-07-08
 
 ### Other
