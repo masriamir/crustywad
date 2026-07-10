@@ -2,28 +2,16 @@
 
 #![cfg(feature = "freedoom-tests")]
 
-use std::path::PathBuf;
+mod common;
 
 use crustywad::Wad;
 
-fn freedoom_dir() -> Option<PathBuf> {
-    std::env::var_os("CRUSTYWAD_FREEDOOM_DIR").map(PathBuf::from)
-}
-
 #[test]
 fn parses_freedoom_when_fixtures_are_available() {
-    let Some(dir) = freedoom_dir() else {
-        eprintln!("skipping Freedoom fixture test: CRUSTYWAD_FREEDOOM_DIR not set");
-        return;
-    };
-
-    for name in ["freedoom1.wad", "freedoom2.wad"] {
-        let path = dir.join(name);
-        if !path.exists() {
-            eprintln!("skipping missing Freedoom fixture: {}", path.display());
-            continue;
-        }
-
+    for path in common::iwad_files(
+        "CRUSTYWAD_FREEDOOM_DIR",
+        &["freedoom1.wad", "freedoom2.wad"],
+    ) {
         let wad = Wad::from_path(&path).expect("fixture should parse");
         assert!(
             wad.lump_count() > 0,

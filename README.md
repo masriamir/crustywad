@@ -156,7 +156,9 @@ cargo run -p crustywad-cli -- list path/to/file.wad
 | --- | --- | --- |
 | `mmap` | no | Enables `Wad::from_path_mapped` and `Wad::from_path_mapped_with_options` for memory-mapped file loading via `memmap2` — no heap copy on load. `Wad::from_path` always reads into memory regardless of this flag. |
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization. |
-| `freedoom-tests` | no | Enables optional integration tests that inspect locally downloaded Freedoom fixtures. |
+| `freedoom-tests` | no | Enables optional integration tests against local Freedoom WADs, supplied via `CRUSTYWAD_FREEDOOM_DIR` (auto-fetchable via `just fetch-fixtures`). |
+| `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD, supplied via `CRUSTYWAD_HEXEN_DIR` (not auto-fetchable). |
+| `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD, supplied via `CRUSTYWAD_DOOM64_DIR` (not auto-fetchable). |
 
 ## Development
 

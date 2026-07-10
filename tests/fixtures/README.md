@@ -23,3 +23,17 @@ just fetch-fixtures version=v0.14.0
 # Direct invocation
 python3 tests/fixtures/fetch_freedoom.py --version v0.14.0
 ```
+
+## Non-redistributable IWADs (Hexen, Doom 64)
+
+Hexen and Doom 64 IWADs are **not freely redistributable**, so unlike Freedoom they are
+never downloaded or committed. To run their optional tests, point the matching environment
+variable at a directory containing the IWAD:
+
+| Feature | Environment variable | Expected file |
+|---|---|---|
+| `hexen-tests` | `CRUSTYWAD_HEXEN_DIR` | `hexen.wad` |
+| `doom64-tests` | `CRUSTYWAD_DOOM64_DIR` | `doom64.wad` |
+
+Each test skips gracefully when its variable is unset or the file is missing, so CI (which
+sets no fixture variables) stays green.

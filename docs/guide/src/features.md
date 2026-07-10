@@ -8,7 +8,9 @@ allowing callers to opt in to additional capabilities.
 | Feature | Default | Purpose |
 |---|---|---|
 | [`mmap`](#mmap) | no | Memory-mapped file loading via `memmap2` |
-| [`freedoom-tests`](#freedoom-tests) | no | Integration tests against local Freedoom WAD fixtures |
+| [`freedoom-tests`](#freedoom-tests) | no | Integration tests against local Freedoom WAD fixtures (auto-fetchable) |
+| [`hexen-tests`](#hexen-tests) | no | Integration tests against a local Hexen IWAD (not auto-fetchable) |
+| [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
 
 ---
@@ -113,6 +115,52 @@ it because the fixture WADs are gitignored and not downloaded in the standard CI
 
 ---
 
+## `hexen-tests`
+
+**Enables:** integration tests in `crates/crustywad/tests/hexen.rs`
+
+### Purpose
+
+Gates an optional smoke test that parses a real Hexen IWAD. Unlike Freedoom, Hexen's IWAD
+is **not freely redistributable**, so there is no fetch script and no committed fixture —
+supply your own copy locally.
+
+### Running the tests
+
+Point `CRUSTYWAD_HEXEN_DIR` at a directory containing `hexen.wad`:
+
+```bash
+CRUSTYWAD_HEXEN_DIR=/path/to/hexen \
+  cargo test -p crustywad --features hexen-tests
+```
+
+The test skips gracefully when `CRUSTYWAD_HEXEN_DIR` is unset or the file is missing.
+
+---
+
+## `doom64-tests`
+
+**Enables:** integration tests in `crates/crustywad/tests/doom64.rs`
+
+### Purpose
+
+Gates an optional smoke test that parses a real Doom 64 IWAD. Like Hexen, the Doom 64 IWAD
+is **not freely redistributable** — no fetch script, no committed fixture; supply your own
+copy locally.
+
+### Running the tests
+
+Point `CRUSTYWAD_DOOM64_DIR` at a directory containing `doom64.wad`:
+
+```bash
+CRUSTYWAD_DOOM64_DIR=/path/to/doom64 \
+  cargo test -p crustywad --features doom64-tests
+```
+
+The test skips gracefully when `CRUSTYWAD_DOOM64_DIR` is unset or the file is missing.
+
+---
+
 ## `write`
 
 **Enables:** `WadBuilder`, `WriteError`, `WriteWarning`, `WriteOptions`, and `Wad::to_builder`
@@ -177,6 +225,8 @@ let rebuilt = wad.to_builder().build().unwrap();
 | Test with all features | `cargo test --workspace --all-features` |
 | Test with `mmap` only | `cargo test -p crustywad --features mmap` |
 | Test with Freedoom fixtures | `CRUSTYWAD_FREEDOOM_DIR=… cargo test -p crustywad --features freedoom-tests` |
+| Test with Hexen fixture | `CRUSTYWAD_HEXEN_DIR=… cargo test -p crustywad --features hexen-tests` |
+| Test with Doom 64 fixture | `CRUSTYWAD_DOOM64_DIR=… cargo test -p crustywad --features doom64-tests` |
 | Build with `write` | `cargo build -p crustywad --features write` |
 | Test with `write` | `cargo test -p crustywad --features write` |
 | Full CI check | `just ci` |

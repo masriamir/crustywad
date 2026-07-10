@@ -170,15 +170,18 @@ The full feature flag reference (usage examples, platform notes, cargo invocatio
 [`docs/guide/src/features.md`](../docs/guide/src/features.md), which is published via the
 mdBook guide to GitHub Pages. That file is the single source of truth.
 
-**Sync rule:** when a feature flag is added, removed, or renamed, update **all three** of:
+**Sync rule:** when a feature flag is added, removed, or renamed, update **all four** of:
 1. `docs/guide/src/features.md` — detailed docs, usage examples, and the summary table
 2. The summary table in `.claude/CLAUDE.md` (Feature flags section)
 3. The summary table below in this file
+4. The summary table in `README.md`
 
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
-| `freedoom-tests` | no | Enables optional Freedoom integration tests against local WAD fixtures |
+| `freedoom-tests` | no | Enables optional integration tests against local Freedoom WADs (via `CRUSTYWAD_FREEDOOM_DIR`; auto-fetchable via `just fetch-fixtures`) |
+| `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD (via `CRUSTYWAD_HEXEN_DIR`; not auto-fetchable) |
+| `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD (via `CRUSTYWAD_DOOM64_DIR`; not auto-fetchable) |
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
 
 ## Commit conventions
