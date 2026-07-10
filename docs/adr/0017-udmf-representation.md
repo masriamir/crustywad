@@ -253,7 +253,8 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
 | `linedef.sideback` | int, default `-1` | `MapLinedef.left` — `-1` (explicit or defaulted) means one-sided, the direct UDMF analog of Doom's `0xffff` sentinel (ADR-0015 §4); any other out-of-range value is a dangling reference under the same strict/lenient rules |
 | `linedef.blocking, blockmonsters, twosided, dontpegtop, dontpegbottom, secret, blocksound, dontdraw, mapped` | bool ×9, default `false` | `MapLinedef.flags` bits 0–8 — these 9 names correspond 1:1 to the 9 documented bit positions of the *existing* Doom on-disk `Linedef.flags` (`doom.rs`), so `flags` keeps a single, format-agnostic meaning across Doom and UDMF |
 | `linedef.passuse`, SPAC flags (`playercross`, …), Strife flags (`translucent`, `jumpover`, `blockfloaters`), and all port-extension flags (ZDoom `blockplayers`, `blocksight`, …) | bool | **not modeled in `Map` yet** — see "What is deferred" below |
-| `linedef.special`, `arg0`–`arg4`, `id` | int, default 0 / -1 | folds into the extended `Special` type (below) |
+| `linedef.special`, `arg0`–`arg4` | int, default 0 | folds into the extended `Special` type (below) |
+| `linedef.id` | int, default per spec | **new** `MapLinedef.id: i32` field — line identification (the UDMF/ZDoom line id), parallel to `MapThing.id` and `MapSector.tag`; the UDMF value is preserved, and Doom/Hexen-format linedefs populate `0`. (It has no slot in `Special`, which holds only `special` + `args[5]`, so it is modeled as a distinct linedef field.) |
 | `sidedef.offsetx`, `.offsety` | int, default 0 | `MapSidedef.x_offset`/`.y_offset` |
 | `sidedef.texturetop`, `.texturebottom`, `.texturemiddle` | string, default `"-"` | `MapSidedef.upper`/`.lower`/`.middle` |
 | `sidedef.sector` | int, no default | `MapSidedef.sector` via `resolve_required` |
@@ -264,7 +265,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
 | `sector.id` | int, default 0 | `MapSector.tag` |
 | `thing.x`, `.y` | float, no default | `MapThing.x`/`.y` |
 | `thing.type` | int (DoomedNum), no default | `MapThing.type_id` — narrowed to `u16` with strict-reject / lenient-clamp+warning if out of range (new `MapWarning::FieldOutOfRange`, below) |
-| `thing.angle` | int degrees, default 0 | `MapThing.angle` — normalized via `rem_euclid(360)` then cast to `u16`; Doom's existing on-disk `u16` is unaffected (always already in range) |
+| `thing.angle` | int degrees, default 0 | `MapThing.angle` — reduced mod 360 (`rem_euclid(360)`) then cast to `u16`, since UDMF permits negative / out-of-range degrees. Doom-format angles are preserved as-is: the existing normalizer copies the on-disk `u16` verbatim and does **not** guarantee `0..360` (a deliberate per-format difference, not an invariant) |
 | `thing.height` | float, default 0 | **new** `MapThing.height: f64` field (also needed by Hexen's `z: i16`, per ADR-0014 §"Hexen" — this ADR adds the field; #55 populates it for Hexen) |
 | `thing.id` | int, default 0 | **new** `MapThing.id: i32` field (the Hexen/UDMF `tid`; Doom-format things always populate `0`, matching the existing "0 = untagged" convention used by `MapSector.tag` and `Special`) |
 | `thing.special`, `arg0`–`arg4` | int, default 0 | **new** `MapThing.special: Special` (reuses the same extended type as linedefs — see below) |
@@ -532,11 +533,12 @@ forward references, not decided here:
 - **Breaking (pre-1.0, intentional):** `LineSpecial` is renamed to `Special`;
   its `tag` field is removed in favor of `args[0]` and its `special` field
   widens `u16` → `i32`. `MapThing` gains `height: f64`, `id: i32`, and
-  `special: Special`. `ParseOptions` gains a `limits` field (mitigated by the
-  `strict()`/`lenient()` constructors, per ADR-0016). `MapThing.angle`'s
-  Doom-derived meaning ("exactly the on-disk bits") becomes "degrees,
-  normalized into `0..360`" — a documented behavior change with no effect on
-  any value Doom itself can produce.
+  `special: Special`; `MapLinedef` gains `id: i32` (line identification).
+  `ParseOptions` gains a `limits` field (mitigated by the `strict()`/`lenient()`
+  constructors, per ADR-0016). UDMF thing angles are reduced mod 360 on the way
+  into `MapThing.angle` (UDMF permits negative / out-of-range degrees);
+  Doom-format angles are unchanged — preserved verbatim as today, with no new
+  invariant imposed.
 - **Good** — UDMF converges cleanly onto the existing `Map` model; no
   consumer branches on `MapFormat`.
 - **Good** — the parser/normalize split mirrors `map::doom` +
