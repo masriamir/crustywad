@@ -176,7 +176,7 @@ mdBook guide to GitHub Pages. That file is the single source of truth.
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
-| `freedoom-tests` | no | Enables optional Freedoom integration tests against local WAD fixtures |
+| `freedoom-tests` | no | Enables optional integration tests against local Freedoom WADs (via `CRUSTYWAD_FREEDOOM_DIR`; auto-fetchable via `just fetch-fixtures`) |
 | `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD (via `CRUSTYWAD_HEXEN_DIR`; not auto-fetchable) |
 | `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD (via `CRUSTYWAD_DOOM64_DIR`; not auto-fetchable) |
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
