@@ -386,3 +386,51 @@ fn hand_built_map_group_with_out_of_range_data_index_does_not_panic() {
     let err = Map::assemble(&wad, &bad_group).unwrap_err();
     assert!(matches!(err, MapAssembleError::MissingLump { .. }));
 }
+
+// Heretic maps use the *identical* Doom binary record layout, so they assemble
+// through the Doom path. crustywad decodes the records and preserves their
+// Heretic-specific values verbatim without interpreting them (thing type-ids and
+// linedef specials carry different meanings in Heretic, but the same byte layout).
+#[test]
+fn heretic_map_assembles_via_doom_path() {
+    // 2005 is a Heretic thing type (the Ethereal Crossbow) — the same numeric id
+    // means the Chainsaw in Doom; crustywad keeps the raw id, meaning is the
+    // caller's concern.
+    const HERETIC_THING_TYPE: u16 = 2005;
+    let bytes = common::build_doom_map_wad(
+        "E1M1", // Heretic uses ExMy markers, like Doom
+        thing(HERETIC_THING_TYPE),
+        linedef(0, 1, 0, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let map = Map::assemble(&wad, &group).unwrap();
+
+    assert_eq!(map.format(), MapFormat::Doom);
+    assert_eq!(map.things().len(), 1);
+    assert_eq!(map.things()[0].type_id, HERETIC_THING_TYPE);
+    assert!(map.warnings().is_empty());
+}
+
+// Doom II maps are byte-identical to Doom, differing only in `MAPxx` marker
+// naming (vs Doom's `ExMy`), which `map_groups()` handles positionally.
+#[test]
+fn doom2_map_assembles_via_doom_path() {
+    let bytes = common::build_doom_map_wad(
+        "MAP01",     // Doom II marker naming
+        thing(3004), // a former human (shared Doom/Doom II thing type)
+        linedef(0, 1, 0, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").expect("MAPxx marker detected");
+    assert_eq!(group.name, "MAP01");
+    let map = Map::assemble(&wad, &group).unwrap();
+    assert_eq!(map.format(), MapFormat::Doom);
+    assert_eq!(map.things().len(), 1);
+}
