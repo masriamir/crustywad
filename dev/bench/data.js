@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783711879109,
+  "lastUpdate": 1783719862486,
   "repoUrl": "https://github.com/masriamir/crustywad",
   "entries": {
     "Benchmark": [
@@ -7055,6 +7055,258 @@ window.BENCHMARK_DATA = {
             "name": "write/roundtrip/large",
             "value": 2289212,
             "range": "± 20195",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "masriamir@users.noreply.github.com",
+            "name": "Amir Masri",
+            "username": "masriamir"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "41caa77a51bc2410906fb54a9d9f1ec7c5b07d67",
+          "message": "docs: define epic aggregate Status convention on the project board (#217)",
+          "timestamp": "2026-07-10T17:34:04-04:00",
+          "tree_id": "7acbea43e5ab6cd928efbcb466df6d3567f508d8",
+          "url": "https://github.com/masriamir/crustywad/commit/41caa77a51bc2410906fb54a9d9f1ec7c5b07d67"
+        },
+        "date": 1783719861974,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "parse/from_bytes_strict/small",
+            "value": 380,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/medium",
+            "value": 4444,
+            "range": "± 166",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/large",
+            "value": 41897,
+            "range": "± 1217",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/small",
+            "value": 401,
+            "range": "± 14",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/medium",
+            "value": 4481,
+            "range": "± 60",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/large",
+            "value": 42272,
+            "range": "± 616",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict",
+            "value": 36635,
+            "range": "± 169",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient",
+            "value": 36199,
+            "range": "± 159",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict_mmap",
+            "value": 23481,
+            "range": "± 144",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient_mmap",
+            "value": 23514,
+            "range": "± 748",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_index",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit",
+            "value": 6,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit_last",
+            "value": 42,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_miss",
+            "value": 42,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_bytes",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_data",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lumps_iter_count",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/clone",
+            "value": 18024,
+            "range": "± 68",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/into_bytes",
+            "value": 1278,
+            "range": "± 84",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Thing_x1000",
+            "value": 11077,
+            "range": "± 48",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Linedef_x1000",
+            "value": 19043,
+            "range": "± 44",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sidedef_x1000",
+            "value": 33095,
+            "range": "± 62",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Vertex_x1000",
+            "value": 5348,
+            "range": "± 38",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Seg_x1000",
+            "value": 11838,
+            "range": "± 65",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Subsector_x1000",
+            "value": 5348,
+            "range": "± 116",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Node_x1000",
+            "value": 22917,
+            "range": "± 76",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sector_x1000",
+            "value": 23930,
+            "range": "± 80",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/small",
+            "value": 421,
+            "range": "± 10",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/medium",
+            "value": 14548,
+            "range": "± 34",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/large",
+            "value": 723454,
+            "range": "± 12045",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/small",
+            "value": 424,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/medium",
+            "value": 14871,
+            "range": "± 33",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/large",
+            "value": 712967,
+            "range": "± 14522",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/10_lumps_256b",
+            "value": 1010,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/100_lumps_4kib",
+            "value": 31461,
+            "range": "± 57",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/small",
+            "value": 1488,
+            "range": "± 26",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/medium",
+            "value": 47790,
+            "range": "± 180",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/large",
+            "value": 2401330,
+            "range": "± 17103",
             "unit": "ns/iter"
           }
         ]
