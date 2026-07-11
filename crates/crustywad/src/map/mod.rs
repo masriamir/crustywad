@@ -37,7 +37,7 @@ pub use graph::{
     SectorIdx, SidedefIdx, Special, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
-pub use udmf::UdmfParseError;
+pub use udmf::{UdmfParseError, parse_udmf};
 
 /// Errors returned when decoding typed map records from a lump byte slice.
 #[derive(Debug, Error)]

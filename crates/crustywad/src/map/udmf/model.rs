@@ -1,5 +1,5 @@
 //! Typed, un-normalized UDMF document model (the intermediate produced by
-//! `parse_udmf`).
+//! [`parse_udmf`][crate::map::udmf::parse_udmf]).
 //!
 //! Each struct carries only the standardized fields that map assembly (PR B)
 //! normalizes into [`Map`][crate::map::Map]; every other recognized UDMF field

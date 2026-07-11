@@ -1,16 +1,15 @@
 //! UDMF (`TEXTMAP`) text-map parsing (ADR-0017).
 //!
-//! `parse_udmf` lexes and parses UDMF text into a typed [`UdmfMap`]. This is
+//! [`parse_udmf`] lexes and parses UDMF text into a typed [`UdmfMap`]. This is
 //! a lexical + grammatical + per-field-default pass only; cross-reference
 //! resolution into [`Map`][crate::map::Map] is map assembly (a later pass).
 
-// The lexer is not yet consumed outside its own tests — the parser (Task 3)
-// wires it in. Suppress dead-code warnings on the module until then.
-#[allow(dead_code)]
 mod lex;
 pub mod model;
+mod parse;
 
 pub use model::{UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfVertex};
+pub use parse::parse_udmf;
 
 use thiserror::Error;
 
