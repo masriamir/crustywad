@@ -242,11 +242,20 @@ fn require_next(
         .ok_or_else(|| syntax_error(last_pos.0, last_pos.1, "unexpected end of input"))
 }
 
-/// Converts a lexed value token to `f64`; any non-`Float` token is a type
+/// Converts a lexed value token to `f64`; any non-numeric token is a type
 /// mismatch.
+///
+/// A bare `Token::Int` is also accepted and widened to `f64`: real UDMF
+/// editors commonly write whole-number coordinates (e.g. `x = 128;`) without
+/// a decimal point, and every UDMF implementation coerces this the same way.
+/// This does not relax integer-typed fields, which still reject `Token::Float`.
 fn as_f64(spanned: &Spanned) -> Result<f64, UdmfParseError> {
     match spanned.token {
         Token::Float(f) => Ok(f),
+        // Coordinate magnitudes are small (well within f64's 53-bit exact
+        // integer range), so this widening never loses precision in practice.
+        #[allow(clippy::cast_precision_loss)]
+        Token::Int(i) => Ok(i as f64),
         _ => Err(syntax_error(
             spanned.line,
             spanned.column,
@@ -364,6 +373,16 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(e3, UdmfParseError::Syntax { .. }), "got {e3:?}");
+    }
+
+    #[test]
+    fn float_field_accepts_integer_literal() {
+        let m = parse_udmf(
+            "namespace=\"doom\"; vertex { x = 128; y = -64; }",
+            crate::Limits::default(),
+        )
+        .unwrap();
+        assert_eq!((m.vertices[0].x, m.vertices[0].y), (128.0, -64.0));
     }
 
     #[test]
