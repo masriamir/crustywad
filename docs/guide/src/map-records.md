@@ -211,7 +211,7 @@ into `MapLinedef.left: Option<SidedefIdx>` — `None` for one-sided lines, `Some
 two-sided lines. `map.linedef_left(linedef)` mirrors this: it returns `None` for a
 one-sided line rather than an error.
 
-### Hexen-specific fields
+### Extended thing and linedef fields
 
 Hexen maps extend the classic Doom binary record layout with additional fields on things and
 linedefs. When assembled, a `MapThing` includes `id` (thing ID for cross-references), `height`
