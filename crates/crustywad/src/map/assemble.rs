@@ -40,16 +40,16 @@ pub enum MapAssembleError {
         /// The number of elements actually available in the referenced arena.
         count: usize,
     },
-    /// The map group is not in the classic Doom binary format that assembly
-    /// supports, detected from a format-specific marker lump (`BEHAVIOR` =
-    /// Hexen, `TEXTMAP` = UDMF). Decoding such a map as Doom records would
-    /// silently mis-decode it, so assembly refuses it. Multi-format assembly is
-    /// planned (Epic #17).
+    /// The map group is in a text-based format that assembly does not yet decode
+    /// as binary records — currently only UDMF (`TEXTMAP`, tracked in Epic #17).
+    /// Binary Doom and Hexen maps assemble normally; a `TEXTMAP` lump marks a
+    /// format whose records would otherwise silently mis-decode, so assembly
+    /// refuses it up front.
     #[error(
-        "unsupported map format: found a {lump} lump; assembly supports the classic Doom binary layout only"
+        "unsupported map format: found a {lump} lump; assembly does not support this text-based format yet"
     )]
     UnsupportedFormat {
-        /// The format-specific marker lump detected (`"BEHAVIOR"` or `"TEXTMAP"`).
+        /// The format-specific marker lump detected (currently always `"TEXTMAP"`).
         lump: &'static str,
     },
 }
