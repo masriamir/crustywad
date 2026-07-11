@@ -26,7 +26,7 @@ pub struct UdmfMap {
 }
 
 /// A UDMF `vertex` block.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct UdmfVertex {
     /// The vertex X coordinate (required; no default).
@@ -36,7 +36,7 @@ pub struct UdmfVertex {
 }
 
 /// A UDMF `linedef` block.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct UdmfLinedef {
     /// The start vertex index (required; no default).
@@ -96,7 +96,7 @@ pub struct UdmfSector {
 }
 
 /// A UDMF `thing` block.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct UdmfThing {
     /// The X coordinate (required; no default).
