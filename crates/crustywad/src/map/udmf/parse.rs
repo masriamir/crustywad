@@ -934,7 +934,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn never_panics_and_output_is_linear(input in ".*") {
+        fn never_panics_and_element_count_is_bounded_by_input(input in ".*") {
             if let Ok(m) = parse_udmf(&input, crate::Limits::default()) {
                 let elements = m.vertices.len() + m.linedefs.len()
                     + m.sidedefs.len() + m.sectors.len() + m.things.len();
