@@ -214,10 +214,11 @@ one-sided line rather than an error.
 ### Hexen-specific fields
 
 Hexen maps extend the classic Doom binary record layout with additional fields on things and
-linedefs. When assembled, a `MapThing` includes Hexen-specific fields: `tid` (thing ID for
-cross-references), `z` (vertical position), and the Hexen-only `special`/`args`. A `MapLinedef`'s
-`special` field is a `LineSpecial`, which for Hexen maps carries the one-byte `special` action
-number and its `args[5]` (action arguments); Doom maps use `LineSpecial`'s `tag` instead.
+linedefs. When assembled, a `MapThing` includes `id` (thing ID for cross-references), `height`
+(vertical position), and `special` (a `Special` carrying the action number and its `args[5]`).
+A `MapLinedef` likewise has a `special: Special` and an `id` (line identification). `Special`
+is shared across formats: for Doom maps the special's target sector tag lives in
+`special.args[0]`; Hexen and UDMF populate the full `args`.
 
 For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
 action semantics. You can check the map's format via `map.format()` to determine whether
@@ -232,7 +233,7 @@ let map = Map::assemble(&wad, &group)?;
 
 for thing in map.things() {
     if map.format() == MapFormat::Hexen {
-        println!("Hexen thing ID: {}, Z: {}", thing.tid, thing.z);
+        println!("Hexen thing ID: {}, height: {}", thing.id, thing.height);
     }
 }
 
