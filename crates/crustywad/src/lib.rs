@@ -1006,3 +1006,24 @@ fn decode_name(
     }
     Ok(String::from_utf8_lossy(trimmed).into_owned())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Limits, ParseOptions, Strictness};
+
+    #[test]
+    fn limits_new_and_default_use_max_depth_64() {
+        assert_eq!(Limits::new().max_depth, 64);
+        assert_eq!(Limits::default().max_depth, 64);
+        assert_eq!(Limits::default(), Limits::new());
+    }
+
+    #[test]
+    fn parse_options_carry_default_limits() {
+        assert_eq!(ParseOptions::default().limits, Limits::new());
+        assert_eq!(ParseOptions::strict().limits, Limits::new());
+        assert_eq!(ParseOptions::lenient().limits, Limits::new());
+        assert_eq!(ParseOptions::default().strictness, Strictness::Strict);
+        assert_eq!(ParseOptions::lenient().strictness, Strictness::Lenient);
+    }
+}
