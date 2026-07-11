@@ -1,6 +1,6 @@
 //! UDMF (`TEXTMAP`) text-map parsing (ADR-0017).
 //!
-//! [`parse_udmf`] lexes and parses UDMF text into a typed [`UdmfMap`]. This is
+//! `parse_udmf` lexes and parses UDMF text into a typed [`UdmfMap`]. This is
 //! a lexical + grammatical + per-field-default pass only; cross-reference
 //! resolution into [`Map`][crate::map::Map] is map assembly (a later pass).
 
