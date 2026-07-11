@@ -123,12 +123,13 @@ The record types above are flat and unresolved — a `Linedef`'s `start_vertex` 
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don't
 have to index arenas by hand.
 
-> **Multi-format assembly.** `Map::assemble` detects the map format via the presence of
-> format-specific lumps (Hexen via `BEHAVIOR`, UDMF via `TEXTMAP`) and assembles each format
-> separately. The assembled `Map` carries its format via `map.format()`, which returns `MapFormat::Doom`
+> **Multi-format assembly.** `Map::assemble` detects the binary map format from its lumps: a
+> `BEHAVIOR` lump marks a Hexen map, otherwise it is treated as the classic Doom binary layout.
+> The assembled `Map` carries its format via `map.format()`, which returns `MapFormat::Doom`
 > for classic Doom/Doom II/Heretic maps (which share the same binary record layout and differ
 > only in map-marker naming, e.g. `MAP01` vs `E1M1`), or `MapFormat::Hexen` for Hexen maps.
-> UDMF support is planned as part of future multi-format maps (Epic #17).
+> A `TEXTMAP` (UDMF) map is not yet supported — assembly returns
+> `MapAssembleError::UnsupportedFormat` for it until UDMF support lands (Epic #17).
 
 ### Finding a map's lumps
 
