@@ -218,7 +218,7 @@ linedefs. When assembled, a `MapThing` includes `id` (thing ID for cross-referen
 (vertical position), and `special` (a `Special` carrying the action number and its five
 `args`). A `MapLinedef` likewise has a `special: Special`, plus an `id` — a UDMF/ZDoom line
 identifier that is `0` for Doom and Hexen maps (reserved for UDMF). `Special` is shared
-across formats: for Doom maps the special's target sector tag lives in `special.args[0]`;
+across formats: for a Doom *linedef*, its target sector tag lives in `special.args[0]`;
 Hexen and UDMF populate the full `args`.
 
 On Doom maps the thing fields (`id`, `height`, and the thing `special`) are all zero, while a

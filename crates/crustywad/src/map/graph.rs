@@ -44,7 +44,8 @@ pub struct MapVertex {
 /// A normalized action special: the `special` number plus its five `args`.
 ///
 /// Shared by [`MapLinedef`] and [`MapThing`] — Doom, Hexen, and UDMF all use this
-/// `special` + `args` shape. Doom's standalone sector tag is carried in `args[0]`.
+/// `special` + `args` shape. For a Doom *linedef*, the sector tag is carried in `args[0]`
+/// (Doom things have no special, so a Doom thing's `Special` is all zero).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Special {
     /// The action special number.
@@ -70,7 +71,7 @@ pub struct MapLinedef {
     pub flags: u32,
     /// The linedef's action special and arguments.
     pub special: Special,
-    /// The linedef's identification tag (UDMF/ZDoom line id); `0` for Doom/Hexen maps.
+    /// The linedef's identifier (the UDMF/ZDoom line id); `0` for Doom/Hexen maps.
     pub id: i32,
 }
 
