@@ -123,14 +123,12 @@ The record types above are flat and unresolved — a `Linedef`'s `start_vertex` 
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don't
 have to index arenas by hand.
 
-> **Doom-family binary formats (for now).** `Map::assemble` decodes the classic Doom
-> binary map records — which **Doom II** and **Heretic** maps use unchanged. They differ
-> only in map-marker naming (`MAP01` vs `E1M1`), which `wad.map_groups()` detects
-> positionally, so all three assemble through the same path as `MapFormat::Doom`.
-> `map_groups()` also detects *other* non-Doom runs (Hexen, marked by a `BEHAVIOR` lump,
-> or UDMF, marked by `TEXTMAP`), but assembling one returns
-> `MapAssembleError::UnsupportedFormat` rather than mis-decoding it — Hexen and UDMF
-> support is planned as part of multi-format maps (Epic #17).
+> **Multi-format assembly.** `Map::assemble` detects the map format via the presence of
+> format-specific lumps (Hexen via `BEHAVIOR`, UDMF via `TEXTMAP`) and assembles each format
+> separately. The assembled `Map` carries its format via `map.format()`, which returns `MapFormat::Doom`
+> for classic Doom/Doom II/Heretic maps (which share the same binary record layout and differ
+> only in map-marker naming, e.g. `MAP01` vs `E1M1`), or `MapFormat::Hexen` for Hexen maps.
+> UDMF support is planned as part of future multi-format maps (Epic #17).
 
 ### Finding a map's lumps
 
@@ -211,6 +209,38 @@ back sidedef" (a one-sided line, such as an outer wall). Assembly translates tha
 into `MapLinedef.left: Option<SidedefIdx>` — `None` for one-sided lines, `Some(idx)` for
 two-sided lines. `map.linedef_left(linedef)` mirrors this: it returns `None` for a
 one-sided line rather than an error.
+
+### Hexen-specific fields
+
+Hexen maps extend the classic Doom binary record layout with additional fields on things and
+linedefs. When assembled, a `MapThing` includes Hexen-specific fields: `tid` (thing ID for
+cross-references), `z` (vertical position), and unused `special`/`args` slots. Similarly,
+`MapLinedef` includes `special` (line special action) and `args[5]` (action arguments).
+
+For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
+action semantics. You can check the map's format via `map.format()` to determine whether
+to interpret these fields:
+
+```rust
+use crustywad::map::{Map, MapFormat};
+
+# let wad = crustywad::Wad::from_bytes(Vec::<u8>::new())?;
+# let group = wad.map_group("MAP01").unwrap();
+let map = Map::assemble(&wad, &group)?;
+
+for thing in map.things() {
+    if map.format() == MapFormat::Hexen {
+        println!("Hexen thing ID: {}, Z: {}", thing.tid, thing.z);
+    }
+}
+
+for linedef in map.linedefs() {
+    if map.format() == MapFormat::Hexen {
+        println!("Hexen line special: {}, args: {:?}", linedef.special, linedef.args);
+    }
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
 
 ### Strict vs. lenient assembly
 
