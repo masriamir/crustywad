@@ -214,8 +214,9 @@ one-sided line rather than an error.
 
 Hexen maps extend the classic Doom binary record layout with additional fields on things and
 linedefs. When assembled, a `MapThing` includes Hexen-specific fields: `tid` (thing ID for
-cross-references), `z` (vertical position), and unused `special`/`args` slots. Similarly,
-`MapLinedef` includes `special` (line special action) and `args[5]` (action arguments).
+cross-references), `z` (vertical position), and the Hexen-only `special`/`args`. A `MapLinedef`'s
+`special` field is a `LineSpecial`, which for Hexen maps carries the one-byte `special` action
+number and its `args[5]` (action arguments); Doom maps use `LineSpecial`'s `tag` instead.
 
 For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
 action semantics. You can check the map's format via `map.format()` to determine whether
@@ -236,7 +237,7 @@ for thing in map.things() {
 
 for linedef in map.linedefs() {
     if map.format() == MapFormat::Hexen {
-        println!("Hexen line special: {}, args: {:?}", linedef.special, linedef.args);
+        println!("Hexen line special: {}, args: {:?}", linedef.special.special, linedef.special.args);
     }
 }
 # Ok::<(), crustywad::map::MapAssembleError>(())
