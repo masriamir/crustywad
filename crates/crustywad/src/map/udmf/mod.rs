@@ -5,7 +5,7 @@
 //! resolution into [`Map`][crate::map::Map] is map assembly (a later pass).
 
 mod lex;
-pub mod model;
+mod model;
 mod parse;
 
 pub use model::{UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfVertex};

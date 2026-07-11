@@ -3,7 +3,7 @@
 //! [`Lexer`] scans UDMF `TEXTMAP` source text into a flat stream of
 //! [`Spanned`] [`Token`]s. The scan is a single non-recursive loop over the
 //! input's characters, tracking 1-based line/column positions as it goes.
-//! This module is crate-internal; [`super::parse`][crate::map::udmf] (Task 3)
+//! This module is crate-internal; [`super::parse`][crate::map::udmf]
 //! consumes the token stream to build the UDMF AST.
 
 use super::UdmfParseError;

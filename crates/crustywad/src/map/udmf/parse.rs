@@ -581,8 +581,8 @@ impl ThingBuilder {
 /// trailing `;`.
 ///
 /// Returns the raw [`Spanned`] token so target-type conversion (`as_f64`,
-/// `as_str`, and Task 4's `i32`/`bool` counterparts) can match on it
-/// directly; only `Int`/`Float`/`Str`/`Bool` are accepted as value tokens.
+/// `as_str`, `as_i32`, `as_bool`) can match on it directly; only
+/// `Int`/`Float`/`Str`/`Bool` are accepted as value tokens.
 fn read_value(
     lexer: &mut Lexer<'_>,
     last_pos: &mut (usize, usize),
@@ -898,6 +898,36 @@ mod tests {
             err,
             crate::map::udmf::UdmfParseError::Semantic { .. }
         ));
+    }
+
+    #[test]
+    fn max_depth_zero_yields_depth_exceeded() {
+        // With `max_depth == 0`, the first `{` (new depth 1 > 0) is rejected by
+        // the depth guard itself, deterministically exercising `DepthExceeded`.
+        let err =
+            parse_udmf("namespace=\"doom\"; x {", crate::Limits { max_depth: 0 }).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::map::udmf::UdmfParseError::DepthExceeded { max_depth: 0, .. }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn integer_field_rejects_float_literal() {
+        // A `float` literal assigned to an `i32`-typed field (`sidedef.sector`)
+        // is a syntax error — the reverse of the accepted int->float widening.
+        let err = parse_udmf(
+            "namespace=\"doom\"; sidedef { sector = 0.5; }",
+            crate::Limits::default(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, crate::map::udmf::UdmfParseError::Syntax { .. }),
+            "got {err:?}"
+        );
     }
 
     use proptest::prelude::*;
