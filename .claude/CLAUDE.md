@@ -272,6 +272,21 @@ I move the board myself as work progresses and **announce each change** in my re
 
 **Epics** (the `epic` label, e.g. #17, #18) carry an **aggregate** Status distinct from the per-issue flow above: an epic moves to `In progress` when its **first** sub-issue starts work, and stays there until **all** its sub-issues close (only then does the board automate it to `Done`). GitHub does not propagate a sub-issue's board **Status** field up to the epic (only completion progress rolls up automatically), so I set the epic's Status myself and announce it. An epic's Horizon (`Now`/`Next`/`Later`) still carries its planning intent; sub-issue rollup shows its completion progress.
 
+### Milestone closeout (propose-and-confirm)
+
+A milestone is **complete** when BOTH conditions hold:
+
+1. **All issues Done** — every issue assigned to the milestone is closed (`open_issues == 0`).
+2. **Shipped** — a `release-plz` PR (`chore: release`) has merged at or after the last milestone issue closed. This is tag-agnostic: because crates version independently (ADR-0011 §3), a milestone titled `vX.Y.Z` need not map to a `crustywad-vX.Y.Z` tag — any release PR merged on/after the final issue's close is the ship signal.
+
+GitHub never auto-closes milestones. Unlike the agent-driven board Status transitions above, milestone closeout is **propose-and-confirm**: when I notice both conditions hold for an open milestone, I surface it and **ask before closing**. On your approval:
+
+```bash
+gh api -X PATCH repos/masriamir/crustywad/milestones/<number> -f state=closed
+```
+
+Closure is reversible (`-f state=open`). The `gh api` milestone recipe lives in the `reference-project-board` memory.
+
 ## Git branching workflow
 
 All work branches from `main` after a `git pull`. A branch is named `<type>/<slug>`; the slug is descriptive (never a bare issue number) and is prefixed with the issue number when a tracking issue exists.
