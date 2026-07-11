@@ -186,6 +186,10 @@ fn normalize_things(raw: &[doom::Thing]) -> Vec<MapThing> {
             angle: t.angle,
             type_id: t.type_id,
             flags: u32::from(t.flags),
+            tid: 0,
+            z: 0.0,
+            special: 0,
+            args: [0; 5],
         })
         .collect()
 }
@@ -272,6 +276,7 @@ fn normalize_linedefs(
             special: LineSpecial {
                 special: ld.special_type,
                 tag: ld.sector_tag,
+                args: [0; 5],
             },
         });
     }
