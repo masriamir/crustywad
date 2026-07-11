@@ -137,9 +137,10 @@ lumps within the flat directory; `Map::assemble` (strict) and `Map::assemble_wit
 [Map Record Parsing](https://crustywad.dev/map-records.html) in the guide for the full API,
 including lenient-mode dangling-reference handling and the one-sided-line sentinel.
 
-Doom, **Doom II**, and **Heretic** maps all share this classic binary record layout, so they
-assemble through the same path (they differ only in map-marker naming, e.g. `MAP01` vs `E1M1`).
-Hexen and UDMF are planned as part of multi-format map support.
+Doom, **Doom II**, **Heretic**, and **Hexen** maps are all supported. Doom/Doom II/Heretic share
+the classic binary record layout (differing only in map-marker naming, e.g. `MAP01` vs `E1M1`);
+Hexen is detected via the `BEHAVIOR` lump and assembles with format-tagged extended fields.
+UDMF support is planned as part of future multi-format maps.
 
 ### CLI
 

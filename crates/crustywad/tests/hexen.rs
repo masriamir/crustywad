@@ -11,6 +11,7 @@ use crustywad::Wad;
 
 #[test]
 fn parses_hexen_when_fixtures_are_available() {
+    use crustywad::map::{Map, MapFormat};
     for path in common::iwad_files("CRUSTYWAD_HEXEN_DIR", &["hexen.wad"]) {
         let wad = Wad::from_path(&path).expect("fixture should parse");
         assert!(
@@ -18,5 +19,14 @@ fn parses_hexen_when_fixtures_are_available() {
             "{} should contain lumps",
             path.display()
         );
+        // Assemble the first map group and confirm it is detected as Hexen.
+        let group = wad
+            .map_groups()
+            .into_iter()
+            .next()
+            .expect("at least one map");
+        let map = Map::assemble(&wad, &group).expect("hexen map assembles");
+        assert_eq!(map.format(), MapFormat::Hexen);
+        assert!(!map.things().is_empty(), "hexen map should have things");
     }
 }

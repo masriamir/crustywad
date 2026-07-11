@@ -1,13 +1,18 @@
 //! The assembled, index-addressed map graph (ADR-0015 §2).
 
-/// The source format a [`Map`] was assembled from. Only [`Doom`][MapFormat::Doom]
-/// is implemented today; Hexen/UDMF (Epic #17) reuse this same model.
+/// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom] and
+/// [`Hexen`][MapFormat::Hexen] are assembled today; UDMF/Doom64 (Epic #17) reuse
+/// this same model but aren't implemented yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {
     /// The classic Doom binary layout — also used, unchanged, by **Doom II** and
     /// **Heretic** (which differ only in map-marker naming, not record format).
     Doom,
+    /// The Hexen binary layout — extends `THINGS`/`LINEDEFS` (see
+    /// [`map::hexen`][crate::map::hexen]); detected by the presence of a
+    /// `BEHAVIOR` lump.
+    Hexen,
 }
 
 /// A zero-based index into [`Map::vertices`].
@@ -37,13 +42,16 @@ pub struct MapVertex {
 }
 
 /// A normalized line special: the classic Doom `special_type` + `sector_tag`.
-/// Hexen's `special` + `args[5]` fold in here in Epic #17 (fields added then).
+/// Hexen's per-special `args` are carried alongside; `tag` is Doom-only (0 for Hexen).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineSpecial {
     /// The linedef special/action number.
     pub special: u16,
     /// The sector tag this special applies to.
     pub tag: u16,
+    /// The Hexen special's five arguments; `[0; 5]` for Doom maps (whose params
+    /// use `tag` instead).
+    pub args: [u8; 5],
 }
 
 /// A normalized linedef, referencing its endpoints, sidedefs, and special by
@@ -117,6 +125,14 @@ pub struct MapThing {
     pub type_id: u16,
     /// The thing's bit flags (skill levels, deaf, multiplayer-only, etc.).
     pub flags: u32,
+    /// The thing's Hexen thing-ID (tag); `0` for Doom maps and untagged things.
+    pub tid: u16,
+    /// The thing's spawn height above the floor, in map units; `0.0` for Doom maps.
+    pub z: f64,
+    /// The thing's Hexen activation special; `0` for Doom maps.
+    pub special: u8,
+    /// The thing's Hexen special arguments; `[0; 5]` for Doom maps.
+    pub args: [u8; 5],
 }
 
 /// A non-fatal issue recorded during lenient map assembly.
@@ -280,7 +296,11 @@ mod tests {
                 right: SidedefIdx(0),
                 left: None,
                 flags: 1,
-                special: LineSpecial { special: 0, tag: 0 },
+                special: LineSpecial {
+                    special: 0,
+                    tag: 0,
+                    args: [0; 5],
+                },
             }],
             things: vec![],
             warnings: vec![],

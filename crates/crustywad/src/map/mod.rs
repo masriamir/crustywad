@@ -6,6 +6,8 @@
 //!
 //! - [`doom`] — the classic Doom binary layout ([`Thing`][doom::Thing],
 //!   [`Linedef`][doom::Linedef]); also used by Heretic.
+//! - [`hexen`] — the Hexen binary layout ([`Thing`][hexen::Thing],
+//!   [`Linedef`][hexen::Linedef]); extends `THINGS`/`LINEDEFS` only.
 //! - [`common`] — records whose byte layout is identical across formats
 //!   ([`Vertex`], [`Sidedef`], [`Sector`], [`Seg`], [`Subsector`], [`Node`],
 //!   [`Name8`]). These are re-exported at the `map` root, so `map::Vertex` and
@@ -25,6 +27,7 @@ pub mod common;
 pub mod doom;
 pub mod graph;
 pub mod group;
+pub mod hexen;
 
 pub use assemble::MapAssembleError;
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
@@ -32,7 +35,7 @@ pub use graph::{
     LineSpecial, LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing,
     MapVertex, MapWarning, SectorIdx, SidedefIdx, VertexIdx,
 };
-pub use group::MapGroup;
+pub use group::{MapGroup, detect_map_format};
 
 /// Errors returned when decoding typed map records from a lump byte slice.
 #[derive(Debug, Error)]
