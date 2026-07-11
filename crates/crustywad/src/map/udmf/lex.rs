@@ -142,7 +142,9 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// Scans a double-quoted string literal, resolving `\"` and `\\` escapes.
+    /// Scans a double-quoted string literal. Resolves the escape sequences
+    /// `\"`, `\\`, `\n`, and `\t`; any other `\X` sequence passes through as
+    /// the literal character `X` (the backslash is dropped).
     ///
     /// The opening quote must already have been consumed by the caller.
     fn scan_string(

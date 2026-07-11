@@ -73,10 +73,17 @@ fn depth_exceeded_on_configured_limit() {
 /// exercising the `Ok` path because it became invalid).
 #[test]
 fn committed_fuzz_seeds_parse_as_intended() {
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/fuzz_parse_udmf");
+    // The fuzz corpus lives outside this crate and is not shipped in the
+    // packaged/published crate. This is a repo-only guard against seed rot, so
+    // skip gracefully when the corpus directory is absent (e.g. running the
+    // tests from a packaged crate tarball).
+    if !dir.exists() {
+        return;
+    }
     let seed = |name: &str| {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fuzz/corpus/fuzz_parse_udmf")
-            .join(name);
+        let path = dir.join(name);
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
     };
 
