@@ -211,17 +211,20 @@ into `MapLinedef.left: Option<SidedefIdx>` — `None` for one-sided lines, `Some
 two-sided lines. `map.linedef_left(linedef)` mirrors this: it returns `None` for a
 one-sided line rather than an error.
 
-### Hexen-specific fields
+### Extended thing and linedef fields
 
 Hexen maps extend the classic Doom binary record layout with additional fields on things and
-linedefs. When assembled, a `MapThing` includes Hexen-specific fields: `tid` (thing ID for
-cross-references), `z` (vertical position), and the Hexen-only `special`/`args`. A `MapLinedef`'s
-`special` field is a `LineSpecial`, which for Hexen maps carries the one-byte `special` action
-number and its `args[5]` (action arguments); Doom maps use `LineSpecial`'s `tag` instead.
+linedefs. When assembled, a `MapThing` includes `id` (thing ID for cross-references), `height`
+(vertical position), and `special` (a `Special` carrying the action number and its five
+`args`). A `MapLinedef` likewise has a `special: Special`, plus an `id` — a UDMF/ZDoom line
+identifier that is `0` for Doom and Hexen maps (reserved for UDMF). `Special` is shared
+across formats: for a Doom *linedef*, its target sector tag lives in `special.args[0]`;
+Hexen and UDMF populate the full `args`.
 
-For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
-action semantics. You can check the map's format via `map.format()` to determine whether
-to interpret these fields:
+On Doom maps the thing fields (`id`, `height`, and the thing `special`) are all zero, while a
+linedef's `special` still holds its classic action number and sector tag (the latter in
+`special.args[0]`). Hexen maps additionally populate the thing fields with real values. Use
+`map.format()` to decide how to interpret them:
 
 ```rust
 use crustywad::map::{Map, MapFormat};
@@ -232,7 +235,7 @@ let map = Map::assemble(&wad, &group)?;
 
 for thing in map.things() {
     if map.format() == MapFormat::Hexen {
-        println!("Hexen thing ID: {}, Z: {}", thing.tid, thing.z);
+        println!("Hexen thing ID: {}, height: {}", thing.id, thing.height);
     }
 }
 

@@ -41,17 +41,17 @@ pub struct MapVertex {
     pub y: f64,
 }
 
-/// A normalized line special: the classic Doom `special_type` + `sector_tag`.
-/// Hexen's per-special `args` are carried alongside; `tag` is Doom-only (0 for Hexen).
+/// A normalized action special: the `special` number plus its five `args`.
+///
+/// Shared by [`MapLinedef`] and [`MapThing`] — Doom, Hexen, and UDMF all use this
+/// `special` + `args` shape. For a Doom *linedef*, the sector tag is carried in `args[0]`
+/// (Doom things have no special, so a Doom thing's `Special` is all zero).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LineSpecial {
-    /// The linedef special/action number.
-    pub special: u16,
-    /// The sector tag this special applies to.
-    pub tag: u16,
-    /// The Hexen special's five arguments; `[0; 5]` for Doom maps (whose params
-    /// use `tag` instead).
-    pub args: [u8; 5],
+pub struct Special {
+    /// The action special number.
+    pub special: i32,
+    /// The special's five arguments; `args[0]` carries Doom's sector tag.
+    pub args: [i32; 5],
 }
 
 /// A normalized linedef, referencing its endpoints, sidedefs, and special by
@@ -69,8 +69,10 @@ pub struct MapLinedef {
     pub left: Option<SidedefIdx>,
     /// The linedef's bit flags (blocking, two-sided, secret, etc.).
     pub flags: u32,
-    /// The linedef's special/tag pair.
-    pub special: LineSpecial,
+    /// The linedef's action special and arguments.
+    pub special: Special,
+    /// The linedef's identifier (the UDMF/ZDoom line id); `0` for Doom/Hexen maps.
+    pub id: i32,
 }
 
 /// A normalized sidedef, referencing its sector by index into the owning
@@ -125,14 +127,12 @@ pub struct MapThing {
     pub type_id: u16,
     /// The thing's bit flags (skill levels, deaf, multiplayer-only, etc.).
     pub flags: u32,
-    /// The thing's Hexen thing-ID (tag); `0` for Doom maps and untagged things.
-    pub tid: u16,
+    /// The thing's identification tag (Hexen/UDMF tid); `0` for Doom maps and untagged things.
+    pub id: i32,
     /// The thing's spawn height above the floor, in map units; `0.0` for Doom maps.
-    pub z: f64,
-    /// The thing's Hexen activation special; `0` for Doom maps.
-    pub special: u8,
-    /// The thing's Hexen special arguments; `[0; 5]` for Doom maps.
-    pub args: [u8; 5],
+    pub height: f64,
+    /// The thing's activation special; `Special { special: 0, args: [0; 5] }` for Doom maps.
+    pub special: Special,
 }
 
 /// A non-fatal issue recorded during lenient map assembly.
@@ -296,11 +296,11 @@ mod tests {
                 right: SidedefIdx(0),
                 left: None,
                 flags: 1,
-                special: LineSpecial {
+                special: Special {
                     special: 0,
-                    tag: 0,
                     args: [0; 5],
                 },
+                id: 0,
             }],
             things: vec![],
             warnings: vec![],

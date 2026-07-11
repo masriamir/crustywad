@@ -429,7 +429,7 @@ fn detects_doom_format_without_behavior() {
     assert_eq!(detect_map_format(&wad, &group), MapFormat::Doom);
 }
 
-// `t.z` is widened from an `i16` (24), an exactly f64-representable integer, so
+// `t.height` is widened from an `i16` (24), an exactly f64-representable integer, so
 // strict float equality is safe here — not a precision-sensitive comparison.
 #[allow(clippy::float_cmp)]
 #[test]
@@ -442,14 +442,14 @@ fn assembles_hexen_map_with_superset_fields() {
 
     assert_eq!(map.format(), MapFormat::Hexen);
     let t = &map.things()[0];
-    assert_eq!(t.tid, 7);
-    assert_eq!(t.z, 24.0);
-    assert_eq!(t.special, 80);
-    assert_eq!(t.args, [1, 2, 3, 4, 5]);
+    assert_eq!(t.id, 7);
+    assert_eq!(t.height, 24.0);
+    assert_eq!(t.special.special, 80);
+    assert_eq!(t.special.args, [1, 2, 3, 4, 5]);
     let l = &map.linedefs()[0];
     assert_eq!(l.special.special, 13);
-    assert_eq!(l.special.tag, 0); // Hexen linedefs have no tag field
     assert_eq!(l.special.args, [99, 0, 0, 0, 0]);
+    assert_eq!(l.id, 0); // line id is UDMF-only; Hexen linedefs leave it 0
     assert!(l.left.is_none()); // 0xffff == one-sided
 }
 

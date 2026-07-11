@@ -32,8 +32,8 @@ pub mod hexen;
 pub use assemble::MapAssembleError;
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
 pub use graph::{
-    LineSpecial, LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing,
-    MapVertex, MapWarning, SectorIdx, SidedefIdx, VertexIdx,
+    LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning,
+    SectorIdx, SidedefIdx, Special, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
 

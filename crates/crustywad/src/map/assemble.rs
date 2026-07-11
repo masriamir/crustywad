@@ -1,8 +1,8 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    LineSpecial, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex,
-    MapWarning, SectorIdx, SidedefIdx, VertexIdx,
+    Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning, SectorIdx,
+    SidedefIdx, Special, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -232,10 +232,12 @@ fn normalize_things(raw: &[doom::Thing]) -> Vec<MapThing> {
             angle: t.angle,
             type_id: t.type_id,
             flags: u32::from(t.flags),
-            tid: 0,
-            z: 0.0,
-            special: 0,
-            args: [0; 5],
+            id: 0,
+            height: 0.0,
+            special: Special {
+                special: 0,
+                args: [0; 5],
+            },
         })
         .collect()
 }
@@ -297,11 +299,11 @@ fn normalize_linedefs(
             right,
             left,
             flags: u32::from(ld.flags),
-            special: LineSpecial {
-                special: ld.special_type,
-                tag: ld.sector_tag,
-                args: [0; 5],
+            special: Special {
+                special: i32::from(ld.special_type),
+                args: [i32::from(ld.sector_tag), 0, 0, 0, 0],
             },
+            id: 0,
         });
     }
     Ok(linedefs)
@@ -316,10 +318,12 @@ fn normalize_things_hexen(raw: &[hexen::Thing]) -> Vec<MapThing> {
             angle: t.angle,
             type_id: t.type_id,
             flags: u32::from(t.flags),
-            tid: t.tid,
-            z: f64::from(t.z),
-            special: t.special,
-            args: t.args,
+            id: i32::from(t.tid),
+            height: f64::from(t.z),
+            special: Special {
+                special: i32::from(t.special),
+                args: t.args.map(i32::from),
+            },
         })
         .collect()
 }
@@ -351,11 +355,11 @@ fn normalize_linedefs_hexen(
             right,
             left,
             flags: u32::from(ld.flags),
-            special: LineSpecial {
-                special: u16::from(ld.special),
-                tag: 0,
-                args: ld.args,
+            special: Special {
+                special: i32::from(ld.special),
+                args: ld.args.map(i32::from),
             },
+            id: 0,
         });
     }
     Ok(linedefs)
