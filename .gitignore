@@ -33,6 +33,11 @@ docs/guide/mermaid-init.js
 /tests/fixtures/freedoom/
 /crates/crustywad/tests/fixtures/freedoom/
 
+# Local IWAD/PWAD blobs dropped at the repo root (supplied locally for optional
+# hexen-tests / doom64-tests / ad-hoc inspection — WAD blobs are never committed)
+/*.wad
+/*.WAD
+
 # Benchmark output
 /criterion/
 
