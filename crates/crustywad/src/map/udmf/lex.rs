@@ -222,8 +222,8 @@ impl<'a> Lexer<'a> {
                 text.push(c);
                 self.advance();
             } else if (c == 'e' || c == 'E')
-                && matches!(self.peek_at(1), Some(d) if d.is_ascii_digit())
-                    | matches!(self.peek_at(1), Some(s) if (s == '+' || s == '-') && matches!(self.peek_at(2), Some(d) if d.is_ascii_digit()))
+                && (matches!(self.peek_at(1), Some(d) if d.is_ascii_digit())
+                    || matches!(self.peek_at(1), Some(s) if (s == '+' || s == '-') && matches!(self.peek_at(2), Some(d) if d.is_ascii_digit())))
             {
                 is_float = true;
                 text.push(c);
@@ -277,20 +277,11 @@ impl<'a> Lexer<'a> {
             ';' => Token::Semicolon,
             '"' => self.scan_string(line, column)?,
             '-' | '+' if matches!(self.peek(), Some(d) if d.is_ascii_digit() || d == '.') => {
-                let sign = c;
-                let Some(next) = self.advance() else {
-                    return Err(UdmfParseError::Syntax {
-                        line,
-                        column,
-                        message: "expected a digit after sign".to_owned(),
-                    });
-                };
-                let token = self.scan_number(next, line, column)?;
-                match token {
-                    Token::Int(v) if sign == '-' => Token::Int(-v),
-                    Token::Float(v) if sign == '-' => Token::Float(-v),
-                    other => other,
-                }
+                // Pass the sign as the leading character so the full signed
+                // literal is parsed in one step. Parsing the magnitude and then
+                // negating would reject `i64::MIN`, whose magnitude
+                // (9223372036854775808) exceeds `i64::MAX`.
+                self.scan_number(c, line, column)?
             }
             c if c.is_ascii_digit() || c == '.' => self.scan_number(c, line, column)?,
             c if c.is_ascii_alphabetic() || c == '_' => self.scan_ident(c),
@@ -358,6 +349,16 @@ mod tests {
                 Token::Semicolon,
                 Token::RBrace,
             ]
+        );
+    }
+
+    #[test]
+    fn lexes_i64_boundaries() {
+        // `i64::MIN`'s magnitude exceeds `i64::MAX`, so it must be parsed as a
+        // single signed literal rather than magnitude-then-negate.
+        assert_eq!(
+            lex_all("-9223372036854775808 9223372036854775807 +42"),
+            vec![Token::Int(i64::MIN), Token::Int(i64::MAX), Token::Int(42)]
         );
     }
 
