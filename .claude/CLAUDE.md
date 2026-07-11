@@ -276,7 +276,7 @@ I move the board myself as work progresses and **announce each change** in my re
 
 A milestone is **complete** when BOTH conditions hold:
 
-1. **All issues Done** — every issue assigned to the milestone is closed (`open_issues == 0`).
+1. **All issues closed** — every issue assigned to the milestone is closed on GitHub (`open_issues == 0`). This tracks the milestone's issue-close count, not the board's `Done` Status field — closing an issue typically sets both, but the milestone counter is the signal here.
 2. **Shipped** — a `release-plz` PR (`chore: release`) has merged at or after the last milestone issue closed. This is tag-agnostic: because crates version independently (ADR-0011 §3), a milestone titled `vX.Y.Z` need not map to a `crustywad-vX.Y.Z` tag — any release PR merged on/after the final issue's close is the ship signal.
 
 GitHub never auto-closes milestones. Unlike the agent-driven board Status transitions above, milestone closeout is **propose-and-confirm**: when I notice both conditions hold for an open milestone, I surface it and **ask before closing**. On your approval:
