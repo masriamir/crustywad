@@ -258,6 +258,62 @@ fn name8_all_null_returns_empty() {
     assert_eq!(record.as_str_lossy(), "");
 }
 
+#[test]
+fn decodes_hexen_thing_fields() {
+    use crustywad::map::hexen::Thing;
+    use crustywad::map::parse_records;
+    // tid=42, x=-16, y=32, z=8, angle=90, type=3001, flags=7, special=80, args=[1,2,3,4,5]
+    let bytes: &[u8] = &[
+        0x2A, 0x00, // tid = 42
+        0xF0, 0xFF, // x = -16
+        0x20, 0x00, // y = 32
+        0x08, 0x00, // z = 8
+        0x5A, 0x00, // angle = 90
+        0xB9, 0x0B, // type_id = 3001
+        0x07, 0x00, // flags = 7
+        0x50, // special = 80
+        0x01, 0x02, 0x03, 0x04, 0x05, // args
+    ];
+    let things: Vec<Thing> = parse_records(bytes).expect("decodes");
+    assert_eq!(things.len(), 1);
+    let t = &things[0];
+    assert_eq!(t.tid, 42);
+    assert_eq!(t.x, -16);
+    assert_eq!(t.y, 32);
+    assert_eq!(t.z, 8);
+    assert_eq!(t.angle, 90);
+    assert_eq!(t.type_id, 3001);
+    assert_eq!(t.flags, 7);
+    assert_eq!(t.special, 80);
+    assert_eq!(t.args, [1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn decodes_hexen_linedef_fields() {
+    use crustywad::map::hexen::Linedef;
+    use crustywad::map::parse_records;
+    // start=0, end=1, flags=1, special=13, args=[99,0,0,0,0], right=0, left=0xffff
+    let bytes: &[u8] = &[
+        0x00, 0x00, // start_vertex = 0
+        0x01, 0x00, // end_vertex = 1
+        0x01, 0x00, // flags = 1
+        0x0D, // special = 13
+        0x63, 0x00, 0x00, 0x00, 0x00, // args = [99,0,0,0,0]
+        0x00, 0x00, // right_sidedef = 0
+        0xFF, 0xFF, // left_sidedef = 0xffff
+    ];
+    let lines: Vec<Linedef> = parse_records(bytes).expect("decodes");
+    assert_eq!(lines.len(), 1);
+    let l = &lines[0];
+    assert_eq!(l.start_vertex, 0);
+    assert_eq!(l.end_vertex, 1);
+    assert_eq!(l.flags, 1);
+    assert_eq!(l.special, 13);
+    assert_eq!(l.args, [99, 0, 0, 0, 0]);
+    assert_eq!(l.right_sidedef, 0);
+    assert_eq!(l.left_sidedef, 0xffff);
+}
+
 proptest! {
     // I-5: parse_records::<Thing> never panics on arbitrary bytes
     #[test]
