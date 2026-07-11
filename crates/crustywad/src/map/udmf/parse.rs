@@ -899,4 +899,19 @@ mod tests {
             crate::map::udmf::UdmfParseError::Semantic { .. }
         ));
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn never_panics_and_output_is_linear(input in ".*") {
+            if let Ok(m) = parse_udmf(&input, crate::Limits::default()) {
+                let elements = m.vertices.len() + m.linedefs.len()
+                    + m.sidedefs.len() + m.sectors.len() + m.things.len();
+                // Each produced element requires at least one `{`...`}` pair, so
+                // the element count is bounded by the input length (O(input)).
+                prop_assert!(elements <= input.len());
+            }
+        }
+    }
 }
