@@ -25,7 +25,9 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
     let mut lexer = Lexer::new(text);
     let mut state = State::ExpectGlobalItem;
     let mut depth: usize = 0;
-    let mut last_pos: (usize, usize);
+    // Initial value covers the zero-token (empty-string) case; every other
+    // path overwrites it before it is read.
+    let mut last_pos: (usize, usize) = (1, 1);
 
     let mut namespace: Option<String> = None;
     let mut vertices = Vec::new();
@@ -113,6 +115,8 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
             },
         }
     }
+
+    check_block_closed(current_block.is_some(), last_pos)?;
 
     let namespace = namespace.ok_or_else(|| UdmfParseError::Semantic {
         message: "TEXTMAP is missing a required 'namespace' declaration".to_owned(),
@@ -265,6 +269,21 @@ fn as_str(spanned: Spanned) -> Result<String, UdmfParseError> {
     }
 }
 
+/// Rejects end-of-input while a block is still open (unbalanced braces).
+///
+/// `last_pos` is the last known source position, used to anchor the error
+/// when there is no further input to point at.
+fn check_block_closed(block_open: bool, last_pos: (usize, usize)) -> Result<(), UdmfParseError> {
+    if block_open {
+        return Err(syntax_error(
+            last_pos.0,
+            last_pos.1,
+            "unexpected end of input inside block",
+        ));
+    }
+    Ok(())
+}
+
 /// Builds a [`UdmfParseError::Syntax`] at `line`/`column` with `message`.
 fn syntax_error(line: usize, column: usize, message: &str) -> UdmfParseError {
     UdmfParseError::Syntax {
@@ -324,6 +343,27 @@ mod tests {
             err,
             UdmfParseError::Syntax { .. } | UdmfParseError::DepthExceeded { .. }
         ));
+    }
+
+    #[test]
+    fn unterminated_block_at_eof_is_syntax_error() {
+        // No closing brace on the (only) block.
+        let e1 = parse_udmf(
+            "namespace=\"doom\"; vertex { x = 1.0; y = 2.0;",
+            crate::Limits::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(e1, UdmfParseError::Syntax { .. }), "got {e1:?}");
+        // EOF immediately after `{`.
+        let e2 = parse_udmf("namespace=\"doom\"; vertex {", crate::Limits::default()).unwrap_err();
+        assert!(matches!(e2, UdmfParseError::Syntax { .. }), "got {e2:?}");
+        // Valid first block, truncated second block.
+        let e3 = parse_udmf(
+            "namespace=\"doom\"; vertex { x=1.0; y=2.0; } vertex { x=3.0;",
+            crate::Limits::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(e3, UdmfParseError::Syntax { .. }), "got {e3:?}");
     }
 
     #[test]
