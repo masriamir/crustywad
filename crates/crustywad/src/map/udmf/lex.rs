@@ -316,12 +316,18 @@ impl<'a> Lexer<'a> {
         }
 
         if is_float {
+            // Reject non-finite results: Rust's `f64` parser maps an
+            // out-of-range exponent (e.g. `1e309`) to `+/-inf` rather than an
+            // error, and an infinite/NaN coordinate must not silently enter the
+            // parsed map (later assembly assumes finite geometry).
             text.parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite())
                 .map(Token::Float)
-                .map_err(|_| UdmfParseError::Syntax {
+                .ok_or_else(|| UdmfParseError::Syntax {
                     line: start_line,
                     column: start_column,
-                    message: format!("invalid float literal '{text}'"),
+                    message: format!("invalid or out-of-range float literal '{text}'"),
                 })
         } else {
             text.parse::<i64>()
@@ -525,6 +531,18 @@ mod tests {
     #[test]
     fn leading_zero_decimal_is_not_octal() {
         assert_eq!(lex_all("010 007"), vec![Token::Int(10), Token::Int(7)]);
+    }
+
+    #[test]
+    fn overflowing_float_exponent_is_rejected() {
+        // A finite (even very large) float lexes fine...
+        assert_eq!(lex_all("1e308"), vec![Token::Float(1e308)]);
+        // ...but an exponent that overflows to +/-inf must be a Syntax error,
+        // not a silent infinite coordinate.
+        let mut inf = Lexer::new("1e309");
+        assert!(inf.next_spanned().is_err());
+        let mut neg_inf = Lexer::new("-2e400");
+        assert!(neg_inf.next_spanned().is_err());
     }
 
     #[test]
