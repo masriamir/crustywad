@@ -295,7 +295,11 @@ mod tests {
                 right: SidedefIdx(0),
                 left: None,
                 flags: 1,
-                special: LineSpecial { special: 0, tag: 0, args: [0; 5] },
+                special: LineSpecial {
+                    special: 0,
+                    tag: 0,
+                    args: [0; 5],
+                },
             }],
             things: vec![],
             warnings: vec![],
