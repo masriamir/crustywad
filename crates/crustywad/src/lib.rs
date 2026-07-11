@@ -162,6 +162,29 @@ pub enum Strictness {
     Lenient,
 }
 
+/// Resource limits applied during parsing.
+///
+/// Currently bounds UDMF text nesting depth; ignored by all binary-format paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Maximum block-nesting depth accepted by the UDMF text parser.
+    pub max_depth: usize,
+}
+
+impl Limits {
+    /// The default limits (`max_depth = 64`).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { max_depth: 64 }
+    }
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Parser configuration passed to the `_with_options` loading functions.
 ///
 /// The default configuration uses [`Strictness::Strict`], which is the right
@@ -184,12 +207,16 @@ pub enum Strictness {
 pub struct ParseOptions {
     /// The chosen validation strategy.
     pub strictness: Strictness,
+    /// Resource limits applied to parsing (currently: UDMF nesting depth).
+    /// Ignored by all binary-format paths.
+    pub limits: Limits,
 }
 
 impl Default for ParseOptions {
     fn default() -> Self {
         Self {
             strictness: Strictness::Strict,
+            limits: Limits::new(),
         }
     }
 }
@@ -203,6 +230,7 @@ impl ParseOptions {
     pub const fn strict() -> Self {
         Self {
             strictness: Strictness::Strict,
+            limits: Limits::new(),
         }
     }
 
@@ -215,6 +243,7 @@ impl ParseOptions {
     pub const fn lenient() -> Self {
         Self {
             strictness: Strictness::Lenient,
+            limits: Limits::new(),
         }
     }
 }
@@ -976,4 +1005,25 @@ fn decode_name(
         };
     }
     Ok(String::from_utf8_lossy(trimmed).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Limits, ParseOptions, Strictness};
+
+    #[test]
+    fn limits_new_and_default_use_max_depth_64() {
+        assert_eq!(Limits::new().max_depth, 64);
+        assert_eq!(Limits::default().max_depth, 64);
+        assert_eq!(Limits::default(), Limits::new());
+    }
+
+    #[test]
+    fn parse_options_carry_default_limits() {
+        assert_eq!(ParseOptions::default().limits, Limits::new());
+        assert_eq!(ParseOptions::strict().limits, Limits::new());
+        assert_eq!(ParseOptions::lenient().limits, Limits::new());
+        assert_eq!(ParseOptions::default().strictness, Strictness::Strict);
+        assert_eq!(ParseOptions::lenient().strictness, Strictness::Lenient);
+    }
 }

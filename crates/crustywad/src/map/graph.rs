@@ -154,8 +154,9 @@ pub enum MapWarning {
     DanglingReference {
         /// The name of the arena the out-of-range index referred to (e.g. `"vertex"`).
         referent: &'static str,
-        /// The out-of-range index value that was encountered.
-        index: usize,
+        /// The out-of-range index value that was encountered (signed, since UDMF
+        /// indices may be negative).
+        index: i32,
         /// The name of the element kind the dangling reference was found on (e.g. `"linedef"`).
         from: &'static str,
         /// The number of elements actually available in the referenced arena.

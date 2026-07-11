@@ -119,7 +119,7 @@ cargo doc --workspace --all-features --no-deps
 - Use `snake_case` for Rust items and `UPPER_SNAKE_CASE` for constants.
 
 ### Strictness model
-- Parsing is controlled by `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient }`.
+- Parsing is controlled by `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient, limits: Limits }` (`limits` bounds UDMF text nesting depth; ignored by binary paths).
 - Strict mode returns the first `ParseError` it encounters.
 - Lenient mode attempts best-effort recovery and collects `ParseWarning` values.
 - New validation logic must honour both modes.

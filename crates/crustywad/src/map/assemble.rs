@@ -33,8 +33,9 @@ pub enum MapAssembleError {
     DanglingReference {
         /// The name of the arena the out-of-range index referred to (e.g. `"vertex"`).
         referent: &'static str,
-        /// The out-of-range index value that was encountered.
-        index: usize,
+        /// The out-of-range index value that was encountered (signed, since UDMF
+        /// indices may be negative).
+        index: i32,
         /// The name of the element kind the dangling reference was found on (e.g. `"linedef"`).
         from: &'static str,
         /// The number of elements actually available in the referenced arena.
@@ -78,37 +79,44 @@ where
 }
 
 /// Resolves a **required** reference. Empty target arena is always fatal.
+///
+/// `index` is `i32` so UDMF's signed, wider indices share this validator with the
+/// binary formats (whose non-negative `u16` indices widen losslessly); a negative
+/// index is treated as out of range, taking the same dangling-reference path. The
+/// raw signed `index` is preserved in the diagnostic (error/warning).
 fn resolve_required(
-    index: u16,
+    index: i32,
     count: usize,
     referent: &'static str,
     from: &'static str,
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<usize, MapAssembleError> {
-    let idx = index as usize;
     if count == 0 {
         return Err(MapAssembleError::DanglingReference {
             referent,
-            index: idx,
+            index,
             from,
             count: 0,
         });
     }
-    if idx < count {
-        return Ok(idx);
+    // A negative index (or one past `count`) is out of range.
+    if let Ok(idx) = usize::try_from(index) {
+        if idx < count {
+            return Ok(idx);
+        }
     }
     match strictness {
         Strictness::Strict => Err(MapAssembleError::DanglingReference {
             referent,
-            index: idx,
+            index,
             from,
             count,
         }),
         Strictness::Lenient => {
             warnings.push(MapWarning::DanglingReference {
                 referent,
-                index: idx,
+                index,
                 from,
                 count,
             });
@@ -117,10 +125,22 @@ fn resolve_required(
     }
 }
 
-/// Resolves a linedef's **left** sidedef: `0xffff` == one-sided (`None`);
-/// any other out-of-range value errors (strict) or becomes `None` + warning (lenient).
+/// Resolves a linedef's **left** sidedef against the binary `0xffff` sentinel.
+///
+/// `0xffff` (65535) is the on-disk Doom/Hexen "no back side" marker: `sideback`
+/// is a `u16` there, so that value means one-sided and maps to `None`. Any other
+/// value outside `0..count` errors (strict) or becomes `None` + a warning
+/// (lenient); a negative index (reachable only via the widened signed parameter)
+/// is simply out of range.
+///
+/// `raw` is `i32` so binary and UDMF callers can share this validator, but the
+/// UDMF normalizer (#58b) must **not** route a raw sidedef index through this
+/// `0xffff` sentinel. Per ADR-0017 §2/§3 it receives `sideback` already
+/// normalized to `Option<i32>` (`-1` → `None` in the parser), maps `None`
+/// straight to `left: None`, and range-checks a real `Some(idx)` — so a valid
+/// UDMF sidedef index of 65535 is never mistaken for the one-sided sentinel.
 fn resolve_left(
-    raw: u16,
+    raw: i32,
     count: usize,
     from: &'static str,
     strictness: Strictness,
@@ -129,21 +149,23 @@ fn resolve_left(
     if raw == 0xffff {
         return Ok(None);
     }
-    let idx = raw as usize;
-    if idx < count {
-        return Ok(Some(idx));
+    // A negative index (or one past `count`) is out of range.
+    if let Ok(idx) = usize::try_from(raw) {
+        if idx < count {
+            return Ok(Some(idx));
+        }
     }
     match strictness {
         Strictness::Strict => Err(MapAssembleError::DanglingReference {
             referent: "sidedef",
-            index: idx,
+            index: raw,
             from,
             count,
         }),
         Strictness::Lenient => {
             warnings.push(MapWarning::DanglingReference {
                 referent: "sidedef",
-                index: idx,
+                index: raw,
                 from,
                 count,
             });
@@ -170,7 +192,7 @@ fn resolve_linedef_refs(
     warnings: &mut Vec<MapWarning>,
 ) -> Result<(VertexIdx, VertexIdx, SidedefIdx, Option<SidedefIdx>), MapAssembleError> {
     let start = VertexIdx(resolve_required(
-        start_vertex,
+        i32::from(start_vertex),
         vertex_count,
         "vertex",
         "linedef",
@@ -178,7 +200,7 @@ fn resolve_linedef_refs(
         warnings,
     )?);
     let end = VertexIdx(resolve_required(
-        end_vertex,
+        i32::from(end_vertex),
         vertex_count,
         "vertex",
         "linedef",
@@ -186,15 +208,21 @@ fn resolve_linedef_refs(
         warnings,
     )?);
     let right = SidedefIdx(resolve_required(
-        right_sidedef,
+        i32::from(right_sidedef),
         sidedef_count,
         "sidedef",
         "linedef",
         strictness,
         warnings,
     )?);
-    let left =
-        resolve_left(left_sidedef, sidedef_count, "linedef", strictness, warnings)?.map(SidedefIdx);
+    let left = resolve_left(
+        i32::from(left_sidedef),
+        sidedef_count,
+        "linedef",
+        strictness,
+        warnings,
+    )?
+    .map(SidedefIdx);
     Ok((start, end, right, left))
 }
 
@@ -253,7 +281,7 @@ fn normalize_sidedefs(
     let mut sidedefs = Vec::with_capacity(raw.len());
     for sd in raw {
         let sector = SectorIdx(resolve_required(
-            sd.sector,
+            i32::from(sd.sector),
             sector_count,
             "sector",
             "sidedef",
@@ -448,5 +476,58 @@ impl Map {
             things,
             warnings,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_left, resolve_required};
+    use crate::Strictness;
+
+    #[test]
+    fn resolve_required_negative_index_is_out_of_range() {
+        let mut warnings = Vec::new();
+        // Strict: a negative (UDMF-style) index is a dangling reference.
+        assert!(
+            resolve_required(
+                -1,
+                4,
+                "vertex",
+                "linedef",
+                Strictness::Strict,
+                &mut warnings
+            )
+            .is_err()
+        );
+        assert!(warnings.is_empty());
+        // Lenient: clamps to 0 and records a warning.
+        let idx = resolve_required(
+            -1,
+            4,
+            "vertex",
+            "linedef",
+            Strictness::Lenient,
+            &mut warnings,
+        )
+        .expect("lenient recovers");
+        assert_eq!(idx, 0);
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn resolve_left_sentinel_and_negative() {
+        let mut warnings = Vec::new();
+        // The binary 0xffff one-sided sentinel resolves to `None`.
+        assert_eq!(
+            resolve_left(0xffff, 4, "linedef", Strictness::Strict, &mut warnings).unwrap(),
+            None
+        );
+        assert!(warnings.is_empty());
+        // A negative index (not the sentinel) is out of range → lenient `None` + warning.
+        assert_eq!(
+            resolve_left(-2, 4, "linedef", Strictness::Lenient, &mut warnings).unwrap(),
+            None
+        );
+        assert_eq!(warnings.len(), 1);
     }
 }
