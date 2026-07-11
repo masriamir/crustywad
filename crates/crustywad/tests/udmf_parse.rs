@@ -46,3 +46,33 @@ fn depth_exceeded_on_configured_limit() {
         UdmfParseError::Syntax { .. } | UdmfParseError::DepthExceeded { .. }
     ));
 }
+
+/// Validates the committed `fuzz_parse_udmf` seed corpus: the two valid seeds
+/// must parse `Ok` with their intended element counts, and the malformed seed
+/// must error. This guards against seed rot (e.g. a seed that silently stops
+/// exercising the `Ok` path because it became invalid).
+#[test]
+fn committed_fuzz_seeds_parse_as_intended() {
+    let seed = |name: &str| {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fuzz/corpus/fuzz_parse_udmf")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+    };
+
+    // seed_minimal: a valid one-of-each map.
+    let min = parse_udmf(&seed("seed_minimal"), Limits::default()).expect("seed_minimal parses");
+    assert_eq!(min.vertices.len(), 2);
+    assert_eq!(min.things.len(), 1);
+
+    // seed_blocks: a valid two-of-each map.
+    let blocks = parse_udmf(&seed("seed_blocks"), Limits::default()).expect("seed_blocks parses");
+    assert_eq!(blocks.vertices.len(), 2);
+    assert_eq!(blocks.linedefs.len(), 2);
+    assert_eq!(blocks.sidedefs.len(), 2);
+    assert_eq!(blocks.sectors.len(), 2);
+    assert_eq!(blocks.things.len(), 2);
+
+    // seed_malformed: must exercise an error path.
+    assert!(parse_udmf(&seed("seed_malformed"), Limits::default()).is_err());
+}
