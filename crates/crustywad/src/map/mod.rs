@@ -28,6 +28,7 @@ pub mod doom;
 pub mod graph;
 pub mod group;
 pub mod hexen;
+pub mod udmf;
 
 pub use assemble::MapAssembleError;
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
@@ -36,6 +37,7 @@ pub use graph::{
     SectorIdx, SidedefIdx, Special, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
+pub use udmf::UdmfParseError;
 
 /// Errors returned when decoding typed map records from a lump byte slice.
 #[derive(Debug, Error)]
