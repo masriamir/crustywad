@@ -1,6 +1,7 @@
 //! Identifying one map's lumps within the flat WAD directory (ADR-0015 §1).
 
 use crate::Wad;
+use crate::map::graph::MapFormat;
 
 /// Recognized classic/extended map **data** lump names. A lump is a map marker
 /// when the lump directly after it is one of these.
@@ -79,4 +80,25 @@ pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
         }
     }
     None
+}
+
+/// Classifies the map format of `group` from its lump names (ADR-0014).
+///
+/// A `BEHAVIOR` lump marks a Hexen map; otherwise the group is treated as the
+/// classic Doom binary layout. UDMF (`TEXTMAP`) classification arrives with the
+/// UDMF work — until then a `TEXTMAP` group is reported as [`MapFormat::Doom`]
+/// here but refused by [`Map::assemble`][crate::map::Map::assemble].
+#[must_use]
+pub fn detect_map_format(wad: &Wad, group: &MapGroup) -> MapFormat {
+    let has_lump = |name: &str| {
+        group
+            .data_indices
+            .iter()
+            .any(|&i| wad.lumps().get(i).is_some_and(|l| l.name() == name))
+    };
+    if has_lump("BEHAVIOR") {
+        MapFormat::Hexen
+    } else {
+        MapFormat::Doom
+    }
 }

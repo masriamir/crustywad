@@ -8,6 +8,10 @@ pub enum MapFormat {
     /// The classic Doom binary layout — also used, unchanged, by **Doom II** and
     /// **Heretic** (which differ only in map-marker naming, not record format).
     Doom,
+    /// The Hexen binary layout — extends `THINGS`/`LINEDEFS` (see
+    /// [`map::hexen`][crate::map::hexen]); detected by the presence of a
+    /// `BEHAVIOR` lump.
+    Hexen,
 }
 
 /// A zero-based index into [`Map::vertices`].

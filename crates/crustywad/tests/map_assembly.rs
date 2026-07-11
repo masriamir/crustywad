@@ -434,3 +434,29 @@ fn doom2_map_assembles_via_doom_path() {
     assert_eq!(map.format(), MapFormat::Doom);
     assert_eq!(map.things().len(), 1);
 }
+
+#[test]
+fn detects_doom_format_without_behavior() {
+    use crustywad::map::{MapFormat, detect_map_format};
+    // A marker followed by a VERTEXES data lump — a Doom-format group, no BEHAVIOR.
+    let bytes = common::build_named_lumps(&[
+        ("MAP01", Vec::new()),
+        ("VERTEXES", vec![0u8; 4]),
+    ]);
+    let wad = crustywad::Wad::from_bytes(bytes).expect("parses");
+    let group = wad.map_group("MAP01").expect("group");
+    assert_eq!(detect_map_format(&wad, &group), MapFormat::Doom);
+}
+
+#[test]
+fn detects_hexen_format_with_behavior() {
+    use crustywad::map::{MapFormat, detect_map_format};
+    let bytes = common::build_named_lumps(&[
+        ("MAP01", Vec::new()),
+        ("VERTEXES", vec![0u8; 4]),
+        ("BEHAVIOR", b"ACS\0".to_vec()),
+    ]);
+    let wad = crustywad::Wad::from_bytes(bytes).expect("parses");
+    let group = wad.map_group("MAP01").expect("group");
+    assert_eq!(detect_map_format(&wad, &group), MapFormat::Hexen);
+}

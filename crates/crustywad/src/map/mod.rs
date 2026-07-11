@@ -35,7 +35,7 @@ pub use graph::{
     LineSpecial, LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing,
     MapVertex, MapWarning, SectorIdx, SidedefIdx, VertexIdx,
 };
-pub use group::MapGroup;
+pub use group::{MapGroup, detect_map_format};
 
 /// Errors returned when decoding typed map records from a lump byte slice.
 #[derive(Debug, Error)]
