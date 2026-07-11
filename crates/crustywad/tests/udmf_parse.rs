@@ -24,6 +24,26 @@ fn parses_a_minimal_valid_map() {
     assert_eq!(m.things.len(), 1);
 }
 
+// `vertices[0].x` is parsed from the hex literal `0x10` (16), an exactly
+// f64-representable integer, so strict float equality is safe here — not a
+// precision-sensitive comparison.
+#[allow(clippy::float_cmp)]
+#[test]
+fn parses_mixed_case_identifiers_and_hex_integers() {
+    let text = concat!(
+        "Namespace = \"doom\";\n",
+        "Vertex { X = 0x10; Y = 0; }\n",
+        "Linedef { v1 = 0; v2 = 0; sidefront = 0; }\n",
+        "SideDef { sector = 0; }\n",
+        "Sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+        "Thing { x = 0; y = 0; type = 1; }\n",
+    );
+    let m = parse_udmf(text, Limits::default()).expect("mixed-case + hex map parses");
+    assert_eq!(m.namespace, "doom");
+    assert_eq!(m.vertices.len(), 1);
+    assert_eq!(m.vertices[0].x, 16.0);
+}
+
 #[test]
 fn syntax_error_reports_position() {
     let err = parse_udmf("namespace = \"doom\" vertex { }", Limits::default()).unwrap_err();

@@ -181,7 +181,11 @@ impl<'a> Lexer<'a> {
     }
 
     /// Scans an identifier/keyword starting at the already-consumed first
-    /// character `first`, mapping `true`/`false` to [`Token::Bool`].
+    /// character `first`, mapping `true`/`false` to [`Token::Bool`]
+    /// case-insensitively. UDMF identifiers and keywords are case-insensitive
+    /// (ADR-0017), so any other identifier is folded to ASCII lowercase
+    /// before being wrapped in [`Token::Ident`]; quoted [`Token::Str`] values
+    /// are left untouched by this rule.
     fn scan_ident(&mut self, first: char) -> Token {
         let mut ident = String::new();
         ident.push(first);
@@ -193,25 +197,92 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        match ident.as_str() {
-            "true" => Token::Bool(true),
-            "false" => Token::Bool(false),
-            _ => Token::Ident(ident),
+        if ident.eq_ignore_ascii_case("true") {
+            Token::Bool(true)
+        } else if ident.eq_ignore_ascii_case("false") {
+            Token::Bool(false)
+        } else {
+            Token::Ident(ident.to_ascii_lowercase())
         }
     }
 
     /// Scans a numeric literal starting at the already-consumed first
     /// character `first`, producing [`Token::Int`] or [`Token::Float`]
-    /// depending on whether a fraction/exponent is present.
+    /// depending on whether a fraction/exponent is present, or a
+    /// [`Token::Int`] parsed from hexadecimal digits for a `0x`/`0X` literal.
     fn scan_number(
         &mut self,
         first: char,
         start_line: usize,
         start_column: usize,
     ) -> Result<Token, UdmfParseError> {
+        // An optional leading sign was passed in as `first`; if so, consume
+        // the next character to find the true start of the magnitude. The
+        // caller (`next_spanned`) only dispatches here for a sign when the
+        // following character is a digit or `.`, so this `advance` cannot
+        // fail.
+        let (sign, digit_first) = if first == '+' || first == '-' {
+            let Some(next) = self.advance() else {
+                return Err(UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: "incomplete numeric literal".to_owned(),
+                });
+            };
+            (Some(first), next)
+        } else {
+            (None, first)
+        };
+
+        // Hexadecimal integer literal: `0x`/`0X` followed by one-or-more hex
+        // digits (case-insensitive), per ADR-0017's grammar
+        // (`0x[0-9A-Fa-f]+`). Octal is intentionally NOT supported below —
+        // see the decimal path's comment.
+        if digit_first == '0' && matches!(self.peek(), Some('x' | 'X')) {
+            self.advance();
+            let mut hex = String::new();
+            while let Some(c) = self.peek() {
+                if c.is_ascii_hexdigit() {
+                    hex.push(c);
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            if hex.is_empty() {
+                return Err(UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: "invalid hexadecimal integer literal".to_owned(),
+                });
+            }
+            return i64::from_str_radix(&hex, 16)
+                .ok()
+                .and_then(|magnitude| {
+                    if sign == Some('-') {
+                        magnitude.checked_neg()
+                    } else {
+                        Some(magnitude)
+                    }
+                })
+                .map(Token::Int)
+                .ok_or_else(|| UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: format!("hexadecimal integer literal '0x{hex}' out of range"),
+                });
+        }
+
+        // Decimal integer or floating-point literal. A leading zero (e.g.
+        // `010`) is intentionally parsed as DECIMAL, not octal: octal-from-
+        // leading-zero is a well-known footgun and real map editors emit
+        // decimal, so `010` lexes to `Int(10)`, not `Int(8)`.
         let mut text = String::new();
-        text.push(first);
-        let mut is_float = first == '.';
+        if let Some(s) = sign {
+            text.push(s);
+        }
+        text.push(digit_first);
+        let mut is_float = digit_first == '.';
 
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() {
@@ -392,6 +463,57 @@ mod tests {
     #[test]
     fn unterminated_string_is_syntax_error() {
         let mut lx = Lexer::new("\"abc");
+        assert!(lx.next_spanned().is_err());
+    }
+
+    #[test]
+    fn identifiers_and_keywords_are_case_insensitive() {
+        assert_eq!(
+            lex_all("VERTEX { X = TRUE; }"),
+            vec![
+                Token::Ident("vertex".into()),
+                Token::LBrace,
+                Token::Ident("x".into()),
+                Token::Equals,
+                Token::Bool(true),
+                Token::Semicolon,
+                Token::RBrace,
+            ]
+        );
+        assert_eq!(
+            lex_all("TextureTop"),
+            vec![Token::Ident("texturetop".into())]
+        );
+    }
+
+    #[test]
+    fn lexes_hexadecimal_integers() {
+        assert_eq!(
+            lex_all("0x10 0xFF 0xff -0x10 +0x1"),
+            vec![
+                Token::Int(16),
+                Token::Int(255),
+                Token::Int(255),
+                Token::Int(-16),
+                Token::Int(1),
+            ]
+        );
+    }
+
+    #[test]
+    fn leading_zero_decimal_is_not_octal() {
+        assert_eq!(lex_all("010 007"), vec![Token::Int(10), Token::Int(7)]);
+    }
+
+    #[test]
+    fn hex_literal_with_no_digits_is_syntax_error() {
+        let mut lx = Lexer::new("0x;");
+        assert!(lx.next_spanned().is_err());
+    }
+
+    #[test]
+    fn hex_literal_overflow_is_syntax_error_not_panic() {
+        let mut lx = Lexer::new("0xFFFFFFFFFFFFFFFFF");
         assert!(lx.next_spanned().is_err());
     }
 }
