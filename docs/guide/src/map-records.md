@@ -215,10 +215,11 @@ one-sided line rather than an error.
 
 Hexen maps extend the classic Doom binary record layout with additional fields on things and
 linedefs. When assembled, a `MapThing` includes `id` (thing ID for cross-references), `height`
-(vertical position), and `special` (a `Special` carrying the action number and its `args[5]`).
-A `MapLinedef` likewise has a `special: Special` and an `id` (line identification). `Special`
-is shared across formats: for Doom maps the special's target sector tag lives in
-`special.args[0]`; Hexen and UDMF populate the full `args`.
+(vertical position), and `special` (a `Special` carrying the action number and its five
+`args`). A `MapLinedef` likewise has a `special: Special`, plus an `id` — a UDMF/ZDoom line
+identifier that is `0` for Doom and Hexen maps (reserved for UDMF). `Special` is shared
+across formats: for Doom maps the special's target sector tag lives in `special.args[0]`;
+Hexen and UDMF populate the full `args`.
 
 For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
 action semantics. You can check the map's format via `map.format()` to determine whether
