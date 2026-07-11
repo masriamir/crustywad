@@ -449,6 +449,7 @@ fn assembles_hexen_map_with_superset_fields() {
     let l = &map.linedefs()[0];
     assert_eq!(l.special.special, 13);
     assert_eq!(l.special.args, [99, 0, 0, 0, 0]);
+    assert_eq!(l.id, 0); // line id is UDMF-only; Hexen linedefs leave it 0
     assert!(l.left.is_none()); // 0xffff == one-sided
 }
 

@@ -221,9 +221,10 @@ identifier that is `0` for Doom and Hexen maps (reserved for UDMF). `Special` is
 across formats: for Doom maps the special's target sector tag lives in `special.args[0]`;
 Hexen and UDMF populate the full `args`.
 
-For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
-action semantics. You can check the map's format via `map.format()` to determine whether
-to interpret these fields:
+On Doom maps the thing fields (`id`, `height`, and the thing `special`) are all zero, while a
+linedef's `special` still holds its classic action number and sector tag (the latter in
+`special.args[0]`). Hexen maps additionally populate the thing fields with real values. Use
+`map.format()` to decide how to interpret them:
 
 ```rust
 use crustywad::map::{Map, MapFormat};
