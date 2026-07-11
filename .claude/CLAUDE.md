@@ -282,10 +282,10 @@ A milestone is **complete** when BOTH conditions hold:
 GitHub never auto-closes milestones. Unlike the agent-driven board Status transitions above, milestone closeout is **propose-and-confirm**: when I notice both conditions hold for an open milestone, I surface it and **ask before closing**. On your approval:
 
 ```bash
-gh api -X PATCH repos/masriamir/crustywad/milestones/<number> -f state=closed
+gh api -X PATCH repos/masriamir/crustywad/milestones/<milestone_number> -f state=closed
 ```
 
-Closure is reversible (`-f state=open`). The `gh api` milestone recipe lives in the `reference-project-board` memory.
+Closure is reversible (`-f state=open`). To find `<milestone_number>` (and its issue counts), the companion listing recipe — `gh api "repos/masriamir/crustywad/milestones?state=all"` — lives in the `reference-project-board` memory.
 
 ## Git branching workflow
 
