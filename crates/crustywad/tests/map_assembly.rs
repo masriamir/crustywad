@@ -455,8 +455,8 @@ fn assembles_hexen_map_with_superset_fields() {
 
 #[test]
 fn hexen_lenient_recovers_dangling_linedef_vertex() {
+    use crustywad::ParseOptions;
     use crustywad::map::Map;
-    use crustywad::{ParseOptions, Strictness};
     // Linedef references vertex index 99 (out of range: only 2 vertices).
     let vertexes = [0i16, 0, 64, 0]
         .iter()
@@ -494,9 +494,7 @@ fn hexen_lenient_recovers_dangling_linedef_vertex() {
     // Strict: dangling reference is fatal.
     assert!(Map::assemble(&wad, &group).is_err());
     // Lenient: recovers and records a warning.
-    let opts = ParseOptions {
-        strictness: Strictness::Lenient,
-    };
+    let opts = ParseOptions::lenient();
     let map = Map::assemble_with_options(&wad, &group, opts).expect("lenient recovers");
     assert!(!map.warnings().is_empty());
 }
