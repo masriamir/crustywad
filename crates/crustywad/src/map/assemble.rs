@@ -125,10 +125,20 @@ fn resolve_required(
     }
 }
 
-/// Resolves a linedef's **left** sidedef: the binary `0xffff` sentinel == one-sided
-/// (`None`); any other out-of-range value (including a negative UDMF index) errors
-/// (strict) or becomes `None` + warning (lenient). `raw` is `i32` for the same
-/// binary/UDMF sharing reason as [`resolve_required`].
+/// Resolves a linedef's **left** sidedef against the binary `0xffff` sentinel.
+///
+/// `0xffff` (65535) is the on-disk Doom/Hexen "no back side" marker: `sideback`
+/// is a `u16` there, so that value means one-sided and maps to `None`. Any other
+/// value outside `0..count` errors (strict) or becomes `None` + a warning
+/// (lenient); a negative index (reachable only via the widened signed parameter)
+/// is simply out of range.
+///
+/// `raw` is `i32` so binary and UDMF callers can share this validator, but the
+/// UDMF normalizer (#58b) must **not** route a raw sidedef index through this
+/// `0xffff` sentinel. Per ADR-0017 §2/§3 it receives `sideback` already
+/// normalized to `Option<i32>` (`-1` → `None` in the parser), maps `None`
+/// straight to `left: None`, and range-checks a real `Some(idx)` — so a valid
+/// UDMF sidedef index of 65535 is never mistaken for the one-sided sentinel.
 fn resolve_left(
     raw: i32,
     count: usize,
