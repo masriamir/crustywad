@@ -258,14 +258,19 @@ impl<'a> Lexer<'a> {
                     message: "invalid hexadecimal integer literal".to_owned(),
                 });
             }
-            return i64::from_str_radix(&hex, 16)
+            // Parse the magnitude as u64 (17+ hex digits overflow it -> None ->
+            // Syntax), then apply the sign in i128 so the full i64 range —
+            // including i64::MIN (`-0x8000000000000000`) — round-trips
+            // consistently with the signed decimal path below.
+            return u64::from_str_radix(&hex, 16)
                 .ok()
                 .and_then(|magnitude| {
-                    if sign == Some('-') {
-                        magnitude.checked_neg()
+                    let signed = if sign == Some('-') {
+                        -i128::from(magnitude)
                     } else {
-                        Some(magnitude)
-                    }
+                        i128::from(magnitude)
+                    };
+                    i64::try_from(signed).ok()
                 })
                 .map(Token::Int)
                 .ok_or_else(|| UdmfParseError::Syntax {
@@ -500,6 +505,21 @@ mod tests {
                 Token::Int(1),
             ]
         );
+    }
+
+    #[test]
+    fn hex_covers_full_i64_range_like_decimal() {
+        // i64::MIN via hex must round-trip (consistent with the decimal path),
+        // and i64::MAX; the positive magnitude 2^63 and a 17-hex-digit value
+        // overflow i64 and are rejected as Syntax (no panic).
+        assert_eq!(
+            lex_all("-0x8000000000000000 0x7fffffffffffffff"),
+            vec![Token::Int(i64::MIN), Token::Int(i64::MAX)]
+        );
+        let mut over = Lexer::new("0x8000000000000000");
+        assert!(over.next_spanned().is_err());
+        let mut huge = Lexer::new("0xffffffffffffffff0");
+        assert!(huge.next_spanned().is_err());
     }
 
     #[test]
