@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-250b1b13.js";
+            window.path_to_searchindex_js = "searchindex-7ca17b58.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -294,14 +294,13 @@ size (e.g. a <code>THINGS</code> lump whose byte count is not divisible by 10).<
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don’t
 have to index arenas by hand.</p>
 <blockquote>
-<p><strong>Doom-family binary formats (for now).</strong> <code>Map::assemble</code> decodes the classic Doom
-binary map records — which <strong>Doom II</strong> and <strong>Heretic</strong> maps use unchanged. They differ
-only in map-marker naming (<code>MAP01</code> vs <code>E1M1</code>), which <code>wad.map_groups()</code> detects
-positionally, so all three assemble through the same path as <code>MapFormat::Doom</code>.
-<code>map_groups()</code> also detects <em>other</em> non-Doom runs (Hexen, marked by a <code>BEHAVIOR</code> lump,
-or UDMF, marked by <code>TEXTMAP</code>), but assembling one returns
-<code>MapAssembleError::UnsupportedFormat</code> rather than mis-decoding it — Hexen and UDMF
-support is planned as part of multi-format maps (Epic #17).</p>
+<p><strong>Multi-format assembly.</strong> <code>Map::assemble</code> detects the binary map format from its lumps: a
+<code>BEHAVIOR</code> lump marks a Hexen map, otherwise it is treated as the classic Doom binary layout.
+The assembled <code>Map</code> carries its format via <code>map.format()</code>, which returns <code>MapFormat::Doom</code>
+for classic Doom/Doom II/Heretic maps (which share the same binary record layout and differ
+only in map-marker naming, e.g. <code>MAP01</code> vs <code>E1M1</code>), or <code>MapFormat::Hexen</code> for Hexen maps.
+A <code>TEXTMAP</code> (UDMF) map is not yet supported — assembly returns
+<code>MapAssembleError::UnsupportedFormat</code> for it until UDMF support lands (Epic #17).</p>
 </blockquote>
 <h3 id="finding-a-maps-lumps"><a class="header" href="#finding-a-maps-lumps">Finding a map’s lumps</a></h3>
 <p>A WAD stores maps as a marker lump (e.g. <code>E1M1</code>, <code>MAP01</code>) followed by a run of data lumps
@@ -381,6 +380,36 @@ back sidedef” (a one-sided line, such as an outer wall). Assembly translates t
 into <code>MapLinedef.left: Option&lt;SidedefIdx&gt;</code> — <code>None</code> for one-sided lines, <code>Some(idx)</code> for
 two-sided lines. <code>map.linedef_left(linedef)</code> mirrors this: it returns <code>None</code> for a
 one-sided line rather than an error.</p>
+<h3 id="hexen-specific-fields"><a class="header" href="#hexen-specific-fields">Hexen-specific fields</a></h3>
+<p>Hexen maps extend the classic Doom binary record layout with additional fields on things and
+linedefs. When assembled, a <code>MapThing</code> includes Hexen-specific fields: <code>tid</code> (thing ID for
+cross-references), <code>z</code> (vertical position), and the Hexen-only <code>special</code>/<code>args</code>. A <code>MapLinedef</code>’s
+<code>special</code> field is a <code>LineSpecial</code>, which for Hexen maps carries the one-byte <code>special</code> action
+number and its <code>args[5]</code> (action arguments); Doom maps use <code>LineSpecial</code>’s <code>tag</code> instead.</p>
+<p>For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
+action semantics. You can check the map’s format via <code>map.format()</code> to determine whether
+to interpret these fields:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::map::{Map, MapFormat};
+
+<span class="boring">let wad = crustywad::Wad::from_bytes(Vec::&lt;u8&gt;::new())?;
+</span><span class="boring">let group = wad.map_group("MAP01").unwrap();
+</span>let map = Map::assemble(&amp;wad, &amp;group)?;
+
+for thing in map.things() {
+    if map.format() == MapFormat::Hexen {
+        println!("Hexen thing ID: {}, Z: {}", thing.tid, thing.z);
+    }
+}
+
+for linedef in map.linedefs() {
+    if map.format() == MapFormat::Hexen {
+        println!("Hexen line special: {}, args: {:?}", linedef.special.special, linedef.special.args);
+    }
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
 <h3 id="strict-vs-lenient-assembly"><a class="header" href="#strict-vs-lenient-assembly">Strict vs. lenient assembly</a></h3>
 <p><code>Map::assemble(wad, group)</code> is a convenience wrapper that always uses strict mode.
 <code>Map::assemble_with_options(wad, group, options)</code> takes a <code>ParseOptions</code> and honors its
