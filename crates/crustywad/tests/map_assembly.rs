@@ -150,10 +150,11 @@ fn assembles_two_sided_map_and_exposes_all_accessors() {
     assert_eq!(map.sidedef_sector(left).floor_flat, "FLOOR");
 }
 
-// Assembly must refuse a non-Doom map rather than silently mis-decoding its
-// lumps as Doom records (whose byte lengths can coincidentally align).
+// Assembly must refuse UDMF rather than silently mis-decoding its text lump
+// as Doom binary records. BEHAVIOR (Hexen) is no longer refused — it dispatches
+// to the Hexen assembly path (see `assembles_hexen_map_with_superset_fields`).
 #[test]
-fn refuses_non_doom_formats() {
+fn refuses_udmf_format() {
     // UDMF: a TEXTMAP lump holds text, not Doom binary records.
     let udmf = common::build_named_lumps(&[
         ("MAP01", vec![]),
@@ -167,23 +168,6 @@ fn refuses_non_doom_formats() {
         MapAssembleError::UnsupportedFormat { lump: "TEXTMAP" }
     ));
     assert!(err.to_string().contains("TEXTMAP"));
-
-    // Hexen: a BEHAVIOR lump alongside otherwise Doom-shaped lumps.
-    let hexen = common::build_named_lumps(&[
-        ("MAP02", vec![]),
-        ("THINGS", vec![0; 10]),
-        ("LINEDEFS", vec![0; 16]), // Hexen linedefs are 16 bytes, not 14
-        ("SIDEDEFS", vec![0; 30]),
-        ("VERTEXES", vec![0; 4]),
-        ("SECTORS", vec![0; 26]),
-        ("BEHAVIOR", vec![0; 8]),
-    ]);
-    let wad = Wad::from_bytes(hexen).unwrap();
-    let group = wad.map_group("MAP02").unwrap();
-    assert!(matches!(
-        Map::assemble(&wad, &group).unwrap_err(),
-        MapAssembleError::UnsupportedFormat { lump: "BEHAVIOR" }
-    ));
 }
 
 #[test]
@@ -443,6 +427,78 @@ fn detects_doom_format_without_behavior() {
     let wad = crustywad::Wad::from_bytes(bytes).expect("parses");
     let group = wad.map_group("MAP01").expect("group");
     assert_eq!(detect_map_format(&wad, &group), MapFormat::Doom);
+}
+
+// `t.z` is widened from an `i16` (24), an exactly f64-representable integer, so
+// strict float equality is safe here — not a precision-sensitive comparison.
+#[allow(clippy::float_cmp)]
+#[test]
+fn assembles_hexen_map_with_superset_fields() {
+    use crustywad::map::{Map, MapFormat};
+    let bytes = common::hexen_sample_map_bytes();
+    let wad = crustywad::Wad::from_bytes(bytes).expect("parses");
+    let group = wad.map_group("MAP01").expect("group");
+    let map = Map::assemble(&wad, &group).expect("assembles");
+
+    assert_eq!(map.format(), MapFormat::Hexen);
+    let t = &map.things()[0];
+    assert_eq!(t.tid, 7);
+    assert_eq!(t.z, 24.0);
+    assert_eq!(t.special, 80);
+    assert_eq!(t.args, [1, 2, 3, 4, 5]);
+    let l = &map.linedefs()[0];
+    assert_eq!(l.special.special, 13);
+    assert_eq!(l.special.tag, 0); // Hexen linedefs have no tag field
+    assert_eq!(l.special.args, [99, 0, 0, 0, 0]);
+    assert!(l.left.is_none()); // 0xffff == one-sided
+}
+
+#[test]
+fn hexen_lenient_recovers_dangling_linedef_vertex() {
+    use crustywad::map::Map;
+    use crustywad::{ParseOptions, Strictness};
+    // Linedef references vertex index 99 (out of range: only 2 vertices).
+    let vertexes = [0i16, 0, 64, 0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect::<Vec<u8>>();
+    let mut sidedef = vec![0u8; 4];
+    for _ in 0..3 {
+        sidedef.extend_from_slice(&[b'-', 0, 0, 0, 0, 0, 0, 0]);
+    }
+    sidedef.extend_from_slice(&0u16.to_le_bytes());
+    let mut sector = Vec::new();
+    sector.extend_from_slice(&0i16.to_le_bytes());
+    sector.extend_from_slice(&128i16.to_le_bytes());
+    sector.extend_from_slice(&[0u8; 16]);
+    sector.extend_from_slice(&160i16.to_le_bytes());
+    sector.extend_from_slice(&0i16.to_le_bytes());
+    sector.extend_from_slice(&0i16.to_le_bytes());
+    // Hexen linedef: start=99 (dangling), end=1, right=0, left=0xffff.
+    let linedef: Vec<u8> = vec![
+        0x63, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
+        0xFF,
+    ];
+    let bytes = common::build_hexen_map_wad(
+        "MAP01",
+        Vec::new(),
+        linedef,
+        sidedef,
+        vertexes,
+        sector,
+        b"ACS\0".to_vec(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).expect("parses");
+    let group = wad.map_group("MAP01").expect("group");
+
+    // Strict: dangling reference is fatal.
+    assert!(Map::assemble(&wad, &group).is_err());
+    // Lenient: recovers and records a warning.
+    let opts = ParseOptions {
+        strictness: Strictness::Lenient,
+    };
+    let map = Map::assemble_with_options(&wad, &group, opts).expect("lenient recovers");
+    assert!(!map.warnings().is_empty());
 }
 
 #[test]

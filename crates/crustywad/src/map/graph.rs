@@ -1,7 +1,8 @@
 //! The assembled, index-addressed map graph (ADR-0015 §2).
 
-/// The source format a [`Map`] was assembled from. Only [`Doom`][MapFormat::Doom]
-/// is implemented today; Hexen/UDMF (Epic #17) reuse this same model.
+/// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom] and
+/// [`Hexen`][MapFormat::Hexen] are assembled today; UDMF/Doom64 (Epic #17) reuse
+/// this same model but aren't implemented yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {

@@ -4,7 +4,7 @@ use crate::map::graph::{
     LineSpecial, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex,
     MapWarning, SectorIdx, SidedefIdx, VertexIdx,
 };
-use crate::map::{MapGroup, MapParseError, common, doom, parse_records};
+use crate::map::{MapGroup, MapParseError, common, doom, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
 
 /// Fatal errors from [`Map::assemble_with_options`].
@@ -152,6 +152,52 @@ fn resolve_left(
     }
 }
 
+/// Resolves a linedef's four cross-references (start/end vertex, right/left
+/// sidedef) — the resolution is identical for the Doom and Hexen layouts, so
+/// both normalizers share it. `left_sidedef == 0xffff` yields `None` (one-sided).
+// The four raw fields plus the two arena counts, strictness, and the warnings
+// sink are each independently meaningful (not a natural struct); grouping them
+// would only relocate, not reduce, the parameter count.
+#[allow(clippy::too_many_arguments)]
+fn resolve_linedef_refs(
+    start_vertex: u16,
+    end_vertex: u16,
+    right_sidedef: u16,
+    left_sidedef: u16,
+    vertex_count: usize,
+    sidedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(VertexIdx, VertexIdx, SidedefIdx, Option<SidedefIdx>), MapAssembleError> {
+    let start = VertexIdx(resolve_required(
+        start_vertex,
+        vertex_count,
+        "vertex",
+        "linedef",
+        strictness,
+        warnings,
+    )?);
+    let end = VertexIdx(resolve_required(
+        end_vertex,
+        vertex_count,
+        "vertex",
+        "linedef",
+        strictness,
+        warnings,
+    )?);
+    let right = SidedefIdx(resolve_required(
+        right_sidedef,
+        sidedef_count,
+        "sidedef",
+        "linedef",
+        strictness,
+        warnings,
+    )?);
+    let left =
+        resolve_left(left_sidedef, sidedef_count, "linedef", strictness, warnings)?.map(SidedefIdx);
+    Ok((start, end, right, left))
+}
+
 /// Widens raw `VERTEXES` records into normalized [`MapVertex`]es.
 fn normalize_vertices(raw: &[common::Vertex]) -> Vec<MapVertex> {
     raw.iter()
@@ -235,38 +281,16 @@ fn normalize_linedefs(
 ) -> Result<Vec<MapLinedef>, MapAssembleError> {
     let mut linedefs = Vec::with_capacity(raw.len());
     for ld in raw {
-        let start = VertexIdx(resolve_required(
+        let (start, end, right, left) = resolve_linedef_refs(
             ld.start_vertex,
-            vertex_count,
-            "vertex",
-            "linedef",
-            strictness,
-            warnings,
-        )?);
-        let end = VertexIdx(resolve_required(
             ld.end_vertex,
-            vertex_count,
-            "vertex",
-            "linedef",
-            strictness,
-            warnings,
-        )?);
-        let right = SidedefIdx(resolve_required(
             ld.right_sidedef,
-            sidedef_count,
-            "sidedef",
-            "linedef",
-            strictness,
-            warnings,
-        )?);
-        let left = resolve_left(
             ld.left_sidedef,
+            vertex_count,
             sidedef_count,
-            "linedef",
             strictness,
             warnings,
-        )?
-        .map(SidedefIdx);
+        )?;
         linedefs.push(MapLinedef {
             start,
             end,
@@ -277,6 +301,60 @@ fn normalize_linedefs(
                 special: ld.special_type,
                 tag: ld.sector_tag,
                 args: [0; 5],
+            },
+        });
+    }
+    Ok(linedefs)
+}
+
+/// Widens raw Hexen `THINGS` records into normalized [`MapThing`]s.
+fn normalize_things_hexen(raw: &[hexen::Thing]) -> Vec<MapThing> {
+    raw.iter()
+        .map(|t| MapThing {
+            x: f64::from(t.x),
+            y: f64::from(t.y),
+            angle: t.angle,
+            type_id: t.type_id,
+            flags: u32::from(t.flags),
+            tid: t.tid,
+            z: f64::from(t.z),
+            special: t.special,
+            args: t.args,
+        })
+        .collect()
+}
+
+/// Widens raw Hexen `LINEDEFS` records into normalized [`MapLinedef`]s, validating
+/// each linedef's vertex and sidedef cross-references (via [`resolve_linedef_refs`]).
+fn normalize_linedefs_hexen(
+    raw: &[hexen::Linedef],
+    vertex_count: usize,
+    sidedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapLinedef>, MapAssembleError> {
+    let mut linedefs = Vec::with_capacity(raw.len());
+    for ld in raw {
+        let (start, end, right, left) = resolve_linedef_refs(
+            ld.start_vertex,
+            ld.end_vertex,
+            ld.right_sidedef,
+            ld.left_sidedef,
+            vertex_count,
+            sidedef_count,
+            strictness,
+            warnings,
+        )?;
+        linedefs.push(MapLinedef {
+            start,
+            end,
+            right,
+            left,
+            flags: u32::from(ld.flags),
+            special: LineSpecial {
+                special: u16::from(ld.special),
+                tag: 0,
+                args: ld.args,
             },
         });
     }
@@ -312,32 +390,53 @@ impl Map {
         let s = options.strictness;
         let mut warnings = Vec::new();
 
-        // Format-dispatch seam: assembly decodes the classic Doom binary layout
-        // only. A BEHAVIOR (Hexen) or TEXTMAP (UDMF) lump marks a different
-        // format whose records would otherwise silently mis-decode as Doom, so
-        // refuse it up front. Full format detection is Epic #17.
-        for marker in ["TEXTMAP", "BEHAVIOR"] {
-            if lump_bytes(wad, group, marker).is_some() {
-                return Err(MapAssembleError::UnsupportedFormat { lump: marker });
-            }
+        // UDMF (TEXTMAP) is a text format with no binary assembler yet (#58);
+        // refuse it explicitly rather than mis-decode it as binary records.
+        if lump_bytes(wad, group, "TEXTMAP").is_some() {
+            return Err(MapAssembleError::UnsupportedFormat { lump: "TEXTMAP" });
         }
+        let format = crate::map::detect_map_format(wad, group); // Doom | Hexen
 
+        // Records shared by both binary formats.
         let raw_verts = decode_required::<common::Vertex>(wad, group, "VERTEXES")?;
         let raw_sectors = decode_required::<common::Sector>(wad, group, "SECTORS")?;
         let raw_sides = decode_required::<common::Sidedef>(wad, group, "SIDEDEFS")?;
-        let raw_lines = decode_required::<doom::Linedef>(wad, group, "LINEDEFS")?;
-        let raw_things = decode_required::<doom::Thing>(wad, group, "THINGS")?;
 
         let vertices = normalize_vertices(&raw_verts);
         let sectors = normalize_sectors(&raw_sectors);
-        let things = normalize_things(&raw_things);
         let sidedefs = normalize_sidedefs(&raw_sides, sectors.len(), s, &mut warnings)?;
-        let linedefs =
-            normalize_linedefs(&raw_lines, vertices.len(), sidedefs.len(), s, &mut warnings)?;
+
+        // Format-specific THINGS/LINEDEFS.
+        let (things, linedefs) = match format {
+            MapFormat::Doom => {
+                let raw_lines = decode_required::<doom::Linedef>(wad, group, "LINEDEFS")?;
+                let raw_things = decode_required::<doom::Thing>(wad, group, "THINGS")?;
+                let linedefs = normalize_linedefs(
+                    &raw_lines,
+                    vertices.len(),
+                    sidedefs.len(),
+                    s,
+                    &mut warnings,
+                )?;
+                (normalize_things(&raw_things), linedefs)
+            }
+            MapFormat::Hexen => {
+                let raw_lines = decode_required::<hexen::Linedef>(wad, group, "LINEDEFS")?;
+                let raw_things = decode_required::<hexen::Thing>(wad, group, "THINGS")?;
+                let linedefs = normalize_linedefs_hexen(
+                    &raw_lines,
+                    vertices.len(),
+                    sidedefs.len(),
+                    s,
+                    &mut warnings,
+                )?;
+                (normalize_things_hexen(&raw_things), linedefs)
+            }
+        };
 
         Ok(Map {
             name: group.name.clone(),
-            format: MapFormat::Doom,
+            format,
             vertices,
             linedefs,
             sidedefs,

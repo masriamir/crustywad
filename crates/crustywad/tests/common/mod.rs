@@ -73,6 +73,76 @@ pub fn build_doom_map_wad(
     ])
 }
 
+/// Builds a single Hexen map: marker `name` followed by THINGS, LINEDEFS,
+/// SIDEDEFS, VERTEXES, SECTORS, and a BEHAVIOR lump (which marks the map as
+/// Hexen; its bytes are irrelevant to assembly).
+#[allow(dead_code)]
+pub fn build_hexen_map_wad(
+    name: &str,
+    things: Vec<u8>,
+    linedefs: Vec<u8>,
+    sidedefs: Vec<u8>,
+    vertexes: Vec<u8>,
+    sectors: Vec<u8>,
+    behavior: Vec<u8>,
+) -> Vec<u8> {
+    build_named_lumps(&[
+        (name, Vec::new()),
+        ("THINGS", things),
+        ("LINEDEFS", linedefs),
+        ("SIDEDEFS", sidedefs),
+        ("VERTEXES", vertexes),
+        ("SECTORS", sectors),
+        ("BEHAVIOR", behavior),
+    ])
+}
+
+/// Builds a minimal but complete Hexen map WAD, used both by the assembly test
+/// and as the fuzz seed: 2 vertices, 1 sector, 1 sidedef, 1 Hexen thing
+/// (tid=7, z=24, special=80, args=[1,2,3,4,5]), and 1 one-sided Hexen linedef
+/// (special=13, args=[99,0,0,0,0], left=0xffff).
+#[allow(dead_code)]
+pub fn hexen_sample_map_bytes() -> Vec<u8> {
+    let vertexes = [0i16, 0, 64, 0] // (0,0) and (64,0)
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect::<Vec<u8>>();
+    // Sidedef (30 B): x_off, y_off, upper/lower/middle=8B each, sector=0.
+    let mut sidedef = vec![0u8; 4];
+    sidedef.extend_from_slice(&[b'-', 0, 0, 0, 0, 0, 0, 0]);
+    sidedef.extend_from_slice(&[b'-', 0, 0, 0, 0, 0, 0, 0]);
+    sidedef.extend_from_slice(&[b'W', b'A', b'L', b'L', 0, 0, 0, 0]);
+    sidedef.extend_from_slice(&0u16.to_le_bytes());
+    // Sector (26 B): floor=0, ceil=128, flats 8B each, light=160, special=0, tag=0.
+    let mut sector = Vec::new();
+    sector.extend_from_slice(&0i16.to_le_bytes());
+    sector.extend_from_slice(&128i16.to_le_bytes());
+    sector.extend_from_slice(&[b'F', b'L', b'O', b'O', b'R', 0, 0, 0]);
+    sector.extend_from_slice(&[b'C', b'E', b'I', b'L', 0, 0, 0, 0]);
+    sector.extend_from_slice(&160i16.to_le_bytes());
+    sector.extend_from_slice(&0i16.to_le_bytes());
+    sector.extend_from_slice(&0i16.to_le_bytes());
+    // Hexen thing (20 B): tid=7, x=16, y=16, z=24, angle=90, type=1, flags=7, special=80, args=[1..5].
+    let thing: Vec<u8> = vec![
+        0x07, 0x00, 0x10, 0x00, 0x10, 0x00, 0x18, 0x00, 0x5A, 0x00, 0x01, 0x00, 0x07, 0x00, 0x50,
+        0x01, 0x02, 0x03, 0x04, 0x05,
+    ];
+    // Hexen linedef (16 B): start=0,end=1,flags=1,special=13,args=[99,0,0,0,0],right=0,left=0xffff.
+    let linedef: Vec<u8> = vec![
+        0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x0D, 0x63, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
+        0xFF,
+    ];
+    build_hexen_map_wad(
+        "MAP01",
+        thing,
+        linedef,
+        sidedef,
+        vertexes,
+        sector,
+        b"ACS\0".to_vec(),
+    )
+}
+
 /// Generates an ASCII lump name (1–8 chars) and a payload (0–256 bytes).
 ///
 /// The name charset covers upper- and lower-case letters, digits, and underscores —
