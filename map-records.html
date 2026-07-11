@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7ca17b58.js";
+            window.path_to_searchindex_js = "searchindex-3eac88fb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -380,15 +380,18 @@ back sidedef” (a one-sided line, such as an outer wall). Assembly translates t
 into <code>MapLinedef.left: Option&lt;SidedefIdx&gt;</code> — <code>None</code> for one-sided lines, <code>Some(idx)</code> for
 two-sided lines. <code>map.linedef_left(linedef)</code> mirrors this: it returns <code>None</code> for a
 one-sided line rather than an error.</p>
-<h3 id="hexen-specific-fields"><a class="header" href="#hexen-specific-fields">Hexen-specific fields</a></h3>
+<h3 id="extended-thing-and-linedef-fields"><a class="header" href="#extended-thing-and-linedef-fields">Extended thing and linedef fields</a></h3>
 <p>Hexen maps extend the classic Doom binary record layout with additional fields on things and
-linedefs. When assembled, a <code>MapThing</code> includes Hexen-specific fields: <code>tid</code> (thing ID for
-cross-references), <code>z</code> (vertical position), and the Hexen-only <code>special</code>/<code>args</code>. A <code>MapLinedef</code>’s
-<code>special</code> field is a <code>LineSpecial</code>, which for Hexen maps carries the one-byte <code>special</code> action
-number and its <code>args[5]</code> (action arguments); Doom maps use <code>LineSpecial</code>’s <code>tag</code> instead.</p>
-<p>For Doom maps, these fields are always zero; for Hexen maps, they carry the actual Hexen
-action semantics. You can check the map’s format via <code>map.format()</code> to determine whether
-to interpret these fields:</p>
+linedefs. When assembled, a <code>MapThing</code> includes <code>id</code> (thing ID for cross-references), <code>height</code>
+(vertical position), and <code>special</code> (a <code>Special</code> carrying the action number and its five
+<code>args</code>). A <code>MapLinedef</code> likewise has a <code>special: Special</code>, plus an <code>id</code> — a UDMF/ZDoom line
+identifier that is <code>0</code> for Doom and Hexen maps (reserved for UDMF). <code>Special</code> is shared
+across formats: for a Doom <em>linedef</em>, its target sector tag lives in <code>special.args[0]</code>;
+Hexen and UDMF populate the full <code>args</code>.</p>
+<p>On Doom maps the thing fields (<code>id</code>, <code>height</code>, and the thing <code>special</code>) are all zero, while a
+linedef’s <code>special</code> still holds its classic action number and sector tag (the latter in
+<code>special.args[0]</code>). Hexen maps additionally populate the thing fields with real values. Use
+<code>map.format()</code> to decide how to interpret them:</p>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use crustywad::map::{Map, MapFormat};
@@ -399,7 +402,7 @@ to interpret these fields:</p>
 
 for thing in map.things() {
     if map.format() == MapFormat::Hexen {
-        println!("Hexen thing ID: {}, Z: {}", thing.tid, thing.z);
+        println!("Hexen thing ID: {}, height: {}", thing.id, thing.height);
     }
 }
 
