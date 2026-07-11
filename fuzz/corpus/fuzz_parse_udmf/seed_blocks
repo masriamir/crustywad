@@ -1,0 +1,13 @@
+namespace = "doom";
+vertex { x = 0.0; y = 0.0; }
+vertex { x = 64.0; y = 0.0; }
+vertex { x = 128.0; y = 64.0; }
+vertex { x = 64.0; y = 128.0; }
+linedef { v1 = 0; v2 = 1; sidefront = 0; sidedef { sector = 0; } }
+linedef { v1 = 1; v2 = 2; sidefront = 1; sidedef { sector = 1; } }
+sidedef { sector = 0; textureoffsetx = 32; textureoffsety = -16; }
+sidedef { sector = 1; uppersidedef = "SKY1"; }
+sector { texturefloor = "F"; textureceiling = "C"; heightfloor = 0; heightceiling = 128; lightlevel = 255; special = 1; tag = 42; }
+sector { texturefloor = "LAVA1"; textureceiling = "LAVA1"; heightfloor = -32; heightceiling = 64; lightlevel = 128; special = 0; tag = 0; }
+thing { x = 0.0; y = 0.0; type = 1; angle = 90; flags = 7; }
+thing { x = 64.0; y = 64.0; type = 2087; angle = 180; flags = 3; special = 10; args1 = 1; args2 = 2; args3 = 3; args4 = 4; args5 = 5; }
