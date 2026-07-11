@@ -33,8 +33,9 @@ pub enum MapAssembleError {
     DanglingReference {
         /// The name of the arena the out-of-range index referred to (e.g. `"vertex"`).
         referent: &'static str,
-        /// The out-of-range index value that was encountered.
-        index: usize,
+        /// The out-of-range index value that was encountered (signed, since UDMF
+        /// indices may be negative).
+        index: i32,
         /// The name of the element kind the dangling reference was found on (e.g. `"linedef"`).
         from: &'static str,
         /// The number of elements actually available in the referenced arena.
@@ -81,7 +82,8 @@ where
 ///
 /// `index` is `i32` so UDMF's signed, wider indices share this validator with the
 /// binary formats (whose non-negative `u16` indices widen losslessly); a negative
-/// index is treated as out of range, taking the same dangling-reference path.
+/// index is treated as out of range, taking the same dangling-reference path. The
+/// raw signed `index` is preserved in the diagnostic (error/warning).
 fn resolve_required(
     index: i32,
     count: usize,
@@ -90,30 +92,31 @@ fn resolve_required(
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<usize, MapAssembleError> {
-    // A negative index has no valid slot; map it to an always-out-of-range value.
-    let idx = usize::try_from(index).unwrap_or(usize::MAX);
     if count == 0 {
         return Err(MapAssembleError::DanglingReference {
             referent,
-            index: idx,
+            index,
             from,
             count: 0,
         });
     }
-    if idx < count {
-        return Ok(idx);
+    // A negative index (or one past `count`) is out of range.
+    if let Ok(idx) = usize::try_from(index) {
+        if idx < count {
+            return Ok(idx);
+        }
     }
     match strictness {
         Strictness::Strict => Err(MapAssembleError::DanglingReference {
             referent,
-            index: idx,
+            index,
             from,
             count,
         }),
         Strictness::Lenient => {
             warnings.push(MapWarning::DanglingReference {
                 referent,
-                index: idx,
+                index,
                 from,
                 count,
             });
@@ -136,21 +139,23 @@ fn resolve_left(
     if raw == 0xffff {
         return Ok(None);
     }
-    let idx = usize::try_from(raw).unwrap_or(usize::MAX);
-    if idx < count {
-        return Ok(Some(idx));
+    // A negative index (or one past `count`) is out of range.
+    if let Ok(idx) = usize::try_from(raw) {
+        if idx < count {
+            return Ok(Some(idx));
+        }
     }
     match strictness {
         Strictness::Strict => Err(MapAssembleError::DanglingReference {
             referent: "sidedef",
-            index: idx,
+            index: raw,
             from,
             count,
         }),
         Strictness::Lenient => {
             warnings.push(MapWarning::DanglingReference {
                 referent: "sidedef",
-                index: idx,
+                index: raw,
                 from,
                 count,
             });

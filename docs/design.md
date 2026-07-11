@@ -34,7 +34,7 @@ See [Data flow](diagrams/data-flow.md) for the read pipeline flowchart.
 
 ## Strict vs. lenient parsing
 
-Parsing is controlled by `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient }`.
+Parsing is controlled by `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient, limits: Limits }` (`limits` bounds UDMF text nesting depth; it is ignored by the binary-format paths).
 
 `Strictness::Strict` treats malformed magic, negative counts, out-of-range offsets, oversized lumps, and non-ASCII names as hard errors.
 

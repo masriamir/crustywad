@@ -140,7 +140,7 @@ CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-feat
 
 ### Strictness model
 
-- `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient }`.
+- `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient, limits: Limits }` (`limits` bounds UDMF text nesting depth; ignored by binary paths).
 - Strict mode returns the first `ParseError` encountered.
 - Lenient mode attempts best-effort recovery and collects `ParseWarning` values.
 - Every new validation must honour both modes.
