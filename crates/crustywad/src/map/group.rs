@@ -34,11 +34,39 @@ fn marker_run_end(wad: &Wad, i: usize) -> Option<usize> {
     if !lumps.get(i + 1).is_some_and(|l| is_map_data_lump(l.name())) {
         return None;
     }
+    // If the map is UDMF (its first data lump is TEXTMAP), the run is bounded by
+    // the first subsequent ENDMAP (inclusive) rather than by MAP_DATA_LUMPS
+    // membership, so intervening port-specific lumps are captured. If ENDMAP is
+    // absent, recover best-effort: stop at the next map marker or end-of-directory.
+    if lumps.get(i + 1).is_some_and(|l| l.name() == "TEXTMAP") {
+        let mut j = i + 2;
+        while j < lumps.len() {
+            if lumps[j].name() == "ENDMAP" {
+                return Some(j + 1); // inclusive of ENDMAP
+            }
+            // A new map marker (its successor is a recognized data lump) bounds recovery.
+            if lumps.get(j + 1).is_some_and(|l| is_map_data_lump(l.name())) {
+                return Some(j);
+            }
+            j += 1;
+        }
+        return Some(j); // end-of-directory recovery
+    }
     let mut j = i + 1;
     while j < lumps.len() && is_map_data_lump(lumps[j].name()) {
         j += 1;
     }
     Some(j)
+}
+
+/// Returns whether any of the group's data lumps is named `name`.
+// Consumed by `detect_map_format`'s UDMF branch, added in a follow-up task.
+#[allow(dead_code)]
+pub(crate) fn group_has_lump(wad: &Wad, group: &MapGroup, name: &str) -> bool {
+    group
+        .data_indices
+        .iter()
+        .any(|&i| wad.lumps().get(i).is_some_and(|l| l.name() == name))
 }
 
 /// Builds the group for the marker at `i` whose data lumps span `i + 1..end`.
@@ -100,5 +128,79 @@ pub fn detect_map_format(wad: &Wad, group: &MapGroup) -> MapFormat {
         MapFormat::Hexen
     } else {
         MapFormat::Doom
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encode_i32(value: usize) -> [u8; 4] {
+        i32::try_from(value)
+            .expect("test fixture values should fit within i32")
+            .to_le_bytes()
+    }
+
+    /// Builds minimal PWAD bytes from `(name, data)` lump pairs, mirroring the
+    /// on-disk layout used by `tests/common/mod.rs::build_wad`: a 12-byte
+    /// header (`PWAD`, lump count, directory offset), lump payloads, then
+    /// 16-byte directory entries (`filepos`, `size`, 8-byte name).
+    fn build_pwad(lumps: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        let mut directory = Vec::new();
+        let directory_offset = 12 + lumps.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+
+        for (name, bytes) in lumps {
+            let filepos = 12 + payload.len();
+            payload.extend_from_slice(bytes);
+            directory.extend_from_slice(&encode_i32(filepos));
+            directory.extend_from_slice(&encode_i32(bytes.len()));
+            let mut encoded = [0_u8; 8];
+            for (slot, byte) in name.as_bytes().iter().take(8).enumerate() {
+                encoded[slot] = *byte;
+            }
+            directory.extend_from_slice(&encoded);
+        }
+
+        let mut wad = Vec::new();
+        wad.extend_from_slice(b"PWAD");
+        wad.extend_from_slice(&encode_i32(lumps.len()));
+        wad.extend_from_slice(&encode_i32(directory_offset));
+        wad.extend_from_slice(&payload);
+        wad.extend_from_slice(&directory);
+        wad
+    }
+
+    #[test]
+    fn textmap_run_is_bounded_by_endmap_inclusive() {
+        // MAP01 / TEXTMAP / SCRIPTS(port lump) / ENDMAP / (next) MAP02 / TEXTMAP / ENDMAP
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("TEXTMAP", b"x"),
+            ("SCRIPTS", b"y"),
+            ("ENDMAP", b""),
+            ("MAP02", b""),
+            ("TEXTMAP", b"z"),
+            ("ENDMAP", b""),
+        ]))
+        .unwrap();
+        let g = map_group(&wad, "MAP01").unwrap();
+        // data_indices covers TEXTMAP, SCRIPTS, and ENDMAP (indices 1,2,3), not MAP02.
+        assert!(group_has_lump(&wad, &g, "TEXTMAP"));
+        assert!(group_has_lump(&wad, &g, "ENDMAP"));
+        assert!(!group_has_lump(&wad, &g, "MAP02"));
+    }
+
+    #[test]
+    fn textmap_without_endmap_recovers_and_has_no_endmap() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("TEXTMAP", b"x"),
+            ("SCRIPTS", b"y"),
+        ]))
+        .unwrap();
+        let g = map_group(&wad, "MAP01").unwrap();
+        assert!(group_has_lump(&wad, &g, "TEXTMAP"));
+        assert!(!group_has_lump(&wad, &g, "ENDMAP"));
     }
 }
