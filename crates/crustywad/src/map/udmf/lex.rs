@@ -299,10 +299,12 @@ impl<'a> Lexer<'a> {
                 is_float = true;
                 text.push(c);
                 self.advance();
-            } else if (c == 'e' || c == 'E')
-                && (matches!(self.peek_at(1), Some(d) if d.is_ascii_digit())
-                    || matches!(self.peek_at(1), Some(s) if (s == '+' || s == '-') && matches!(self.peek_at(2), Some(d) if d.is_ascii_digit())))
-            {
+            } else if c == 'e' || c == 'E' {
+                // An `e`/`E` following the mantissa always introduces an
+                // exponent (making this a float). If no valid exponent digits
+                // follow (e.g. `1e`, `1e+`), the final `f64` parse rejects the
+                // whole literal as a `Syntax` error, rather than splitting off a
+                // stray `e` identifier and producing a misleading downstream one.
                 is_float = true;
                 text.push(c);
                 self.advance();
@@ -639,6 +641,19 @@ mod tests {
     fn float_exponent_with_explicit_sign_is_lexed() {
         assert_eq!(lex_all("1e+5"), vec![Token::Float(1e5)]);
         assert_eq!(lex_all("2.5e-3"), vec![Token::Float(2.5e-3)]);
+    }
+
+    #[test]
+    fn incomplete_exponent_is_rejected_at_lex_time() {
+        // An `e`/`E` with no following exponent digits is a malformed float and
+        // must be a single `Syntax` error, not `Int(1)` + a stray `Ident("e")`.
+        for src in ["1e", "1e+", "1e-", "2.5e", "3E"] {
+            let mut lx = Lexer::new(src);
+            assert!(
+                lx.next_spanned().is_err(),
+                "expected Syntax error lexing {src:?}"
+            );
+        }
     }
 
     #[test]
