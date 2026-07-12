@@ -18,11 +18,13 @@ recorded:
 
 ### Finding 1 — Doom 64 maps are nested WADs, not flat marker+sibling lumps
 
-Unlike a classic Doom map (a 0-byte marker lump followed by sibling `THINGS`,
-`LINEDEFS`, … lumps at the top level), **each Doom 64 `MAPxx` is a single lump
-whose bytes are themselves a complete WAD**. `MAP01` is one 112 800-byte lump
+Unlike a classic Doom map (a conventionally empty marker lump followed by sibling
+`THINGS`, `LINEDEFS`, … lumps at the top level), **each Doom 64 `MAPxx` is a single
+lump whose bytes are themselves a complete WAD**. `MAP01` is one 112 800-byte lump
 beginning with the ASCII magic `IWAD`, a little-endian `i32` lump count (`14`),
-and a directory offset — a self-contained WAD with 14 sub-lumps:
+and a directory offset. Its bytes decode to a self-contained WAD whose own directory
+lists 14 sub-lumps — the first of which is an *inner* empty `MAP01` marker, distinct
+from the outer `MAP01` lump that contains it:
 
 ```
 MAP01(marker, 0B)  THINGS  LINEDEFS  SIDEDEFS  VERTEXES  SEGS  SSECTORS
@@ -40,9 +42,11 @@ top-level `DEMO1..4LMP` lumps; it is **not** the 2020 KEX re-release repackaging
 
 Earlier research assumed Doom 64 shared Doom's lump names with **no** auto-detect
 signal, requiring a caller hint. The nested-WAD structure is itself the signal: a
-Doom 64 map is a **non-empty** `MAPxx` lump whose content begins with `IWAD`/`PWAD`
-magic, whereas a classic Doom/Hexen map marker is a **0-byte** lump followed by a
-recognized data lump. No caller hint is needed.
+Doom 64 map is a `MAPxx` lump whose content begins with `IWAD`/`PWAD` magic, whereas
+a classic Doom/Hexen map marker carries no such magic (it is a conventionally empty
+lump) and is recognized instead by a following data lump. Detection keys on the
+presence of the nested-WAD magic, not on any marker size check. No caller hint is
+needed.
 
 ### Finding 3 — measured record layouts
 
