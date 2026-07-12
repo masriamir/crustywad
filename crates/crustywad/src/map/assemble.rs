@@ -570,8 +570,10 @@ fn normalize_udmf_things(
     let mut out = Vec::with_capacity(raw.len());
     for t in raw {
         let type_id = coerce_u16(t.type_id, "thing.type", "thing", strictness, warnings)?;
-        // rem_euclid(360) yields 0..=359, which always fits u16.
-        let angle = u16::try_from(t.angle.rem_euclid(360)).unwrap_or(0);
+        // `rem_euclid(360)` yields 0..=359 for any i32, which always fits u16;
+        // the conversion is infallible by construction.
+        let angle = u16::try_from(t.angle.rem_euclid(360))
+            .expect("rem_euclid(360) is in 0..=359, which always fits u16");
         out.push(MapThing {
             x: t.x,
             y: t.y,

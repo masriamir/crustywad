@@ -36,14 +36,18 @@ fn marker_run_end(wad: &Wad, i: usize) -> Option<usize> {
     }
     // If the map is UDMF (its first data lump is TEXTMAP), the run is bounded by
     // the first subsequent ENDMAP (inclusive) rather than by MAP_DATA_LUMPS
-    // membership, so intervening port-specific/binary lumps (ZNODES, REJECT,
-    // BLOCKMAP, BEHAVIOR, …) between TEXTMAP and ENDMAP are all captured.
-    // ENDMAP takes priority: those intervening lumps are themselves in
-    // MAP_DATA_LUMPS, so the "successor is a data lump" test is NOT a reliable
-    // next-marker signal here and must not stop the scan before ENDMAP. The
-    // next-marker heuristic is only a *fallback* for a malformed map that has no
-    // ENDMAP at all; the first such candidate is remembered but overridden by an
-    // ENDMAP found later in the run.
+    // membership, so intervening port-specific/binary lumps between TEXTMAP and
+    // ENDMAP are all captured — some are classic data lumps (REJECT, BLOCKMAP,
+    // BEHAVIOR) and some are not (ZNODES and other port lumps). ENDMAP takes
+    // priority: the "successor is a data lump" test is NOT a reliable next-marker
+    // signal here and must not stop the scan before ENDMAP.
+    //
+    // The next-marker heuristic is only a *fallback* for a malformed map with no
+    // ENDMAP at all. To avoid the fallback picking an intervening binary lump as
+    // the bound (which would drop it and later be mis-read as a standalone
+    // marker), a candidate must itself be a non-data-lump — i.e. a genuine map
+    // name — whose successor is a data lump. The first such candidate is
+    // remembered but overridden by any ENDMAP found later in the run.
     if lumps.get(i + 1).is_some_and(|l| l.name() == "TEXTMAP") {
         let mut j = i + 2;
         let mut recovery_bound: Option<usize> = None;
@@ -52,6 +56,7 @@ fn marker_run_end(wad: &Wad, i: usize) -> Option<usize> {
                 return Some(j + 1); // inclusive of ENDMAP
             }
             if recovery_bound.is_none()
+                && !is_map_data_lump(lumps[j].name())
                 && lumps.get(j + 1).is_some_and(|l| is_map_data_lump(l.name()))
             {
                 recovery_bound = Some(j);
@@ -244,10 +249,11 @@ mod tests {
 
     #[test]
     fn textmap_run_captures_intervening_binary_lumps_up_to_endmap() {
-        // A ZDoom-style UDMF map carries binary auxiliary lumps (ZNODES/REJECT/
-        // BLOCKMAP/BEHAVIOR — all in MAP_DATA_LUMPS) between TEXTMAP and ENDMAP.
-        // The run must extend to ENDMAP, NOT truncate at the first intervening
-        // lump whose successor happens to be a data lump.
+        // A ZDoom-style UDMF map carries auxiliary lumps between TEXTMAP and
+        // ENDMAP — some classic data lumps (REJECT/BLOCKMAP/BEHAVIOR) and some
+        // port lumps that are NOT in MAP_DATA_LUMPS (ZNODES). The run must extend
+        // to ENDMAP, NOT truncate at the first intervening lump whose successor
+        // happens to be a data lump.
         let wad = crate::Wad::from_bytes(build_pwad(&[
             ("MAP01", b"" as &[u8]),
             ("TEXTMAP", b"x"),
@@ -273,5 +279,25 @@ mod tests {
             assert!(group_has_lump(&wad, &g, lump), "MAP01 must contain {lump}");
         }
         assert!(!group_has_lump(&wad, &g, "MAP02"));
+    }
+
+    #[test]
+    fn textmap_without_endmap_followed_by_data_lumps_makes_no_phantom_markers() {
+        // A malformed UDMF map (no ENDMAP) followed only by data lumps: recovery
+        // must NOT pick a data lump (REJECT/BLOCKMAP) as the bound, which would
+        // both drop it and later be mis-read as a standalone "REJECT" marker.
+        // With no genuine next marker, the whole tail is one recovered group.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("TEXTMAP", b"x"),
+            ("REJECT", b"r"),
+            ("BLOCKMAP", b"b"),
+        ]))
+        .unwrap();
+        let groups = map_groups(&wad);
+        assert_eq!(groups.len(), 1, "no phantom REJECT/BLOCKMAP marker groups");
+        let g = map_group(&wad, "MAP01").unwrap();
+        assert!(group_has_lump(&wad, &g, "REJECT"));
+        assert!(group_has_lump(&wad, &g, "BLOCKMAP"));
     }
 }
