@@ -66,8 +66,9 @@ pub enum UdmfParseError {
 /// carrying the byte offset of the first invalid sequence.
 #[allow(dead_code)]
 pub(crate) fn decode_textmap(bytes: &[u8]) -> Result<&str, UdmfParseError> {
-    std::str::from_utf8(bytes)
-        .map_err(|e| UdmfParseError::InvalidEncoding { offset: e.valid_up_to() })
+    std::str::from_utf8(bytes).map_err(|e| UdmfParseError::InvalidEncoding {
+        offset: e.valid_up_to(),
+    })
 }
 
 #[cfg(test)]
@@ -76,7 +77,10 @@ mod tests {
 
     #[test]
     fn decode_textmap_roundtrips_and_rejects_non_utf8() {
-        assert_eq!(decode_textmap(b"namespace = \"doom\";").unwrap(), "namespace = \"doom\";");
+        assert_eq!(
+            decode_textmap(b"namespace = \"doom\";").unwrap(),
+            "namespace = \"doom\";"
+        );
         assert_eq!(
             decode_textmap(&[b'a', 0xFF]).unwrap_err(),
             UdmfParseError::InvalidEncoding { offset: 1 }
