@@ -666,7 +666,10 @@ fn as_str(spanned: &Spanned) -> Result<String, UdmfParseError> {
 fn as_i32(spanned: &Spanned) -> Result<i32, UdmfParseError> {
     match spanned.token {
         Token::Int(i) => i32::try_from(i).map_err(|_| UdmfParseError::Semantic {
-            message: format!("integer value {i} does not fit in a 32-bit field"),
+            message: format!(
+                "integer value {i} at line {}, column {} does not fit in a 32-bit field",
+                spanned.line, spanned.column
+            ),
         }),
         _ => Err(syntax_error(
             spanned.line,
