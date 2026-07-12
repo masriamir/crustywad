@@ -15,7 +15,9 @@ fn wrap_textmap(data: &[u8]) -> Vec<u8> {
         dir.extend_from_slice(&(filepos as i32).to_le_bytes());
         dir.extend_from_slice(&(bytes.len() as i32).to_le_bytes());
         let mut n = [0u8; 8];
-        for (s, b) in n.iter_mut().zip(name.bytes()) { *s = b; }
+        for (s, b) in n.iter_mut().zip(name.bytes()) {
+            *s = b;
+        }
         dir.extend_from_slice(&n);
     }
     let mut wad = Vec::with_capacity(12 + payload.len() + dir.len());
@@ -35,10 +37,16 @@ fuzz_target!(|data: &[u8]| {
                 if map.format() == MapFormat::Udmf {
                     // O(input) invariant (ADR-0016 §1): each Map element derives from a
                     // parsed UDMF block, each backed by >= one `{`...`}` in the input text.
-                    let elements = map.vertices().len() + map.linedefs().len()
-                        + map.sidedefs().len() + map.sectors().len() + map.things().len();
-                    assert!(elements <= data.len(),
-                        "element count {elements} exceeds O(input) bound {}", data.len());
+                    let elements = map.vertices().len()
+                        + map.linedefs().len()
+                        + map.sidedefs().len()
+                        + map.sectors().len()
+                        + map.things().len();
+                    assert!(
+                        elements <= data.len(),
+                        "element count {elements} exceeds O(input) bound {}",
+                        data.len()
+                    );
                 }
                 std::hint::black_box(&map);
             }
