@@ -56,7 +56,7 @@ breakdowns are read from actual records (little-endian throughout):
 | `LINEDEFS` | 16 B | `v1: u16, v2: u16, flags: u32, special: u16, tag: u16, sidefront: u16, sideback: u16` — **flags widened to `u32`**; `sideback == 0xffff` is the one-sided sentinel |
 | `SIDEDEFS` | 12 B | `x_offset: i16, y_offset: i16, upper: u16, lower: u16, middle: u16, sector: u16` — **textures are `u16` indices**, not 8-byte names |
 | `SECTORS` | 24 B | `floor_height: i16, ceiling_height: i16, floor_tex: u16, ceiling_tex: u16, colors: [u16; 5], special: u16, tag: u16, flags: u16` — **flats are `u16` indices** + **5 colored-lighting IDs** |
-| `SEGS` | 12 B | `v1: u16, v2: u16, angle: u16, linedef: u16, side: u16, offset: u16` |
+| `SEGS` | 12 B | `v1: u16, v2: u16, angle: u16, linedef: u16, side: u16, offset: i16` — matches `map::common::Seg` field-for-field (`offset` is signed; goes negative after BSP splitting) |
 | `SSECTORS` | 4 B | `seg_count: u16, first_seg: u16` |
 | `NODES` | 28 B | classic Doom node: `x, y, dx, dy: i16`, two `[i16; 4]` bounding boxes, two `u16` children (`0x8000` = subsector flag) |
 | `LIGHTS` | 6 B | `r, g, b: u8` + 3 further bytes — the colored-lighting palette the sector color IDs reference |
