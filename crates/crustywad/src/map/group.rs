@@ -36,21 +36,31 @@ fn marker_run_end(wad: &Wad, i: usize) -> Option<usize> {
     }
     // If the map is UDMF (its first data lump is TEXTMAP), the run is bounded by
     // the first subsequent ENDMAP (inclusive) rather than by MAP_DATA_LUMPS
-    // membership, so intervening port-specific lumps are captured. If ENDMAP is
-    // absent, recover best-effort: stop at the next map marker or end-of-directory.
+    // membership, so intervening port-specific/binary lumps (ZNODES, REJECT,
+    // BLOCKMAP, BEHAVIOR, …) between TEXTMAP and ENDMAP are all captured.
+    // ENDMAP takes priority: those intervening lumps are themselves in
+    // MAP_DATA_LUMPS, so the "successor is a data lump" test is NOT a reliable
+    // next-marker signal here and must not stop the scan before ENDMAP. The
+    // next-marker heuristic is only a *fallback* for a malformed map that has no
+    // ENDMAP at all; the first such candidate is remembered but overridden by an
+    // ENDMAP found later in the run.
     if lumps.get(i + 1).is_some_and(|l| l.name() == "TEXTMAP") {
         let mut j = i + 2;
+        let mut recovery_bound: Option<usize> = None;
         while j < lumps.len() {
             if lumps[j].name() == "ENDMAP" {
                 return Some(j + 1); // inclusive of ENDMAP
             }
-            // A new map marker (its successor is a recognized data lump) bounds recovery.
-            if lumps.get(j + 1).is_some_and(|l| is_map_data_lump(l.name())) {
-                return Some(j);
+            if recovery_bound.is_none()
+                && lumps.get(j + 1).is_some_and(|l| is_map_data_lump(l.name()))
+            {
+                recovery_bound = Some(j);
             }
             j += 1;
         }
-        return Some(j); // end-of-directory recovery
+        // No ENDMAP anywhere: recover at the first plausible next map marker, or
+        // end-of-directory if none.
+        return Some(recovery_bound.unwrap_or(j));
     }
     let mut j = i + 1;
     while j < lumps.len() && is_map_data_lump(lumps[j].name()) {
@@ -230,5 +240,38 @@ mod tests {
         let g2 = map_group(&wad, "MAP02").unwrap();
         assert!(group_has_lump(&wad, &g2, "THINGS"));
         assert!(group_has_lump(&wad, &g2, "LINEDEFS"));
+    }
+
+    #[test]
+    fn textmap_run_captures_intervening_binary_lumps_up_to_endmap() {
+        // A ZDoom-style UDMF map carries binary auxiliary lumps (ZNODES/REJECT/
+        // BLOCKMAP/BEHAVIOR — all in MAP_DATA_LUMPS) between TEXTMAP and ENDMAP.
+        // The run must extend to ENDMAP, NOT truncate at the first intervening
+        // lump whose successor happens to be a data lump.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("TEXTMAP", b"x"),
+            ("ZNODES", b"z"),
+            ("REJECT", b"r"),
+            ("BLOCKMAP", b"b"),
+            ("BEHAVIOR", b""),
+            ("ENDMAP", b""),
+            ("MAP02", b""),
+            ("THINGS", b""),
+        ]))
+        .unwrap();
+        let groups = map_groups(&wad);
+        assert_eq!(
+            groups.len(),
+            2,
+            "MAP01 (through ENDMAP) and MAP02 are separate"
+        );
+        let g = map_group(&wad, "MAP01").unwrap();
+        for lump in [
+            "TEXTMAP", "ZNODES", "REJECT", "BLOCKMAP", "BEHAVIOR", "ENDMAP",
+        ] {
+            assert!(group_has_lump(&wad, &g, lump), "MAP01 must contain {lump}");
+        }
+        assert!(!group_has_lump(&wad, &g, "MAP02"));
     }
 }
