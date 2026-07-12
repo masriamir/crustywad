@@ -60,8 +60,6 @@ fn marker_run_end(wad: &Wad, i: usize) -> Option<usize> {
 }
 
 /// Returns whether any of the group's data lumps is named `name`.
-// Consumed by `detect_map_format`'s UDMF branch, added in a follow-up task.
-#[allow(dead_code)]
 pub(crate) fn group_has_lump(wad: &Wad, group: &MapGroup, name: &str) -> bool {
     group
         .data_indices
@@ -112,12 +110,13 @@ pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
 
 /// Classifies the map format of `group` from its lump names (ADR-0014).
 ///
-/// A `BEHAVIOR` lump marks a Hexen map; otherwise the group is treated as the
-/// classic Doom binary layout. UDMF (`TEXTMAP`) classification arrives with the
-/// UDMF work — until then a `TEXTMAP` group is reported as [`MapFormat::Doom`]
-/// here but refused by [`Map::assemble`][crate::map::Map::assemble].
+/// A `TEXTMAP` lump marks a UDMF map; otherwise a `BEHAVIOR` lump marks a Hexen
+/// map; otherwise the group is treated as the classic Doom binary layout.
 #[must_use]
 pub fn detect_map_format(wad: &Wad, group: &MapGroup) -> MapFormat {
+    if group_has_lump(wad, group, "TEXTMAP") {
+        return MapFormat::Udmf;
+    }
     let has_lump = |name: &str| {
         group
             .data_indices

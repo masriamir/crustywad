@@ -1,8 +1,8 @@
 //! The assembled, index-addressed map graph (ADR-0015 §2).
 
-/// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom] and
-/// [`Hexen`][MapFormat::Hexen] are assembled today; UDMF/Doom64 (Epic #17) reuse
-/// this same model but aren't implemented yet.
+/// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom],
+/// [`Hexen`][MapFormat::Hexen], and [`Udmf`][MapFormat::Udmf] are assembled
+/// today; Doom64 (Epic #17) reuses this same model but isn't implemented yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {
@@ -13,6 +13,10 @@ pub enum MapFormat {
     /// [`map::hexen`][crate::map::hexen]); detected by the presence of a
     /// `BEHAVIOR` lump.
     Hexen,
+    /// The Universal Doom Map Format (UDMF) text layout (see
+    /// [`map::udmf`][crate::map::udmf]); detected by the presence of a
+    /// `TEXTMAP` lump.
+    Udmf,
 }
 
 /// A zero-based index into [`Map::vertices`].

@@ -64,7 +64,6 @@ pub enum UdmfParseError {
 /// # Errors
 /// Returns [`UdmfParseError::InvalidEncoding`] if `bytes` is not valid UTF-8,
 /// carrying the byte offset of the first invalid sequence.
-#[allow(dead_code)]
 pub(crate) fn decode_textmap(bytes: &[u8]) -> Result<&str, UdmfParseError> {
     std::str::from_utf8(bytes).map_err(|e| UdmfParseError::InvalidEncoding {
         offset: e.valid_up_to(),

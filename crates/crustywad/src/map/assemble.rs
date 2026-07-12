@@ -41,16 +41,15 @@ pub enum MapAssembleError {
         /// The number of elements actually available in the referenced arena.
         count: usize,
     },
-    /// The map group is in a text-based format that assembly does not yet decode
-    /// as binary records — currently only UDMF (`TEXTMAP`, tracked in Epic #17).
-    /// Binary Doom and Hexen maps assemble normally; a `TEXTMAP` lump marks a
-    /// format whose records would otherwise silently mis-decode, so assembly
-    /// refuses it up front.
+    /// The map group is in a format assembly does not yet decode into a
+    /// [`Map`] — reserved for a future format-specific marker lump (e.g.
+    /// Doom64, tracked in Epic #17). Doom, Hexen, and UDMF maps assemble
+    /// normally today.
     #[error(
-        "unsupported map format: found a {lump} lump; assembly does not support this text-based format yet"
+        "unsupported map format: found a {lump} lump; assembly does not support this format yet"
     )]
     UnsupportedFormat {
-        /// The format-specific marker lump detected (currently always `"TEXTMAP"`).
+        /// The format-specific marker lump detected.
         lump: &'static str,
     },
     /// The `TEXTMAP` text failed to decode or parse as UDMF.
@@ -434,7 +433,6 @@ fn normalize_linedefs_hexen(
 
 /// Narrows an `i32` UDMF value into `u16`: strict rejects out-of-range;
 /// lenient clamps to `u16` bounds and records a [`MapWarning::FieldOutOfRange`].
-#[allow(dead_code)]
 fn coerce_u16(
     value: i32,
     field: &'static str,
@@ -455,13 +453,11 @@ fn coerce_u16(
 }
 
 /// Widens raw UDMF `VERTEX` records into normalized [`MapVertex`]es.
-#[allow(dead_code)]
 fn normalize_udmf_vertices(raw: &[crate::map::udmf::UdmfVertex]) -> Vec<MapVertex> {
     raw.iter().map(|v| MapVertex { x: v.x, y: v.y }).collect()
 }
 
 /// Widens raw UDMF `SECTOR` records into normalized [`MapSector`]s.
-#[allow(dead_code)]
 fn normalize_udmf_sectors(raw: &[crate::map::udmf::UdmfSector]) -> Vec<MapSector> {
     raw.iter()
         .map(|s| MapSector {
@@ -478,7 +474,6 @@ fn normalize_udmf_sectors(raw: &[crate::map::udmf::UdmfSector]) -> Vec<MapSector
 
 /// Widens raw UDMF `SIDEDEF` records into normalized [`MapSidedef`]s, validating
 /// each sidedef's sector cross-reference.
-#[allow(dead_code)]
 fn normalize_udmf_sidedefs(
     raw: &[crate::map::udmf::UdmfSidedef],
     sector_count: usize,
@@ -511,7 +506,6 @@ fn normalize_udmf_sidedefs(
 /// each linedef's vertex and sidedef cross-references. Does not use the binary
 /// `0xffff` sentinel for one-sided; instead routes `sideback: None` to `left: None`
 /// and validates real `Some(idx)` values via [`resolve_optional`] (ADR-0017 §2).
-#[allow(dead_code)]
 fn normalize_udmf_linedefs(
     raw: &[crate::map::udmf::UdmfLinedef],
     vertex_count: usize,
@@ -568,7 +562,6 @@ fn normalize_udmf_linedefs(
 
 /// Widens raw UDMF `THING` records into normalized [`MapThing`]s, coercing
 /// `type_id` to `u16` and wrapping `angle` modulo 360.
-#[allow(dead_code)]
 fn normalize_udmf_things(
     raw: &[crate::map::udmf::UdmfThing],
     strictness: Strictness,
@@ -622,76 +615,194 @@ impl Map {
         group: &MapGroup,
         options: ParseOptions,
     ) -> Result<Map, MapAssembleError> {
-        let s = options.strictness;
         let mut warnings = Vec::new();
 
-        // UDMF (TEXTMAP) is a text format with no binary assembler yet (#58);
-        // refuse it explicitly rather than mis-decode it as binary records.
-        if lump_bytes(wad, group, "TEXTMAP").is_some() {
-            return Err(MapAssembleError::UnsupportedFormat { lump: "TEXTMAP" });
+        match crate::map::detect_map_format(wad, group) {
+            MapFormat::Udmf => assemble_udmf(wad, group, options, warnings),
+            format => {
+                let s = options.strictness;
+
+                // Records shared by both binary formats.
+                let raw_verts = decode_required::<common::Vertex>(wad, group, "VERTEXES")?;
+                let raw_sectors = decode_required::<common::Sector>(wad, group, "SECTORS")?;
+                let raw_sides = decode_required::<common::Sidedef>(wad, group, "SIDEDEFS")?;
+
+                let vertices = normalize_vertices(&raw_verts);
+                let sectors = normalize_sectors(&raw_sectors);
+                let sidedefs = normalize_sidedefs(&raw_sides, sectors.len(), s, &mut warnings)?;
+
+                // Format-specific THINGS/LINEDEFS.
+                let (things, linedefs) = match format {
+                    MapFormat::Doom => {
+                        let raw_lines = decode_required::<doom::Linedef>(wad, group, "LINEDEFS")?;
+                        let raw_things = decode_required::<doom::Thing>(wad, group, "THINGS")?;
+                        let linedefs = normalize_linedefs(
+                            &raw_lines,
+                            vertices.len(),
+                            sidedefs.len(),
+                            s,
+                            &mut warnings,
+                        )?;
+                        (normalize_things(&raw_things), linedefs)
+                    }
+                    MapFormat::Hexen => {
+                        let raw_lines = decode_required::<hexen::Linedef>(wad, group, "LINEDEFS")?;
+                        let raw_things = decode_required::<hexen::Thing>(wad, group, "THINGS")?;
+                        let linedefs = normalize_linedefs_hexen(
+                            &raw_lines,
+                            vertices.len(),
+                            sidedefs.len(),
+                            s,
+                            &mut warnings,
+                        )?;
+                        (normalize_things_hexen(&raw_things), linedefs)
+                    }
+                    MapFormat::Udmf => unreachable!("Udmf is handled by the outer match arm"),
+                };
+
+                Ok(Map {
+                    name: group.name.clone(),
+                    format,
+                    namespace: None,
+                    vertices,
+                    linedefs,
+                    sidedefs,
+                    sectors,
+                    things,
+                    warnings,
+                })
+            }
         }
-        let format = crate::map::detect_map_format(wad, group); // Doom | Hexen
-
-        // Records shared by both binary formats.
-        let raw_verts = decode_required::<common::Vertex>(wad, group, "VERTEXES")?;
-        let raw_sectors = decode_required::<common::Sector>(wad, group, "SECTORS")?;
-        let raw_sides = decode_required::<common::Sidedef>(wad, group, "SIDEDEFS")?;
-
-        let vertices = normalize_vertices(&raw_verts);
-        let sectors = normalize_sectors(&raw_sectors);
-        let sidedefs = normalize_sidedefs(&raw_sides, sectors.len(), s, &mut warnings)?;
-
-        // Format-specific THINGS/LINEDEFS.
-        let (things, linedefs) = match format {
-            MapFormat::Doom => {
-                let raw_lines = decode_required::<doom::Linedef>(wad, group, "LINEDEFS")?;
-                let raw_things = decode_required::<doom::Thing>(wad, group, "THINGS")?;
-                let linedefs = normalize_linedefs(
-                    &raw_lines,
-                    vertices.len(),
-                    sidedefs.len(),
-                    s,
-                    &mut warnings,
-                )?;
-                (normalize_things(&raw_things), linedefs)
-            }
-            MapFormat::Hexen => {
-                let raw_lines = decode_required::<hexen::Linedef>(wad, group, "LINEDEFS")?;
-                let raw_things = decode_required::<hexen::Thing>(wad, group, "THINGS")?;
-                let linedefs = normalize_linedefs_hexen(
-                    &raw_lines,
-                    vertices.len(),
-                    sidedefs.len(),
-                    s,
-                    &mut warnings,
-                )?;
-                (normalize_things_hexen(&raw_things), linedefs)
-            }
-        };
-
-        Ok(Map {
-            name: group.name.clone(),
-            format,
-            namespace: None,
-            vertices,
-            linedefs,
-            sidedefs,
-            sectors,
-            things,
-            warnings,
-        })
     }
+}
+
+/// Assembles a UDMF (`TEXTMAP`) map group into a [`Map`] (ADR-0017 §3).
+fn assemble_udmf(
+    wad: &Wad,
+    group: &MapGroup,
+    options: ParseOptions,
+    mut warnings: Vec<MapWarning>,
+) -> Result<Map, MapAssembleError> {
+    let s = options.strictness;
+
+    if !crate::map::group::group_has_lump(wad, group, "ENDMAP") {
+        match s {
+            Strictness::Strict => {
+                return Err(MapAssembleError::UnterminatedUdmf {
+                    name: group.name.clone(),
+                });
+            }
+            Strictness::Lenient => warnings.push(MapWarning::UnterminatedUdmf {
+                name: group.name.clone(),
+            }),
+        }
+    }
+
+    let bytes = lump_bytes(wad, group, "TEXTMAP")
+        .ok_or(MapAssembleError::MissingLump { lump: "TEXTMAP" })?;
+    let text = crate::map::udmf::decode_textmap(bytes)
+        .map_err(|source| MapAssembleError::Udmf { source })?;
+    let udmf = crate::map::udmf::parse_udmf(text, options.limits)
+        .map_err(|source| MapAssembleError::Udmf { source })?;
+
+    let vertices = normalize_udmf_vertices(&udmf.vertices);
+    let sectors = normalize_udmf_sectors(&udmf.sectors);
+    let sidedefs = normalize_udmf_sidedefs(&udmf.sidedefs, sectors.len(), s, &mut warnings)?;
+    let linedefs = normalize_udmf_linedefs(
+        &udmf.linedefs,
+        vertices.len(),
+        sidedefs.len(),
+        s,
+        &mut warnings,
+    )?;
+    let things = normalize_udmf_things(&udmf.things, s, &mut warnings)?;
+
+    Ok(Map {
+        name: group.name.clone(),
+        format: MapFormat::Udmf,
+        namespace: Some(udmf.namespace),
+        vertices,
+        linedefs,
+        sidedefs,
+        sectors,
+        things,
+        warnings,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_udmf_linedefs, normalize_udmf_things, resolve_left, resolve_optional,
+        Map, normalize_udmf_linedefs, normalize_udmf_things, resolve_left, resolve_optional,
         resolve_required,
     };
-    use crate::map::graph::{SidedefIdx, VertexIdx};
+    use crate::map::graph::{MapFormat, SidedefIdx, VertexIdx};
     use crate::map::udmf::{UdmfLinedef, UdmfThing};
-    use crate::{Strictness, map::MapWarning};
+    use crate::{ParseOptions, Strictness, map::MapWarning};
+
+    fn encode_i32(value: usize) -> [u8; 4] {
+        i32::try_from(value)
+            .expect("test fixture values should fit within i32")
+            .to_le_bytes()
+    }
+
+    /// Builds minimal PWAD bytes from `(name, data)` lump pairs, mirroring the
+    /// on-disk layout used by `tests/common/mod.rs::build_wad` and
+    /// `group.rs`'s test helper of the same name: a 12-byte header (`PWAD`,
+    /// lump count, directory offset), lump payloads, then 16-byte directory
+    /// entries (`filepos`, `size`, 8-byte name).
+    fn build_pwad(lumps: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        let mut directory = Vec::new();
+        let directory_offset = 12 + lumps.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+
+        for (name, bytes) in lumps {
+            let filepos = 12 + payload.len();
+            payload.extend_from_slice(bytes);
+            directory.extend_from_slice(&encode_i32(filepos));
+            directory.extend_from_slice(&encode_i32(bytes.len()));
+            let mut encoded = [0_u8; 8];
+            for (slot, byte) in name.as_bytes().iter().take(8).enumerate() {
+                encoded[slot] = *byte;
+            }
+            directory.extend_from_slice(&encoded);
+        }
+
+        let mut wad = Vec::new();
+        wad.extend_from_slice(b"PWAD");
+        wad.extend_from_slice(&encode_i32(lumps.len()));
+        wad.extend_from_slice(&encode_i32(directory_offset));
+        wad.extend_from_slice(&payload);
+        wad.extend_from_slice(&directory);
+        wad
+    }
+
+    #[test]
+    fn assembles_a_minimal_udmf_map() {
+        let text = concat!(
+            "namespace = \"doom\";\n",
+            "vertex { x = 0.0; y = 0.0; }\n",
+            "vertex { x = 64.0; y = 0.0; }\n",
+            "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+            "sidedef { sector = 0; }\n",
+            "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+            "thing { x = 0.0; y = 0.0; type = 1; }\n",
+        );
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("TEXTMAP", text.as_bytes()),
+            ("ENDMAP", b""),
+        ]))
+        .unwrap();
+        let g = crate::map::group::map_group(&wad, "MAP01").unwrap();
+        assert_eq!(crate::map::detect_map_format(&wad, &g), MapFormat::Udmf);
+        let map = Map::assemble_with_options(&wad, &g, ParseOptions::default()).unwrap();
+        assert_eq!(map.namespace(), Some("doom"));
+        assert_eq!(map.format(), MapFormat::Udmf);
+        assert_eq!(map.vertices().len(), 2);
+        assert_eq!(map.linedefs().len(), 1);
+        assert_eq!(map.linedefs()[0].left, None);
+    }
 
     #[test]
     fn resolve_required_negative_index_is_out_of_range() {
