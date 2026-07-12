@@ -30,6 +30,9 @@ jobs:
       - name: Fuzz fuzz_parse_udmf
         run: cargo fuzz run fuzz_parse_udmf -- -max_total_time=60
         working-directory: fuzz
+      - name: Fuzz fuzz_assemble_udmf
+        run: cargo fuzz run fuzz_assemble_udmf -- -max_total_time=60
+        working-directory: fuzz
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

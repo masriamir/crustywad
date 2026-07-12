@@ -1,8 +1,8 @@
 //! The assembled, index-addressed map graph (ADR-0015 §2).
 
-/// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom] and
-/// [`Hexen`][MapFormat::Hexen] are assembled today; UDMF/Doom64 (Epic #17) reuse
-/// this same model but aren't implemented yet.
+/// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom],
+/// [`Hexen`][MapFormat::Hexen], and [`Udmf`][MapFormat::Udmf] are assembled
+/// today; Doom64 (Epic #17) reuses this same model but isn't implemented yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {
@@ -13,6 +13,10 @@ pub enum MapFormat {
     /// [`map::hexen`][crate::map::hexen]); detected by the presence of a
     /// `BEHAVIOR` lump.
     Hexen,
+    /// The Universal Doom Map Format (UDMF) text layout (see
+    /// [`map::udmf`][crate::map::udmf]); detected by the presence of a
+    /// `TEXTMAP` lump.
+    Udmf,
 }
 
 /// A zero-based index into [`Map::vertices`].
@@ -162,6 +166,23 @@ pub enum MapWarning {
         /// The number of elements actually available in the referenced arena.
         count: usize,
     },
+    /// A field value was outside its target field's representable range and was
+    /// clamped during lenient assembly.
+    #[error("{field} value {value} on {from} is out of range; clamped during lenient assembly")]
+    FieldOutOfRange {
+        /// The UDMF field name (e.g. `"thing.type"`).
+        field: &'static str,
+        /// The element kind the field was on (e.g. `"thing"`).
+        from: &'static str,
+        /// The offending value.
+        value: i32,
+    },
+    /// A UDMF map lacked its `ENDMAP` terminator and was recovered best-effort.
+    #[error("UDMF map '{name}' has no ENDMAP terminator; recovered during lenient assembly")]
+    UnterminatedUdmf {
+        /// The map's marker name.
+        name: String,
+    },
 }
 
 /// An assembled Doom map graph: normalized elements addressed by index,
@@ -174,6 +195,7 @@ pub enum MapWarning {
 pub struct Map {
     pub(crate) name: String,
     pub(crate) format: MapFormat,
+    pub(crate) namespace: Option<String>,
     pub(crate) vertices: Vec<MapVertex>,
     pub(crate) linedefs: Vec<MapLinedef>,
     pub(crate) sidedefs: Vec<MapSidedef>,
@@ -193,6 +215,13 @@ impl Map {
     #[must_use]
     pub fn format(&self) -> MapFormat {
         self.format
+    }
+
+    /// Returns the map's UDMF `namespace` declaration (e.g. `"doom"`), or `None`
+    /// for binary-format maps.
+    #[must_use]
+    pub fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
     }
 
     /// Returns the map's vertex arena.
@@ -273,6 +302,7 @@ mod tests {
         Map {
             name: "E1M1".into(),
             format: MapFormat::Doom,
+            namespace: None,
             vertices: vec![MapVertex { x: 0.0, y: 0.0 }, MapVertex { x: 64.0, y: 0.0 }],
             sidedefs: vec![MapSidedef {
                 sector: SectorIdx(0),

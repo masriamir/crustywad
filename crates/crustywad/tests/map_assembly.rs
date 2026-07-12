@@ -150,12 +150,14 @@ fn assembles_two_sided_map_and_exposes_all_accessors() {
     assert_eq!(map.sidedef_sector(left).floor_flat, "FLOOR");
 }
 
-// Assembly must refuse UDMF rather than silently mis-decoding its text lump
-// as Doom binary records. BEHAVIOR (Hexen) is no longer refused — it dispatches
-// to the Hexen assembly path (see `assembles_hexen_map_with_superset_fields`).
+// UDMF assembly (TEXTMAP -> Map) is exercised end-to-end in
+// `assemble::tests::assembles_a_minimal_udmf_map`. Here, strict assembly of a
+// TEXTMAP group missing its ENDMAP terminator must fail with
+// `UnterminatedUdmf` rather than silently mis-decoding the text lump as Doom
+// binary records.
 #[test]
-fn refuses_udmf_format() {
-    // UDMF: a TEXTMAP lump holds text, not Doom binary records.
+fn strict_rejects_udmf_missing_endmap() {
+    // UDMF: a TEXTMAP lump holds text, not Doom binary records; no ENDMAP.
     let udmf = common::build_named_lumps(&[
         ("MAP01", vec![]),
         ("TEXTMAP", b"namespace = \"zdoom\";".to_vec()),
@@ -165,9 +167,9 @@ fn refuses_udmf_format() {
     let err = Map::assemble(&wad, &group).unwrap_err();
     assert!(matches!(
         err,
-        MapAssembleError::UnsupportedFormat { lump: "TEXTMAP" }
+        MapAssembleError::UnterminatedUdmf { ref name } if name == "MAP01"
     ));
-    assert!(err.to_string().contains("TEXTMAP"));
+    assert!(err.to_string().contains("ENDMAP"));
 }
 
 #[test]

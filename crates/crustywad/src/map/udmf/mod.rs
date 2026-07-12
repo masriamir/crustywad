@@ -15,13 +15,19 @@ use thiserror::Error;
 
 /// An error raised while parsing UDMF `TEXTMAP` text.
 ///
-/// The enum is `#[non_exhaustive]`: map assembly (a later pass) reads `TEXTMAP`
-/// as raw lump bytes and will add a UTF-8-decoding variant for that byte
-/// entrypoint. [`parse_udmf`] itself takes an already-decoded `&str`, so it
-/// never reports an encoding error.
+/// [`parse_udmf`] itself takes an already-decoded `&str`, so it never reports an
+/// encoding error; the [`InvalidEncoding`](UdmfParseError::InvalidEncoding)
+/// variant is produced only at byte-level entrypoints (the `decode_textmap`
+/// helper used by map assembly). The enum is `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum UdmfParseError {
+    /// The `TEXTMAP` bytes are not valid UTF-8.
+    #[error("TEXTMAP lump is not valid UTF-8 at byte offset {offset}")]
+    InvalidEncoding {
+        /// The byte offset of the first invalid UTF-8 sequence.
+        offset: usize,
+    },
     /// A lexical or grammatical error at a specific source position.
     #[error("syntax error at line {line}, column {column}: {message}")]
     Syntax {
@@ -51,4 +57,32 @@ pub enum UdmfParseError {
         /// Human-readable description of the missing field or declaration.
         message: String,
     },
+}
+
+/// Decodes `TEXTMAP` lump bytes as UTF-8.
+///
+/// # Errors
+/// Returns [`UdmfParseError::InvalidEncoding`] if `bytes` is not valid UTF-8,
+/// carrying the byte offset of the first invalid sequence.
+pub(crate) fn decode_textmap(bytes: &[u8]) -> Result<&str, UdmfParseError> {
+    std::str::from_utf8(bytes).map_err(|e| UdmfParseError::InvalidEncoding {
+        offset: e.valid_up_to(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UdmfParseError, decode_textmap};
+
+    #[test]
+    fn decode_textmap_roundtrips_and_rejects_non_utf8() {
+        assert_eq!(
+            decode_textmap(b"namespace = \"doom\";").unwrap(),
+            "namespace = \"doom\";"
+        );
+        assert_eq!(
+            decode_textmap(&[b'a', 0xFF]).unwrap_err(),
+            UdmfParseError::InvalidEncoding { offset: 1 }
+        );
+    }
 }
