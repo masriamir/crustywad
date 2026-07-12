@@ -53,6 +53,29 @@ pub enum MapAssembleError {
         /// The format-specific marker lump detected (currently always `"TEXTMAP"`).
         lump: &'static str,
     },
+    /// The `TEXTMAP` text failed to decode or parse as UDMF.
+    #[error("failed to parse UDMF text map: {source}")]
+    Udmf {
+        /// The underlying UDMF parse error.
+        #[source]
+        source: crate::map::udmf::UdmfParseError,
+    },
+    /// A UDMF map (`TEXTMAP` present) had no `ENDMAP` terminator lump (strict mode).
+    #[error("UDMF map '{name}' has no ENDMAP terminator lump")]
+    UnterminatedUdmf {
+        /// The map's marker name.
+        name: String,
+    },
+    /// A field value was outside its target field's representable range (strict mode).
+    #[error("{field} value {value} on {from} is out of range")]
+    FieldOutOfRange {
+        /// The UDMF field name.
+        field: &'static str,
+        /// The element kind.
+        from: &'static str,
+        /// The offending value.
+        value: i32,
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.
@@ -469,6 +492,7 @@ impl Map {
         Ok(Map {
             name: group.name.clone(),
             format,
+            namespace: None,
             vertices,
             linedefs,
             sidedefs,
