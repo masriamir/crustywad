@@ -203,4 +203,33 @@ mod tests {
         assert!(group_has_lump(&wad, &g, "TEXTMAP"));
         assert!(!group_has_lump(&wad, &g, "ENDMAP"));
     }
+
+    #[test]
+    fn textmap_without_endmap_recovers_at_next_marker_without_swallowing_it() {
+        // No ENDMAP for MAP01, but a following binary map MAP02 must remain its
+        // own group — recovery bounds MAP01's run at MAP02, not end-of-directory.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("TEXTMAP", b"x"),
+            ("SCRIPTS", b"y"),
+            ("MAP02", b""),
+            ("THINGS", b""),
+            ("LINEDEFS", b""),
+        ]))
+        .unwrap();
+        let groups = map_groups(&wad);
+        assert_eq!(
+            groups.len(),
+            2,
+            "MAP02 must be a separate group, not swallowed"
+        );
+        let g1 = map_group(&wad, "MAP01").unwrap();
+        assert!(group_has_lump(&wad, &g1, "TEXTMAP"));
+        assert!(!group_has_lump(&wad, &g1, "ENDMAP"));
+        assert!(!group_has_lump(&wad, &g1, "MAP02"));
+        assert!(!group_has_lump(&wad, &g1, "THINGS"));
+        let g2 = map_group(&wad, "MAP02").unwrap();
+        assert!(group_has_lump(&wad, &g2, "THINGS"));
+        assert!(group_has_lump(&wad, &g2, "LINEDEFS"));
+    }
 }
