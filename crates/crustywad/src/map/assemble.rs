@@ -733,12 +733,13 @@ fn assemble_udmf(
 #[cfg(test)]
 mod tests {
     use super::{
-        Map, normalize_udmf_linedefs, normalize_udmf_things, resolve_left, resolve_optional,
-        resolve_required,
+        Map, normalize_udmf_linedefs, normalize_udmf_things, normalize_udmf_vertices, resolve_left,
+        resolve_optional, resolve_required,
     };
     use crate::map::graph::{MapFormat, SidedefIdx, VertexIdx};
     use crate::map::udmf::{UdmfLinedef, UdmfThing};
     use crate::{ParseOptions, Strictness, map::MapWarning};
+    use proptest::prelude::*;
 
     fn encode_i32(value: usize) -> [u8; 4] {
         i32::try_from(value)
@@ -947,5 +948,23 @@ mod tests {
             w.iter()
                 .any(|x| matches!(x, MapWarning::FieldOutOfRange { .. }))
         );
+    }
+
+    proptest! {
+        // Arbitrary UTF-8 text, wrapped as a TEXTMAP: whenever it happens to
+        // parse as UDMF, normalization must neither panic nor create more
+        // vertices than could possibly have been parsed from the input — the
+        // O(input) allocation invariant (ADR-0016 item 1) applied to the UDMF
+        // assembly surface.
+        #[test]
+        fn udmf_assembly_never_panics_and_is_bounded(text in ".*") {
+            if let Ok(map) = crate::map::udmf::parse_udmf(&text, crate::Limits::default()) {
+                // Normalizing cannot create more elements than were parsed.
+                let mut w = Vec::new();
+                let v = normalize_udmf_vertices(&map.vertices);
+                prop_assert!(v.len() <= text.len());
+                let _ = normalize_udmf_things(&map.things, Strictness::Lenient, &mut w);
+            }
+        }
     }
 }
