@@ -930,6 +930,143 @@ mod tests {
         );
     }
 
+    #[test]
+    fn global_identifier_without_equals_or_lbrace_is_syntax_error() {
+        // At file scope, an identifier must be followed by `=` (assignment)
+        // or `{` (block header); anything else is rejected.
+        let err = parse_udmf("namespace \"doom\";", Limits::default()).unwrap_err();
+        match err {
+            UdmfParseError::Syntax { message, .. } => {
+                assert_eq!(message, "expected '=' or '{' after identifier");
+            }
+            other => panic!("expected Syntax error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn global_non_namespace_assignment_is_dropped() {
+        // A top-level assignment to an identifier other than `namespace` must
+        // be accepted (no error) and simply have no effect: only `namespace`
+        // is tracked at file scope, and no other global state exists.
+        let text = "namespace=\"doom\"; author=\"me\"; vertex { x=1.0; y=2.0; }";
+        let m = parse_udmf(text, Limits::default()).unwrap();
+        assert_eq!(m.namespace, "doom");
+        assert_eq!(m.vertices.len(), 1);
+    }
+
+    #[test]
+    fn block_item_missing_equals_is_syntax_error() {
+        let err = parse_udmf(
+            "namespace=\"doom\"; vertex { x 1.0; y=2.0; }",
+            Limits::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, UdmfParseError::Syntax { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn vertex_missing_x_is_semantic() {
+        // The existing `vertex_missing_required_field_is_semantic` test only
+        // omits `y`; this covers the `x`-specific missing-field arm.
+        let err =
+            parse_udmf("namespace=\"doom\"; vertex { y = 1.0; }", Limits::default()).unwrap_err();
+        match err {
+            UdmfParseError::Semantic { message } => {
+                assert!(message.contains('x'), "message was: {message}");
+            }
+            other => panic!("expected Semantic error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn linedef_boolean_flags_false_and_all_set_correctly() {
+        let text = concat!(
+            "namespace=\"doom\"; linedef { v1=0; v2=1; sidefront=0;",
+            " blocking=false; blockmonsters=true; twosided=false;",
+            " dontpegtop=true; dontpegbottom=true; secret=true;",
+            " blocksound=true; dontdraw=true; mapped=true;",
+            " unknownfield=1; }",
+        );
+        let m = parse_udmf(text, Limits::default()).unwrap();
+        // bit0 blocking=false, bit1 blockmonsters=true, bit2 twosided=false,
+        // bits 3-8 (dontpegtop..mapped) all true.
+        assert_eq!(m.linedefs[0].flags, 0b1_1111_1010);
+    }
+
+    #[test]
+    fn sidedef_unknown_field_is_dropped() {
+        let m = parse_udmf(
+            "namespace=\"doom\"; sidedef { sector = 3; extra = \"x\"; }",
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(m.sidedefs[0].sector, 3);
+    }
+
+    #[test]
+    fn sector_unknown_field_is_dropped() {
+        let m = parse_udmf(
+            concat!(
+                "namespace=\"doom\"; sector { texturefloor=\"F\";",
+                " textureceiling=\"C\"; extra = 5; }",
+            ),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(m.sectors[0].texturefloor, "F");
+    }
+
+    #[test]
+    fn thing_all_optional_fields_and_unknown_field() {
+        let text = concat!(
+            "namespace=\"doom\"; thing { x=1.0; y=2.0; height=8.0; angle=90;",
+            " type=5; id=9; special=3; arg0=1; arg1=2; arg2=3; arg3=4; arg4=5;",
+            " extra=\"dropped\"; }",
+        );
+        let m = parse_udmf(text, Limits::default()).unwrap();
+        let th = &m.things[0];
+        assert_eq!((th.height, th.angle), (8.0, 90));
+        assert_eq!((th.id, th.special), (9, 3));
+        assert_eq!(th.args, [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn value_position_rejects_non_literal_token() {
+        // An identifier is not a valid value literal.
+        let err = parse_udmf("namespace = vertex;", Limits::default()).unwrap_err();
+        assert!(matches!(err, UdmfParseError::Syntax { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn float_field_rejects_non_numeric_value() {
+        let err = parse_udmf(
+            "namespace=\"doom\"; vertex { x = true; y = 1.0; }",
+            Limits::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, UdmfParseError::Syntax { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn string_field_rejects_non_string_value() {
+        let err = parse_udmf(
+            "namespace=\"doom\"; sidedef { sector = 0; texturetop = 5; }",
+            Limits::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, UdmfParseError::Syntax { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn bool_field_rejects_non_bool_value() {
+        let err = parse_udmf(
+            "namespace=\"doom\"; linedef { v1=0; v2=1; sidefront=0; blocking = 1; }",
+            Limits::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, UdmfParseError::Syntax { .. }), "got {err:?}");
+    }
+
     use proptest::prelude::*;
 
     proptest! {

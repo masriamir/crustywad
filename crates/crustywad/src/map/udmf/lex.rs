@@ -262,11 +262,6 @@ impl<'a> Lexer<'a> {
             // Syntax), then apply the sign in i128 so the full i64 range —
             // including i64::MIN (`-0x8000000000000000`) — round-trips
             // consistently with the signed decimal path below.
-            let sign_str = match sign {
-                Some('-') => "-",
-                Some('+') => "+",
-                _ => "",
-            };
             return u64::from_str_radix(&hex, 16)
                 .ok()
                 .and_then(|magnitude| {
@@ -281,9 +276,7 @@ impl<'a> Lexer<'a> {
                 .ok_or_else(|| UdmfParseError::Syntax {
                     line: start_line,
                     column: start_column,
-                    message: format!(
-                        "hexadecimal integer literal '{sign_str}0x{hex}' out of range"
-                    ),
+                    message: hex_out_of_range_message(sign, &hex),
                 });
         }
 
@@ -393,9 +386,21 @@ impl<'a> Lexer<'a> {
     }
 }
 
+/// Formats the out-of-range hexadecimal integer literal error message,
+/// preserving `sign` so the reported literal round-trips what the caller
+/// actually wrote (matching the decimal path's error formatting).
+fn hex_out_of_range_message(sign: Option<char>, hex: &str) -> String {
+    let sign_str = match sign {
+        Some('-') => "-",
+        Some('+') => "+",
+        _ => "",
+    };
+    format!("hexadecimal integer literal '{sign_str}0x{hex}' out of range")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Lexer, Token};
+    use super::{Lexer, Token, UdmfParseError};
 
     fn lex_all(input: &str) -> Vec<Token> {
         let mut lx = Lexer::new(input);
@@ -562,5 +567,89 @@ mod tests {
     fn hex_literal_overflow_is_syntax_error_not_panic() {
         let mut lx = Lexer::new("0xFFFFFFFFFFFFFFFFF");
         assert!(lx.next_spanned().is_err());
+    }
+
+    #[test]
+    fn hex_out_of_range_error_message_includes_sign() {
+        // Regression test: the out-of-range hex message must include the
+        // literal's leading sign (e.g. `-0x8000000000000001`), matching the
+        // decimal path's error formatting, instead of silently dropping it.
+        let mut neg = Lexer::new("-0x8000000000000001");
+        let err = neg.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert!(
+            message.contains("'-0x8000000000000001'"),
+            "message was: {message}"
+        );
+
+        let mut pos = Lexer::new("+0x10000000000000000");
+        let err = pos.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert!(
+            message.contains("'+0x10000000000000000'"),
+            "message was: {message}"
+        );
+    }
+
+    #[test]
+    fn unterminated_block_comment_is_syntax_error() {
+        let mut lx = Lexer::new("/* never closed");
+        let err = lx.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert_eq!(message, "unterminated block comment");
+    }
+
+    #[test]
+    fn lexes_false_keyword() {
+        assert_eq!(lex_all("false"), vec![Token::Bool(false)]);
+    }
+
+    #[test]
+    fn string_escapes_resolve_newline_and_tab() {
+        assert_eq!(lex_all(r#""a\nb\tc""#), vec![Token::Str("a\nb\tc".into())]);
+    }
+
+    #[test]
+    fn string_unrecognized_escape_passes_through_character() {
+        // Per `scan_string`'s doc comment, any `\X` other than `\"`, `\\`,
+        // `\n`, `\t` passes through as the literal character `X` (the
+        // backslash itself is dropped).
+        assert_eq!(lex_all(r#""a\qb""#), vec![Token::Str("aqb".into())]);
+    }
+
+    #[test]
+    fn string_with_trailing_backslash_at_eof_is_syntax_error() {
+        // The backslash starts an escape sequence, but input ends before the
+        // escaped character (and before a closing quote).
+        let mut lx = Lexer::new("\"abc\\");
+        let err = lx.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert_eq!(message, "unterminated string literal");
+    }
+
+    #[test]
+    fn float_exponent_with_explicit_sign_is_lexed() {
+        assert_eq!(lex_all("1e+5"), vec![Token::Float(1e5)]);
+        assert_eq!(lex_all("2.5e-3"), vec![Token::Float(2.5e-3)]);
+    }
+
+    #[test]
+    fn decimal_integer_overflow_is_syntax_error() {
+        // 20 nines: exceeds i64::MAX (19 digits), has no `.`/`e`, so it takes
+        // the decimal-integer (not float) path and must fail `str::parse`.
+        let mut lx = Lexer::new("99999999999999999999");
+        let err = lx.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert_eq!(message, "invalid integer literal '99999999999999999999'");
     }
 }
