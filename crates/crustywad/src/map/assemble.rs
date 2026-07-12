@@ -432,6 +432,170 @@ fn normalize_linedefs_hexen(
     Ok(linedefs)
 }
 
+/// Narrows an `i32` UDMF value into `u16`: strict rejects out-of-range;
+/// lenient clamps to `u16` bounds and records a [`MapWarning::FieldOutOfRange`].
+#[allow(dead_code)]
+fn coerce_u16(
+    value: i32,
+    field: &'static str,
+    from: &'static str,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<u16, MapAssembleError> {
+    if let Ok(v) = u16::try_from(value) {
+        return Ok(v);
+    }
+    match strictness {
+        Strictness::Strict => Err(MapAssembleError::FieldOutOfRange { field, from, value }),
+        Strictness::Lenient => {
+            warnings.push(MapWarning::FieldOutOfRange { field, from, value });
+            Ok(if value < 0 { 0 } else { u16::MAX })
+        }
+    }
+}
+
+/// Widens raw UDMF `VERTEX` records into normalized [`MapVertex`]es.
+#[allow(dead_code)]
+fn normalize_udmf_vertices(raw: &[crate::map::udmf::UdmfVertex]) -> Vec<MapVertex> {
+    raw.iter().map(|v| MapVertex { x: v.x, y: v.y }).collect()
+}
+
+/// Widens raw UDMF `SECTOR` records into normalized [`MapSector`]s.
+#[allow(dead_code)]
+fn normalize_udmf_sectors(raw: &[crate::map::udmf::UdmfSector]) -> Vec<MapSector> {
+    raw.iter()
+        .map(|s| MapSector {
+            floor_height: s.heightfloor,
+            ceiling_height: s.heightceiling,
+            floor_flat: s.texturefloor.clone(),
+            ceiling_flat: s.textureceiling.clone(),
+            light: s.lightlevel,
+            special: s.special,
+            tag: s.id,
+        })
+        .collect()
+}
+
+/// Widens raw UDMF `SIDEDEF` records into normalized [`MapSidedef`]s, validating
+/// each sidedef's sector cross-reference.
+#[allow(dead_code)]
+fn normalize_udmf_sidedefs(
+    raw: &[crate::map::udmf::UdmfSidedef],
+    sector_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapSidedef>, MapAssembleError> {
+    let mut out = Vec::with_capacity(raw.len());
+    for sd in raw {
+        let sector = SectorIdx(resolve_required(
+            sd.sector,
+            sector_count,
+            "sector",
+            "sidedef",
+            strictness,
+            warnings,
+        )?);
+        out.push(MapSidedef {
+            sector,
+            x_offset: sd.offsetx,
+            y_offset: sd.offsety,
+            upper: sd.texturetop.clone(),
+            lower: sd.texturebottom.clone(),
+            middle: sd.texturemiddle.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// Widens raw UDMF `LINEDEF` records into normalized [`MapLinedef`]s, validating
+/// each linedef's vertex and sidedef cross-references. Does not use the binary
+/// `0xffff` sentinel for one-sided; instead routes `sideback: None` to `left: None`
+/// and validates real `Some(idx)` values via [`resolve_optional`] (ADR-0017 §2).
+#[allow(dead_code)]
+fn normalize_udmf_linedefs(
+    raw: &[crate::map::udmf::UdmfLinedef],
+    vertex_count: usize,
+    sidedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapLinedef>, MapAssembleError> {
+    let mut out = Vec::with_capacity(raw.len());
+    for ld in raw {
+        let start = VertexIdx(resolve_required(
+            ld.v1,
+            vertex_count,
+            "vertex",
+            "linedef",
+            strictness,
+            warnings,
+        )?);
+        let end = VertexIdx(resolve_required(
+            ld.v2,
+            vertex_count,
+            "vertex",
+            "linedef",
+            strictness,
+            warnings,
+        )?);
+        let right = SidedefIdx(resolve_required(
+            ld.sidefront,
+            sidedef_count,
+            "sidedef",
+            "linedef",
+            strictness,
+            warnings,
+        )?);
+        let left = match ld.sideback {
+            None => None,
+            Some(idx) => resolve_optional(idx, sidedef_count, "linedef", strictness, warnings)?
+                .map(SidedefIdx),
+        };
+        out.push(MapLinedef {
+            start,
+            end,
+            right,
+            left,
+            flags: ld.flags,
+            special: Special {
+                special: ld.special,
+                args: ld.args,
+            },
+            id: ld.id,
+        });
+    }
+    Ok(out)
+}
+
+/// Widens raw UDMF `THING` records into normalized [`MapThing`]s, coercing
+/// `type_id` to `u16` and wrapping `angle` modulo 360.
+#[allow(dead_code)]
+fn normalize_udmf_things(
+    raw: &[crate::map::udmf::UdmfThing],
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapThing>, MapAssembleError> {
+    let mut out = Vec::with_capacity(raw.len());
+    for t in raw {
+        let type_id = coerce_u16(t.type_id, "thing.type", "thing", strictness, warnings)?;
+        // rem_euclid(360) yields 0..=359, which always fits u16.
+        let angle = u16::try_from(t.angle.rem_euclid(360)).unwrap_or(0);
+        out.push(MapThing {
+            x: t.x,
+            y: t.y,
+            angle,
+            type_id,
+            flags: 0, // UDMF thing flags are not modeled in Map yet (ADR-0017 §1).
+            id: t.id,
+            height: t.height,
+            special: Special {
+                special: t.special,
+                args: t.args,
+            },
+        });
+    }
+    Ok(out)
+}
+
 impl Map {
     /// Assembles a map from a WAD and one of its groups, using strict rules.
     ///
@@ -521,8 +685,13 @@ impl Map {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_left, resolve_optional, resolve_required};
-    use crate::Strictness;
+    use super::{
+        normalize_udmf_linedefs, normalize_udmf_things, resolve_left, resolve_optional,
+        resolve_required,
+    };
+    use crate::map::graph::{SidedefIdx, VertexIdx};
+    use crate::map::udmf::{UdmfLinedef, UdmfThing};
+    use crate::{Strictness, map::MapWarning};
 
     #[test]
     fn resolve_required_negative_index_is_out_of_range() {
@@ -586,5 +755,86 @@ mod tests {
             None
         );
         assert_eq!(w.len(), 1);
+    }
+
+    #[test]
+    fn normalize_udmf_linedef_sideback_none_and_valid_65535() {
+        let mut w = Vec::new();
+        // sideback None -> left None; a valid Some(1) with 2 sidedefs -> Some(1).
+        let lines = [UdmfLinedef {
+            v1: 0,
+            v2: 1,
+            sidefront: 0,
+            sideback: Some(1),
+            id: 7,
+            special: 80,
+            args: [1, 2, 0, 0, 0],
+            flags: 0b101,
+        }];
+        let out = normalize_udmf_linedefs(&lines, 2, 2, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(out[0].start, VertexIdx(0));
+        assert_eq!(out[0].end, VertexIdx(1));
+        assert_eq!(out[0].right, SidedefIdx(0));
+        assert_eq!(out[0].left, Some(SidedefIdx(1)));
+        assert_eq!(out[0].id, 7);
+        assert_eq!(out[0].flags, 0b101);
+        assert_eq!(out[0].special.special, 80);
+        assert_eq!(out[0].special.args, [1, 2, 0, 0, 0]);
+
+        let one_sided = [UdmfLinedef {
+            v1: 0,
+            v2: 1,
+            sidefront: 0,
+            sideback: None,
+            id: -1,
+            special: 0,
+            args: [0; 5],
+            flags: 0,
+        }];
+        let out2 = normalize_udmf_linedefs(&one_sided, 2, 2, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(out2[0].left, None);
+    }
+
+    #[test]
+    fn normalize_udmf_thing_narrows_type_and_wraps_angle() {
+        let mut w = Vec::new();
+        let things = [UdmfThing {
+            x: 1.0,
+            y: 2.0,
+            height: 3.0,
+            angle: 450,
+            type_id: 1,
+            id: 5,
+            special: 0,
+            args: [0; 5],
+        }];
+        let out = normalize_udmf_things(&things, Strictness::Strict, &mut w).unwrap();
+        assert_eq!((out[0].x, out[0].y, out[0].height), (1.0, 2.0, 3.0));
+        assert_eq!(out[0].angle, 90); // 450 rem_euclid 360
+        assert_eq!(out[0].type_id, 1);
+        assert_eq!(out[0].id, 5);
+        assert_eq!(out[0].flags, 0);
+    }
+
+    #[test]
+    fn thing_type_overflow_strict_errors_lenient_clamps() {
+        let mut w = Vec::new();
+        let bad = [UdmfThing {
+            x: 0.0,
+            y: 0.0,
+            height: 0.0,
+            angle: 0,
+            type_id: 70000,
+            id: 0,
+            special: 0,
+            args: [0; 5],
+        }];
+        assert!(normalize_udmf_things(&bad, Strictness::Strict, &mut w).is_err());
+        let out = normalize_udmf_things(&bad, Strictness::Lenient, &mut w).unwrap();
+        assert_eq!(out[0].type_id, u16::MAX);
+        assert!(
+            w.iter()
+                .any(|x| matches!(x, MapWarning::FieldOutOfRange { .. }))
+        );
     }
 }
