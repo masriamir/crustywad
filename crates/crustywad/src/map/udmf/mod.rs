@@ -15,10 +15,10 @@ use thiserror::Error;
 
 /// An error raised while parsing UDMF `TEXTMAP` text.
 ///
-/// The enum is `#[non_exhaustive]`: map assembly (a later pass) reads `TEXTMAP`
-/// as raw lump bytes and will add a UTF-8-decoding variant for that byte
-/// entrypoint. [`parse_udmf`] itself takes an already-decoded `&str`, so it
-/// never reports an encoding error.
+/// [`parse_udmf`] itself takes an already-decoded `&str`, so it never reports an
+/// encoding error; the [`InvalidEncoding`](UdmfParseError::InvalidEncoding)
+/// variant is produced only at byte-level entrypoints (the `decode_textmap`
+/// helper used by map assembly). The enum is `#[non_exhaustive]`.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum UdmfParseError {
