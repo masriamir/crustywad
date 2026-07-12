@@ -34,38 +34,31 @@ fn marker_run_end(wad: &Wad, i: usize) -> Option<usize> {
     if !lumps.get(i + 1).is_some_and(|l| is_map_data_lump(l.name())) {
         return None;
     }
-    // If the map is UDMF (its first data lump is TEXTMAP), the run is bounded by
-    // the first subsequent ENDMAP (inclusive) rather than by MAP_DATA_LUMPS
-    // membership, so intervening port-specific/binary lumps between TEXTMAP and
-    // ENDMAP are all captured — some are classic data lumps (REJECT, BLOCKMAP,
-    // BEHAVIOR) and some are not (ZNODES and other port lumps). ENDMAP takes
-    // priority: the "successor is a data lump" test is NOT a reliable next-marker
-    // signal here and must not stop the scan before ENDMAP.
+    // A UDMF map (its first data lump is TEXTMAP) is delimited by TEXTMAP ...
+    // ENDMAP, so the run is bounded by the first subsequent ENDMAP (inclusive)
+    // rather than by MAP_DATA_LUMPS membership — every intervening lump (classic
+    // data lumps like REJECT/BLOCKMAP/BEHAVIOR *and* port lumps like ZNODES) is
+    // captured up to ENDMAP.
     //
-    // The next-marker heuristic is only a *fallback* for a malformed map with no
-    // ENDMAP at all. To avoid the fallback picking an intervening binary lump as
-    // the bound (which would drop it and later be mis-read as a standalone
-    // marker), a candidate must itself be a non-data-lump — i.e. a genuine map
-    // name — whose successor is a data lump. The first such candidate is
-    // remembered but overridden by any ENDMAP found later in the run.
+    // A UDMF map has no reliable internal terminator other than ENDMAP, so the
+    // "successor is a data lump" next-marker heuristic (used for binary maps) is
+    // deliberately NOT applied here: an intervening lump that happens to precede
+    // a data lump must not be mistaken for a new map marker (which would truncate
+    // the run and spawn phantom groups). For a malformed map with no ENDMAP, the
+    // only unambiguous boundary is the next map's TEXTMAP (its marker is the lump
+    // just before it) or end-of-directory — so such a map absorbs trailing lumps
+    // up to the next UDMF map or the end of the directory.
     if lumps.get(i + 1).is_some_and(|l| l.name() == "TEXTMAP") {
         let mut j = i + 2;
-        let mut recovery_bound: Option<usize> = None;
         while j < lumps.len() {
-            if lumps[j].name() == "ENDMAP" {
-                return Some(j + 1); // inclusive of ENDMAP
+            match lumps[j].name() {
+                "ENDMAP" => return Some(j + 1), // inclusive of ENDMAP
+                // The next UDMF map's data begins at `j`; its marker is `j - 1`.
+                "TEXTMAP" => return Some(j - 1),
+                _ => j += 1,
             }
-            if recovery_bound.is_none()
-                && !is_map_data_lump(lumps[j].name())
-                && lumps.get(j + 1).is_some_and(|l| is_map_data_lump(l.name()))
-            {
-                recovery_bound = Some(j);
-            }
-            j += 1;
         }
-        // No ENDMAP anywhere: recover at the first plausible next map marker, or
-        // end-of-directory if none.
-        return Some(recovery_bound.unwrap_or(j));
+        return Some(j); // end-of-directory recovery
     }
     let mut j = i + 1;
     while j < lumps.len() && is_map_data_lump(lumps[j].name()) {
@@ -219,32 +212,35 @@ mod tests {
     }
 
     #[test]
-    fn textmap_without_endmap_recovers_at_next_marker_without_swallowing_it() {
-        // No ENDMAP for MAP01, but a following binary map MAP02 must remain its
-        // own group — recovery bounds MAP01's run at MAP02, not end-of-directory.
+    fn textmap_without_endmap_recovers_at_next_udmf_map() {
+        // No ENDMAP for MAP01, but a following UDMF map (MAP02/TEXTMAP/…) is an
+        // unambiguous boundary: MAP01's run ends just before MAP02, and MAP02 is
+        // its own group. (Its own TEXTMAP is what makes MAP02 recognizable — a
+        // following *binary* map without a TEXTMAP would instead be absorbed,
+        // since a no-ENDMAP UDMF run has no reliable binary-marker boundary.)
         let wad = crate::Wad::from_bytes(build_pwad(&[
             ("MAP01", b"" as &[u8]),
             ("TEXTMAP", b"x"),
             ("SCRIPTS", b"y"),
             ("MAP02", b""),
-            ("THINGS", b""),
-            ("LINEDEFS", b""),
+            ("TEXTMAP", b"z"),
+            ("ENDMAP", b""),
         ]))
         .unwrap();
         let groups = map_groups(&wad);
         assert_eq!(
             groups.len(),
             2,
-            "MAP02 must be a separate group, not swallowed"
+            "MAP01 and the next UDMF map MAP02 are separate"
         );
         let g1 = map_group(&wad, "MAP01").unwrap();
         assert!(group_has_lump(&wad, &g1, "TEXTMAP"));
+        assert!(group_has_lump(&wad, &g1, "SCRIPTS"));
         assert!(!group_has_lump(&wad, &g1, "ENDMAP"));
         assert!(!group_has_lump(&wad, &g1, "MAP02"));
-        assert!(!group_has_lump(&wad, &g1, "THINGS"));
         let g2 = map_group(&wad, "MAP02").unwrap();
-        assert!(group_has_lump(&wad, &g2, "THINGS"));
-        assert!(group_has_lump(&wad, &g2, "LINEDEFS"));
+        assert!(group_has_lump(&wad, &g2, "TEXTMAP"));
+        assert!(group_has_lump(&wad, &g2, "ENDMAP"));
     }
 
     #[test]
