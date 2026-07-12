@@ -72,9 +72,12 @@ breakdowns are read from actual records (little-endian throughout):
 - `map::common` holds records whose byte layout is identical across formats
   (`Vertex`, `Sidedef`, `Sector`, `Seg`, `Subsector`, `Node`, `Name8`);
   `map::doom` and `map::hexen` hold the format-specific `Thing`/`Linedef`.
-  **None of these Doom 64 records share a byte layout** with the existing
-  structs (every Doom 64 record differs in width from its Doom/Hexen counterpart),
-  so Doom 64 gets its own module rather than reusing `map::common`.
+  Doom 64's `VERTEXES`/`THINGS`/`LINEDEFS`/`SIDEDEFS`/`SECTORS` each differ (in
+  width or field layout) from every existing struct and need new `map::doom64`
+  types. Its **BSP lumps `SEGS`/`SSECTORS`/`NODES`, however, share the classic
+  Doom byte layout** already modeled by `map::common::{Seg, Subsector, Node}`
+  (verified field-for-field against the real file), so Doom 64 **reuses** those
+  and defines only the differing records in its own module.
 - `parse_records::<T>` reads a lump byte slice into `Vec<T>` for any
   `T: BinRead<Args<'_> = ()>`; it derives on-disk record size from the first
   record's consumed bytes. It applies unchanged to Doom 64 sub-lump slices.
@@ -135,14 +138,12 @@ pub struct Sidedef { pub x_offset: i16, pub y_offset: i16, pub upper: u16,
 pub struct Sector { pub floor_height: i16, pub ceiling_height: i16,
     pub floor_tex: u16, pub ceiling_tex: u16, pub colors: [u16; 5],
     pub special: u16, pub tag: u16, pub flags: u16 }       // 24 B; 5 color IDs
-pub struct Seg { pub v1: u16, pub v2: u16, pub angle: u16, pub linedef: u16,
-    pub side: u16, pub offset: u16 }                       // 12 B
-pub struct Subsector { pub seg_count: u16, pub first_seg: u16 }   // 4 B
-pub struct Node { pub x: i16, pub y: i16, pub dx: i16, pub dy: i16,
-    pub right_bbox: [i16; 4], pub left_bbox: [i16; 4],
-    pub right_child: u16, pub left_child: u16 }            // 28 B
 pub struct Light { pub r: u8, pub g: u8, pub b: u8, /* + 3 bytes, field-typed in #54 */ }
 ```
+
+Doom 64's BSP lumps are **not** redefined: `SEGS` (12 B), `SSECTORS` (4 B), and
+`NODES` (28 B) match the classic Doom byte layout field-for-field, so the reader
+uses the existing `map::common::{Seg, Subsector, Node}` for them.
 
 `REJECT`, `BLOCKMAP`, `LEAFS`, and `MACROS` are read as **raw byte slices**
 (no record decoding) in this pass — `LEAFS` (render leaves) and `MACROS`
