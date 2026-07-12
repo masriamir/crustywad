@@ -262,6 +262,11 @@ impl<'a> Lexer<'a> {
             // Syntax), then apply the sign in i128 so the full i64 range —
             // including i64::MIN (`-0x8000000000000000`) — round-trips
             // consistently with the signed decimal path below.
+            let sign_str = match sign {
+                Some('-') => "-",
+                Some('+') => "+",
+                _ => "",
+            };
             return u64::from_str_radix(&hex, 16)
                 .ok()
                 .and_then(|magnitude| {
@@ -276,7 +281,9 @@ impl<'a> Lexer<'a> {
                 .ok_or_else(|| UdmfParseError::Syntax {
                     line: start_line,
                     column: start_column,
-                    message: format!("hexadecimal integer literal '0x{hex}' out of range"),
+                    message: format!(
+                        "hexadecimal integer literal '{sign_str}0x{hex}' out of range"
+                    ),
                 });
         }
 

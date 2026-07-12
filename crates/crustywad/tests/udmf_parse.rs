@@ -59,12 +59,15 @@ fn semantic_error_on_missing_required_field() {
 
 #[test]
 fn depth_exceeded_on_configured_limit() {
-    let text = format!("namespace=\"doom\"; x {}", "{".repeat(64));
-    let err = parse_udmf(&text, Limits { max_depth: 4 }).unwrap_err();
-    assert!(matches!(
-        err,
-        UdmfParseError::Syntax { .. } | UdmfParseError::DepthExceeded { .. }
-    ));
+    // With `max_depth: 0`, the very first `{` (new depth 1 > 0) trips the
+    // depth guard deterministically, before the "blocks don't nest" `Syntax`
+    // catch-all ever gets a chance to fire (that would require a *second*
+    // `{`, which this input never reaches).
+    let err = parse_udmf("namespace=\"doom\"; vertex {", Limits { max_depth: 0 }).unwrap_err();
+    assert!(
+        matches!(err, UdmfParseError::DepthExceeded { max_depth: 0, .. }),
+        "got {err:?}"
+    );
 }
 
 /// Validates the committed `fuzz_parse_udmf` seed corpus: the two valid seeds
