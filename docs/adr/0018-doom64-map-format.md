@@ -3,6 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-07-12
 - **Deciders:** @masriamir
+- **Tracking issue:** https://github.com/masriamir/crustywad/issues/54
 
 ## Context and problem statement
 
@@ -72,7 +73,7 @@ breakdowns are read from actual records (little-endian throughout):
   (`Vertex`, `Sidedef`, `Sector`, `Seg`, `Subsector`, `Node`, `Name8`);
   `map::doom` and `map::hexen` hold the format-specific `Thing`/`Linedef`.
   **None of these Doom 64 records share a byte layout** with the existing
-  structs (every Doom 64 arena differs in width from its Doom/Hexen counterpart),
+  structs (every Doom 64 record differs in width from its Doom/Hexen counterpart),
   so Doom 64 gets its own module rather than reusing `map::common`.
 - `parse_records::<T>` reads a lump byte slice into `Vec<T>` for any
   `T: BinRead<Args<'_> = ()>`; it derives on-disk record size from the first
