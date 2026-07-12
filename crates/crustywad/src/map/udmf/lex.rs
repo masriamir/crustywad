@@ -1,0 +1,670 @@
+//! UDMF tokenizer.
+//!
+//! [`Lexer`] scans UDMF `TEXTMAP` source text into a flat stream of
+//! [`Spanned`] [`Token`]s. The scan is a single non-recursive loop over the
+//! input's characters, tracking 1-based line/column positions as it goes.
+//! This module is crate-internal; [`super::parse`][crate::map::udmf]
+//! consumes the token stream to build the UDMF AST.
+
+use super::UdmfParseError;
+
+/// A single lexical token produced by [`Lexer`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Token {
+    /// `{`
+    LBrace,
+    /// `}`
+    RBrace,
+    /// `=`
+    Equals,
+    /// `;`
+    Semicolon,
+    /// An identifier or keyword, e.g. a block name or field key.
+    Ident(String),
+    /// A `true`/`false` literal.
+    Bool(bool),
+    /// A signed integer literal.
+    Int(i64),
+    /// A floating-point literal.
+    Float(f64),
+    /// A double-quoted string literal with escapes resolved.
+    Str(String),
+}
+
+/// A [`Token`] paired with the 1-based line and column of its first character.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Spanned {
+    /// The token itself.
+    pub(crate) token: Token,
+    /// 1-based source line of the token's first character.
+    pub(crate) line: usize,
+    /// 1-based source column of the token's first character.
+    pub(crate) column: usize,
+}
+
+/// A flat, non-recursive tokenizer over UDMF source text.
+///
+/// `Lexer` holds a `Vec<char>` view of the input plus a cursor index and the
+/// current 1-based line/column. Each call to [`Lexer::next_spanned`] advances
+/// the cursor past exactly one token (skipping whitespace and comments
+/// first) and returns it.
+pub(crate) struct Lexer<'a> {
+    /// Retained for potential future use (e.g. byte-offset reporting); the
+    /// scan itself operates over `chars`.
+    _input: &'a str,
+    /// The input, decoded into a random-accessible character buffer.
+    chars: Vec<char>,
+    /// Index of the next unconsumed character in `chars`.
+    pos: usize,
+    /// 1-based line of the next unconsumed character.
+    line: usize,
+    /// 1-based column of the next unconsumed character.
+    column: usize,
+}
+
+impl<'a> Lexer<'a> {
+    /// Creates a lexer over `input`.
+    pub(crate) fn new(input: &'a str) -> Self {
+        Self {
+            _input: input,
+            chars: input.chars().collect(),
+            pos: 0,
+            line: 1,
+            column: 1,
+        }
+    }
+
+    /// Returns the character at `pos` without consuming it.
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).copied()
+    }
+
+    /// Returns the character at `pos + offset` without consuming it.
+    fn peek_at(&self, offset: usize) -> Option<char> {
+        self.chars.get(self.pos + offset).copied()
+    }
+
+    /// Consumes and returns the character at `pos`, advancing `line`/`column`.
+    fn advance(&mut self) -> Option<char> {
+        let c = self.peek()?;
+        self.pos += 1;
+        if c == '\n' {
+            self.line += 1;
+            self.column = 1;
+        } else {
+            self.column += 1;
+        }
+        Some(c)
+    }
+
+    /// Skips whitespace, `//` line comments, and `/* */` block comments.
+    ///
+    /// Returns an error if a block comment is left unterminated.
+    fn skip_trivia(&mut self) -> Result<(), UdmfParseError> {
+        loop {
+            match self.peek() {
+                Some(c) if c.is_whitespace() => {
+                    self.advance();
+                }
+                Some('/') if self.peek_at(1) == Some('/') => {
+                    while let Some(c) = self.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                Some('/') if self.peek_at(1) == Some('*') => {
+                    let (start_line, start_column) = (self.line, self.column);
+                    self.advance();
+                    self.advance();
+                    let mut closed = false;
+                    while let Some(c) = self.peek() {
+                        if c == '*' && self.peek_at(1) == Some('/') {
+                            self.advance();
+                            self.advance();
+                            closed = true;
+                            break;
+                        }
+                        self.advance();
+                    }
+                    if !closed {
+                        return Err(UdmfParseError::Syntax {
+                            line: start_line,
+                            column: start_column,
+                            message: "unterminated block comment".to_owned(),
+                        });
+                    }
+                }
+                _ => break,
+            }
+        }
+        Ok(())
+    }
+
+    /// Scans a double-quoted string literal. Resolves the escape sequences
+    /// `\"`, `\\`, `\n`, and `\t`; any other `\X` sequence passes through as
+    /// the literal character `X` (the backslash is dropped).
+    ///
+    /// The opening quote must already have been consumed by the caller.
+    fn scan_string(
+        &mut self,
+        start_line: usize,
+        start_column: usize,
+    ) -> Result<Token, UdmfParseError> {
+        let mut value = String::new();
+        loop {
+            match self.advance() {
+                None | Some('\n') => {
+                    return Err(UdmfParseError::Syntax {
+                        line: start_line,
+                        column: start_column,
+                        message: "unterminated string literal".to_owned(),
+                    });
+                }
+                Some('"') => return Ok(Token::Str(value)),
+                Some('\\') => match self.advance() {
+                    Some('"') => value.push('"'),
+                    Some('\\') => value.push('\\'),
+                    Some('n') => value.push('\n'),
+                    Some('t') => value.push('\t'),
+                    Some(other) => value.push(other),
+                    None => {
+                        return Err(UdmfParseError::Syntax {
+                            line: start_line,
+                            column: start_column,
+                            message: "unterminated string literal".to_owned(),
+                        });
+                    }
+                },
+                Some(c) => value.push(c),
+            }
+        }
+    }
+
+    /// Scans an identifier/keyword starting at the already-consumed first
+    /// character `first`, mapping `true`/`false` to [`Token::Bool`]
+    /// case-insensitively. UDMF identifiers and keywords are case-insensitive
+    /// (ADR-0017), so any other identifier is folded to ASCII lowercase
+    /// before being wrapped in [`Token::Ident`]; quoted [`Token::Str`] values
+    /// are left untouched by this rule.
+    fn scan_ident(&mut self, first: char) -> Token {
+        let mut ident = String::new();
+        ident.push(first);
+        while let Some(c) = self.peek() {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                ident.push(c);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if ident.eq_ignore_ascii_case("true") {
+            Token::Bool(true)
+        } else if ident.eq_ignore_ascii_case("false") {
+            Token::Bool(false)
+        } else {
+            Token::Ident(ident.to_ascii_lowercase())
+        }
+    }
+
+    /// Scans a numeric literal starting at the already-consumed first
+    /// character `first`, producing [`Token::Int`] or [`Token::Float`]
+    /// depending on whether a fraction/exponent is present, or a
+    /// [`Token::Int`] parsed from hexadecimal digits for a `0x`/`0X` literal.
+    fn scan_number(
+        &mut self,
+        first: char,
+        start_line: usize,
+        start_column: usize,
+    ) -> Result<Token, UdmfParseError> {
+        // An optional leading sign was passed in as `first`; if so, consume
+        // the next character to find the true start of the magnitude. The
+        // caller (`next_spanned`) only dispatches here for a sign when the
+        // following character is a digit or `.`, so this `advance` cannot
+        // fail.
+        let (sign, digit_first) = if first == '+' || first == '-' {
+            let Some(next) = self.advance() else {
+                return Err(UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: "incomplete numeric literal".to_owned(),
+                });
+            };
+            (Some(first), next)
+        } else {
+            (None, first)
+        };
+
+        // Hexadecimal integer literal: `0x`/`0X` followed by one-or-more hex
+        // digits (case-insensitive), per ADR-0017's grammar
+        // (`0x[0-9A-Fa-f]+`). Octal is intentionally NOT supported below —
+        // see the decimal path's comment.
+        if digit_first == '0' && matches!(self.peek(), Some('x' | 'X')) {
+            self.advance();
+            let mut hex = String::new();
+            while let Some(c) = self.peek() {
+                if c.is_ascii_hexdigit() {
+                    hex.push(c);
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            if hex.is_empty() {
+                return Err(UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: "invalid hexadecimal integer literal".to_owned(),
+                });
+            }
+            // Parse the magnitude as u64 (17+ hex digits overflow it -> None ->
+            // Syntax), then apply the sign in i128 so the full i64 range —
+            // including i64::MIN (`-0x8000000000000000`) — round-trips
+            // consistently with the signed decimal path below.
+            return u64::from_str_radix(&hex, 16)
+                .ok()
+                .and_then(|magnitude| {
+                    let signed = if sign == Some('-') {
+                        -i128::from(magnitude)
+                    } else {
+                        i128::from(magnitude)
+                    };
+                    i64::try_from(signed).ok()
+                })
+                .map(Token::Int)
+                .ok_or_else(|| UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: hex_out_of_range_message(sign, &hex),
+                });
+        }
+
+        // Decimal integer or floating-point literal. A leading zero (e.g.
+        // `010`) is intentionally parsed as DECIMAL, not octal: octal-from-
+        // leading-zero is a well-known footgun and real map editors emit
+        // decimal, so `010` lexes to `Int(10)`, not `Int(8)`.
+        let mut text = String::new();
+        if let Some(s) = sign {
+            text.push(s);
+        }
+        text.push(digit_first);
+        let mut is_float = digit_first == '.';
+
+        while let Some(c) = self.peek() {
+            if c.is_ascii_digit() {
+                text.push(c);
+                self.advance();
+            } else if c == '.' && !is_float {
+                is_float = true;
+                text.push(c);
+                self.advance();
+            } else if c == 'e' || c == 'E' {
+                // An `e`/`E` following the mantissa always introduces an
+                // exponent (making this a float). If no valid exponent digits
+                // follow (e.g. `1e`, `1e+`), the final `f64` parse rejects the
+                // whole literal as a `Syntax` error, rather than splitting off a
+                // stray `e` identifier and producing a misleading downstream one.
+                is_float = true;
+                text.push(c);
+                self.advance();
+                if let Some(sign @ ('+' | '-')) = self.peek() {
+                    text.push(sign);
+                    self.advance();
+                }
+            } else {
+                break;
+            }
+        }
+
+        if is_float {
+            // Reject non-finite results: Rust's `f64` parser maps an
+            // out-of-range exponent (e.g. `1e309`) to `+/-inf` rather than an
+            // error, and an infinite/NaN coordinate must not silently enter the
+            // parsed map (later assembly assumes finite geometry).
+            text.parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite())
+                .map(Token::Float)
+                .ok_or_else(|| UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: format!("invalid or out-of-range float literal '{text}'"),
+                })
+        } else {
+            text.parse::<i64>()
+                .map(Token::Int)
+                .map_err(|_| UdmfParseError::Syntax {
+                    line: start_line,
+                    column: start_column,
+                    message: format!("invalid integer literal '{text}'"),
+                })
+        }
+    }
+
+    /// Scans and returns the next token, or `Ok(None)` at end of input.
+    ///
+    /// # Errors
+    /// Returns [`UdmfParseError::Syntax`] if a string is unterminated, a
+    /// block comment is unterminated, a numeric literal is malformed, or a
+    /// character does not start any recognized token.
+    pub(crate) fn next_spanned(&mut self) -> Result<Option<Spanned>, UdmfParseError> {
+        self.skip_trivia()?;
+
+        let (line, column) = (self.line, self.column);
+        let Some(c) = self.advance() else {
+            return Ok(None);
+        };
+
+        let token = match c {
+            '{' => Token::LBrace,
+            '}' => Token::RBrace,
+            '=' => Token::Equals,
+            ';' => Token::Semicolon,
+            '"' => self.scan_string(line, column)?,
+            '-' | '+' if matches!(self.peek(), Some(d) if d.is_ascii_digit() || d == '.') => {
+                // Pass the sign as the leading character so the full signed
+                // literal is parsed in one step. Parsing the magnitude and then
+                // negating would reject `i64::MIN`, whose magnitude
+                // (9223372036854775808) exceeds `i64::MAX`.
+                self.scan_number(c, line, column)?
+            }
+            c if c.is_ascii_digit() || c == '.' => self.scan_number(c, line, column)?,
+            c if c.is_ascii_alphabetic() || c == '_' => self.scan_ident(c),
+            other => {
+                return Err(UdmfParseError::Syntax {
+                    line,
+                    column,
+                    message: format!("unexpected character '{other}'"),
+                });
+            }
+        };
+
+        Ok(Some(Spanned {
+            token,
+            line,
+            column,
+        }))
+    }
+}
+
+/// Formats the out-of-range hexadecimal integer literal error message,
+/// preserving `sign` so the reported literal round-trips what the caller
+/// actually wrote (matching the decimal path's error formatting).
+fn hex_out_of_range_message(sign: Option<char>, hex: &str) -> String {
+    let sign_str = match sign {
+        Some('-') => "-",
+        Some('+') => "+",
+        _ => "",
+    };
+    format!("hexadecimal integer literal '{sign_str}0x{hex}' out of range")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Lexer, Token, UdmfParseError};
+
+    fn lex_all(input: &str) -> Vec<Token> {
+        let mut lx = Lexer::new(input);
+        let mut out = Vec::new();
+        while let Some(s) = lx.next_spanned().unwrap() {
+            out.push(s.token);
+        }
+        out
+    }
+
+    #[test]
+    fn lexes_assignment_tokens() {
+        assert_eq!(
+            lex_all("namespace = \"doom\" ;"),
+            vec![
+                Token::Ident("namespace".into()),
+                Token::Equals,
+                Token::Str("doom".into()),
+                Token::Semicolon,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_block_and_numbers_and_bools() {
+        assert_eq!(
+            lex_all("vertex { x = -1; y = 2.5; b = true; }"),
+            vec![
+                Token::Ident("vertex".into()),
+                Token::LBrace,
+                Token::Ident("x".into()),
+                Token::Equals,
+                Token::Int(-1),
+                Token::Semicolon,
+                Token::Ident("y".into()),
+                Token::Equals,
+                Token::Float(2.5),
+                Token::Semicolon,
+                Token::Ident("b".into()),
+                Token::Equals,
+                Token::Bool(true),
+                Token::Semicolon,
+                Token::RBrace,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_i64_boundaries() {
+        // `i64::MIN`'s magnitude exceeds `i64::MAX`, so it must be parsed as a
+        // single signed literal rather than magnitude-then-negate.
+        assert_eq!(
+            lex_all("-9223372036854775808 9223372036854775807 +42"),
+            vec![Token::Int(i64::MIN), Token::Int(i64::MAX), Token::Int(42)]
+        );
+    }
+
+    #[test]
+    fn skips_line_and_block_comments() {
+        assert_eq!(
+            lex_all("a // comment\n = /* x */ 1 ;"),
+            vec![
+                Token::Ident("a".into()),
+                Token::Equals,
+                Token::Int(1),
+                Token::Semicolon
+            ]
+        );
+    }
+
+    #[test]
+    fn tracks_line_and_column() {
+        let mut lx = Lexer::new("a\n  b");
+        let a = lx.next_spanned().unwrap().unwrap();
+        assert_eq!((a.line, a.column), (1, 1));
+        let b = lx.next_spanned().unwrap().unwrap();
+        assert_eq!((b.line, b.column), (2, 3));
+    }
+
+    #[test]
+    fn handles_string_escapes() {
+        assert_eq!(lex_all(r#""a\"b\\c""#), vec![Token::Str("a\"b\\c".into())]);
+    }
+
+    #[test]
+    fn unterminated_string_is_syntax_error() {
+        let mut lx = Lexer::new("\"abc");
+        assert!(lx.next_spanned().is_err());
+    }
+
+    #[test]
+    fn identifiers_and_keywords_are_case_insensitive() {
+        assert_eq!(
+            lex_all("VERTEX { X = TRUE; }"),
+            vec![
+                Token::Ident("vertex".into()),
+                Token::LBrace,
+                Token::Ident("x".into()),
+                Token::Equals,
+                Token::Bool(true),
+                Token::Semicolon,
+                Token::RBrace,
+            ]
+        );
+        assert_eq!(
+            lex_all("TextureTop"),
+            vec![Token::Ident("texturetop".into())]
+        );
+    }
+
+    #[test]
+    fn lexes_hexadecimal_integers() {
+        assert_eq!(
+            lex_all("0x10 0xFF 0xff -0x10 +0x1"),
+            vec![
+                Token::Int(16),
+                Token::Int(255),
+                Token::Int(255),
+                Token::Int(-16),
+                Token::Int(1),
+            ]
+        );
+    }
+
+    #[test]
+    fn hex_covers_full_i64_range_like_decimal() {
+        // i64::MIN via hex must round-trip (consistent with the decimal path),
+        // and i64::MAX; the positive magnitude 2^63 and a 17-hex-digit value
+        // overflow i64 and are rejected as Syntax (no panic).
+        assert_eq!(
+            lex_all("-0x8000000000000000 0x7fffffffffffffff"),
+            vec![Token::Int(i64::MIN), Token::Int(i64::MAX)]
+        );
+        let mut over = Lexer::new("0x8000000000000000");
+        assert!(over.next_spanned().is_err());
+        let mut huge = Lexer::new("0xffffffffffffffff0");
+        assert!(huge.next_spanned().is_err());
+    }
+
+    #[test]
+    fn leading_zero_decimal_is_not_octal() {
+        assert_eq!(lex_all("010 007"), vec![Token::Int(10), Token::Int(7)]);
+    }
+
+    #[test]
+    fn overflowing_float_exponent_is_rejected() {
+        // A finite (even very large) float lexes fine...
+        assert_eq!(lex_all("1e308"), vec![Token::Float(1e308)]);
+        // ...but an exponent that overflows to +/-inf must be a Syntax error,
+        // not a silent infinite coordinate.
+        let mut inf = Lexer::new("1e309");
+        assert!(inf.next_spanned().is_err());
+        let mut neg_inf = Lexer::new("-2e400");
+        assert!(neg_inf.next_spanned().is_err());
+    }
+
+    #[test]
+    fn hex_literal_with_no_digits_is_syntax_error() {
+        let mut lx = Lexer::new("0x;");
+        assert!(lx.next_spanned().is_err());
+    }
+
+    #[test]
+    fn hex_literal_overflow_is_syntax_error_not_panic() {
+        let mut lx = Lexer::new("0xFFFFFFFFFFFFFFFFF");
+        assert!(lx.next_spanned().is_err());
+    }
+
+    #[test]
+    fn hex_out_of_range_error_message_includes_sign() {
+        // Regression test: the out-of-range hex message must include the
+        // literal's leading sign (e.g. `-0x8000000000000001`), matching the
+        // decimal path's error formatting, instead of silently dropping it.
+        let mut neg = Lexer::new("-0x8000000000000001");
+        let err = neg.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert!(
+            message.contains("'-0x8000000000000001'"),
+            "message was: {message}"
+        );
+
+        let mut pos = Lexer::new("+0x10000000000000000");
+        let err = pos.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert!(
+            message.contains("'+0x10000000000000000'"),
+            "message was: {message}"
+        );
+    }
+
+    #[test]
+    fn unterminated_block_comment_is_syntax_error() {
+        let mut lx = Lexer::new("/* never closed");
+        let err = lx.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert_eq!(message, "unterminated block comment");
+    }
+
+    #[test]
+    fn lexes_false_keyword() {
+        assert_eq!(lex_all("false"), vec![Token::Bool(false)]);
+    }
+
+    #[test]
+    fn string_escapes_resolve_newline_and_tab() {
+        assert_eq!(lex_all(r#""a\nb\tc""#), vec![Token::Str("a\nb\tc".into())]);
+    }
+
+    #[test]
+    fn string_unrecognized_escape_passes_through_character() {
+        // Per `scan_string`'s doc comment, any `\X` other than `\"`, `\\`,
+        // `\n`, `\t` passes through as the literal character `X` (the
+        // backslash itself is dropped).
+        assert_eq!(lex_all(r#""a\qb""#), vec![Token::Str("aqb".into())]);
+    }
+
+    #[test]
+    fn string_with_trailing_backslash_at_eof_is_syntax_error() {
+        // The backslash starts an escape sequence, but input ends before the
+        // escaped character (and before a closing quote).
+        let mut lx = Lexer::new("\"abc\\");
+        let err = lx.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert_eq!(message, "unterminated string literal");
+    }
+
+    #[test]
+    fn float_exponent_with_explicit_sign_is_lexed() {
+        assert_eq!(lex_all("1e+5"), vec![Token::Float(1e5)]);
+        assert_eq!(lex_all("2.5e-3"), vec![Token::Float(2.5e-3)]);
+    }
+
+    #[test]
+    fn incomplete_exponent_is_rejected_at_lex_time() {
+        // An `e`/`E` with no following exponent digits is a malformed float and
+        // must be a single `Syntax` error, not `Int(1)` + a stray `Ident("e")`.
+        for src in ["1e", "1e+", "1e-", "2.5e", "3E"] {
+            let mut lx = Lexer::new(src);
+            assert!(
+                lx.next_spanned().is_err(),
+                "expected Syntax error lexing {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decimal_integer_overflow_is_syntax_error() {
+        // 20 nines: exceeds i64::MAX (19 digits), has no `.`/`e`, so it takes
+        // the decimal-integer (not float) path and must fail `str::parse`.
+        let mut lx = Lexer::new("99999999999999999999");
+        let err = lx.next_spanned().unwrap_err();
+        let UdmfParseError::Syntax { message, .. } = err else {
+            panic!("expected Syntax error, got {err:?}");
+        };
+        assert_eq!(message, "invalid integer literal '99999999999999999999'");
+    }
+}
