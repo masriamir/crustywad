@@ -733,11 +733,12 @@ fn assemble_udmf(
 #[cfg(test)]
 mod tests {
     use super::{
-        Map, normalize_udmf_linedefs, normalize_udmf_things, normalize_udmf_vertices, resolve_left,
-        resolve_optional, resolve_required,
+        Map, MapAssembleError, normalize_udmf_linedefs, normalize_udmf_sidedefs,
+        normalize_udmf_things, normalize_udmf_vertices, resolve_left, resolve_optional,
+        resolve_required,
     };
     use crate::map::graph::{MapFormat, SidedefIdx, VertexIdx};
-    use crate::map::udmf::{UdmfLinedef, UdmfThing};
+    use crate::map::udmf::{UdmfLinedef, UdmfSidedef, UdmfThing};
     use crate::{ParseOptions, Strictness, map::MapWarning};
     use proptest::prelude::*;
 
@@ -948,6 +949,60 @@ mod tests {
             w.iter()
                 .any(|x| matches!(x, MapWarning::FieldOutOfRange { .. }))
         );
+    }
+
+    #[test]
+    fn normalize_udmf_sidedef_dangling_sector_strict_errors() {
+        // Strict-mode error propagation on a UDMF sidedef's out-of-range sector.
+        let mut w = Vec::new();
+        let sides = [UdmfSidedef {
+            offsetx: 0,
+            offsety: 0,
+            texturetop: "-".to_owned(),
+            texturebottom: "-".to_owned(),
+            texturemiddle: "-".to_owned(),
+            sector: 99,
+        }];
+        let err = normalize_udmf_sidedefs(&sides, 1, Strictness::Strict, &mut w).unwrap_err();
+        assert!(matches!(err, MapAssembleError::DanglingReference { .. }));
+    }
+
+    #[test]
+    fn normalize_udmf_linedef_dangling_end_vertex_strict_errors() {
+        // Strict-mode error on the second (end/`v2`) vertex reference — `v1` is
+        // valid so resolution reaches `v2`.
+        let mut w = Vec::new();
+        let lines = [UdmfLinedef {
+            v1: 0,
+            v2: 99,
+            sidefront: 0,
+            sideback: None,
+            id: 0,
+            special: 0,
+            args: [0; 5],
+            flags: 0,
+        }];
+        let err = normalize_udmf_linedefs(&lines, 2, 1, Strictness::Strict, &mut w).unwrap_err();
+        assert!(matches!(err, MapAssembleError::DanglingReference { .. }));
+    }
+
+    #[test]
+    fn normalize_udmf_linedef_dangling_sidefront_strict_errors() {
+        // Strict-mode error on the `sidefront` (right sidedef) reference — the
+        // vertices resolve, so resolution reaches `sidefront`.
+        let mut w = Vec::new();
+        let lines = [UdmfLinedef {
+            v1: 0,
+            v2: 1,
+            sidefront: 99,
+            sideback: None,
+            id: 0,
+            special: 0,
+            args: [0; 5],
+            flags: 0,
+        }];
+        let err = normalize_udmf_linedefs(&lines, 2, 1, Strictness::Strict, &mut w).unwrap_err();
+        assert!(matches!(err, MapAssembleError::DanglingReference { .. }));
     }
 
     proptest! {
