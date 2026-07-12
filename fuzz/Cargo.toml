@@ -36,6 +36,12 @@ path = "fuzz_targets/fuzz_parse_udmf.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_assemble_udmf"
+path = "fuzz_targets/fuzz_assemble_udmf.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 crustywad = { path = "../crates/crustywad" }
