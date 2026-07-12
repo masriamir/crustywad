@@ -148,6 +148,44 @@ fn resolve_required(
     }
 }
 
+/// Range-checks an **optional** sidedef reference with no binary sentinel.
+///
+/// Used by the UDMF normalizer, which supplies `sideback` already stripped of
+/// its `-1` one-sided sentinel (the parser mapped `-1 -> None`), so a real index
+/// — including `65535` — is validated normally rather than treated as the binary
+/// `0xffff` "no back side" marker. In range -> `Some(idx)`; otherwise strict
+/// error / lenient `None` + `DanglingReference` warning.
+fn resolve_optional(
+    idx: i32,
+    count: usize,
+    from: &'static str,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Option<usize>, MapAssembleError> {
+    if let Ok(u) = usize::try_from(idx) {
+        if u < count {
+            return Ok(Some(u));
+        }
+    }
+    match strictness {
+        Strictness::Strict => Err(MapAssembleError::DanglingReference {
+            referent: "sidedef",
+            index: idx,
+            from,
+            count,
+        }),
+        Strictness::Lenient => {
+            warnings.push(MapWarning::DanglingReference {
+                referent: "sidedef",
+                index: idx,
+                from,
+                count,
+            });
+            Ok(None)
+        }
+    }
+}
+
 /// Resolves a linedef's **left** sidedef against the binary `0xffff` sentinel.
 ///
 /// `0xffff` (65535) is the on-disk Doom/Hexen "no back side" marker: `sideback`
@@ -172,29 +210,7 @@ fn resolve_left(
     if raw == 0xffff {
         return Ok(None);
     }
-    // A negative index (or one past `count`) is out of range.
-    if let Ok(idx) = usize::try_from(raw) {
-        if idx < count {
-            return Ok(Some(idx));
-        }
-    }
-    match strictness {
-        Strictness::Strict => Err(MapAssembleError::DanglingReference {
-            referent: "sidedef",
-            index: raw,
-            from,
-            count,
-        }),
-        Strictness::Lenient => {
-            warnings.push(MapWarning::DanglingReference {
-                referent: "sidedef",
-                index: raw,
-                from,
-                count,
-            });
-            Ok(None)
-        }
-    }
+    resolve_optional(raw, count, from, strictness, warnings)
 }
 
 /// Resolves a linedef's four cross-references (start/end vertex, right/left
@@ -505,7 +521,7 @@ impl Map {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_left, resolve_required};
+    use super::{resolve_left, resolve_optional, resolve_required};
     use crate::Strictness;
 
     #[test]
@@ -553,5 +569,22 @@ mod tests {
             None
         );
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn resolve_optional_has_no_binary_sentinel() {
+        let mut w = Vec::new();
+        // 65535 is a VALID index when count is large enough (no 0xffff sentinel).
+        assert_eq!(
+            resolve_optional(0xffff, 70000, "linedef", Strictness::Strict, &mut w).unwrap(),
+            Some(0xffff)
+        );
+        assert!(w.is_empty());
+        // Out of range -> lenient None + warning.
+        assert_eq!(
+            resolve_optional(5, 4, "linedef", Strictness::Lenient, &mut w).unwrap(),
+            None
+        );
+        assert_eq!(w.len(), 1);
     }
 }
