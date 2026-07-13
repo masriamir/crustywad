@@ -12,7 +12,7 @@ use std::fmt::Write as _;
 
 use crate::Strictness;
 use crate::map::Map;
-use crate::map::graph::{MapLinedef, MapSector, MapSidedef, MapVertex};
+use crate::map::graph::{MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
 use crate::write::WriteOptions;
 
 /// Message for the infallible `write!`-into-`String` calls.
@@ -211,6 +211,50 @@ impl Writer {
         }
         self.out.push_str("}\n");
     }
+
+    fn push_thing(&mut self, index: usize, t: &MapThing) -> Result<(), UdmfWriteError> {
+        let x = self.fmt_float("thing", "x", index, t.x)?;
+        let y = self.fmt_float("thing", "y", index, t.y)?;
+        self.out.push_str("thing { ");
+        write!(self.out, "x = {x}; y = {y}; type = {}; ", t.type_id).expect(INFALLIBLE);
+        if t.height != 0.0 {
+            let h = self.fmt_float("thing", "height", index, t.height)?;
+            write!(self.out, "height = {h}; ").expect(INFALLIBLE);
+        }
+        if t.angle != 0 {
+            write!(self.out, "angle = {}; ", t.angle).expect(INFALLIBLE);
+        }
+        if t.id != 0 {
+            write!(self.out, "id = {}; ", t.id).expect(INFALLIBLE);
+        }
+        if t.special.special != 0 {
+            write!(self.out, "special = {}; ", t.special.special).expect(INFALLIBLE);
+        }
+        for (i, arg) in t.special.args.iter().enumerate() {
+            if *arg != 0 {
+                write!(self.out, "arg{i} = {arg}; ").expect(INFALLIBLE);
+            }
+        }
+        // Thing flags: Doom bits -> UDMF booleans (single/dm/coop default true).
+        let f = t.flags;
+        if f & 0x0001 != 0 {
+            self.out.push_str("skill1 = true; skill2 = true; ");
+        }
+        if f & 0x0002 != 0 {
+            self.out.push_str("skill3 = true; ");
+        }
+        if f & 0x0004 != 0 {
+            self.out.push_str("skill4 = true; skill5 = true; ");
+        }
+        if f & 0x0008 != 0 {
+            self.out.push_str("ambush = true; ");
+        }
+        if f & 0x0010 != 0 {
+            self.out.push_str("single = false; ");
+        }
+        self.out.push_str("}\n");
+        Ok(())
+    }
 }
 
 /// Serializes an assembled map to UDMF `TEXTMAP` text.
@@ -263,5 +307,93 @@ pub fn write_udmf(
         w.push_sector(s);
     }
 
+    for (i, t) in map.things().iter().enumerate() {
+        w.push_thing(i, t)?;
+    }
+
     Ok((w.out, w.warnings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::graph::{MapThing, Special};
+
+    fn thing(flags: u32) -> MapThing {
+        MapThing {
+            x: 0.0,
+            y: 0.0,
+            angle: 0,
+            type_id: 1,
+            flags,
+            id: 0,
+            height: 0.0,
+            special: Special {
+                special: 0,
+                args: [0; 5],
+            },
+        }
+    }
+
+    #[test]
+    fn thing_flag_mapping_covers_all_bits() {
+        let mut w = Writer::new(Strictness::Strict);
+        w.push_thing(0, &thing(0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010))
+            .unwrap();
+        let out = &w.out;
+        assert!(out.contains("skill1 = true; skill2 = true; "));
+        assert!(out.contains("skill3 = true; "));
+        assert!(out.contains("skill4 = true; skill5 = true; "));
+        assert!(out.contains("ambush = true; "));
+        assert!(out.contains("single = false; "));
+    }
+
+    #[test]
+    fn no_thing_flags_emitted_when_zero() {
+        let mut w = Writer::new(Strictness::Strict);
+        w.push_thing(0, &thing(0)).unwrap();
+        assert!(!w.out.contains("skill"));
+        assert!(!w.out.contains("ambush"));
+        assert!(!w.out.contains("single"));
+    }
+
+    #[test]
+    fn non_finite_coordinate_errors_in_strict() {
+        let mut w = Writer::new(Strictness::Strict);
+        let mut t = thing(0);
+        t.x = f64::NAN;
+        let err = w.push_thing(0, &t).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfWriteError::NonFiniteCoordinate {
+                block: "thing",
+                field: "x",
+                index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn non_finite_coordinate_replaced_in_lenient() {
+        let mut w = Writer::new(Strictness::Lenient);
+        let mut t = thing(0);
+        t.height = f64::INFINITY;
+        t.x = 1.0;
+        t.y = 2.0;
+        w.push_thing(0, &t).unwrap();
+        assert!(w.out.contains("height = 0; "));
+        assert_eq!(
+            w.warnings,
+            vec![UdmfWriteWarning::NonFiniteReplaced {
+                block: "thing",
+                field: "height",
+                index: 0
+            }]
+        );
+    }
+
+    #[test]
+    fn escape_handles_quote_and_backslash() {
+        assert_eq!(escape_udmf_string(r#"a"b\c"#), r#""a\"b\\c""#);
+    }
 }

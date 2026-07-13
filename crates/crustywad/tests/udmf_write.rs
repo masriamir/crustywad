@@ -137,3 +137,32 @@ fn omits_lightlevel_at_udmf_default_160() {
     let sector = out.lines().find(|l| l.starts_with("sector")).unwrap();
     assert!(!sector.contains("lightlevel = "), "{sector}");
 }
+
+#[test]
+fn writes_thing_fields_omitting_defaults() {
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 8; y = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "sidedef { sector = 0; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+        "thing { x = 1.5; y = 2; type = 3001; angle = 90; id = 5; special = 80; arg0 = 1; height = 24; }\n",
+    );
+    let map = assemble_udmf(text);
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    let t = out.lines().find(|l| l.starts_with("thing")).unwrap();
+    assert!(t.contains("x = 1.5; "), "{t}"); // non-whole float preserved
+    assert!(t.contains("y = 2; "), "{t}"); // whole float narrowed
+    assert!(t.contains("type = 3001; "), "{t}");
+    assert!(t.contains("angle = 90; "), "{t}");
+    assert!(t.contains("id = 5; "), "{t}");
+    assert!(t.contains("special = 80; "), "{t}");
+    assert!(t.contains("arg0 = 1; "), "{t}");
+    assert!(t.contains("height = 24; "), "{t}");
+    assert!(!t.contains("arg1"), "{t}"); // 0 default
+}
+
+// Thing-flag mapping and non-finite handling are covered by unit tests inside
+// write.rs (they need direct `Map`/`Writer` construction that the public
+// assembly path cannot easily produce for flags/NaN). See Step 3b.
