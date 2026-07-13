@@ -7,9 +7,13 @@
 mod lex;
 mod model;
 mod parse;
+#[cfg(feature = "write")]
+mod write;
 
 pub use model::{UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfVertex};
 pub use parse::parse_udmf;
+#[cfg(feature = "write")]
+pub use write::{UdmfWriteError, UdmfWriteWarning, write_udmf};
 
 use thiserror::Error;
 
