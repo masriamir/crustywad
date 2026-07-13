@@ -95,14 +95,24 @@ def crate_version() -> str:
 def expected_pin(version: str) -> str:
     """Returns the caret requirement a reader should write for `version`.
 
-    Cargo's caret semantics differ either side of 1.0: for `0.x` the compatible
-    range is minor-pinned, so a reader must write `0.3` (not `0`); from 1.0 the
-    major alone is enough.
+    Cargo's caret semantics narrow as the version approaches zero, and each tier
+    needs a different pin for the requirement to actually resolve:
+
+    - ``1.2.3`` -> ``1``      (``^1`` is ``>=1.2.3, <2.0.0``; the major suffices)
+    - ``0.3.0`` -> ``0.3``    (``^0.3`` is ``>=0.3.0, <0.4.0``; minor-pinned)
+    - ``0.0.5`` -> ``0.0.5``  (``^0.0.5`` is ``>=0.0.5, <0.0.6``; patch-pinned --
+      the full version is required, since ``0.0`` denotes a different range)
     """
     parts = version.split(".")
     major = parts[0]
     minor = parts[1] if len(parts) > 1 else "0"
-    return major if major != "0" else f"0.{minor}"
+    patch = parts[2] if len(parts) > 2 else "0"
+
+    if major != "0":
+        return major
+    if minor != "0":
+        return f"0.{minor}"
+    return f"0.0.{patch}"
 
 
 def main() -> int:
