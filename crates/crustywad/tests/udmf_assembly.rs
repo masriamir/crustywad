@@ -196,3 +196,28 @@ fn detect_map_format_recognizes_udmf_textmap_group() {
     let group = wad.map_group("MAP01").unwrap();
     assert_eq!(detect_map_format(&wad, &group), MapFormat::Udmf);
 }
+
+#[test]
+fn udmf_thing_flags_reach_the_map_graph() {
+    // ADR-0019: UDMF's discrete skill/multiplayer thing booleans are packed
+    // into the Doom/Boom-MBF `Thing.flags` layout on assembly, so this value
+    // must reach `MapThing.flags` unchanged: skill3 -> bit 1, ambush -> bit 3.
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 64; y = 0; }\n",
+        "sector { texturefloor = \"FLOOR\"; textureceiling = \"CEIL\"; }\n",
+        "sidedef { sector = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "thing { x = 32; y = 32; type = 1; skill3 = true; ambush = true; }\n",
+    );
+    let bytes = common::build_named_lumps(&[
+        ("MAP01", vec![]),
+        ("TEXTMAP", text.as_bytes().to_vec()),
+        ("ENDMAP", vec![]),
+    ]);
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::default()).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let map = Map::assemble(&wad, &group).unwrap();
+    assert_eq!(map.things()[0].flags, 0b0000_1010);
+}

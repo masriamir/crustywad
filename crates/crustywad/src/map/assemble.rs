@@ -561,7 +561,8 @@ fn normalize_udmf_linedefs(
 }
 
 /// Widens raw UDMF `THING` records into normalized [`MapThing`]s, coercing
-/// `type_id` to `u16` and wrapping `angle` modulo 360.
+/// `type_id` to `u16`, wrapping `angle` modulo 360, and carrying the packed
+/// Doom/Boom-MBF thing flags through (ADR-0019, amending ADR-0017 §1).
 fn normalize_udmf_things(
     raw: &[crate::map::udmf::UdmfThing],
     strictness: Strictness,
@@ -579,7 +580,7 @@ fn normalize_udmf_things(
             y: t.y,
             angle,
             type_id,
-            flags: 0, // UDMF thing flags are not modeled in Map yet (ADR-0017 §1).
+            flags: t.flags,
             id: t.id,
             height: t.height,
             special: Special {

@@ -129,7 +129,11 @@ pub struct MapThing {
     pub angle: u16,
     /// The thing's doomednum, identifying its type.
     pub type_id: u16,
-    /// The thing's bit flags (skill levels, deaf, multiplayer-only, etc.).
+    /// The thing's bit flags in the Doom/Boom-MBF layout — skill 1–2 (bit 0),
+    /// skill 3 (bit 1), skill 4–5 (bit 2), ambush (bit 3), multiplayer-only
+    /// (bit 4), not-in-deathmatch (bit 5), not-in-co-op (bit 6), friendly
+    /// (bit 7). UDMF's discrete booleans are packed into this layout on read
+    /// (ADR-0019), so the field means the same thing for every format.
     pub flags: u32,
     /// The thing's identification tag (Hexen/UDMF tid); `0` for Doom maps and untagged things.
     pub id: i32,
