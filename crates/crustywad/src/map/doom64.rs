@@ -413,3 +413,62 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record type that fails to decode on *content* (a magic mismatch), so
+    /// `parse_records` returns [`MapParseError::Binrw`] rather than
+    /// [`MapParseError::TrailingBytes`]. The real Doom 64 record types are plain
+    /// fixed-size integers and only ever fail on EOF (which becomes
+    /// `TrailingBytes`), so this synthetic type is the only way to exercise
+    /// `decode_lump`'s `Binrw` error arm.
+    #[derive(BinRead, Debug)]
+    #[br(little, magic = b"OK")]
+    struct MagicRecord {
+        #[allow(dead_code)]
+        value: u8,
+    }
+
+    /// Builds a minimal well-formed single-lump `PWAD` in memory.
+    fn wad_with_lump(name: &str, data: &[u8]) -> Wad {
+        let directory_offset = 12 + data.len();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"PWAD");
+        bytes.extend_from_slice(&1_i32.to_le_bytes());
+        bytes.extend_from_slice(&i32::try_from(directory_offset).unwrap().to_le_bytes());
+        bytes.extend_from_slice(data);
+        bytes.extend_from_slice(&12_i32.to_le_bytes());
+        bytes.extend_from_slice(&i32::try_from(data.len()).unwrap().to_le_bytes());
+        let mut encoded = [0_u8; 8];
+        for (slot, byte) in name.as_bytes().iter().take(8).enumerate() {
+            encoded[slot] = *byte;
+        }
+        bytes.extend_from_slice(&encoded);
+        Wad::from_bytes(bytes).expect("hand-built WAD should parse")
+    }
+
+    #[test]
+    fn decode_lump_maps_binrw_error_to_records() {
+        // 3 bytes that are not the `OK` magic: parse_records fails on the first
+        // record with a non-EOF (content) error -> MapParseError::Binrw, which
+        // decode_lump must map to Doom64ReadError::Records in either mode.
+        let wad = wad_with_lump("THINGS", b"NO!");
+        for strictness in [Strictness::Strict, Strictness::Lenient] {
+            let mut warnings = Vec::new();
+            let result = decode_lump::<MagicRecord>(&wad, "THINGS", strictness, &mut warnings);
+            assert!(
+                matches!(
+                    result,
+                    Err(Doom64ReadError::Records {
+                        lump: "THINGS",
+                        source: MapParseError::Binrw(_),
+                    })
+                ),
+                "expected Records/Binrw error, got {result:?}"
+            );
+            assert!(warnings.is_empty());
+        }
+    }
+}
