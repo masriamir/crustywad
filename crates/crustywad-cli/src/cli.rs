@@ -164,8 +164,14 @@ pub(crate) enum SubCommand {
     /// Converting to `doom` emits empty SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
     /// lumps — run an external nodebuilder (zdbsp, bsp) before playing the map.
     ///
+    /// A converted map keeps only the lumps the target format defines. Any
+    /// other lump inside the map group — BEHAVIOR (compiled ACS), SCRIPTS,
+    /// ZNODES, DIALOGUE, ... — is bound to the source map's specials or
+    /// geometry and is dropped rather than carried across: strict mode refuses
+    /// and names each such lump; `--lenient` drops them and warns.
+    ///
     /// Exits 0 on success, 2 on I/O or parse error, 3 if a map cannot be
-    /// converted.
+    /// converted or if `--map NAME` matches no map in the WAD.
     Convert {
         /// Path to the input WAD file.
         input: PathBuf,
@@ -177,6 +183,7 @@ pub(crate) enum SubCommand {
         to: MapFormatArg,
         /// Convert only the map with this marker name (e.g. `MAP01`); all other
         /// maps pass through unchanged. If not given, every map is converted.
+        /// If the name matches no map in the WAD the command exits with code 3.
         #[arg(short, long, value_name = "NAME")]
         map: Option<String>,
         /// Output WAD kind.

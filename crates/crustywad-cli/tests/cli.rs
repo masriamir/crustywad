@@ -2453,6 +2453,143 @@ fn convert_lenient_accepts_lossy_udmf_to_doom_and_warns() {
     assert!(lump_names(out.path()).contains(&"THINGS".to_owned()));
 }
 
+/// A PWAD containing a single Hexen-format map (`MAP01`) whose group carries a
+/// `BEHAVIOR` lump (compiled ACS) alongside the five classic data lumps. The
+/// `THINGS` and `LINEDEFS` lumps use the Hexen record layouts; the other three
+/// are byte-identical across formats and are reused from [`doom_map_lumps`].
+fn write_hexen_map_wad() -> NamedTempFile {
+    let m = doom_map_lumps();
+
+    // Hexen linedef: v1, v2, flags (u16), special + 5 args (u8), right, left (u16).
+    let mut linedefs = Vec::new();
+    for v in [0_u16, 1, 1] {
+        linedefs.extend_from_slice(&v.to_le_bytes());
+    }
+    linedefs.extend_from_slice(&[0_u8; 6]);
+    linedefs.extend_from_slice(&0_u16.to_le_bytes());
+    linedefs.extend_from_slice(&0xffff_u16.to_le_bytes());
+
+    // Hexen thing: tid, x, y, z, angle, type, flags (u16), special + 5 args (u8).
+    let mut things = Vec::new();
+    for v in [0_u16, 32, 32, 0, 0, 1, 7] {
+        things.extend_from_slice(&v.to_le_bytes());
+    }
+    things.extend_from_slice(&[0_u8; 6]);
+
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+            ("BEHAVIOR", &[7, 7, 7, 7]),
+        ],
+    )
+}
+
+#[test]
+fn convert_strict_refuses_to_drop_extra_group_lumps_with_exit_3() {
+    // A `BEHAVIOR` lump is compiled ACS bound to the source map's specials: no
+    // conversion can carry it across. Dropping it is data loss, so strict mode
+    // must refuse, name the lump, and point at `--lenient`.
+    let wad = write_hexen_map_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
+        .stderr(predicate::str::contains("BEHAVIOR"))
+        .stderr(predicate::str::contains("--lenient"));
+}
+
+#[test]
+fn convert_lenient_drops_extra_group_lumps_and_warns() {
+    let wad = write_hexen_map_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("BEHAVIOR"));
+
+    // The dropped lump is really gone — it is neither converted nor passed
+    // through into the converted group.
+    let names = lump_names(out.path());
+    assert!(!names.contains(&"BEHAVIOR".to_owned()), "{names:?}");
+    assert_eq!(names, vec!["MAP01", "TEXTMAP", "ENDMAP"]);
+}
+
+#[test]
+fn convert_strict_accepts_a_group_with_no_extra_lumps() {
+    // Regression guard for the strict refusal above: a plain Doom map group has
+    // no extra lumps, so strict mode must convert it without complaint.
+    let wad = write_doom_map_wad("MAP01");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 1 map to udmf"))
+        .stderr(predicate::str::contains("cannot convert").not());
+}
+
+#[test]
+fn convert_unknown_map_name_exits_3() {
+    // A typo'd `--map` name must not look like success (it previously wrote a
+    // verbatim copy and reported "converted 0 maps").
+    let wad = write_doom_map_wad("MAP01");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--map",
+            "TYPO",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(r#"map "TYPO" not found"#))
+        .stderr(predicate::str::contains("available maps: MAP01"));
+}
+
 #[test]
 fn convert_json_and_iwad_kind() {
     let wad = write_doom_map_wad("MAP01");

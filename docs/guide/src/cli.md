@@ -136,8 +136,9 @@ wrote udmf.wad: converted 1 map to udmf
 
 `--to` is required and takes `doom` or `udmf`. Use `--map NAME` to convert
 only the named map (e.g. `--map MAP01`) and pass every other map through
-unchanged; omit it to convert every map in the WAD. Use `--kind` to set the
-output WAD kind (`iwad` or `pwad`; default `pwad`).
+unchanged; omit it to convert every map in the WAD. A `--map NAME` that
+matches no map in the WAD is an error (exit `3`), not a no-op. Use `--kind`
+to set the output WAD kind (`iwad` or `pwad`; default `pwad`).
 
 > **Converting to `doom` is not engine-playable without a nodebuilder.**
 > `--to doom` emits empty `SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`
@@ -162,8 +163,30 @@ the loss and convert anyway; each dropped or rounded field is then reported
 as a warning on stderr instead. See [Converting maps](converting-maps.md)
 for the full loss policy.
 
+**A converted map keeps only the lumps its target format defines.** A
+converted group is rebuilt from the assembled map: the marker plus `TEXTMAP`
+and `ENDMAP` (`--to udmf`), or the marker plus the classic
+`THINGS`/`LINEDEFS`/`SIDEDEFS`/`VERTEXES`/`SECTORS` run and the empty node
+lumps (`--to doom`). Any *other* lump that lived inside the map group —
+`BEHAVIOR` (compiled ACS), `SCRIPTS`, `ZNODES`, `DIALOGUE`, GL node lumps —
+is dropped. It is not passed through: compiled ACS is bound to the source
+map's specials and node lumps describe the source geometry, so carrying
+either into a converted map would produce something that looks intact and is
+subtly broken. Dropping it is data loss, and is treated like any other:
+
+```text
+$ cwad convert hexen.wad -o udmf.wad --to udmf
+error: cannot convert map MAP01 to udmf: it contains lump(s) that cannot be carried into the converted map: BEHAVIOR
+note: re-run with --lenient to convert anyway and drop them
+```
+
+With `--lenient` the conversion proceeds and each dropped lump is named in a
+warning on stderr. A map already in the target format is not converted, so
+nothing in its group is dropped.
+
 Exits `0` on success, `2` on I/O or parse error, `3` if a map cannot be
-assembled or cannot be converted without loss in strict mode.
+assembled, cannot be converted without loss in strict mode, or if `--map
+NAME` matches no map in the WAD.
 
 ## Global options
 
@@ -273,7 +296,7 @@ true
 | `0` | Success |
 | `1` | Differences found (`diff` only) |
 | `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found |
-| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`/`merge`); for `convert`, also a map that fails to assemble or that cannot be converted without loss in strict mode |
+| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`/`merge`); for `convert`, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as `BEHAVIOR` that the target format cannot carry), or a `--map NAME` that matches no map in the WAD |
 
 ## Man page
 

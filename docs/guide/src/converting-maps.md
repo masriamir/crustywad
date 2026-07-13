@@ -269,6 +269,18 @@ cwad convert udmf.wad -o doom.wad --to doom --lenient
 ```
 
 The second command needs `--lenient` for the same reason described above:
-strict mode refuses any UDMF field the Doom format cannot represent. See
-[CLI Usage](cli.md#convert) for the full flag reference, example output, and
-exit codes.
+strict mode refuses any UDMF field the Doom format cannot represent.
+
+A converted group contains only what the target format defines — the marker
+plus `TEXTMAP`/`ENDMAP`, or the marker plus the classic data lumps and the
+empty node lumps. Any other lump that lived inside the map group (`BEHAVIOR`,
+`SCRIPTS`, `ZNODES`, `DIALOGUE`, GL nodes) is **dropped**, not passed
+through: compiled ACS is bound to the source map's specials and node lumps
+describe the source geometry, so carrying either across would look intact
+while being subtly wrong. That is data loss under the same policy as any
+other: strict mode refuses (exit `3`, naming each lump), `--lenient` drops
+them and warns. A map already in the target format is not converted, so
+nothing in its group is dropped.
+
+See [CLI Usage](cli.md#convert) for the full flag reference, example output,
+and exit codes.
