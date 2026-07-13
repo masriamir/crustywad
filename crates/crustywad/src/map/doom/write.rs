@@ -24,8 +24,20 @@
 //! returns [`DoomWriteWarning::NodesNotBuilt`]: run an external nodebuilder
 //! (`zdbsp`, `bsp`, …) before the map is playable.
 //!
-//! Doom → UDMF → Doom is byte-identical. **UDMF → Doom → UDMF is not
-//! reversible** — coordinate rounding and tier-3 drops are one-way.
+//! # Round-tripping
+//!
+//! Doom → UDMF → Doom is byte-identical **for maps whose linedef flags fit the
+//! nine standard bits (0–8) and whose thing angles are already in `0..360`**.
+//! Outside that envelope the UDMF leg loses data, so the returned Doom lumps
+//! differ from the originals:
+//!
+//! - A linedef flag bit ≥ 9 (e.g. Boom's `passuse`, `0x200`) has no UDMF boolean
+//!   in [`write_udmf`](crate::map::udmf::write_udmf), which emits only the nine
+//!   standard flags, so it is dropped.
+//! - A thing `angle` ≥ 360 is normalized modulo 360 on the way out to UDMF.
+//!
+//! **UDMF → Doom → UDMF is not reversible** — coordinate rounding and tier-3
+//! drops are one-way.
 
 use std::io::Cursor;
 
@@ -34,7 +46,7 @@ use binrw::{BinWrite, BinWriterExt};
 use crate::Strictness;
 use crate::map::common::{Name8, Sector, Sidedef, Vertex};
 use crate::map::doom::{Linedef, Thing};
-use crate::map::graph::{Map, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
+use crate::map::graph::{Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
 use crate::write::{WadBuilder, WriteOptions};
 
 /// Message for the infallible `BinWrite`-into-`Vec` calls.
@@ -250,12 +262,18 @@ impl Narrower {
 
         // `round` is half-away-from-zero, which is what map editors do.
         let rounded = value.round();
-        let clamped = rounded.clamp(f64::from(i16::MIN), f64::from(i16::MAX));
+        let (min, max) = (f64::from(i16::MIN), f64::from(i16::MAX));
+        let clamped = rounded.clamp(min, max);
         // Safe: `clamped` is finite and within i16's range by construction.
         #[allow(clippy::cast_possible_truncation)]
         let out = clamped as i16;
 
-        if (rounded - value).abs() > f64::EPSILON {
+        // Exact whole-number test. An `f64::EPSILON` comparison would call a
+        // tiny fractional value such as `1e-16` whole and silently round it to
+        // `0` even in strict mode — precisely the silent loss this policy
+        // exists to prevent. `value` is finite here (guarded above), so
+        // `fract()` is well-defined; comparing it against zero is exact.
+        if value.fract() != 0.0 {
             match self.strictness {
                 Strictness::Strict => {
                     return Err(DoomWriteError::FractionalCoordinate {
@@ -275,7 +293,9 @@ impl Narrower {
             }
         }
 
-        if (clamped - rounded).abs() > f64::EPSILON {
+        // Ordering comparison rather than a float equality/epsilon test: the
+        // clamp fired exactly when `rounded` fell outside `i16`'s range.
+        if rounded < min || rounded > max {
             // Safe: `rounded` is finite; the float→int cast saturates, which is
             // exactly the clamp we want for the *reported* value.
             #[allow(clippy::cast_possible_truncation)]
@@ -438,6 +458,20 @@ impl Narrower {
     }
 }
 
+/// The graph's "no id" sentinel for a linedef, which is **source-dependent**:
+/// UDMF's spec default is `-1`, while a Doom/Hexen map's linedefs are assembled
+/// with `0` (the graph convention). Assembly copies each source's sentinel into
+/// `MapLinedef.id` verbatim, so the check for "does this linedef carry a real
+/// id?" must know the format.
+///
+/// This is the exact mirror of the `id_unset` logic in
+/// [`udmf::write`](crate::map::udmf::write_udmf); the two must agree, or a
+/// Doom → UDMF → Doom round-trip resurrects a sentinel as data and reports it
+/// as unrepresentable.
+fn id_unset(format: MapFormat) -> i32 {
+    if format == MapFormat::Udmf { -1 } else { 0 }
+}
+
 /// Serializes a slice of `BinWrite` records into a lump byte buffer.
 fn encode<T>(records: &[T]) -> Vec<u8>
 where
@@ -464,13 +498,22 @@ fn narrow_vertices(n: &mut Narrower, raw: &[MapVertex]) -> Result<Vec<Vertex>, D
 
 /// Narrows the linedef arena. Doom keeps `special` + a single sector tag
 /// (`args[0]`); `args[1..=4]` and `id` have no slot (ADR-0019 tier 3).
-fn narrow_linedefs(n: &mut Narrower, raw: &[MapLinedef]) -> Result<Vec<Linedef>, DoomWriteError> {
+///
+/// `format` selects the graph's "no id" sentinel, which is source-dependent —
+/// see [`id_unset`].
+fn narrow_linedefs(
+    n: &mut Narrower,
+    raw: &[MapLinedef],
+    format: MapFormat,
+) -> Result<Vec<Linedef>, DoomWriteError> {
+    let unset = id_unset(format);
     let mut out = Vec::with_capacity(raw.len());
     for (i, l) in raw.iter().enumerate() {
         for (arg_i, field) in [(1, "arg1"), (2, "arg2"), (3, "arg3"), (4, "arg4")] {
             n.drop_field("linedef", field, i, l.special.args[arg_i] != 0)?;
         }
-        n.drop_field("linedef", "id", i, l.id != 0)?;
+        // Only a *real* id is tier-3 loss; the sentinel is the absence of one.
+        n.drop_field("linedef", "id", i, l.id != unset)?;
 
         out.push(Linedef {
             start_vertex: n.index("linedef", "v1", i, l.start.0, MAX_INDEX)?,
@@ -573,7 +616,7 @@ pub fn write_doom_map(
 
     let mut n = Narrower::new(opts.strictness);
     let vertices = narrow_vertices(&mut n, map.vertices())?;
-    let linedefs = narrow_linedefs(&mut n, map.linedefs())?;
+    let linedefs = narrow_linedefs(&mut n, map.linedefs(), map.format())?;
     let sidedefs = narrow_sidedefs(&mut n, map.sidedefs())?;
     let sectors = narrow_sectors(&mut n, map.sectors())?;
     let things = narrow_things(&mut n, map.things())?;
@@ -649,7 +692,10 @@ mod tests {
                     special: 11,
                     args: [7, 0, 0, 0, 0],
                 },
-                id: 0,
+                // A UDMF-sourced linedef with no id carries the UDMF spec
+                // default, `-1` — *not* `0`, which is a Doom/Hexen graph
+                // sentinel and, for a UDMF map, a genuine id.
+                id: -1,
             }],
             sidedefs: vec![MapSidedef {
                 sector: SectorIdx(0),
@@ -1033,6 +1079,183 @@ mod tests {
         );
     }
 
+    /// The graph's "no id" sentinel is source-dependent: `-1` for a UDMF map,
+    /// `0` for a Doom/Hexen one. Treating a UDMF `-1` as a real id would make
+    /// Doom → UDMF → Doom fail on the first linedef of every map.
+    #[test]
+    fn udmf_linedef_id_sentinel_is_not_data() {
+        let mut map = tiny_map();
+        map.format = MapFormat::Udmf;
+        map.linedefs[0].id = -1;
+
+        // Strict: the sentinel is the *absence* of an id, so this must succeed.
+        let (_, warnings) = write_doom_map(&map, &WriteOptions::strict()).unwrap();
+        assert_eq!(warnings, vec![DoomWriteWarning::NodesNotBuilt]);
+
+        // Lenient: no bogus "dropped" warning for data that never existed.
+        let (_, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+        assert!(
+            !warnings.contains(&DoomWriteWarning::FieldDropped {
+                block: "linedef",
+                field: "id",
+                index: 0
+            }),
+            "the UDMF -1 sentinel must not be reported as a dropped id: {warnings:?}"
+        );
+    }
+
+    /// The mirror of the above: a *genuine* UDMF id must still be reported. The
+    /// sentinel must not swallow real ids — including `id = 0`, which is a real
+    /// id for a UDMF map even though it is Doom's sentinel.
+    #[test]
+    fn genuine_udmf_linedef_id_is_still_unrepresentable() {
+        for id in [7, 0] {
+            let mut map = tiny_map();
+            map.format = MapFormat::Udmf;
+            map.linedefs[0].id = id;
+
+            assert_eq!(
+                write_doom_map(&map, &WriteOptions::strict()).unwrap_err(),
+                DoomWriteError::UnrepresentableField {
+                    block: "linedef",
+                    field: "id",
+                    index: 0
+                },
+                "UDMF id = {id} is real data and must be rejected in strict mode"
+            );
+
+            let (_, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+            assert!(
+                warnings.contains(&DoomWriteWarning::FieldDropped {
+                    block: "linedef",
+                    field: "id",
+                    index: 0
+                }),
+                "UDMF id = {id} must be reported as dropped in lenient mode"
+            );
+        }
+    }
+
+    /// A Doom/Hexen-sourced map uses `0` as its "no id" sentinel, so a
+    /// Doom → Doom write is clean.
+    #[test]
+    fn doom_linedef_id_sentinel_is_zero() {
+        for format in [MapFormat::Doom, MapFormat::Hexen] {
+            let mut map = tiny_map();
+            map.format = format;
+            map.linedefs[0].id = 0;
+            let (_, warnings) = write_doom_map(&map, &WriteOptions::strict()).unwrap();
+            assert_eq!(
+                warnings,
+                vec![DoomWriteWarning::NodesNotBuilt],
+                "{format:?}"
+            );
+        }
+    }
+
+    /// `0xFFFF` is the largest index a Doom `u16` vertex/sector reference can
+    /// hold (there is no sentinel in that space), so it must survive untouched.
+    #[test]
+    fn max_vertex_and_sector_index_round_trip_unclamped() {
+        let mut map = tiny_map();
+        map.linedefs[0].start = VertexIdx(0xFFFF);
+        map.sidedefs[0].sector = SectorIdx(0xFFFF);
+
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::strict()).unwrap();
+        let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
+        let sidedefs: Vec<crate::map::Sidedef> = parse_records(&lumps.sidedefs).unwrap();
+
+        assert_eq!(linedefs[0].start_vertex, 0xFFFF);
+        assert_eq!(sidedefs[0].sector, 0xFFFF);
+        // Neither was clamped nor rejected.
+        assert_eq!(warnings, vec![DoomWriteWarning::NodesNotBuilt]);
+    }
+
+    /// A sidedef reference gets one fewer: `0xFFFF` is the "no sidedef"
+    /// sentinel, so a real index must never reach it. `0xFFFE` is the boundary.
+    #[test]
+    fn sidedef_index_stops_one_below_the_no_sidedef_sentinel() {
+        // 0xFFFE is legal and untouched, on both the front and back reference.
+        let mut map = tiny_map();
+        map.linedefs[0].right = SidedefIdx(0xFFFE);
+        map.linedefs[0].left = Some(SidedefIdx(0xFFFE));
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::strict()).unwrap();
+        let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
+        assert_eq!(linedefs[0].right_sidedef, 0xFFFE);
+        assert_eq!(linedefs[0].left_sidedef, 0xFFFE);
+        assert_ne!(linedefs[0].left_sidedef, NO_SIDEDEF);
+        assert_eq!(warnings, vec![DoomWriteWarning::NodesNotBuilt]);
+
+        // 0xFFFF would collide with the sentinel: strict rejects it...
+        let mut map = tiny_map();
+        map.linedefs[0].right = SidedefIdx(0xFFFF);
+        assert_eq!(
+            write_doom_map(&map, &WriteOptions::strict()).unwrap_err(),
+            DoomWriteError::ValueOutOfRange {
+                block: "linedef",
+                field: "sidefront",
+                index: 0,
+                value: 0xFFFF
+            }
+        );
+
+        // ...and lenient clamps it to 0xFFFE, never emitting the sentinel as a
+        // real reference.
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+        let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
+        assert_eq!(linedefs[0].right_sidedef, 0xFFFE);
+        assert_ne!(linedefs[0].right_sidedef, NO_SIDEDEF);
+        assert!(warnings.contains(&DoomWriteWarning::ValueClamped {
+            block: "linedef",
+            field: "sidefront",
+            index: 0,
+            from: 0xFFFF,
+            to: 0xFFFE
+        }));
+    }
+
+    /// A vertex/sector reference is capped at `0xFFFF`, one *above* the sidedef
+    /// cap — the two bounds are genuinely different, not a copy of each other.
+    #[test]
+    fn vertex_index_above_the_sidedef_cap_is_still_accepted() {
+        let mut map = tiny_map();
+        // 0xFFFF is rejected for a sidedef reference but legal for a vertex one.
+        map.linedefs[0].end = VertexIdx(usize::try_from(MAX_SIDEDEF_INDEX).unwrap() + 1);
+        let (lumps, _) = write_doom_map(&map, &WriteOptions::strict()).unwrap();
+        let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
+        assert_eq!(i64::from(linedefs[0].end_vertex), MAX_INDEX);
+    }
+
+    /// A tiny fractional value must not be silently swallowed by an epsilon
+    /// comparison: `1e-16` is not a whole number, so strict must reject it and
+    /// lenient must warn — rounding it to `0` unannounced is silent data loss.
+    #[test]
+    fn tiny_fractional_coordinate_is_not_swallowed() {
+        let mut map = tiny_map();
+        map.vertices[0].x = 1e-16;
+
+        assert_eq!(
+            write_doom_map(&map, &WriteOptions::strict()).unwrap_err(),
+            DoomWriteError::FractionalCoordinate {
+                block: "vertex",
+                field: "x",
+                index: 0,
+                value: 1e-16
+            }
+        );
+
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+        let vertices: Vec<crate::map::Vertex> = parse_records(&lumps.vertexes).unwrap();
+        assert_eq!(vertices[0].x, 0);
+        assert!(warnings.contains(&DoomWriteWarning::CoordinateRounded {
+            block: "vertex",
+            field: "x",
+            index: 0,
+            from: 1e-16,
+            to: 0
+        }));
+    }
+
     #[test]
     fn two_sided_linedef_writes_a_real_back_sidedef_index() {
         let mut map = tiny_map();
@@ -1041,14 +1264,10 @@ mod tests {
         let (lumps, _) = write_doom_map(&map, &WriteOptions::strict()).unwrap();
         let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
         assert_eq!(linedefs[0].left_sidedef, 1);
-        // A real index can never be the 0xFFFF "no sidedef" sentinel: the
-        // sidedef count is capped at 65_535, so the largest index is 0xFFFE.
+        // A real index can never be the 0xFFFF "no sidedef" sentinel; the
+        // boundary itself is exercised by
+        // `sidedef_index_stops_one_below_the_no_sidedef_sentinel`.
         assert_ne!(linedefs[0].left_sidedef, NO_SIDEDEF);
-        assert_eq!(MAX_SIDEDEF_INDEX, i64::from(NO_SIDEDEF) - 1);
-        assert_eq!(
-            MAX_SIDEDEFS - 1,
-            usize::try_from(MAX_SIDEDEF_INDEX).unwrap()
-        );
     }
 
     #[test]
