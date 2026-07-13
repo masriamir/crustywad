@@ -18,9 +18,14 @@
 //!
 //! This module reads records **raw** (un-normalized): the texture/flat/color
 //! `u16` indices are preserved as-is; resolving them needs a texture/graphics
-//! layer that does not exist yet. A reader API will be added in a future task.
+//! layer that does not exist yet. Use [`read_doom64_map`] to read a whole
+//! `MAPxx` lump's nested WAD into a [`Doom64Map`].
 
 use binrw::BinRead;
+
+use crate::map::common::{Node, Seg, Subsector};
+use crate::map::{MapParseError, parse_records};
+use crate::{ParseError, ParseOptions, Strictness, Wad};
 
 /// Returns `true` if `bytes` look like a Doom 64 map lump: a lump whose content
 /// is itself a WAD (leading `IWAD` or `PWAD` magic).
@@ -171,4 +176,205 @@ pub struct Light {
     /// 16-bit trailing field (high byte always `0` in retail data); tentative
     /// semantics, preserved raw.
     pub unknown: u16,
+}
+
+/// All records read from one Doom 64 `MAPxx` nested WAD, raw and un-normalized.
+///
+/// Produced by [`read_doom64_map`]. Record vectors hold the decoded fixed-size
+/// records; `reject`/`blockmap`/`leafs`/`macros` are kept as raw bytes
+/// (recognition-only this pass). Non-fatal issues collected in lenient mode are
+/// available via [`Doom64Map::warnings`].
+#[derive(Debug, Clone)]
+pub struct Doom64Map {
+    /// Decoded `THINGS` records.
+    pub things: Vec<Thing>,
+    /// Decoded `LINEDEFS` records.
+    pub linedefs: Vec<Linedef>,
+    /// Decoded `SIDEDEFS` records.
+    pub sidedefs: Vec<Sidedef>,
+    /// Decoded `VERTEXES` records (16.16 fixed-point).
+    pub vertexes: Vec<Vertex>,
+    /// Decoded `SECTORS` records.
+    pub sectors: Vec<Sector>,
+    /// Decoded `LIGHTS` records (colored-lighting palette).
+    pub lights: Vec<Light>,
+    /// Decoded `SEGS` records (classic Doom layout, [`common::Seg`](crate::map::common::Seg)).
+    pub segs: Vec<Seg>,
+    /// Decoded `SSECTORS` records ([`common::Subsector`](crate::map::common::Subsector)).
+    pub subsectors: Vec<Subsector>,
+    /// Decoded `NODES` records ([`common::Node`](crate::map::common::Node)).
+    pub nodes: Vec<Node>,
+    /// Raw `REJECT` bytes (undecoded); empty if the lump is absent.
+    pub reject: Vec<u8>,
+    /// Raw `BLOCKMAP` bytes (undecoded); empty if the lump is absent.
+    pub blockmap: Vec<u8>,
+    /// Raw `LEAFS` bytes (render leaves, undecoded); empty if absent.
+    pub leafs: Vec<u8>,
+    /// Raw `MACROS` bytes (compiled scripts, undecoded); empty if absent.
+    pub macros: Vec<u8>,
+    pub(crate) warnings: Vec<Doom64Warning>,
+}
+
+impl Doom64Map {
+    /// Returns the non-fatal warnings collected during a lenient-mode read.
+    ///
+    /// Always empty after a successful strict-mode read.
+    #[must_use]
+    pub fn warnings(&self) -> &[Doom64Warning] {
+        &self.warnings
+    }
+}
+
+/// A non-fatal issue recovered while reading a Doom 64 map in lenient mode.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Doom64Warning {
+    /// An expected record sub-lump was absent; its vector was left empty.
+    #[error("Doom 64 map is missing the {name} lump; treated as empty")]
+    MissingLump {
+        /// The absent sub-lump's name.
+        name: &'static str,
+    },
+    /// A record sub-lump's length was not a whole multiple of the record size;
+    /// the whole records were kept and the trailing partial record dropped.
+    #[error("{lump} lump has trailing bytes at offset {offset}; kept whole records only")]
+    TrailingBytes {
+        /// The sub-lump's name.
+        lump: &'static str,
+        /// Byte offset where the trailing partial record begins.
+        offset: u64,
+    },
+}
+
+/// An error that prevents reading a Doom 64 map.
+#[derive(Debug, thiserror::Error)]
+pub enum Doom64ReadError {
+    /// The map lump's bytes did not parse as a nested WAD (fatal in both modes).
+    #[error("Doom 64 map lump is not a valid nested WAD: {0}")]
+    NestedWad(#[from] ParseError),
+    /// A record sub-lump failed to decode (strict mode, or a corrupt record in
+    /// either mode).
+    #[error("failed to decode {lump} records: {source}")]
+    Records {
+        /// The sub-lump's name.
+        lump: &'static str,
+        /// The underlying record-parse error.
+        source: MapParseError,
+    },
+    /// An expected record sub-lump was absent (strict mode only).
+    #[error("Doom 64 map is missing the required {name} lump")]
+    MissingLump {
+        /// The absent sub-lump's name.
+        name: &'static str,
+    },
+}
+
+/// Reads a Doom 64 `MAPxx` lump's bytes — themselves a nested WAD — into typed
+/// records.
+///
+/// The `bytes` are parsed with [`Wad::from_bytes_with_options`]; each record
+/// sub-lump is looked up by name and decoded with
+/// [`parse_records`]. BSP lumps reuse the classic
+/// [`common`](crate::map::common) records. `REJECT`/`BLOCKMAP`/`LEAFS`/`MACROS`
+/// are kept as raw bytes.
+///
+/// In [`Strictness::Lenient`] mode, a missing expected sub-lump yields an empty
+/// vector plus a [`Doom64Warning::MissingLump`], and a sub-lump whose size is
+/// not a whole multiple of the record size keeps the whole records and warns
+/// with [`Doom64Warning::TrailingBytes`]. In [`Strictness::Strict`] mode either
+/// condition is an error.
+///
+/// # Errors
+///
+/// - [`Doom64ReadError::NestedWad`] — `bytes` do not parse as a WAD (both modes).
+/// - [`Doom64ReadError::MissingLump`] — an expected sub-lump is absent (strict).
+/// - [`Doom64ReadError::Records`] — a record sub-lump failed to decode (strict,
+///   or a corrupt record mid-stream in either mode).
+pub fn read_doom64_map(bytes: &[u8], options: &ParseOptions) -> Result<Doom64Map, Doom64ReadError> {
+    let nested = Wad::from_bytes_with_options(bytes.to_vec(), *options)?;
+    let strictness = options.strictness;
+    let mut warnings = Vec::new();
+
+    let things = decode_lump::<Thing>(&nested, "THINGS", strictness, &mut warnings)?;
+    let linedefs = decode_lump::<Linedef>(&nested, "LINEDEFS", strictness, &mut warnings)?;
+    let sidedefs = decode_lump::<Sidedef>(&nested, "SIDEDEFS", strictness, &mut warnings)?;
+    let vertexes = decode_lump::<Vertex>(&nested, "VERTEXES", strictness, &mut warnings)?;
+    let segs = decode_lump::<Seg>(&nested, "SEGS", strictness, &mut warnings)?;
+    let subsectors = decode_lump::<Subsector>(&nested, "SSECTORS", strictness, &mut warnings)?;
+    let nodes = decode_lump::<Node>(&nested, "NODES", strictness, &mut warnings)?;
+    let sectors = decode_lump::<Sector>(&nested, "SECTORS", strictness, &mut warnings)?;
+    let lights = decode_lump::<Light>(&nested, "LIGHTS", strictness, &mut warnings)?;
+
+    let raw = |name: &str| -> Vec<u8> {
+        nested
+            .lump_by_name(name)
+            .map(|lump| nested.lump_data(lump).to_vec())
+            .unwrap_or_default()
+    };
+
+    Ok(Doom64Map {
+        things,
+        linedefs,
+        sidedefs,
+        vertexes,
+        sectors,
+        lights,
+        segs,
+        subsectors,
+        nodes,
+        reject: raw("REJECT"),
+        blockmap: raw("BLOCKMAP"),
+        leafs: raw("LEAFS"),
+        macros: raw("MACROS"),
+        warnings,
+    })
+}
+
+/// Decodes one expected record sub-lump by name, honoring strictness.
+///
+/// Missing lump: strict → `MissingLump` error; lenient → empty vec + warning.
+/// Trailing bytes: strict → `Records` error; lenient → keep the whole records
+/// (re-parse the clean prefix) + warning. A corrupt (`Binrw`) record is an
+/// error in both modes.
+fn decode_lump<T>(
+    nested: &Wad,
+    name: &'static str,
+    strictness: Strictness,
+    warnings: &mut Vec<Doom64Warning>,
+) -> Result<Vec<T>, Doom64ReadError>
+where
+    T: for<'a> BinRead<Args<'a> = ()>,
+{
+    let Some(lump) = nested.lump_by_name(name) else {
+        return match strictness {
+            Strictness::Strict => Err(Doom64ReadError::MissingLump { name }),
+            Strictness::Lenient => {
+                warnings.push(Doom64Warning::MissingLump { name });
+                Ok(Vec::new())
+            }
+        };
+    };
+    let data = nested.lump_data(lump);
+    match parse_records::<T>(data) {
+        Ok(records) => Ok(records),
+        Err(MapParseError::TrailingBytes { offset }) => match strictness {
+            Strictness::Strict => Err(Doom64ReadError::Records {
+                lump: name,
+                source: MapParseError::TrailingBytes { offset },
+            }),
+            Strictness::Lenient => {
+                warnings.push(Doom64Warning::TrailingBytes { lump: name, offset });
+                // `offset` is a whole-record boundary within `data`; re-parse the
+                // clean prefix (cannot itself have trailing bytes). Clamp
+                // defensively so a pathological `offset` can never panic.
+                let end = usize::try_from(offset)
+                    .unwrap_or(data.len())
+                    .min(data.len());
+                parse_records::<T>(&data[..end])
+                    .map_err(|source| Doom64ReadError::Records { lump: name, source })
+            }
+        },
+        Err(source @ MapParseError::Binrw(_)) => {
+            Err(Doom64ReadError::Records { lump: name, source })
+        }
+    }
 }

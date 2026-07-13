@@ -1,5 +1,7 @@
 //! Integration tests for Doom 64 map-record parsing and the nested-WAD reader.
 
+mod common;
+
 use crustywad::map::doom64::{Light, Linedef, Sector, Sidedef, Thing, Vertex};
 use crustywad::map::parse_records;
 
@@ -134,4 +136,157 @@ fn detects_doom64_map_lump_by_nested_magic() {
     // Right length, wrong magic.
     assert!(!is_doom64_map_lump(&[0u8; 12]));
     assert!(!is_doom64_map_lump(b"THINGS\0\0\0\0\0\0"));
+}
+
+use crustywad::ParseOptions;
+use crustywad::map::{Doom64ReadError, Doom64Warning, read_doom64_map};
+
+/// Builds a minimal Doom 64 map lump (a nested IWAD) with one record per lump.
+/// Returns the bytes that a `MAPxx` lump would contain.
+fn sample_doom64_map_bytes() -> Vec<u8> {
+    // One record each; sizes: THINGS 14, LINEDEFS 16, SIDEDEFS 12, VERTEXES 8,
+    // SEGS 12, SSECTORS 4, NODES 28, SECTORS 24, LIGHTS 6.
+    let things = vec![0u8; 14];
+    let linedefs = vec![0u8; 16];
+    let sidedefs = vec![0u8; 12];
+    let vertexes = vec![0u8; 8];
+    let segs = vec![0u8; 12];
+    let ssectors = vec![0u8; 4];
+    let nodes = vec![0u8; 28];
+    let sector_records = vec![0u8; 24];
+    let lights = vec![0u8; 6];
+    common::build_wad(
+        *b"IWAD",
+        &[
+            ("MAP01", &[]),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SEGS", &segs),
+            ("SSECTORS", &ssectors),
+            ("NODES", &nodes),
+            ("SECTORS", &sector_records),
+            ("REJECT", &[1, 2, 3]),
+            ("BLOCKMAP", &[4, 5]),
+            ("LEAFS", &[6]),
+            ("LIGHTS", &lights),
+            ("MACROS", &[7, 8]),
+        ],
+    )
+}
+
+#[test]
+fn reads_doom64_map_strict() {
+    let bytes = sample_doom64_map_bytes();
+    let map = read_doom64_map(&bytes, &ParseOptions::strict()).unwrap();
+    assert_eq!(map.things.len(), 1);
+    assert_eq!(map.linedefs.len(), 1);
+    assert_eq!(map.sidedefs.len(), 1);
+    assert_eq!(map.vertexes.len(), 1);
+    assert_eq!(map.segs.len(), 1);
+    assert_eq!(map.subsectors.len(), 1);
+    assert_eq!(map.nodes.len(), 1);
+    assert_eq!(map.sectors.len(), 1);
+    assert_eq!(map.lights.len(), 1);
+    assert_eq!(map.reject, vec![1, 2, 3]);
+    assert_eq!(map.blockmap, vec![4, 5]);
+    assert_eq!(map.leafs, vec![6]);
+    assert_eq!(map.macros, vec![7, 8]);
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn corrupt_container_errors_both_modes() {
+    // Shorter than the 12-byte WAD header: a truncated header is unrecoverable
+    // in both modes (unlike bad magic or an out-of-bounds directory offset,
+    // which lenient mode's `Wad` parser recovers from with warnings).
+    let junk = b"not a wad".to_vec();
+    assert!(matches!(
+        read_doom64_map(&junk, &ParseOptions::strict()),
+        Err(Doom64ReadError::NestedWad(_))
+    ));
+    assert!(matches!(
+        read_doom64_map(&junk, &ParseOptions::lenient()),
+        Err(Doom64ReadError::NestedWad(_))
+    ));
+}
+
+#[test]
+fn missing_lump_strict_errors_lenient_warns() {
+    // Build a map WAD lacking LIGHTS.
+    let things = vec![0u8; 14];
+    let linedefs = vec![0u8; 16];
+    let sidedefs = vec![0u8; 12];
+    let vertexes = vec![0u8; 8];
+    let segs = vec![0u8; 12];
+    let ssectors = vec![0u8; 4];
+    let nodes = vec![0u8; 28];
+    let sector_records = vec![0u8; 24];
+    let bytes = common::build_wad(
+        *b"IWAD",
+        &[
+            ("MAP01", &[]),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SEGS", &segs),
+            ("SSECTORS", &ssectors),
+            ("NODES", &nodes),
+            ("SECTORS", &sector_records),
+            // LIGHTS omitted
+        ],
+    );
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::strict()),
+        Err(Doom64ReadError::MissingLump { name: "LIGHTS" })
+    ));
+    let map = read_doom64_map(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(map.lights.is_empty());
+    assert_eq!(
+        map.warnings(),
+        &[Doom64Warning::MissingLump { name: "LIGHTS" }]
+    );
+}
+
+#[test]
+fn trailing_bytes_strict_errors_lenient_salvages() {
+    // SECTORS lump of 24*2 + 5 bytes: two whole records + a 5-byte remainder.
+    let mut sectors = vec![0u8; 48];
+    sectors.extend_from_slice(&[9, 9, 9, 9, 9]);
+    let build = |sectors: &[u8]| {
+        common::build_wad(
+            *b"IWAD",
+            &[
+                ("MAP01", &[]),
+                ("THINGS", &[0u8; 14]),
+                ("LINEDEFS", &[0u8; 16]),
+                ("SIDEDEFS", &[0u8; 12]),
+                ("VERTEXES", &[0u8; 8]),
+                ("SEGS", &[0u8; 12]),
+                ("SSECTORS", &[0u8; 4]),
+                ("NODES", &[0u8; 28]),
+                ("SECTORS", sectors),
+                ("LIGHTS", &[0u8; 6]),
+            ],
+        )
+    };
+    let bytes = build(&sectors);
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::strict()),
+        Err(Doom64ReadError::Records {
+            lump: "SECTORS",
+            ..
+        })
+    ));
+    let map = read_doom64_map(&bytes, &ParseOptions::lenient()).unwrap();
+    assert_eq!(map.sectors.len(), 2);
+    assert_eq!(
+        map.warnings(),
+        &[Doom64Warning::TrailingBytes {
+            lump: "SECTORS",
+            offset: 48
+        }]
+    );
 }
