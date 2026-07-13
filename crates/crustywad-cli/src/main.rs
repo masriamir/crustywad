@@ -119,9 +119,16 @@ fn json_string(s: &str) -> String {
     out
 }
 
-/// Lump names that a map conversion accounts for: the classic binary map-data
-/// lumps (consumed by map assembly and re-emitted by `add_doom_map`) plus the
-/// UDMF text lumps (re-emitted by `add_udmf_map`).
+/// Lump names that a map conversion accounts for — those it either *reads* to
+/// build the `Map` graph or *emits* as part of the converted map, and which are
+/// therefore safe to replace rather than carry across.
+///
+/// Note the two roles are not the same set. Assembly reads only `THINGS`,
+/// `LINEDEFS`, `SIDEDEFS`, `VERTEXES`, and `SECTORS`; the node lumps
+/// (`SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`) are never consumed, and
+/// appear here because `add_doom_map` emits them (empty — see the
+/// `NodesNotBuilt` warning). `TEXTMAP`/`ENDMAP` are the UDMF equivalents,
+/// read by assembly and emitted by `add_udmf_map`.
 ///
 /// The classification is by name, and is deliberately narrower than the
 /// library's map-group membership rule (which also admits `BEHAVIOR` and any
