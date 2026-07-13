@@ -56,8 +56,9 @@ checklist:
   `friend`) are never emitted. Its own comment concedes the mapping "is
   currently one-way within the crate."
 - `map/udmf/write.rs`, `write_udmf`: when `map.namespace()` is `None` it writes
-  `"doom"` and pushes `UdmfWriteWarning::NamespaceDefaulted { used: "doom" }` —
-  regardless of `map.format()`, so a Hexen-sourced map is labeled `doom`.
+  `"doom"` regardless of `map.format()`, so a Hexen-sourced map is labeled
+  `doom`. It pushes `UdmfWriteWarning::NamespaceDefaulted { used: "doom" }` only
+  in lenient mode; strict mode writes the same default silently.
 - On-disk record types (`map/doom.rs`, `map/common.rs`), all `#[br(little)]`
   `BinRead` derives — these are the exact target types the graph's wider fields
   narrow *to*:
