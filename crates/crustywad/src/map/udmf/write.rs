@@ -236,7 +236,7 @@ impl Writer {
             let h = self.fmt_float("thing", "height", index, t.height)?;
             write!(self.out, "height = {h}; ").expect(INFALLIBLE);
         }
-        // Normalize to the conventional UDMF 0..360 range. UDMF assembly re-reads
+        // Normalize to the conventional UDMF 0..=359 range. UDMF assembly re-reads
         // angles through `rem_euclid(360)`, so emitting a raw Doom angle >= 360
         // (preserved verbatim in the graph) would wrap on re-read; normalizing
         // here keeps the emitted UDMF in-range and the serialized output stable
