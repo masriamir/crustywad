@@ -2,7 +2,7 @@
 
 > **Audience:** Library users
 
-The `cwad` binary exposes seven subcommands: `info`, `list`, `validate`, `diff`, and `extract` (read-only) plus `merge` and `build` (write-path, backed by `crustywad`'s `write` feature). `crustywad-cli`'s `Cargo.toml` enables that feature unconditionally on its `crustywad` dependency, so `merge` and `build` are always available in `cwad` — there is no user-facing flag to opt in. `--lenient` and `--format` (`-F`; `human` default, `json`, or `csv`) are global flags that apply to every subcommand. Warnings are always written to stderr; normal output routes through `--format`. Argument-parsing failures (via `clap`) exit `3` before any subcommand runs, regardless of which subcommand was given.
+The `cwad` binary exposes eight subcommands: `info`, `list`, `validate`, `diff`, and `extract` (read-only) plus `merge`, `build`, and `convert` (write-path, backed by `crustywad`'s `write` feature). `crustywad-cli`'s `Cargo.toml` enables that feature unconditionally on its `crustywad` dependency, so the write-path subcommands are always available in `cwad` — there is no user-facing flag to opt in. `--lenient` and `--format` (`-F`; `human` default, `json`, or `csv`) are global flags that apply to every subcommand. Warnings are always written to stderr; normal output routes through `--format`. Argument-parsing failures (via `clap`) exit `3` before any subcommand runs, regardless of which subcommand was given.
 
 ## Read-path dispatch
 
@@ -56,7 +56,9 @@ flowchart TD
 
 ## Write-path dispatch
 
-`merge` and `build` construct a WAD via `WadBuilder`. `crustywad-cli` gets `WadBuilder` by unconditionally enabling `crustywad`'s `write` feature in its `Cargo.toml` — both subcommands are always available in `cwad`, with no user-facing flag required. `--lenient` selects `WriteOptions::strict()`/`lenient()` for the build step, distinct from (but analogous to) the read-side `ParseOptions`. `WriteError` from `build_with_options` is a usage/data error and exits `3`; I/O failures (reading input files, writing the output file) still propagate via `?` and exit `2`, mirroring the read-path exit codes. `merge` additionally reads each input WAD under `ParseOptions`, so it prints that WAD's `ParseWarning`s (path-prefixed) as each input is loaded, in addition to the `WriteWarning`s from the build step.
+`merge`, `build`, and `convert` construct a WAD via `WadBuilder`. `crustywad-cli` gets `WadBuilder` by unconditionally enabling `crustywad`'s `write` feature in its `Cargo.toml` — all three subcommands are always available in `cwad`, with no user-facing flag required. `--lenient` selects `WriteOptions::strict()`/`lenient()` for the build step, distinct from (but analogous to) the read-side `ParseOptions`. `WriteError` from `build_with_options` is a usage/data error and exits `3`; I/O failures (reading input files, writing the output file) still propagate via `?` and exit `2`, mirroring the read-path exit codes. `merge` additionally reads each input WAD under `ParseOptions`, so it prints that WAD's `ParseWarning`s (path-prefixed) as each input is loaded, in addition to the `WriteWarning`s from the build step.
+
+`convert` reads one WAD, re-emits every map group in the requested target format (`--to doom|udmf`), and passes all other lumps through unchanged in directory order. It exits `3` when a map cannot be converted — in strict mode, that includes any data loss the target format cannot represent, and the message names the offending field and points at `--lenient`. Converting to `doom` emits empty node lumps and always warns `NodesNotBuilt`: the output needs an external nodebuilder before it is engine-playable. See [Converting maps](converting-maps.md).
 
 ```mermaid
 flowchart TD

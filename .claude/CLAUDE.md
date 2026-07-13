@@ -4,7 +4,7 @@
 
 `crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is dual-licensed under MIT OR Apache-2.0.
 
-**Current state:** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, WAD serialization (`write` feature), zero-copy memory-mapped loading (`mmap` feature), a `cwad` CLI with `info`/`list`/`validate`/`merge`/`diff`/`extract`/`build` subcommands, `cargo-fuzz` targets, and Criterion benchmarking infrastructure.
+**Current state:** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, WAD serialization (`write` feature), zero-copy memory-mapped loading (`mmap` feature), a `cwad` CLI with `info`/`list`/`validate`/`merge`/`diff`/`extract`/`convert`/`build` subcommands, `cargo-fuzz` targets, and Criterion benchmarking infrastructure.
 
 ## Workspace layout
 
@@ -33,7 +33,7 @@ crates/
       map_records.rs   # Integration tests for typed map-record parsing
       freedoom.rs      # Optional Freedoom fixture tests (feature = "freedoom-tests")
   crustywad-cli/       # CLI binary crate (`cwad`)
-    src/main.rs        # `info`/`list`/`validate`/`merge`/`diff`/`extract`/`build` subcommands via clap
+    src/main.rs        # `info`/`list`/`validate`/`merge`/`diff`/`extract`/`convert`/`build` subcommands via clap
     src/cli.rs         # CLI argument types (also included by build.rs for shell completions)
 docs/
   design.md            # Goals, data model, read pipeline, feature plan

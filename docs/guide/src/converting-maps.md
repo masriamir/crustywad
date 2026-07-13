@@ -254,3 +254,32 @@ the field: a magnitude clamps (`ValueClamped`), a `flags` bit field truncates
 See [Map Record Parsing](map-records.md) for the `Map` graph types these APIs
 consume, and [Writing WAD Files](writing-wads.md) for the general
 `WadBuilder` / `WriteOptions` contract.
+
+## From the CLI
+
+The `cwad convert` subcommand wraps this same `read → Map → write` path for
+whole WAD files, without writing any Rust. It replaces each map's lump run
+with its converted form; non-map lumps and maps already in the target format
+pass through unchanged, in directory order:
+
+```bash
+cwad convert doom.wad -o udmf.wad --to udmf
+cwad convert udmf.wad -o doom.wad --to doom --lenient
+```
+
+The second command needs `--lenient` for the same reason described above:
+strict mode refuses any UDMF field the Doom format cannot represent.
+
+A converted group contains only what the target format defines — the marker
+plus `TEXTMAP`/`ENDMAP`, or the marker plus the classic data lumps and the
+empty node lumps. Any other lump that lived inside the map group (`BEHAVIOR`,
+`SCRIPTS`, `ZNODES`, `DIALOGUE`, GL nodes) is **dropped**, not passed
+through: compiled ACS is bound to the source map's specials and node lumps
+describe the source geometry, so carrying either across would look intact
+while being subtly wrong. That is data loss under the same policy as any
+other: strict mode refuses (exit `3`, naming each lump), `--lenient` drops
+them and warns. A map already in the target format is not converted, so
+nothing in its group is dropped.
+
+See [CLI Usage](cli.md#convert) for the full flag reference, example output,
+and exit codes.

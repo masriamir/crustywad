@@ -52,6 +52,15 @@ pub(crate) enum WadKindArg {
     Pwad,
 }
 
+/// Target map format for `convert`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum MapFormatArg {
+    /// The classic Doom binary layout (THINGS/LINEDEFS/SIDEDEFS/VERTEXES/SECTORS).
+    Doom,
+    /// The UDMF text layout (TEXTMAP).
+    Udmf,
+}
+
 /// Available `cwad` subcommands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SubCommand {
@@ -141,5 +150,47 @@ pub(crate) enum SubCommand {
         /// Lumps are added to the WAD in the order they are listed.
         #[arg(value_name = "NAME=FILE")]
         lumps: Vec<String>,
+    },
+    /// Convert every map in a WAD between the UDMF and classic Doom formats.
+    ///
+    /// Maps already in the target format, and all non-map lumps, pass through
+    /// unchanged in directory order. Conversion is lossy in one direction:
+    /// Doom -> UDMF -> Doom is exact, but UDMF -> Doom rounds fractional
+    /// coordinates and drops fields Doom cannot represent (linedef args and id;
+    /// thing special, args, height, and id — the UDMF/Hexen tid). In strict mode
+    /// any such loss is an error; `--lenient` accepts the loss and reports each
+    /// instance as a warning, naming the field exactly as listed here.
+    ///
+    /// Converting to `doom` emits empty SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
+    /// lumps — run an external nodebuilder (zdbsp, bsp) before playing the map.
+    ///
+    /// A converted map keeps only the lumps the target format defines. Any
+    /// other lump inside the map group — BEHAVIOR (compiled ACS), SCRIPTS,
+    /// ZNODES, DIALOGUE, ... — is bound to the source map's specials or
+    /// geometry and is dropped rather than carried across: strict mode refuses
+    /// and names each such lump; `--lenient` drops them and warns.
+    ///
+    /// Exits 0 on success, 2 on I/O or parse error, 3 if a map cannot be
+    /// converted, if `--map NAME` matches no map in the WAD, or if the output
+    /// WAD fails write validation (e.g. a pass-through lump whose name is not
+    /// ASCII — such a name decodes under a lenient read but is rejected on
+    /// write, in both strictness modes).
+    Convert {
+        /// Path to the input WAD file.
+        input: PathBuf,
+        /// Output WAD file path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Target map format.
+        #[arg(long = "to", value_name = "FORMAT")]
+        to: MapFormatArg,
+        /// Convert only the map with this marker name (e.g. `MAP01`); all other
+        /// maps pass through unchanged. If not given, every map is converted.
+        /// If the name matches no map in the WAD the command exits with code 3.
+        #[arg(short, long, value_name = "NAME")]
+        map: Option<String>,
+        /// Output WAD kind.
+        #[arg(long, default_value = "pwad", value_name = "KIND")]
+        kind: WadKindArg,
     },
 }

@@ -2132,3 +2132,699 @@ fn hardening_merge_truncated_wad_exits_nonzero() {
         .assert()
         .code(2);
 }
+
+// ---------------------------------------------------------------------------
+// `cwad convert`
+// ---------------------------------------------------------------------------
+
+/// The five classic Doom map data lumps, as raw bytes.
+struct DoomMapLumps {
+    things: Vec<u8>,
+    linedefs: Vec<u8>,
+    sidedefs: Vec<u8>,
+    vertexes: Vec<u8>,
+    sectors: Vec<u8>,
+}
+
+/// The five classic Doom map data lumps for a minimal one-sector, one-linedef,
+/// one-thing map (mirrors the fixture used in the guide's conversion page).
+fn doom_map_lumps() -> DoomMapLumps {
+    let mut vertexes = Vec::new();
+    for v in [0_i16, 0, 64, 0] {
+        vertexes.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut linedefs = Vec::new();
+    for v in [0_u16, 1, 1, 0, 0, 0, 0xffff] {
+        linedefs.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut sidedefs = Vec::new();
+    sidedefs.extend_from_slice(&0_i16.to_le_bytes());
+    sidedefs.extend_from_slice(&0_i16.to_le_bytes());
+    sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0");
+    sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0");
+    sidedefs.extend_from_slice(b"STARTAN3");
+    sidedefs.extend_from_slice(&0_u16.to_le_bytes());
+
+    let mut sectors = Vec::new();
+    sectors.extend_from_slice(&0_i16.to_le_bytes());
+    sectors.extend_from_slice(&128_i16.to_le_bytes());
+    sectors.extend_from_slice(b"FLOOR4_8");
+    sectors.extend_from_slice(b"CEIL3_5\0");
+    sectors.extend_from_slice(&160_i16.to_le_bytes());
+    sectors.extend_from_slice(&0_i16.to_le_bytes());
+    sectors.extend_from_slice(&0_i16.to_le_bytes());
+
+    let mut things = Vec::new();
+    for v in [32_i16, 32, 0, 1, 7] {
+        things.extend_from_slice(&v.to_le_bytes());
+    }
+
+    DoomMapLumps {
+        things,
+        linedefs,
+        sidedefs,
+        vertexes,
+        sectors,
+    }
+}
+
+/// A PWAD containing `PLAYPAL`, one classic Doom map named `map_name`, then
+/// `COLORMAP`, so pass-through of non-map lumps (and their order) is testable.
+fn write_doom_map_wad(map_name: &str) -> NamedTempFile {
+    let m = doom_map_lumps();
+    write_wad(
+        *b"PWAD",
+        &[
+            ("PLAYPAL", &[1, 2, 3]),
+            (map_name, b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+            ("COLORMAP", &[4, 5, 6]),
+        ],
+    )
+}
+
+/// A UDMF `TEXTMAP` body equivalent to [`doom_map_lumps`]. When `zdoom_fields`
+/// is set the thing carries a nonzero `height`, which the Doom format has no
+/// slot for (ADR-0019 tier 3).
+fn udmf_textmap(zdoom_fields: bool) -> String {
+    let thing = if zdoom_fields {
+        "thing { x = 32; y = 32; height = 16; type = 1; skill1 = true; skill2 = true; skill3 = true; }\n"
+    } else {
+        "thing { x = 32; y = 32; type = 1; skill1 = true; skill2 = true; skill3 = true; }\n"
+    };
+    format!(
+        concat!(
+            "namespace = \"doom\";\n",
+            "vertex {{ x = 0; y = 0; }}\n",
+            "vertex {{ x = 64; y = 0; }}\n",
+            "sector {{ texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }}\n",
+            "sidedef {{ sector = 0; }}\n",
+            "linedef {{ v1 = 0; v2 = 1; sidefront = 0; blocking = true; }}\n",
+            "{}"
+        ),
+        thing
+    )
+}
+
+/// A PWAD containing a single UDMF map (`MAP01`) plus a trailing `COLORMAP`.
+fn write_udmf_map_wad(zdoom_fields: bool) -> NamedTempFile {
+    let textmap = udmf_textmap(zdoom_fields);
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+            ("COLORMAP", &[4, 5, 6]),
+        ],
+    )
+}
+
+/// Reads the data of the named lump from a WAD file.
+fn lump_bytes(path: &std::path::Path, name: &str) -> Vec<u8> {
+    let bytes = std::fs::read(path).expect("output WAD should be readable");
+    let wad = crustywad::Wad::from_bytes(bytes).expect("output WAD should parse");
+    let lump = wad
+        .lump_by_name(name)
+        .unwrap_or_else(|| panic!("{name} should be present"));
+    wad.lump_data(lump).to_vec()
+}
+
+/// Reads the lump names of a WAD file, in directory order.
+fn lump_names(path: &std::path::Path) -> Vec<String> {
+    let bytes = std::fs::read(path).expect("output WAD should be readable");
+    let wad = crustywad::Wad::from_bytes(bytes).expect("output WAD should parse");
+    wad.lumps()
+        .iter()
+        .map(|l| l.name().to_owned())
+        .collect::<Vec<_>>()
+}
+
+#[test]
+fn convert_doom_to_udmf_replaces_map_lumps_in_place() {
+    let wad = write_doom_map_wad("MAP01");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 1 map to udmf"));
+
+    // The map group is replaced in place: the original binary lumps are gone,
+    // and the surrounding non-map lumps keep their directory order.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["PLAYPAL", "MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+    );
+    // Non-map lumps pass through byte for byte, not merely by name — conversion
+    // must not rewrite payloads it does not own.
+    assert_eq!(lump_bytes(out.path(), "PLAYPAL"), vec![1, 2, 3]);
+    assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4, 5, 6]);
+}
+
+#[test]
+fn convert_udmf_to_doom_emits_lump_run_and_nodes_warning() {
+    let wad = write_udmf_map_wad(false);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+        ])
+        .assert()
+        .code(0)
+        // The unconditional NodesNotBuilt warning (ADR-0019 §4) must be shown.
+        .stderr(predicate::str::contains("MAP01: node lumps"))
+        .stderr(predicate::str::contains("run a nodebuilder"));
+
+    assert_eq!(
+        lump_names(out.path()),
+        vec![
+            // The canonical Doom lump order, with the node lumps present but
+            // zero-length (ADR-0019 §4).
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP", "COLORMAP",
+        ]
+    );
+}
+
+#[test]
+fn convert_map_already_in_target_format_passes_through() {
+    let wad = write_doom_map_wad("MAP01");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 0 maps to doom"));
+
+    assert_eq!(
+        lump_names(out.path()),
+        vec![
+            "PLAYPAL", "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SECTORS",
+            "COLORMAP",
+        ]
+    );
+}
+
+#[test]
+fn convert_map_filter_converts_only_the_named_map() {
+    let m = doom_map_lumps();
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+            ("MAP02", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--map",
+            "MAP02",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 1 map to udmf"));
+
+    assert_eq!(
+        lump_names(out.path()),
+        vec![
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SECTORS", "MAP02", "TEXTMAP",
+            "ENDMAP",
+        ]
+    );
+}
+
+#[test]
+fn convert_strict_refuses_lossy_udmf_to_doom_with_exit_3() {
+    // A UDMF thing with a nonzero `height` has no slot in the Doom format
+    // (ADR-0019 tier 3): strict mode must refuse, name the field, and point at
+    // `--lenient`.
+    let wad = write_udmf_map_wad(true);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("cannot convert map MAP01 to doom"))
+        .stderr(predicate::str::contains("height"))
+        .stderr(predicate::str::contains("--lenient"));
+}
+
+#[test]
+fn convert_lenient_accepts_lossy_udmf_to_doom_and_warns() {
+    let wad = write_udmf_map_wad(true);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("was dropped"))
+        .stderr(predicate::str::contains("height"));
+
+    assert!(lump_names(out.path()).contains(&"THINGS".to_owned()));
+}
+
+/// A PWAD containing a single Hexen-format map (`MAP01`) whose group carries a
+/// `BEHAVIOR` lump (compiled ACS) alongside the five classic data lumps. The
+/// `THINGS` and `LINEDEFS` lumps use the Hexen record layouts; the other three
+/// are byte-identical across formats and are reused from [`doom_map_lumps`].
+fn write_hexen_map_wad() -> NamedTempFile {
+    let m = doom_map_lumps();
+
+    // Hexen linedef: v1, v2, flags (u16), special + 5 args (u8), right, left (u16).
+    let mut linedefs = Vec::new();
+    for v in [0_u16, 1, 1] {
+        linedefs.extend_from_slice(&v.to_le_bytes());
+    }
+    linedefs.extend_from_slice(&[0_u8; 6]);
+    linedefs.extend_from_slice(&0_u16.to_le_bytes());
+    linedefs.extend_from_slice(&0xffff_u16.to_le_bytes());
+
+    // Hexen thing: tid, x, y, z, angle, type, flags (u16), special + 5 args (u8).
+    let mut things = Vec::new();
+    for v in [0_u16, 32, 32, 0, 0, 1, 7] {
+        things.extend_from_slice(&v.to_le_bytes());
+    }
+    things.extend_from_slice(&[0_u8; 6]);
+
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+            ("BEHAVIOR", &[7, 7, 7, 7]),
+        ],
+    )
+}
+
+#[test]
+fn convert_strict_refuses_to_drop_extra_group_lumps_with_exit_3() {
+    // A `BEHAVIOR` lump is compiled ACS bound to the source map's specials: no
+    // conversion can carry it across. Dropping it is data loss, so strict mode
+    // must refuse, name the lump, and point at `--lenient`.
+    let wad = write_hexen_map_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
+        .stderr(predicate::str::contains("BEHAVIOR"))
+        .stderr(predicate::str::contains("--lenient"));
+}
+
+#[test]
+fn convert_lenient_drops_extra_group_lumps_and_warns() {
+    let wad = write_hexen_map_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("BEHAVIOR"));
+
+    // The dropped lump is really gone — it is neither converted nor passed
+    // through into the converted group.
+    let names = lump_names(out.path());
+    assert!(!names.contains(&"BEHAVIOR".to_owned()), "{names:?}");
+    assert_eq!(names, vec!["MAP01", "TEXTMAP", "ENDMAP"]);
+}
+
+#[test]
+fn convert_strict_accepts_a_group_with_no_extra_lumps() {
+    // Regression guard for the strict refusal above: a plain Doom map group has
+    // no extra lumps, so strict mode must convert it without complaint.
+    let wad = write_doom_map_wad("MAP01");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 1 map to udmf"))
+        .stderr(predicate::str::contains("cannot convert").not());
+}
+
+#[test]
+fn convert_unknown_map_name_exits_3() {
+    // A typo'd `--map` name must not look like success (it previously wrote a
+    // verbatim copy and reported "converted 0 maps").
+    let wad = write_doom_map_wad("MAP01");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--map",
+            "TYPO",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(r#"map "TYPO" not found"#))
+        .stderr(predicate::str::contains("available maps: MAP01"));
+}
+
+#[test]
+fn convert_json_and_iwad_kind() {
+    let wad = write_doom_map_wad("MAP01");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "json",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--kind",
+            "iwad",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains(
+            r#"{"ok":true,"converted":1,"format":"udmf"}"#,
+        ));
+
+    let bytes = std::fs::read(out.path()).unwrap();
+    let converted = crustywad::Wad::from_bytes(bytes).unwrap();
+    assert_eq!(converted.kind(), crustywad::WadKind::Iwad);
+}
+
+#[test]
+fn convert_missing_input_exits_2() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("no_such_input.wad");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            missing.to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn convert_lenient_reports_parse_warnings_from_the_input() {
+    // A WAD with non-standard magic parses only in lenient mode, and the
+    // resulting ParseWarning must reach the user (path-prefixed on stderr)
+    // rather than being swallowed by the conversion.
+    let m = doom_map_lumps();
+    let wad = write_wad(
+        *b"XWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--lenient",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("warning:"));
+}
+
+#[test]
+fn convert_lenient_reports_assembly_warnings() {
+    // A linedef pointing at a vertex that does not exist is a dangling
+    // cross-reference: strict assembly rejects it, lenient assembly clamps it to
+    // an in-range vertex and records a MapWarning. That repair changes the
+    // geometry being written out, so `convert --lenient` must surface it rather
+    // than silently emitting a repaired map that looks clean.
+    let m = doom_map_lumps();
+    let mut linedefs = m.linedefs.clone();
+    // Point the linedef's start vertex (first u16) at index 999 — well past the
+    // two vertices the map actually has.
+    linedefs[0..2].copy_from_slice(&999_u16.to_le_bytes());
+
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    // Strict refuses the dangling reference outright.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3);
+
+    // Lenient converts, but must report the repair it made.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--lenient",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("MAP01"))
+        .stderr(predicate::str::contains("vertex"));
+}
+
+#[test]
+fn convert_non_ascii_lump_name_fails_write_validation_exits_3() {
+    // A non-ASCII lump name decodes under a lenient *read* but `WriteError::
+    // NonAsciiName` is rejected in both write modes, so building the converted
+    // WAD fails. Convert must surface that as a usage error (exit 3), not fall
+    // through to the generic I/O exit 2 — the same contract `merge` honors.
+    let m = doom_map_lumps();
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("É", &[1]),
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("failed to build"));
+}
+
+#[test]
+fn convert_map_filter_on_a_wad_with_no_maps_exits_3() {
+    // `--map NAME` against a WAD that has no maps at all takes the "contains no
+    // maps" branch: still exit 3, but the note must say so rather than printing
+    // an empty list of available maps.
+    let wad = write_wad(*b"PWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--map",
+            "MAP01",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("contains no maps"));
+}
+
+#[test]
+fn convert_corrupt_map_exits_3() {
+    // A map group whose VERTEXES lump has a trailing partial record cannot be
+    // assembled: the conversion must fail with exit 3, not panic.
+    let m = doom_map_lumps();
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &[0, 0, 0]), // 3 bytes: not a whole 4-byte vertex
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("failed to assemble map MAP01"))
+        .stderr(predicate::str::contains("thread '").not());
+}

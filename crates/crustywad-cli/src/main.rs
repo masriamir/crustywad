@@ -12,7 +12,7 @@ use anyhow::{Context as _, Result};
 use clap::Parser as _;
 use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
 
-use cli::{Cli, Format, SubCommand, WadKindArg};
+use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 
 /// Returns the names of map marker lumps found in `wad`, in directory order.
 ///
@@ -117,6 +117,48 @@ fn json_string(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Lump names that a map conversion accounts for — those it either *reads* to
+/// build the `Map` graph or *emits* as part of the converted map, and which are
+/// therefore safe to replace rather than carry across.
+///
+/// Note the two roles are not the same set. Assembly reads only `THINGS`,
+/// `LINEDEFS`, `SIDEDEFS`, `VERTEXES`, and `SECTORS`; the node lumps
+/// (`SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`) are never consumed, and
+/// appear here because `add_doom_map` emits them (empty — see the
+/// `NodesNotBuilt` warning). `TEXTMAP`/`ENDMAP` are the UDMF equivalents,
+/// read by assembly and emitted by `add_udmf_map`.
+///
+/// The classification is by name, and is deliberately narrower than the
+/// library's map-group membership rule (which also admits `BEHAVIOR` and any
+/// lump appearing between `TEXTMAP` and `ENDMAP`). Anything else found inside a
+/// map group — `BEHAVIOR` (compiled ACS), `SCRIPTS`, `ZNODES`, `DIALOGUE`, GL
+/// node lumps — is bound to the *source* map's specials or geometry, so it is
+/// neither converted nor copied into the converted map; see
+/// [`dropped_group_lumps`].
+const CONVERTED_MAP_LUMPS: &[&str] = &[
+    "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES", "SECTORS", "REJECT",
+    "BLOCKMAP", "TEXTMAP", "ENDMAP",
+];
+
+/// Returns the names of the lumps in `group` that a conversion would drop —
+/// every data lump whose name is not in [`CONVERTED_MAP_LUMPS`] — in directory
+/// order, preserving duplicates.
+///
+/// Carrying such a lump through into the converted map would be worse than
+/// dropping it: a `BEHAVIOR` lump is compiled ACS bound to the source map's
+/// linedef/thing specials, and node lumps describe the source geometry, so a
+/// pass-through would look intact while being subtly wrong.
+fn dropped_group_lumps(wad: &Wad, group: &crustywad::map::MapGroup) -> Vec<String> {
+    group
+        .data_indices
+        .iter()
+        .filter_map(|&i| wad.lump(i))
+        .map(crustywad::Lump::name)
+        .filter(|name| !CONVERTED_MAP_LUMPS.contains(name))
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 /// Groups each lump's data slice by name; duplicate names accumulate in directory order.
@@ -578,6 +620,204 @@ fn run(cli: Cli) -> Result<i32> {
                     wad_kind
                 ),
                 Format::Json => println!(r#"{{"ok":true,"lumps":{lump_count}}}"#),
+            }
+            Ok(0)
+        }
+
+        SubCommand::Convert {
+            input,
+            output,
+            to,
+            map,
+            kind,
+        } => {
+            use crustywad::map::detect_map_format;
+            use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
+
+            let wad = Wad::from_path_with_options(&input, options)
+                .with_context(|| format!("failed to load {}", input.display()))?;
+            for w in wad.warnings() {
+                eprintln!("warning: {}: {w}", input.display());
+            }
+
+            let wad_kind = match kind {
+                WadKindArg::Iwad => WadKind::Iwad,
+                WadKindArg::Pwad => WadKind::Pwad,
+            };
+            let write_opts = if cli.lenient {
+                crustywad::WriteOptions::lenient()
+            } else {
+                crustywad::WriteOptions::strict()
+            };
+            // `target` is only compared against `detect_map_format` (to skip a
+            // map already in the target format); the writer is chosen from `to`
+            // instead. `target_name` is the user-facing spelling.
+            let (target, target_name) = match to {
+                MapFormatArg::Doom => (MapFormat::Doom, "doom"),
+                MapFormatArg::Udmf => (MapFormat::Udmf, "udmf"),
+            };
+
+            let groups = wad.map_groups();
+
+            // A `--map NAME` that matches nothing is a usage error: without this
+            // the command would happily write a verbatim copy of the input and
+            // report "converted 0 maps", making a typo look like success.
+            if let Some(name) = map.as_deref() {
+                if !groups.iter().any(|g| g.name == name) {
+                    eprintln!("error: map {name:?} not found in {}", input.display());
+                    if groups.is_empty() {
+                        eprintln!("note: {} contains no maps", input.display());
+                    } else {
+                        let available: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+                        eprintln!("note: available maps: {}", available.join(", "));
+                    }
+                    return Ok(3);
+                }
+            }
+
+            // Directory index -> the group that starts there, for the groups we
+            // are converting. Every lump index inside a converted group (the
+            // marker and all of its data lumps) is recorded in `absorbed` and
+            // skipped on the pass-through walk, so the original binary lumps
+            // are not emitted alongside the converted ones.
+            let mut starts: HashMap<usize, MapGroup> = HashMap::new();
+            let mut absorbed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            // Per converted group, the lumps a conversion drops (see `dropped_group_lumps`).
+            let mut dropped: Vec<(String, Vec<String>)> = Vec::new();
+            for group in groups {
+                if map.as_deref().is_some_and(|n| n != group.name) {
+                    continue;
+                }
+                if detect_map_format(&wad, &group) == target {
+                    continue; // already in the target format: pass through
+                }
+                let extra = dropped_group_lumps(&wad, &group);
+                if !extra.is_empty() {
+                    dropped.push((group.name.clone(), extra));
+                }
+                absorbed.insert(group.marker_index);
+                absorbed.extend(group.data_indices.iter().copied());
+                starts.insert(group.marker_index, group);
+            }
+
+            // Dropping a lump the target format has no place for is data loss,
+            // and is handled exactly like an unrepresentable field (ADR-0019):
+            // strict refuses, lenient converts and warns.
+            if !dropped.is_empty() {
+                if cli.lenient {
+                    for (name, lumps) in &dropped {
+                        eprintln!(
+                            "warning: {name}: dropped lump(s) not carried into the {target_name} map: {}",
+                            lumps.join(", ")
+                        );
+                    }
+                } else {
+                    for (name, lumps) in &dropped {
+                        eprintln!(
+                            "error: cannot convert map {name} to {target_name}: it contains lump(s) that cannot be carried into the converted map: {}",
+                            lumps.join(", ")
+                        );
+                    }
+                    eprintln!("note: re-run with --lenient to convert anyway and drop them");
+                    return Ok(3);
+                }
+            }
+
+            let mut builder = WadBuilder::new(wad_kind);
+            let mut converted = 0_usize;
+
+            for (i, lump) in wad.lumps().iter().enumerate() {
+                if let Some(group) = starts.get(&i) {
+                    let assembled = match Map::assemble_with_options(&wad, group, options) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            eprintln!("error: failed to assemble map {}: {e}", group.name);
+                            return Ok(3);
+                        }
+                    };
+                    // Lenient assembly repairs what it can (clamping an
+                    // out-of-range cross-reference, coercing a field) and records
+                    // each repair. Those are changes to the map the user is about
+                    // to write out, so surface them alongside the write warnings
+                    // rather than dropping them — otherwise a repaired map looks
+                    // like a clean one.
+                    for w in assembled.warnings() {
+                        eprintln!("warning: {}: {w}", group.name);
+                    }
+                    // Conversion warnings (rounding, clamping, dropped fields,
+                    // and the unconditional `NodesNotBuilt` when targeting Doom)
+                    // are reported to stderr; a strict-mode refusal is fatal.
+                    // Dispatch on the CLI argument, not on `MapFormat`: the latter
+                    // is `#[non_exhaustive]`, so a wildcard arm would silently
+                    // route a future format to the UDMF writer. `MapFormatArg` is
+                    // exhaustive, so adding a target here is a compile error until
+                    // it is given a writer.
+                    //
+                    // Both writers report the same shape (warnings on success, a
+                    // refusal on loss), so normalize to strings and handle the
+                    // refusal once rather than per target format.
+                    let written: Result<Vec<String>, String> = match to {
+                        MapFormatArg::Doom => {
+                            add_doom_map(&mut builder, &group.name, &assembled, &write_opts)
+                                .map(|ws| ws.iter().map(ToString::to_string).collect())
+                                .map_err(|e| e.to_string())
+                        }
+                        MapFormatArg::Udmf => {
+                            add_udmf_map(&mut builder, &group.name, &assembled, &write_opts)
+                                .map(|ws| ws.iter().map(ToString::to_string).collect())
+                                .map_err(|e| e.to_string())
+                        }
+                    };
+                    let warnings: Vec<String> = match written {
+                        Ok(ws) => ws,
+                        Err(e) => {
+                            eprintln!(
+                                "error: cannot convert map {} to {target_name}: {e}",
+                                group.name
+                            );
+                            if !cli.lenient {
+                                eprintln!("note: re-run with --lenient to accept the data loss");
+                            }
+                            return Ok(3);
+                        }
+                    };
+                    for w in &warnings {
+                        eprintln!("warning: {}: {w}", group.name);
+                    }
+                    converted += 1;
+                } else if !absorbed.contains(&i) {
+                    builder.add_lump(lump.name(), wad.lump_data(lump));
+                }
+            }
+
+            // Lump-name/size validation failures are usage errors (bad input
+            // data), distinct from the I/O failures handled via `?` below.
+            let (bytes, warnings) = match builder.build_with_options(&write_opts) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("error: failed to build {}: {e}", output.display());
+                    return Ok(3);
+                }
+            };
+            for w in &warnings {
+                eprintln!("warning: {w}");
+            }
+
+            std::fs::write(&output, &bytes)
+                .with_context(|| format!("failed to write {}", output.display()))?;
+
+            match cli.format {
+                Format::Human | Format::Csv => {
+                    let maps = if converted == 1 { "map" } else { "maps" };
+                    println!(
+                        "wrote {}: converted {converted} {maps} to {target_name}",
+                        output.display()
+                    );
+                }
+                Format::Json => println!(
+                    r#"{{"ok":true,"converted":{converted},"format":{}}}"#,
+                    json_string(target_name)
+                ),
             }
             Ok(0)
         }

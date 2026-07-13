@@ -8,7 +8,7 @@ The repository currently implements:
 - Safe WAD header and lump-directory reading, plus typed scaffolding for classic Doom map-record lumps (`THINGS`, `LINEDEFS`, `SIDEDEFS`, `VERTEXES`, `SEGS`, `SSECTORS`, `NODES`, `SECTORS`)
 - WAD serialization (`WadBuilder`, behind the `write` feature)
 - Zero-copy memory-mapped loading (behind the `mmap` feature)
-- A `cwad` CLI binary with `info`, `list`, `validate`, `merge`, `diff`, `extract`, and `build` subcommands
+- A `cwad` CLI binary with `info`, `list`, `validate`, `merge`, `diff`, `extract`, `convert`, and `build` subcommands
 - `cargo-fuzz` targets and Criterion benchmarking infrastructure
 
 ## Workspace layout
@@ -28,7 +28,7 @@ crates/
       wad_reader.rs    # Integration tests for the main WAD reader API
   crustywad-cli/       # CLI binary crate (`cwad`)
     src/main.rs
-    src/cli.rs         # CLI argument types (info/list/validate/merge/diff/extract/build)
+    src/cli.rs         # CLI argument types (info/list/validate/merge/diff/extract/convert/build)
 docs/
   design.md            # Goals, data model, read pipeline, feature plan
   adr/                 # Architecture decision records
