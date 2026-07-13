@@ -642,8 +642,9 @@ fn run(cli: Cli) -> Result<i32> {
             } else {
                 crustywad::WriteOptions::strict()
             };
-            // `MapFormat` is `#[non_exhaustive]`, so it is matched with a
-            // wildcard arm below; `target_name` is the user-facing spelling.
+            // `target` is only compared against `detect_map_format` (to skip a
+            // map already in the target format); the writer is chosen from `to`
+            // instead. `target_name` is the user-facing spelling.
             let (target, target_name) = match to {
                 MapFormatArg::Doom => (MapFormat::Doom, "doom"),
                 MapFormatArg::Udmf => (MapFormat::Udmf, "udmf"),
@@ -730,18 +731,26 @@ fn run(cli: Cli) -> Result<i32> {
                     // Conversion warnings (rounding, clamping, dropped fields,
                     // and the unconditional `NodesNotBuilt` when targeting Doom)
                     // are reported to stderr; a strict-mode refusal is fatal.
+                    // Dispatch on the CLI argument, not on `MapFormat`: the latter
+                    // is `#[non_exhaustive]`, so a wildcard arm would silently
+                    // route a future format to the UDMF writer. `MapFormatArg` is
+                    // exhaustive, so adding a target here is a compile error until
+                    // it is given a writer.
+                    //
                     // Both writers report the same shape (warnings on success, a
-                    // refusal on loss), so normalize to strings here and handle
-                    // the refusal once rather than per target format.
-                    let written: Result<Vec<String>, String> = match target {
-                        MapFormat::Doom => {
+                    // refusal on loss), so normalize to strings and handle the
+                    // refusal once rather than per target format.
+                    let written: Result<Vec<String>, String> = match to {
+                        MapFormatArg::Doom => {
                             add_doom_map(&mut builder, &group.name, &assembled, &write_opts)
                                 .map(|ws| ws.iter().map(ToString::to_string).collect())
                                 .map_err(|e| e.to_string())
                         }
-                        _ => add_udmf_map(&mut builder, &group.name, &assembled, &write_opts)
-                            .map(|ws| ws.iter().map(ToString::to_string).collect())
-                            .map_err(|e| e.to_string()),
+                        MapFormatArg::Udmf => {
+                            add_udmf_map(&mut builder, &group.name, &assembled, &write_opts)
+                                .map(|ws| ws.iter().map(ToString::to_string).collect())
+                                .map_err(|e| e.to_string())
+                        }
                     };
                     let warnings: Vec<String> = match written {
                         Ok(ws) => ws,
