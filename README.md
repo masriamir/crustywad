@@ -195,7 +195,7 @@ just fetch-fixtures version=v0.14.0
 FREEDOOM_VERSION=v0.14.0 just fetch-fixtures
 ```
 
-Enable the optional fixture coverage by passing `--features freedoom-tests` (or `--all-features`) **and** setting `CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom` when running tests locally.
+Enable the optional fixture coverage with `just test-freedoom`, or by passing `--features freedoom-tests` (or `--all-features`) **and** setting `CRUSTYWAD_FREEDOOM_DIR` to an **absolute** path (e.g. `CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom"`). A relative path does not resolve — cargo runs the test binary from the package root — and the fixture tests skip silently instead of failing.
 
 ## MSRV
 

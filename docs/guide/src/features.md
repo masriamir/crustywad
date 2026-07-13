@@ -96,7 +96,7 @@ just fetch-fixtures version=v0.14.0
 ### Running the tests
 
 ```sh
-# Using just — defaults CRUSTYWAD_FREEDOOM_DIR to tests/fixtures/freedoom:
+# Using just — defaults CRUSTYWAD_FREEDOOM_DIR to an absolute path under the repo root:
 just test-freedoom
 
 # Override the fixture directory:

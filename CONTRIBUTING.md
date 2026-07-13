@@ -30,7 +30,7 @@ Commits are expected to follow Conventional Commits. The bundled `lefthook.yml` 
 
 ## Freedoom fixtures
 
-Some optional tests use Freedoom WADs. Download them with `just fetch-fixtures`, then pass `--features freedoom-tests` (or `--all-features`) **and** set `CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom` when running tests locally.
+Some optional tests use Freedoom WADs. Download them with `just fetch-fixtures`, then run `just test-freedoom`. To invoke cargo directly, pass `--features freedoom-tests` (or `--all-features`) **and** set `CRUSTYWAD_FREEDOOM_DIR` to an **absolute** path — e.g. `CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom"`. A relative path does not resolve (cargo runs the test binary from the package root), and the fixture tests then skip silently instead of failing.
 
 The Freedoom version is configurable — see `tests/fixtures/README.md` for details.
 
