@@ -93,8 +93,9 @@ let bytes = builder.build()?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Fields are emitted only when they differ from UDMF spec defaults; coordinates are
-written as floating-point. See [UDMF](map-records.md) for the complete API and
+Fields are emitted only when they differ from UDMF spec defaults; float coordinates
+are narrowed to integer form when whole (e.g. `64.0` is written as `64`). See
+[UDMF](map-records.md) for the complete API and
 strictness options.
 
 ## Strict vs. lenient write validation

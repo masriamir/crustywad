@@ -23,7 +23,7 @@ const INFALLIBLE: &str = "writing to a String never fails";
 #[non_exhaustive]
 pub enum UdmfWriteError {
     /// A coordinate or height was NaN or infinite and cannot be a valid UDMF
-    /// float (strict mode; lenient replaces it with `0.0` and warns).
+    /// float (strict mode; lenient replaces it with `0` and warns).
     #[error("non-finite {field} in {block} #{index}")]
     NonFiniteCoordinate {
         /// The block kind (e.g. `"vertex"`, `"thing"`).
@@ -43,8 +43,8 @@ pub enum UdmfWriteError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum UdmfWriteWarning {
-    /// A non-finite coordinate/height was replaced with `0.0`.
-    #[error("non-finite {field} in {block} #{index} replaced with 0.0")]
+    /// A non-finite coordinate/height was replaced with `0`.
+    #[error("non-finite {field} in {block} #{index} replaced with 0")]
     NonFiniteReplaced {
         /// The block kind.
         block: &'static str,

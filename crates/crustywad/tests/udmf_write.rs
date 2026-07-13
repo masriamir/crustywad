@@ -41,15 +41,14 @@ fn writes_namespace_and_vertices() {
 }
 
 #[test]
-fn empty_namespace_errors_in_strict_defaults_in_lenient() {
-    // A namespace of "" is invalid. We can't easily assemble such a map, so this
-    // is covered by unit tests in write.rs; here we assert the lenient default
-    // path via a normal map that already has "doom".
+fn lenient_preserves_existing_namespace_without_warnings() {
+    // A map that already carries a namespace keeps it verbatim in lenient mode
+    // and produces no warnings. (The missing/empty-namespace default and error
+    // paths are covered by their own tests below.)
     let map = assemble_udmf(FULL_MAP);
-    let (text, _) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+    let (text, warnings) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
     assert!(text.starts_with("namespace = \"doom\";"));
-    // Reference the error type so the import is exercised.
-    let _ = UdmfWriteError::EmptyNamespace;
+    assert!(warnings.is_empty());
 }
 
 #[test]
