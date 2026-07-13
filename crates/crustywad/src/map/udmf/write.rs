@@ -56,7 +56,8 @@ pub enum UdmfWriteWarning {
     /// The map had no (or an empty) namespace; `used` was written instead.
     #[error("map had no namespace; wrote {used:?}")]
     NamespaceDefaulted {
-        /// The namespace written instead (always `"doom"`).
+        /// The namespace written instead: `"hexen"` for a [`MapFormat::Hexen`]
+        /// map, `"doom"` otherwise.
         used: &'static str,
     },
 }
@@ -256,13 +257,12 @@ impl Writer {
                 write!(self.out, "arg{i} = {arg}; ").expect(INFALLIBLE);
             }
         }
-        // Thing flags: map the Doom flag bits to the UDMF booleans this writer
-        // emits — `skill1`..`skill5`, `ambush`, and `single` (`single = false`
-        // for the "multiplayer only" bit, since UDMF's `single`/`dm`/`coop`
-        // default to `true`). These are emitted from a Doom/Hexen-sourced map's
-        // flags; UDMF-sourced maps have `flags == 0` (UDMF thing flags are not
-        // modeled on the read/assembly path — normalization sets them to 0), so
-        // this mapping is currently one-way within the crate.
+        // Thing flags: the exact inverse of the read-side packing (ADR-0019) —
+        // bit 0 -> skill1+skill2, bit 1 -> skill3, bit 2 -> skill4+skill5,
+        // bit 3 -> ambush, bit 4 -> single = false, bit 5 -> dm = false,
+        // bit 6 -> coop = false, bit 7 -> friend = true. UDMF's single/dm/coop
+        // default to true, so Doom's "not in X" bits emit an explicit `false`.
+        // Bits above 7 have no UDMF boolean and are not emitted.
         let f = t.flags;
         if f & 0x0001 != 0 {
             self.out.push_str("skill1 = true; skill2 = true; ");
@@ -278,6 +278,15 @@ impl Writer {
         }
         if f & 0x0010 != 0 {
             self.out.push_str("single = false; ");
+        }
+        if f & 0x0020 != 0 {
+            self.out.push_str("dm = false; ");
+        }
+        if f & 0x0040 != 0 {
+            self.out.push_str("coop = false; ");
+        }
+        if f & 0x0080 != 0 {
+            self.out.push_str("friend = true; ");
         }
         self.out.push_str("}\n");
         Ok(())
@@ -309,11 +318,19 @@ pub fn write_udmf(
         },
         Some(ns) => ns,
         None => {
+            // A binary-format map has no namespace declaration of its own, so
+            // derive the reserved UDMF namespace matching its source format
+            // (ADR-0019). `MapFormat` is #[non_exhaustive]; anything without a
+            // reserved namespace falls back to "doom".
+            let derived = match map.format() {
+                MapFormat::Hexen => "hexen",
+                _ => "doom",
+            };
             if opts.strictness == Strictness::Lenient {
                 w.warnings
-                    .push(UdmfWriteWarning::NamespaceDefaulted { used: "doom" });
+                    .push(UdmfWriteWarning::NamespaceDefaulted { used: derived });
             }
-            "doom"
+            derived
         }
     };
     writeln!(w.out, "namespace = {};", escape_udmf_string(namespace)).expect(INFALLIBLE);
@@ -560,6 +577,38 @@ mod tests {
                 index: 0
             }
         );
+    }
+
+    #[test]
+    fn hexen_map_gets_hexen_namespace() {
+        let mut map = map_with(vec![MapVertex { x: 0.0, y: 0.0 }], vec![]);
+        map.format = MapFormat::Hexen;
+        map.namespace = None;
+        let (text, warnings) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+        assert!(text.starts_with("namespace = \"hexen\";"), "{text}");
+        assert_eq!(
+            warnings,
+            vec![UdmfWriteWarning::NamespaceDefaulted { used: "hexen" }]
+        );
+    }
+
+    #[test]
+    fn doom_map_gets_doom_namespace() {
+        let mut map = map_with(vec![MapVertex { x: 0.0, y: 0.0 }], vec![]);
+        map.format = MapFormat::Doom;
+        map.namespace = None;
+        let (text, _) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+        assert!(text.starts_with("namespace = \"doom\";"), "{text}");
+    }
+
+    #[test]
+    fn thing_flag_mapping_covers_boom_mbf_bits() {
+        let mut w = Writer::new(Strictness::Strict);
+        w.push_thing(0, &thing(0x0020 | 0x0040 | 0x0080)).unwrap();
+        let out = &w.out;
+        assert!(out.contains("dm = false; "), "{out}");
+        assert!(out.contains("coop = false; "), "{out}");
+        assert!(out.contains("friend = true; "), "{out}");
     }
 
     #[test]
