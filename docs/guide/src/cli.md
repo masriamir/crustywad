@@ -123,6 +123,48 @@ wrote custom.wad: kind=Pwad lumps: 2
 Use `--kind iwad` to build an IWAD instead of the default PWAD. Lump-name or
 size validation failures exit `3`.
 
+### convert
+
+Convert every map in a WAD between the classic Doom binary format and UDMF,
+replacing each map's lump run in place; non-map lumps, and maps already in
+the target format, pass through unchanged in directory order.
+
+```text
+$ cwad convert doom.wad -o udmf.wad --to udmf
+wrote udmf.wad: converted 1 map to udmf
+```
+
+`--to` is required and takes `doom` or `udmf`. Use `--map NAME` to convert
+only the named map (e.g. `--map MAP01`) and pass every other map through
+unchanged; omit it to convert every map in the WAD. Use `--kind` to set the
+output WAD kind (`iwad` or `pwad`; default `pwad`).
+
+> **Converting to `doom` is not engine-playable without a nodebuilder.**
+> `--to doom` emits empty `SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`
+> lumps and always prints a `NodesNotBuilt` warning to stderr — run an
+> external nodebuilder (`zdbsp`, `bsp`, ...) over the output before loading
+> it in a source port. See [Converting maps](converting-maps.md) for
+> details.
+
+**Strict mode refuses data loss.** Converting a typical ZDoom-namespace UDMF
+map (linedef `args`, thing `height`/`id`/`special`, ...) to `doom` exits `3`,
+naming the offending field on stderr:
+
+```text
+$ cwad convert udmf.wad -o doom.wad --to doom
+error: cannot convert map MAP01 to doom: thing #0 has a height value, which the Doom format cannot represent
+note: re-run with --lenient to accept the data loss
+```
+
+This is intended, not a bug: `--to doom` succeeding is the answer to "does
+this map fit in the Doom format?" Pass the global `--lenient` flag to accept
+the loss and convert anyway; each dropped or rounded field is then reported
+as a warning on stderr instead. See [Converting maps](converting-maps.md)
+for the full loss policy.
+
+Exits `0` on success, `2` on I/O or parse error, `3` if a map cannot be
+assembled or cannot be converted without loss in strict mode.
+
 ## Global options
 
 | Flag | Short | Description |
@@ -231,7 +273,7 @@ true
 | `0` | Success |
 | `1` | Differences found (`diff` only) |
 | `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found |
-| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`/`merge`) |
+| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`/`merge`); for `convert`, also a map that fails to assemble or that cannot be converted without loss in strict mode |
 
 ## Man page
 

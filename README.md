@@ -18,7 +18,7 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 
 ## Status
 
-`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
+`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, converting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
 
 Integration tests for each layer live in `crates/crustywad/tests/`:
 - `wad_reader.rs` — WAD header and directory parsing
@@ -69,7 +69,7 @@ irm https://github.com/masriamir/crustywad/releases/latest/download/crustywad-cl
 ## Workspace layout
 
 - `crates/crustywad` — core library for safe WAD reading and writing.
-- `crates/crustywad-cli` — `cwad`, a CLI for inspecting, validating, merging, diffing, extracting, and building WAD files.
+- `crates/crustywad-cli` — `cwad`, a CLI for inspecting, validating, merging, diffing, extracting, converting, and building WAD files.
 - `docs/` — design notes, ADRs, and the [mdBook user guide](https://crustywad.dev).
 - `.github/` — CI, release automation, issue templates, and repository policy files.
 
@@ -156,7 +156,7 @@ cargo run -p crustywad-cli -- info path/to/file.wad
 cargo run -p crustywad-cli -- list path/to/file.wad
 ```
 
-`cwad` also has `validate`, `merge`, `diff`, `extract`, and `build` subcommands — see [CLI Usage](https://crustywad.dev/cli.html) in the guide for the full reference.
+`cwad` also has `validate`, `merge`, `diff`, `extract`, `convert`, and `build` subcommands — see [CLI Usage](https://crustywad.dev/cli.html) in the guide for the full reference.
 
 ## Feature flags
 
