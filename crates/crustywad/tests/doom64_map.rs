@@ -290,3 +290,116 @@ fn trailing_bytes_strict_errors_lenient_salvages() {
         }]
     );
 }
+
+#[test]
+fn reads_doom64_map_lenient_clean_no_warnings() {
+    // A well-formed sample Doom 64 map read with lenient mode must produce
+    // zero warnings—clean input has no issues to warn about.
+    let bytes = sample_doom64_map_bytes();
+    let map = read_doom64_map(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(map.warnings().is_empty());
+}
+
+use proptest::prelude::*;
+
+proptest! {
+    // Doom 64 record types are plain integer records (no field validation),
+    // so a buffer whose length is an exact multiple of the record size must
+    // always parse successfully to exactly len / size records.
+
+    #[test]
+    fn doom64_vertex_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const VERTEX_SIZE: usize = 8;
+        let result = parse_records::<Vertex>(&data);
+        if data.len() % VERTEX_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Vertex> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), VERTEX_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / VERTEX_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_thing_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const THING_SIZE: usize = 14;
+        let result = parse_records::<Thing>(&data);
+        if data.len() % THING_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Thing> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), THING_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / THING_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_linedef_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const LINEDEF_SIZE: usize = 16;
+        let result = parse_records::<Linedef>(&data);
+        if data.len() % LINEDEF_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Linedef> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), LINEDEF_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / LINEDEF_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_sidedef_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const SIDEDEF_SIZE: usize = 12;
+        let result = parse_records::<Sidedef>(&data);
+        if data.len() % SIDEDEF_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Sidedef> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), SIDEDEF_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / SIDEDEF_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_sector_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const SECTOR_SIZE: usize = 24;
+        let result = parse_records::<Sector>(&data);
+        if data.len() % SECTOR_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Sector> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), SECTOR_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / SECTOR_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_light_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const LIGHT_SIZE: usize = 6;
+        let result = parse_records::<Light>(&data);
+        if data.len() % LIGHT_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Light> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), LIGHT_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / LIGHT_SIZE);
+        }
+    }
+}
