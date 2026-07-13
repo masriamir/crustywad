@@ -12,10 +12,15 @@ fuzz_target!(|data: &[u8]| {
 
     // Path 2: force valid `IWAD` magic so the fuzzer reaches the nested-WAD
     // container parse and per-record decoding (which the magic guard would
-    // otherwise skip for the vast majority of inputs).
-    let mut input = Vec::with_capacity(4 + data.len());
+    // otherwise skip for the vast majority of inputs). Pad to the 12-byte
+    // minimum WAD-header length so the magic guard (`len >= 12`) passes even for
+    // very short `data` and the container parser is always reached.
+    let mut input = Vec::with_capacity((4 + data.len()).max(12));
     input.extend_from_slice(b"IWAD");
     input.extend_from_slice(data);
+    if input.len() < 12 {
+        input.resize(12, 0);
+    }
 
     if let Ok(map) = read_doom64_map(&input, &ParseOptions::lenient()) {
         // Oracle (ADR-0016 §1): O(input) allocation. Each record vector is
