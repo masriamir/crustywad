@@ -27,13 +27,16 @@
 //! # Round-tripping
 //!
 //! Doom → UDMF → Doom is byte-identical **for maps whose linedef flags fit the
-//! nine standard bits (0–8) and whose thing angles are already in `0..360`**.
-//! Outside that envelope the UDMF leg loses data, so the returned Doom lumps
-//! differ from the originals:
+//! nine standard bits (0–8), whose thing flags fit the eight mapped bits (0–7),
+//! and whose thing angles are already in `0..360`**. Outside that envelope the
+//! UDMF leg loses data, so the returned Doom lumps differ from the originals:
 //!
 //! - A linedef flag bit ≥ 9 (e.g. Boom's `passuse`, `0x200`) has no UDMF boolean
 //!   in [`write_udmf`](crate::map::udmf::write_udmf), which emits only the nine
 //!   standard flags, so it is dropped.
+//! - A thing flag bit ≥ 8 likewise has no UDMF boolean (the eight mapped bits
+//!   are skill 1–5, ambush, multiplayer-only, and the Boom/MBF dm/co-op/friend
+//!   bits), so it is dropped.
 //! - A thing `angle` ≥ 360 is normalized modulo 360 on the way out to UDMF.
 //!
 //! **UDMF → Doom → UDMF is not reversible** — coordinate rounding and tier-3
