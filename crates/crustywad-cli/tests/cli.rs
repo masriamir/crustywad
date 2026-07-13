@@ -2641,6 +2641,66 @@ fn convert_missing_input_exits_2() {
 }
 
 #[test]
+fn convert_lenient_reports_parse_warnings_from_the_input() {
+    // A WAD with non-standard magic parses only in lenient mode, and the
+    // resulting ParseWarning must reach the user (path-prefixed on stderr)
+    // rather than being swallowed by the conversion.
+    let m = doom_map_lumps();
+    let wad = write_wad(
+        *b"XWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--lenient",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("warning:"));
+}
+
+#[test]
+fn convert_map_filter_on_a_wad_with_no_maps_exits_3() {
+    // `--map NAME` against a WAD that has no maps at all takes the "contains no
+    // maps" branch: still exit 3, but the note must say so rather than printing
+    // an empty list of available maps.
+    let wad = write_wad(*b"PWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--map",
+            "MAP01",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("contains no maps"));
+}
+
+#[test]
 fn convert_corrupt_map_exits_3() {
     // A map group whose VERTEXES lump has a trailing partial record cannot be
     // assembled: the conversion must fail with exit 3, not panic.
