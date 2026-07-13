@@ -4,6 +4,12 @@
 
 use binrw::BinRead;
 
+#[cfg(feature = "write")]
+mod write;
+
+#[cfg(feature = "write")]
+pub use write::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, write_doom_map};
+
 /// A single record from the `THINGS` lump, describing one map object.
 ///
 /// Things include player start positions, monsters, items, decorations, and
