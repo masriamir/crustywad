@@ -2,10 +2,8 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let result = crustywad::Wad::from_bytes_with_options(
-        data.to_vec(),
-        crustywad::ParseOptions::lenient(),
-    );
+    let result =
+        crustywad::Wad::from_bytes_with_options(data.to_vec(), crustywad::ParseOptions::lenient());
     if let Ok(wad) = result {
         // O(input) allocation invariant (ADR-0016 §1): 16-byte directory entries
         // bound the lump count by input_len / 16 even in lenient mode, where
