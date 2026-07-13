@@ -58,6 +58,12 @@ PIN_RE = re.compile(
     r'crustywad(?!-)\s*=\s*(?:"(?P<bare>[^"]+)"|\{[^}]*?version\s*=\s*"(?P<table>[^"]+)")'
 )
 
+# A template placeholder, and only that: `X.Y.Z` / `x.y.z` (CONTRIBUTING.md uses
+# one when showing the shape of the CLI's dependency entry). Deliberately narrow
+# — `0.x` and `0.3-beta.1` are malformed pins, not placeholders, and must be
+# reported rather than waved through.
+PLACEHOLDER_RE = re.compile(r"[XYZ](?:\.[XYZ])*", re.IGNORECASE)
+
 
 def crate_version() -> str:
     """Returns `[package].version` from the library crate's Cargo.toml.
@@ -164,10 +170,12 @@ def main() -> int:
             lineno = text.count("\n", 0, match.start()) + 1
 
             # Skip deliberate placeholders (`version = "X.Y.Z"` in a template
-            # snippet). They instruct nobody to install anything, so pinning them
-            # to a real version would be wrong. Anything else non-numeric is a
-            # malformed pin and still reported.
-            if any(char.isalpha() for char in found):
+            # snippet): they instruct nobody to install anything, so pinning them
+            # to a real version would be wrong. The match must be a placeholder
+            # *and nothing else* — a pin like `0.x` or `0.3-beta.1` is malformed,
+            # not a template, and is still reported. Skipping on "contains a
+            # letter" would let those through silently.
+            if PLACEHOLDER_RE.fullmatch(found):
                 continue
 
             checked += 1
