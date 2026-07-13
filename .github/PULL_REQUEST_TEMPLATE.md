@@ -22,7 +22,7 @@ If this PR renames or introduces a shared convention phrase:
 
 If this PR bumps the crate's **minor** version (a `release-plz` release PR):
 
-- [ ] Updated the `crustywad = "X.Y"` pins in `README.md` and `docs/guide/src/` (a 0.x caret is minor-pinned, so a stale pin stops resolving for readers; `just docs-sync` enforces this)
+- [ ] Updated the `crustywad = "X.Y.Z"` pins in `README.md` and `docs/guide/src/` (a 0.x caret is minor-pinned, so after a minor bump a stale pin stops resolving for readers; `just docs-sync` enforces this. Patch bumps still resolve and need no change.)
 
 ## Roadmap milestones
 

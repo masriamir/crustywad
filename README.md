@@ -34,14 +34,14 @@ Library:
 
 ```toml
 [dependencies]
-crustywad = "0.3"
+crustywad = "0.3.0"
 ```
 
 Enable optional features as needed (see [Feature flags](#feature-flags) below):
 
 ```toml
 [dependencies]
-crustywad = { version = "0.3", features = ["write", "mmap"] }
+crustywad = { version = "0.3.0", features = ["write", "mmap"] }
 ```
 
 CLI (`cwad`) — any of:

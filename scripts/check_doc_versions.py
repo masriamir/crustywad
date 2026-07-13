@@ -39,15 +39,22 @@ from pathlib import Path
 
 CARGO_TOML = Path("crates/crustywad/Cargo.toml")
 
-# Every doc that could carry a dependency snippet is discovered, not listed: a
-# hardcoded list is itself a drift source — a new guide page with a pin would
-# silently escape the check, which is the exact failure this script exists to
-# prevent (a guard with a blind spot is worse than none, because it reads as
-# coverage).
 def checked_files() -> list[Path]:
-    """Returns every documentation file that may pin a `crustywad` version."""
+    """Returns the *reader-facing* docs whose pins must stay installable.
+
+    Scope is the README, CONTRIBUTING, and the mdBook guide (recursively, so a
+    future subdirectory cannot become a blind spot). Within that scope the files
+    are *discovered*, never listed: a hardcoded list is itself a drift source --
+    a new guide page carrying a pin would silently escape, which is the exact
+    failure this script exists to prevent.
+
+    **ADRs are deliberately out of scope.** `docs/adr/` records decisions as they
+    stood when taken -- ADR-0011, for instance, quotes `version = "0.1.0"` --
+    and rewriting those snippets to track the current release would falsify the
+    historical record. They instruct nobody to install anything; these files do.
+    """
     paths = [Path("README.md"), Path("CONTRIBUTING.md")]
-    paths.extend(sorted(Path("docs/guide/src").glob("*.md")))
+    paths.extend(sorted(Path("docs/guide/src").rglob("*.md")))
     return [p for p in paths if p.exists()]
 
 # Matches both snippet forms, capturing the version string:
@@ -101,26 +108,20 @@ def crate_version() -> str:
 
 
 def expected_pin(version: str) -> str:
-    """Returns the caret requirement a reader should write for `version`.
+    """Returns the pin the docs should show for `version` -- the full `X.Y.Z`.
 
-    Cargo's caret semantics narrow as the version approaches zero, and each tier
-    needs a different pin for the requirement to actually resolve:
+    This is what ``cargo add crustywad`` writes into a reader's ``Cargo.toml``
+    (verified: it emits ``crustywad = "0.3.0"``, not ``"0.3"``), so it is the
+    form a reader will actually end up with, and it states the minimum patch
+    they need -- which matters as soon as a documented example relies on
+    something added in a patch release.
 
-    - ``1.2.3`` -> ``1``      (``^1`` is ``>=1.2.3, <2.0.0``; the major suffices)
-    - ``0.3.0`` -> ``0.3``    (``^0.3`` is ``>=0.3.0, <0.4.0``; minor-pinned)
-    - ``0.0.5`` -> ``0.0.5``  (``^0.0.5`` is ``>=0.0.5, <0.0.6``; patch-pinned --
-      the full version is required, since ``0.0`` denotes a different range)
+    Shorter forms still *work* (``"0.3"`` resolves to 0.3.0), and
+    :func:`pin_resolves` accepts any requirement that genuinely fetches the
+    current version. This function only supplies the canonical spelling to
+    suggest when a pin is wrong.
     """
-    parts = version.split(".")
-    major = parts[0]
-    minor = parts[1] if len(parts) > 1 else "0"
-    patch = parts[2] if len(parts) > 2 else "0"
-
-    if major != "0":
-        return major
-    if minor != "0":
-        return f"0.{minor}"
-    return f"0.0.{patch}"
+    return version
 
 
 def pin_resolves(pin: str, version: str) -> bool:
@@ -191,7 +192,8 @@ def main() -> int:
             print(f"  {problem}", file=sys.stderr)
         print(
             f"\nThe crate is at {version}, so every documented dependency snippet "
-            f'should read crustywad = "{want}".\n'
+            f'should read crustywad = "{want}" (the full X.Y.Z, matching what '
+            "`cargo add` writes).\n"
             "For a 0.x crate a caret requirement is minor-pinned, so a stale pin "
             "does not resolve at all for readers.\n"
             "If a release just bumped the minor version, update the pins in the "

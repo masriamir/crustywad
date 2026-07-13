@@ -38,7 +38,7 @@ docs/
     src/               # Guide source pages (SUMMARY.md, *.md including features.md)
 scripts/
   check_doc_anchors.py # Living-docs anchor drift detector (ADR-0007); run via `just docs-sync`
-  check_doc_versions.py # Fails if a documented `crustywad = "X.Y"` pin disagrees with the crate's actual version; run via `just docs-sync`
+  check_doc_versions.py # Fails if a documented `crustywad = "X.Y.Z"` pin no longer resolves to the crate's actual version; run via `just docs-sync`
 anchors.txt            # Anchor strings that must appear verbatim in all three main doc files
 tests/
   fixtures/
