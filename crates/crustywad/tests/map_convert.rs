@@ -13,7 +13,7 @@ mod common;
 
 use proptest::prelude::*;
 
-use crustywad::map::{DoomWriteWarning, write_doom_map};
+use crustywad::map::{DoomWriteWarning, write_doom_map, write_udmf};
 use crustywad::map::{Map, MapFormat, Vertex, add_doom_map, add_udmf_map, parse_records};
 use crustywad::{ParseOptions, Wad, WadBuilder, WadKind, WriteOptions};
 
@@ -133,6 +133,65 @@ fn doom_to_udmf_to_doom_is_byte_identical() {
 
     // Nodes are never built — in either strictness mode.
     assert_eq!(warnings, vec![DoomWriteWarning::NodesNotBuilt]);
+}
+
+/// An ordinary Doom thing — flags `0x07`, i.e. present on every skill and in
+/// every game mode — must name every game mode it appears in when written to
+/// UDMF. The UDMF spec defaults **all** flags to `false` ("All flags default to
+/// false"; the suggested *editor* default of `true` is a UI hint, not parse
+/// semantics), so omitting `single`/`dm`/`coop` means the thing spawns in *no*
+/// game mode in any spec-conformant consumer (`GZDoom`, SLADE).
+#[test]
+fn converted_doom_thing_names_the_game_modes_it_appears_in() {
+    let vertexes = [0i16, 0, 64, 0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect::<Vec<u8>>();
+
+    let mut linedefs = Vec::new();
+    linedefs.extend_from_slice(&0u16.to_le_bytes());
+    linedefs.extend_from_slice(&1u16.to_le_bytes());
+    linedefs.extend_from_slice(&0u16.to_le_bytes());
+    linedefs.extend_from_slice(&0u16.to_le_bytes());
+    linedefs.extend_from_slice(&0u16.to_le_bytes());
+    linedefs.extend_from_slice(&0u16.to_le_bytes());
+    linedefs.extend_from_slice(&0xffffu16.to_le_bytes());
+
+    let mut sidedefs = Vec::new();
+    sidedefs.extend_from_slice(&0i16.to_le_bytes());
+    sidedefs.extend_from_slice(&0i16.to_le_bytes());
+    sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0");
+    sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0");
+    sidedefs.extend_from_slice(b"STARTAN3");
+    sidedefs.extend_from_slice(&0u16.to_le_bytes());
+
+    let mut sectors = Vec::new();
+    sectors.extend_from_slice(&0i16.to_le_bytes());
+    sectors.extend_from_slice(&128i16.to_le_bytes());
+    sectors.extend_from_slice(b"FLOOR4_8");
+    sectors.extend_from_slice(b"CEIL3_5\0");
+    sectors.extend_from_slice(&160i16.to_le_bytes());
+    sectors.extend_from_slice(&0i16.to_le_bytes());
+    sectors.extend_from_slice(&0i16.to_le_bytes());
+
+    let mut things = Vec::new();
+    things.extend_from_slice(&32i16.to_le_bytes());
+    things.extend_from_slice(&32i16.to_le_bytes());
+    things.extend_from_slice(&0u16.to_le_bytes());
+    things.extend_from_slice(&1u16.to_le_bytes()); // a player 1 start
+    things.extend_from_slice(&0x0007u16.to_le_bytes()); // all skills, all modes
+
+    let wad = doom_wad("MAP01", &things, &linedefs, &sidedefs, &vertexes, &sectors);
+    let (text, _) = write_udmf(&assemble(&wad, "MAP01"), &WriteOptions::strict())
+        .expect("the Doom map should convert to UDMF");
+    let t = text
+        .lines()
+        .find(|l| l.starts_with("thing"))
+        .expect("a thing block should be emitted");
+
+    assert!(t.contains("single = true; "), "{t}");
+    assert!(t.contains("dm = true; "), "{t}");
+    assert!(t.contains("coop = true; "), "{t}");
 }
 
 /// The round-trip envelope has edges, and they are documented rather than
@@ -302,7 +361,10 @@ fn converted_map_reassembles_from_the_output_wad() {
     assert_eq!(reassembled.vertices().len(), 2);
     assert_eq!(reassembled.linedefs().len(), 1);
     assert_eq!(reassembled.sectors().len(), 1);
-    assert_eq!(reassembled.things()[0].flags, 0b10, "skill3");
+    // skill3 -> bit 1. The source names no game-mode flag, and the UDMF spec
+    // defaults every flag to false, so Doom's three negated game-mode bits
+    // (4/5/6) are set: the thing appears on skill 3 in no game mode.
+    assert_eq!(reassembled.things()[0].flags, 0b0111_0010, "skill3");
 }
 
 // ---------------------------------------------------------------------------

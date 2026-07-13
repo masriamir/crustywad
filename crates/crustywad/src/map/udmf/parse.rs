@@ -510,7 +510,14 @@ impl SectorBuilder {
 /// [`finish`][ThingBuilder::finish], which an incremental `set_flag_bit` call
 /// per field cannot express (a later `false` would clear a bit set by an
 /// earlier `true` in the same pair).
+///
+/// **Every boolean defaults to `false`**, per the UDMF spec: *"All flags
+/// default to false."* The spec's separate note that *"suggested editor
+/// defaults for all skill, gamemode, and player class flags is true rather
+/// than the UDMF default of false"* is a hint for what an editor pre-fills in
+/// its UI — it is **not** parse semantics, and must not be read as one.
 #[allow(clippy::struct_excessive_bools)]
+#[derive(Default)]
 struct ThingBuilder {
     /// The `x` field, if assigned (required; no default).
     x: Option<f64>,
@@ -540,39 +547,14 @@ struct ThingBuilder {
     skill5: bool,
     /// The `ambush` field (default false).
     ambush: bool,
-    /// The `single` field (UDMF default **true**).
+    /// The `single` field (default false).
     single: bool,
-    /// The `dm` field (UDMF default **true**).
+    /// The `dm` field (default false).
     dm: bool,
-    /// The `coop` field (UDMF default **true**).
+    /// The `coop` field (default false).
     coop: bool,
     /// The `friend` field (default false).
     friend: bool,
-}
-
-impl Default for ThingBuilder {
-    fn default() -> Self {
-        ThingBuilder {
-            x: None,
-            y: None,
-            height: 0.0,
-            angle: 0,
-            type_id: None,
-            id: 0,
-            special: 0,
-            args: [0; 5],
-            skill1: false,
-            skill2: false,
-            skill3: false,
-            skill4: false,
-            skill5: false,
-            ambush: false,
-            single: true,
-            dm: true,
-            coop: true,
-            friend: false,
-        }
-    }
 }
 
 impl ThingBuilder {
@@ -615,8 +597,11 @@ impl ThingBuilder {
         let y = self.y.ok_or_else(|| missing_field("thing", "y"))?;
         let type_id = self.type_id.ok_or_else(|| missing_field("thing", "type"))?;
         // Pack per ADR-0019. The skill pairs are OR-folded (Doom has one bit per
-        // pair); single/dm/coop default to true in UDMF, so Doom's "not in X"
-        // bits are their inverse.
+        // pair); Doom's game-mode bits are negative ("not in X"), so they are
+        // the inverse of UDMF's positive single/dm/coop booleans. Those three
+        // default to `false` like every other UDMF flag, so a `thing` block
+        // that names none of them packs to `0x70` — present in no game mode,
+        // which is exactly what the spec says an unflagged thing means.
         let mut flags = 0u32;
         set_flag_bit(&mut flags, 0, self.skill1 || self.skill2);
         set_flag_bit(&mut flags, 1, self.skill3);
@@ -1111,26 +1096,41 @@ mod tests {
     }
 
     #[test]
-    fn thing_flags_default_to_zero() {
-        // single/dm/coop default to true in UDMF, so the Doom "not in X" bits are clear.
+    fn unflagged_thing_appears_in_no_game_mode() {
+        // The UDMF spec: "All flags default to false." (Its suggested *editor*
+        // default of true is a UI hint, not parse semantics.) `single`/`dm`/
+        // `coop` are therefore false here, and Doom's bits are their negation,
+        // so bits 4/5/6 are all set: 0x70 — the thing appears in no game mode.
         let text = r#"
             namespace = "doom";
             thing { x = 0; y = 0; type = 1; }
         "#;
         let map = parse_udmf(text, Limits::default()).unwrap();
-        assert_eq!(map.things[0].flags, 0);
+        assert_eq!(map.things[0].flags, 0x70);
     }
 
     #[test]
     fn thing_skill_pairs_are_or_folded() {
         // skill1 and skill2 collapse to one Doom bit; setting either sets bit 0.
         // Order matters: a naive set-then-clear would leave bit 0 clear here.
+        // Bits 4/5/6 are set because single/dm/coop default to false (above).
         let text = r#"
             namespace = "doom";
             thing { x = 0; y = 0; type = 1; skill1 = true; skill2 = false; }
         "#;
         let map = parse_udmf(text, Limits::default()).unwrap();
-        assert_eq!(map.things[0].flags, 0b0000_0001);
+        assert_eq!(map.things[0].flags, 0b0111_0001);
+    }
+
+    #[test]
+    fn thing_game_mode_flags_are_the_inverse_of_dooms_bits() {
+        // The positive UDMF booleans clear Doom's negative "not in X" bits.
+        let text = r#"
+            namespace = "doom";
+            thing { x = 0; y = 0; type = 1; single = true; dm = true; coop = true; }
+        "#;
+        let map = parse_udmf(text, Limits::default()).unwrap();
+        assert_eq!(map.things[0].flags, 0);
     }
 
     #[test]

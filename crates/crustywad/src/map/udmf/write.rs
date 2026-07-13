@@ -259,9 +259,18 @@ impl Writer {
         }
         // Thing flags: the exact inverse of the read-side packing (ADR-0019) —
         // bit 0 -> skill1+skill2, bit 1 -> skill3, bit 2 -> skill4+skill5,
-        // bit 3 -> ambush, bit 4 -> single = false, bit 5 -> dm = false,
-        // bit 6 -> coop = false, bit 7 -> friend = true. UDMF's single/dm/coop
-        // default to true, so Doom's "not in X" bits emit an explicit `false`.
+        // bit 3 -> ambush, bit 7 -> friend.
+        //
+        // Every UDMF flag defaults to `false` (spec: "All flags default to
+        // false"), so `false` is the value that gets omitted. Doom's game-mode
+        // bits are negative ("not in X") while UDMF's are positive, so the
+        // *positive* key is emitted when Doom's bit is CLEAR: bit 4 clear ->
+        // `single = true`, bit 5 clear -> `dm = true`, bit 6 clear ->
+        // `coop = true`. Omitting them when the bit is set correctly means
+        // "false" — a spec-conformant reader then keeps the thing out of that
+        // mode. Emitting nothing at all (the old behavior, which assumed a
+        // default of `true`) makes every converted thing spawn nowhere.
+        //
         // Bits above 7 have no UDMF boolean and are not emitted.
         let f = t.flags;
         if f & 0x0001 != 0 {
@@ -276,14 +285,14 @@ impl Writer {
         if f & 0x0008 != 0 {
             self.out.push_str("ambush = true; ");
         }
-        if f & 0x0010 != 0 {
-            self.out.push_str("single = false; ");
+        if f & 0x0010 == 0 {
+            self.out.push_str("single = true; ");
         }
-        if f & 0x0020 != 0 {
-            self.out.push_str("dm = false; ");
+        if f & 0x0020 == 0 {
+            self.out.push_str("dm = true; ");
         }
-        if f & 0x0040 != 0 {
-            self.out.push_str("coop = false; ");
+        if f & 0x0040 == 0 {
+            self.out.push_str("coop = true; ");
         }
         if f & 0x0080 != 0 {
             self.out.push_str("friend = true; ");
@@ -429,16 +438,44 @@ mod tests {
         assert!(out.contains("skill3 = true; "));
         assert!(out.contains("skill4 = true; skill5 = true; "));
         assert!(out.contains("ambush = true; "));
-        assert!(out.contains("single = false; "));
+        // Bit 4 ("not in single player") is set, so the positive `single` key
+        // is omitted — and omission means `false`, the UDMF default.
+        assert!(!out.contains("single"), "{out}");
+        // Bits 5/6 are clear, so the thing *is* in dm and co-op, which the
+        // spec's false-by-default flags require us to say explicitly.
+        assert!(out.contains("dm = true; "), "{out}");
+        assert!(out.contains("coop = true; "), "{out}");
+    }
+
+    /// The headline conversion case: an ordinary Doom thing (`0x07` — all
+    /// skills, all game modes) must name every game mode it appears in.
+    /// Emitting nothing here would make the thing spawn in no mode at all,
+    /// because the UDMF spec defaults every flag to `false`.
+    #[test]
+    fn ordinary_doom_thing_names_every_game_mode() {
+        let mut w = Writer::new(Strictness::Strict);
+        w.push_thing(0, &thing(0x0007)).unwrap();
+        let out = &w.out;
+        assert!(out.contains("single = true; "), "{out}");
+        assert!(out.contains("dm = true; "), "{out}");
+        assert!(out.contains("coop = true; "), "{out}");
+        assert!(out.contains("skill1 = true; skill2 = true; "), "{out}");
+        assert!(out.contains("skill3 = true; "), "{out}");
+        assert!(out.contains("skill4 = true; skill5 = true; "), "{out}");
     }
 
     #[test]
-    fn no_thing_flags_emitted_when_zero() {
+    fn zero_flags_emit_the_game_modes_but_no_skills() {
         let mut w = Writer::new(Strictness::Strict);
         w.push_thing(0, &thing(0)).unwrap();
-        assert!(!w.out.contains("skill"));
-        assert!(!w.out.contains("ambush"));
-        assert!(!w.out.contains("single"));
+        assert!(!w.out.contains("skill"), "{}", w.out);
+        assert!(!w.out.contains("ambush"), "{}", w.out);
+        assert!(!w.out.contains("friend"), "{}", w.out);
+        // No Doom "not in X" bit is set, so the thing appears in every game
+        // mode — which UDMF states positively.
+        assert!(w.out.contains("single = true; "), "{}", w.out);
+        assert!(w.out.contains("dm = true; "), "{}", w.out);
+        assert!(w.out.contains("coop = true; "), "{}", w.out);
     }
 
     #[test]
@@ -606,9 +643,31 @@ mod tests {
         let mut w = Writer::new(Strictness::Strict);
         w.push_thing(0, &thing(0x0020 | 0x0040 | 0x0080)).unwrap();
         let out = &w.out;
-        assert!(out.contains("dm = false; "), "{out}");
-        assert!(out.contains("coop = false; "), "{out}");
+        // "not in deathmatch" / "not in co-op" are set, so both keys are
+        // omitted (= false). Bit 4 is clear, so single-player is stated.
+        assert!(!out.contains("dm"), "{out}");
+        assert!(!out.contains("coop"), "{out}");
+        assert!(out.contains("single = true; "), "{out}");
         assert!(out.contains("friend = true; "), "{out}");
+    }
+
+    /// Doom → UDMF → Doom is the identity over every one of the 256 mapped
+    /// thing-flag values. This is the property the wrong `single`/`dm`/`coop`
+    /// defaults silently preserved (reader and writer agreed with each other
+    /// while both disagreed with the spec); it must still hold now that both
+    /// sides match the spec.
+    #[test]
+    fn doom_thing_flags_round_trip_through_udmf_for_every_value() {
+        use crate::Limits;
+        use crate::map::udmf::parse_udmf;
+
+        for f in 0u32..256 {
+            let mut w = Writer::new(Strictness::Strict);
+            w.push_thing(0, &thing(f)).unwrap();
+            let text = format!("namespace = \"doom\";\n{}", w.out);
+            let parsed = parse_udmf(&text, Limits::default()).unwrap();
+            assert_eq!(parsed.things[0].flags, f, "flags {f:#04x} did not survive");
+        }
     }
 
     #[test]

@@ -202,6 +202,8 @@ fn udmf_thing_flags_reach_the_map_graph() {
     // ADR-0019: UDMF's discrete skill/multiplayer thing booleans are packed
     // into the Doom/Boom-MBF `Thing.flags` layout on assembly, so this value
     // must reach `MapThing.flags` unchanged: skill3 -> bit 1, ambush -> bit 3.
+    // `single`/`dm`/`coop` are absent, and the UDMF spec defaults every flag to
+    // false, so Doom's three negated game-mode bits (4/5/6) are all set: 0x70.
     let text = concat!(
         "namespace = \"doom\";\n",
         "vertex { x = 0; y = 0; }\n",
@@ -219,5 +221,5 @@ fn udmf_thing_flags_reach_the_map_graph() {
     let wad = Wad::from_bytes_with_options(bytes, ParseOptions::default()).unwrap();
     let group = wad.map_group("MAP01").unwrap();
     let map = Map::assemble(&wad, &group).unwrap();
-    assert_eq!(map.things()[0].flags, 0b0000_1010);
+    assert_eq!(map.things()[0].flags, 0b0111_1010);
 }
