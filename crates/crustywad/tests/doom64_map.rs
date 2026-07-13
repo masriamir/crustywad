@@ -113,3 +113,25 @@ fn parses_doom64_light_six_bytes() {
     assert_eq!(l.tag, 0x02);
     assert_eq!(l.unknown, 5);
 }
+
+use crustywad::map::is_doom64_map_lump;
+
+#[test]
+fn detects_doom64_map_lump_by_nested_magic() {
+    // Minimal 12-byte WAD header with IWAD / PWAD magic.
+    let mut iwad = b"IWAD".to_vec();
+    iwad.extend_from_slice(&[0u8; 8]);
+    assert!(is_doom64_map_lump(&iwad));
+
+    let mut pwad = b"PWAD".to_vec();
+    pwad.extend_from_slice(&[0u8; 8]);
+    assert!(is_doom64_map_lump(&pwad));
+
+    // A classic 0-byte marker lump is not a Doom 64 map.
+    assert!(!is_doom64_map_lump(&[]));
+    // Too short to hold a WAD header.
+    assert!(!is_doom64_map_lump(b"IWA"));
+    // Right length, wrong magic.
+    assert!(!is_doom64_map_lump(&[0u8; 12]));
+    assert!(!is_doom64_map_lump(b"THINGS\0\0\0\0\0\0"));
+}

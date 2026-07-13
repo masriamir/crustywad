@@ -22,6 +22,18 @@
 
 use binrw::BinRead;
 
+/// Returns `true` if `bytes` look like a Doom 64 map lump: a lump whose content
+/// is itself a WAD (leading `IWAD` or `PWAD` magic).
+///
+/// This is the structural detection signal for Doom 64 maps (ADR-0018): a
+/// Doom 64 `MAPxx` lump's bytes begin with WAD magic, whereas a classic
+/// Doom/Hexen map marker is a conventionally empty lump carrying no such magic.
+/// The check is cheap and does not parse the nested directory.
+#[must_use]
+pub fn is_doom64_map_lump(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && (bytes[0..4] == *b"IWAD" || bytes[0..4] == *b"PWAD")
+}
+
 /// A single `VERTEXES` record (8 bytes): a map vertex in **16.16 fixed-point**.
 ///
 /// Unlike classic Doom's `i16` integer coordinates, Doom 64 stores each axis as
