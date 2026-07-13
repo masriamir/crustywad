@@ -11,8 +11,9 @@ Epic #17's last unshipped piece is conversion between UDMF text maps and the
 classic Doom binary map layout. This ADR decides the conversion contract, the
 data-loss policy, and the public write surface it needs. It also **amends
 ADR-0017's "Decisions resolved during spike review" item 3**, which deferred
-UDMF thing-flag normalization "for a concrete future consumer to motivate it":
-#59 is that consumer, and the deferral ends here (§2).
+UDMF thing-flag normalization, describing a normalized representation as
+"left for a concrete future consumer to motivate" (ADR-0017 §1, "What is
+deferred"): #59 is that consumer, and the deferral ends here (§2).
 
 The crate is asymmetric today, and the asymmetry is the problem:
 
@@ -25,8 +26,11 @@ The crate is asymmetric today, and the asymmetry is the problem:
   correct (§5).
 - **UDMF → classic does not exist in any form.** There is **no binary map write
   path in the crate at all**: no `BinWrite` on any map record struct, no
-  `write_doom_map`, nothing. `WadBuilder` accepts only raw
-  `add_lump(name, bytes)`.
+  `write_doom_map`, nothing. There is no typed *binary* map-level builder
+  helper either — `WadBuilder`'s own inherent methods offer only raw
+  `add_lump(name, bytes)`; the sole map-level helper today is
+  `add_udmf_map(&mut WadBuilder, name, &Map, &WriteOptions)` (`map/udmf/write.rs`,
+  #231), and it writes UDMF text, not the binary format.
 - **A fidelity hole sits directly under conversion.** Because ADR-0017 deferred
   thing-flag normalization, UDMF's `skill1..5`, `ambush`, `single`, `dm`,
   `coop`, and `friend` booleans are parsed for syntax and then dropped, and
@@ -143,9 +147,10 @@ un-normalized `UdmfMap` intermediate, exactly as ADR-0017 §1 intended.
 
 ### 2. `MapThing.flags` is populated for UDMF (amends ADR-0017 decision 3)
 
-ADR-0017 decision 3 read: *"Defer `MapThing.flags` UDMF synthesis … A
-crustywad-normalized thing-flag representation is left for a concrete future
-consumer to motivate it."* **That deferral is hereby closed.** #59 is the
+ADR-0017 decision 3 read: *"Defer `MapThing.flags` UDMF synthesis."* Its §1
+"What is deferred" list adds that a normalized representation is *"left for a
+concrete future consumer to motivate (see Decisions resolved during spike
+review, below)."* **That deferral is hereby closed.** #59 is the
 consumer, and the reason is concrete: without a synthesis, every UDMF map
 converted to Doom produces things with `flags == 0`, which appear on no skill
 level. What changes: `UdmfThing` gains `flags: u32`, packed by
