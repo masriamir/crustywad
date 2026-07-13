@@ -730,37 +730,31 @@ fn run(cli: Cli) -> Result<i32> {
                     // Conversion warnings (rounding, clamping, dropped fields,
                     // and the unconditional `NodesNotBuilt` when targeting Doom)
                     // are reported to stderr; a strict-mode refusal is fatal.
-                    let warnings: Vec<String> = match target {
+                    // Both writers report the same shape (warnings on success, a
+                    // refusal on loss), so normalize to strings here and handle
+                    // the refusal once rather than per target format.
+                    let written: Result<Vec<String>, String> = match target {
                         MapFormat::Doom => {
-                            match add_doom_map(&mut builder, &group.name, &assembled, &write_opts) {
-                                Ok(ws) => ws.iter().map(ToString::to_string).collect(),
-                                Err(e) => {
-                                    eprintln!(
-                                        "error: cannot convert map {} to doom: {e}",
-                                        group.name
-                                    );
-                                    if !cli.lenient {
-                                        eprintln!(
-                                            "note: re-run with --lenient to accept the data loss"
-                                        );
-                                    }
-                                    return Ok(3);
-                                }
-                            }
+                            add_doom_map(&mut builder, &group.name, &assembled, &write_opts)
+                                .map(|ws| ws.iter().map(ToString::to_string).collect())
+                                .map_err(|e| e.to_string())
                         }
-                        _ => match add_udmf_map(&mut builder, &group.name, &assembled, &write_opts)
-                        {
-                            Ok(ws) => ws.iter().map(ToString::to_string).collect(),
-                            Err(e) => {
-                                eprintln!("error: cannot convert map {} to udmf: {e}", group.name);
-                                if !cli.lenient {
-                                    eprintln!(
-                                        "note: re-run with --lenient to accept the data loss"
-                                    );
-                                }
-                                return Ok(3);
+                        _ => add_udmf_map(&mut builder, &group.name, &assembled, &write_opts)
+                            .map(|ws| ws.iter().map(ToString::to_string).collect())
+                            .map_err(|e| e.to_string()),
+                    };
+                    let warnings: Vec<String> = match written {
+                        Ok(ws) => ws,
+                        Err(e) => {
+                            eprintln!(
+                                "error: cannot convert map {} to {target_name}: {e}",
+                                group.name
+                            );
+                            if !cli.lenient {
+                                eprintln!("note: re-run with --lenient to accept the data loss");
                             }
-                        },
+                            return Ok(3);
+                        }
                     };
                     for w in &warnings {
                         eprintln!("warning: {}: {w}", group.name);

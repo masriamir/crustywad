@@ -2676,6 +2676,43 @@ fn convert_lenient_reports_parse_warnings_from_the_input() {
 }
 
 #[test]
+fn convert_non_ascii_lump_name_fails_write_validation_exits_3() {
+    // A non-ASCII lump name decodes under a lenient *read* but `WriteError::
+    // NonAsciiName` is rejected in both write modes, so building the converted
+    // WAD fails. Convert must surface that as a usage error (exit 3), not fall
+    // through to the generic I/O exit 2 — the same contract `merge` honors.
+    let m = doom_map_lumps();
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("É", &[1]),
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &m.linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("failed to build"));
+}
+
+#[test]
 fn convert_map_filter_on_a_wad_with_no_maps_exits_3() {
     // `--map NAME` against a WAD that has no maps at all takes the "contains no
     // maps" branch: still exit 3, but the note must say so rather than printing
