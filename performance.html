@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2098619d.js";
+            window.path_to_searchindex_js = "searchindex-909fb432.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ed427db4.js"></script>
+        <script src="toc-fd61d5e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -242,7 +242,8 @@ cargo bench --all-features --benches -- "write/roundtrip"
 <p>The <code>freedoom</code> group is skipped by default. To enable it, fetch the fixtures first and point
 the environment variable at the directory:</p>
 <pre><code class="language-sh">just fetch-fixtures                         # downloads freedoom1.wad / freedoom2.wad
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom just bench
+# Absolute path required — cargo runs the bench binary from the package root.
+CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" just bench
 </code></pre>
 <hr>
 <h2 id="ci-benchmark-workflow"><a class="header" href="#ci-benchmark-workflow">CI benchmark workflow</a></h2>

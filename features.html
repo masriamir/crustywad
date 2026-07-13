@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2098619d.js";
+            window.path_to_searchindex_js = "searchindex-909fb432.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ed427db4.js"></script>
+        <script src="toc-fd61d5e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -252,14 +252,16 @@ just fetch-fixtures
 just fetch-fixtures version=v0.14.0
 </code></pre>
 <h3 id="running-the-tests"><a class="header" href="#running-the-tests">Running the tests</a></h3>
-<pre><code class="language-sh"># Using just — defaults CRUSTYWAD_FREEDOOM_DIR to tests/fixtures/freedoom:
+<pre><code class="language-sh"># Using just — defaults CRUSTYWAD_FREEDOOM_DIR to an absolute path under the repo root:
 just test-freedoom
 
 # Override the fixture directory:
 just test-freedoom dir=/path/to/freedoom
 
-# Or run cargo directly:
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom \
+# Or run cargo directly. The path must be ABSOLUTE: cargo sets the test binary's
+# working directory to the package root (crates/crustywad), so a relative path
+# never resolves and the fixture tests skip silently.
+CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" \
   cargo test -p crustywad --features freedoom-tests
 </code></pre>
 <h3 id="ci"><a class="header" href="#ci">CI</a></h3>

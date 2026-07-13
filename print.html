@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2098619d.js";
+            window.path_to_searchindex_js = "searchindex-909fb432.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ed427db4.js"></script>
+        <script src="toc-fd61d5e0.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -531,6 +531,253 @@ strict/lenient write mode comparison, and <a href="#data-model">Data model</a> f
 <pre><code class="language-bash">cargo run -p crustywad --example write_wad --features write
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="converting-maps"><a class="header" href="#converting-maps">Converting maps</a></h1>
+<p><code>crustywad::map</code> can convert an assembled <a href="#map-record-parsing"><code>Map</code></a> between the
+UDMF text format and the classic Doom binary format, in both directions. Both
+directions are behind the <code>write</code> feature:</p>
+<pre><code class="language-toml">crustywad = { version = "0.2", features = ["write"] }
+</code></pre>
+<p>Conversion is <code>read → Map → write</code>: there is no direct format-to-format path.
+A UDMF field that the <code>Map</code> graph does not model is already lost at <em>read</em>
+time (see <a href="#map-record-parsing">Map Record Parsing</a>); conversion only polices loss
+that is visible in the graph. See <a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0019-map-format-conversion.md">ADR-0019</a>
+for the full decision record this page summarizes.</p>
+<h2 id="doom--udmf"><a class="header" href="#doom--udmf">Doom → UDMF</a></h2>
+<p><code>write_udmf()</code> and <code>add_udmf_map()</code> (covered in <a href="#writing-udmf-maps">Writing WAD Files</a>)
+accept a <code>Map</code> assembled from <em>any</em> source format, including a classic Doom
+map:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{Wad, WadBuilder, WadKind, WriteOptions};
+use crustywad::map::{Map, add_udmf_map, write_udmf};
+
+<span class="boring">// A minimal classic Doom map: one linedef, one sector, one thing.
+</span><span class="boring">let vertexes = [0i16, 0, 64, 0].iter().flat_map(|v| v.to_le_bytes()).collect::&lt;Vec&lt;u8&gt;&gt;();
+</span><span class="boring">let mut linedefs = Vec::new();
+</span><span class="boring">linedefs.extend_from_slice(&amp;0u16.to_le_bytes());
+</span><span class="boring">linedefs.extend_from_slice(&amp;1u16.to_le_bytes());
+</span><span class="boring">linedefs.extend_from_slice(&amp;1u16.to_le_bytes());
+</span><span class="boring">linedefs.extend_from_slice(&amp;0u16.to_le_bytes());
+</span><span class="boring">linedefs.extend_from_slice(&amp;0u16.to_le_bytes());
+</span><span class="boring">linedefs.extend_from_slice(&amp;0u16.to_le_bytes());
+</span><span class="boring">linedefs.extend_from_slice(&amp;0xffffu16.to_le_bytes());
+</span><span class="boring">let mut sidedefs = Vec::new();
+</span><span class="boring">sidedefs.extend_from_slice(&amp;0i16.to_le_bytes());
+</span><span class="boring">sidedefs.extend_from_slice(&amp;0i16.to_le_bytes());
+</span><span class="boring">sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0");
+</span><span class="boring">sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0");
+</span><span class="boring">sidedefs.extend_from_slice(b"STARTAN3");
+</span><span class="boring">sidedefs.extend_from_slice(&amp;0u16.to_le_bytes());
+</span><span class="boring">let mut sectors = Vec::new();
+</span><span class="boring">sectors.extend_from_slice(&amp;0i16.to_le_bytes());
+</span><span class="boring">sectors.extend_from_slice(&amp;128i16.to_le_bytes());
+</span><span class="boring">sectors.extend_from_slice(b"FLOOR4_8");
+</span><span class="boring">sectors.extend_from_slice(b"CEIL3_5\0");
+</span><span class="boring">sectors.extend_from_slice(&amp;160i16.to_le_bytes());
+</span><span class="boring">sectors.extend_from_slice(&amp;0i16.to_le_bytes());
+</span><span class="boring">sectors.extend_from_slice(&amp;0i16.to_le_bytes());
+</span><span class="boring">let things = vec![0u8; 10];
+</span><span class="boring">let mut src = WadBuilder::new(WadKind::Pwad);
+</span><span class="boring">src.add_lump("MAP01", b"");
+</span><span class="boring">src.add_lump("THINGS", things);
+</span><span class="boring">src.add_lump("LINEDEFS", linedefs);
+</span><span class="boring">src.add_lump("SIDEDEFS", sidedefs);
+</span><span class="boring">src.add_lump("VERTEXES", vertexes);
+</span><span class="boring">src.add_lump("SECTORS", sectors);
+</span><span class="boring">let wad = Wad::from_bytes(src.build()?)?;
+</span><span class="boring">let group = wad.map_group("MAP01").unwrap();
+</span>let map: Map = Map::assemble(&amp;wad, &amp;group)?;
+
+let (textmap, _warnings) = write_udmf(&amp;map, &amp;WriteOptions::strict())?;
+assert!(textmap.starts_with("namespace"));
+
+let mut builder = WadBuilder::new(WadKind::Pwad);
+add_udmf_map(&amp;mut builder, "MAP01", &amp;map, &amp;WriteOptions::strict())?;
+let bytes = builder.build()?;
+<span class="boring">assert!(!bytes.is_empty());
+</span><span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="udmf--doom"><a class="header" href="#udmf--doom">UDMF → Doom</a></h2>
+<p><code>write_doom_map()</code> serializes an assembled <code>Map</code> into the five classic Doom
+map data lumps (<code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>VERTEXES</code>, <code>SECTORS</code>);
+<code>add_doom_map()</code> adds a complete map group to a <code>WadBuilder</code>. Both are
+available with the <code>write</code> feature:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{Wad, WadBuilder, WadKind, WriteOptions};
+use crustywad::map::{Map, add_doom_map, write_doom_map};
+
+<span class="boring">let textmap = concat!(
+</span><span class="boring">    "namespace = \"doom\";\n",
+</span><span class="boring">    "vertex { x = 0; y = 0; }\n",
+</span><span class="boring">    "vertex { x = 64; y = 0; }\n",
+</span><span class="boring">    "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+</span><span class="boring">    "sidedef { sector = 0; }\n",
+</span><span class="boring">    "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+</span><span class="boring">    "thing { x = 32; y = 32; type = 1; skill1 = true; skill2 = true; skill3 = true; }\n",
+</span><span class="boring">);
+</span><span class="boring">let mut src = WadBuilder::new(WadKind::Pwad);
+</span><span class="boring">src.add_lump("MAP01", b"");
+</span><span class="boring">src.add_lump("TEXTMAP", textmap.as_bytes().to_vec());
+</span><span class="boring">src.add_lump("ENDMAP", b"");
+</span><span class="boring">let wad = Wad::from_bytes(src.build()?)?;
+</span><span class="boring">let group = wad.map_group("MAP01").unwrap();
+</span>let map: Map = Map::assemble(&amp;wad, &amp;group)?;
+
+// Serialize to the five Doom binary map lumps:
+let (lumps, warnings) = write_doom_map(&amp;map, &amp;WriteOptions::strict())?;
+assert!(!lumps.vertexes.is_empty());
+// Nodes are never built (see below): this warning is always present.
+assert!(warnings.contains(&amp;crustywad::map::DoomWriteWarning::NodesNotBuilt));
+
+// Or add a complete map group to a builder:
+let mut builder = WadBuilder::new(WadKind::Pwad);
+add_doom_map(&amp;mut builder, "MAP01", &amp;map, &amp;WriteOptions::strict())?;
+let bytes = builder.build()?;
+<span class="boring">assert!(!bytes.is_empty());
+</span><span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
+</span><span class="boring">}</span></code></pre>
+<blockquote>
+<p><strong>Converted output is not engine-playable.</strong> <code>add_doom_map</code> writes
+<strong>zero-length <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code>, <code>REJECT</code>, and <code>BLOCKMAP</code></strong>
+lumps — the canonical Doom lump run editors and nodebuilders expect to
+find, but with no node data in them. Every call returns
+<code>DoomWriteWarning::NodesNotBuilt</code>, in <strong>both</strong> strictness modes: it is
+a property of the output, not a defect strictness can fix. The result is
+<strong>editor- and nodebuilder-ready, not engine-playable</strong> — run an external
+nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over it before loading it in a source
+port. crustywad has no nodebuilder; building nodes is tracked separately
+(issue #199).</p>
+</blockquote>
+<h2 id="round-tripping-not-symmetric"><a class="header" href="#round-tripping-not-symmetric">Round-tripping: not symmetric</a></h2>
+<blockquote>
+<p>Doom → UDMF → Doom is a <strong>byte-identical round-trip</strong> for <code>VERTEXES</code>,
+<code>LINEDEFS</code>, <code>SIDEDEFS</code>, and <code>SECTORS</code>, and for <code>THINGS</code> within an envelope.
+<strong>UDMF → Doom → UDMF is <em>not</em> reversible.</strong> No option, flag, or mode makes
+it reversible.</p>
+</blockquote>
+<p><strong>Doom → UDMF → Doom</strong> reproduces the four geometry lumps exactly, and
+<code>THINGS</code> too, provided the map stays inside the envelope where UDMF has a
+representation for every Doom bit:</p>
+<ul>
+<li>Linedef flag bits 0–8 (the nine standard bits) round-trip; a bit ≥ 9 (e.g.
+Boom’s <code>passuse</code>, <code>0x200</code>) has no UDMF boolean and is dropped.</li>
+<li>Thing flag bits 0–7 (skill 1–5, ambush, multiplayer-only, and the Boom/MBF
+dm/co-op/friend bits) round-trip; a bit ≥ 8 has no UDMF boolean and is
+dropped.</li>
+<li>A thing <code>angle</code> in <code>0..360</code> round-trips exactly; an angle ≥ 360 comes back
+as <code>angle % 360</code>. This is a <strong>semantic no-op</strong>, not data loss: Doom’s
+<code>P_SpawnMapThing</code> computes the spawn facing as <code>ANG45 * (angle / 45)</code> with
+integer division, so <code>360</code> and <code>0</code> produce the identical facing. This case
+is not hypothetical — 226 things across 10 Freedoom maps store a literal
+<code>angle = 360</code>.</li>
+</ul>
+<p><strong>UDMF → Doom → UDMF is one-way.</strong> Converting a UDMF map to Doom and back
+does not reproduce the original UDMF map: <code>f64</code> coordinates are rounded to
+<code>i16</code> map units, and fields Doom has no slot for (tier 3 below) are dropped
+permanently. There is no lossless UDMF → UDMF path through this API; a
+caller needing full text-level fidelity should keep the parsed <code>UdmfMap</code>
+intermediate instead of round-tripping through <code>Map</code>.</p>
+<h2 id="strict-vs-lenient-conversion"><a class="header" href="#strict-vs-lenient-conversion">Strict vs. lenient conversion</a></h2>
+<p><code>write_doom_map()</code> / <code>add_doom_map()</code> share the crate’s usual
+<a href="#strict-vs-lenient-write-validation"><code>WriteOptions</code></a>
+strict/lenient contract. <strong>Strict mode refuses any data loss</strong> — a typical
+ZDoom-namespace UDMF map, with linedef <code>args</code> or thing <code>height</code>/<code>id</code>/<code>special</code>
+set, will <strong>fail</strong> strict conversion to Doom, naming the first offending
+field. This is the intended design: <code>write_doom_map(&amp;map, &amp;WriteOptions::strict())</code>
+returning <code>Ok</code> is exactly the answer to “does this map fit in the Doom
+format?” <code>WriteOptions::lenient()</code> is the single-flag acknowledgment that the
+loss is acceptable — it recovers a best-effort value for every lossy field
+and reports each recovery as a <code>DoomWriteWarning</code>.</p>
+<p>The Doom binary format is strictly narrower than the <code>Map</code> graph, so
+narrowing it loses data in three tiers (from ADR-0019):</p>
+<h3 id="tier-1--structurally-impossible-errors-in-both-modes"><a class="header" href="#tier-1--structurally-impossible-errors-in-both-modes">Tier 1 — structurally impossible: errors in both modes</a></h3>
+<p>Doom’s <code>u16</code> indices cannot address an arena beyond their range; there is no
+honest recovery, so this errors in <strong>both</strong> strictness modes.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Arena</th><th>Maximum</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td>vertices</td><td>65,536</td><td>indices <code>0..=65,535</code></td></tr>
+<tr><td>sectors</td><td>65,536</td><td>indices <code>0..=65,535</code></td></tr>
+<tr><td>sidedefs</td><td>65,535</td><td><code>0xffff</code> is the “no sidedef” sentinel</td></tr>
+</tbody>
+</table>
+</div>
+<p>Reported as <code>DoomWriteError::TooManyElements { kind, count, max }</code>.</p>
+<h3 id="tier-2--value-loss-strict-errors-lenient-recovers-and-warns"><a class="header" href="#tier-2--value-loss-strict-errors-lenient-recovers-and-warns">Tier 2 — value loss: strict errors, lenient recovers and warns</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Loss</th><th>Lenient recovery</th></tr>
+</thead>
+<tbody>
+<tr><td>Fractional <code>f64</code> coordinate (vertex <code>x</code>/<code>y</code>, thing <code>x</code>/<code>y</code>)</td><td>round to nearest <code>i16</code> (half away from zero)</td></tr>
+<tr><td>Coordinate outside <code>i16</code> range</td><td>clamp to <code>i16::MIN</code>/<code>i16::MAX</code></td></tr>
+<tr><td>Linedef <code>special</code> outside <code>u16</code>; <code>args[0]</code> (the sector tag) outside <code>u16</code></td><td>clamp</td></tr>
+<tr><td>Sidedef <code>x_offset</code> / <code>y_offset</code> outside <code>i16</code></td><td>clamp</td></tr>
+<tr><td>Sector <code>floor_height</code> / <code>ceiling_height</code> / <code>light</code> / <code>special</code> / <code>tag</code> outside <code>i16</code></td><td>clamp</td></tr>
+<tr><td>Thing or linedef <code>flags</code> with any bit above 15 set</td><td><strong>truncate</strong> to <code>u16</code> (<code>&amp; 0xffff</code>)</td></tr>
+<tr><td>Texture/flat name longer than 8 bytes</td><td>truncate to 8 bytes</td></tr>
+<tr><td>Non-finite (<code>NaN</code>/infinite) coordinate</td><td>strict errors, lenient substitutes <code>0</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>flags</code> <strong>truncates rather than clamps</strong>, unlike every other integer field: a
+bit field is not a magnitude. Clamping <code>0x1_0001</code> to <code>0xffff</code> would set <em>all
+sixteen</em> Doom flags at once (blocking, secret, two-sided, …) from one stray high
+bit; masking keeps the bits Doom can hold and drops only those it cannot.
+Lenient reports <code>DoomWriteWarning::ValueTruncated</code>; strict still errors.</p>
+<p><strong>Name fidelity has a caveat.</strong> A texture/flat name round-trips byte-for-byte
+<strong>only if it is valid UTF-8 and NUL-clean</strong> — valid UTF-8 up to its first NUL,
+with nothing but NUL padding after it. Every name in practice is ASCII, so this
+holds for real maps, but the exceptions are real and are not warned about:</p>
+<ul>
+<li>Doom’s on-disk name field is a raw <code>[u8; 8]</code>, and <code>map::common::Name8</code> keeps
+those bytes verbatim — but the <code>Map</code> graph does <strong>not</strong>. <code>MapSidedef</code> and
+<code>MapSector</code> store <code>String</code>, filled on read via <code>Name8::as_str_lossy</code>, which
+trims at the first NUL and decodes with <code>String::from_utf8_lossy</code>.</li>
+<li>A name containing <strong>invalid UTF-8</strong> is therefore normalized on <em>read</em>:
+<code>b"\x81OCK\0\0\0\0"</code> becomes <code>"\u{FFFD}OCK"</code> in the graph and is written back
+as <code>EF BF BD 4F 43 4B 00 00</code> — different bytes, no warning. An 8-byte
+all-invalid name expands to a 24-byte replacement-character string and then
+<strong>fails</strong> as <code>DoomWriteError::NameTooLong</code> in strict mode.</li>
+<li><strong>Bytes after the NUL terminator</strong> (which real IWADs do contain) are dropped
+on read for the same reason.</li>
+</ul>
+<p>Only a name longer than 8 bytes is <em>conversion</em> loss; the two cases above are
+read-time normalization, and no <code>WriteOptions</code> mode changes them.</p>
+<h3 id="tier-3--no-slot-in-the-doom-format-strict-errors-lenient-drops-and-warns"><a class="header" href="#tier-3--no-slot-in-the-doom-format-strict-errors-lenient-drops-and-warns">Tier 3 — no slot in the Doom format: strict errors, lenient drops and warns</a></h3>
+<p>A Doom linedef carries only <code>special_type</code> plus one sector tag; a Doom thing
+carries no special, no tid, and no height. A nonzero value in any of the
+following has nowhere to go:</p>
+<ul>
+<li>linedef <code>args[1..=4]</code> (nonzero)</li>
+<li>linedef <code>id</code></li>
+<li>thing <code>special</code> and <code>args[0..=4]</code> (nonzero)</li>
+<li>thing <code>height</code> (nonzero)</li>
+<li>thing <code>id</code> (the tid)</li>
+</ul>
+<p>This is exactly why a ZDoom-namespace UDMF map typically fails strict
+conversion — “this map is not expressible in Doom format” is the correct
+answer, and <code>WriteOptions::lenient()</code> is how a caller accepts that.</p>
+<h2 id="error-handling-1"><a class="header" href="#error-handling-1">Error handling</a></h2>
+<p><code>write_doom_map()</code> and <code>add_doom_map()</code> return
+<code>Result&lt;(DoomMapLumps, Vec&lt;DoomWriteWarning&gt;), DoomWriteError&gt;</code> and
+<code>Result&lt;Vec&lt;DoomWriteWarning&gt;, DoomWriteError&gt;</code> respectively — the warnings
+vector always contains at least <code>DoomWriteWarning::NodesNotBuilt</code>, in both
+strictness modes. Every strict-mode <code>DoomWriteError</code> variant has a lenient-mode
+<code>DoomWriteWarning</code> counterpart naming the recovery it took, so the two modes
+read as a single decision table rather than two separate implementations. The
+mapping is one-to-one except for <code>ValueOutOfRange</code>, whose recovery depends on
+the field: a magnitude clamps (<code>ValueClamped</code>), a <code>flags</code> bit field truncates
+(<code>ValueTruncated</code>).</p>
+<p>See <a href="#map-record-parsing">Map Record Parsing</a> for the <code>Map</code> graph types these APIs
+consume, and <a href="#writing-wad-files">Writing WAD Files</a> for the general
+<code>WadBuilder</code> / <code>WriteOptions</code> contract.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="map-record-parsing"><a class="header" href="#map-record-parsing">Map Record Parsing</a></h1>
 <p>Doom maps are stored as a group of sequentially named lumps. After the marker lump
 (e.g. <code>E1M1</code>) come the parsed map data lumps. The table below covers the record lumps
@@ -634,7 +881,7 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
 <span class="boring">}</span></code></pre>
 <p>See <code>crustywad::map</code> in the API docs for the full definitions of <code>Seg</code>,
 <code>Subsector</code>, and <code>Node</code>.</p>
-<h2 id="error-handling-1"><a class="header" href="#error-handling-1">Error handling</a></h2>
+<h2 id="error-handling-2"><a class="header" href="#error-handling-2">Error handling</a></h2>
 <p><code>parse_records</code> returns <code>MapParseError</code>:</p>
 <ul>
 <li><code>MapParseError::TrailingBytes</code> — the lump length is not an exact multiple of the record
@@ -1048,14 +1295,16 @@ just fetch-fixtures
 just fetch-fixtures version=v0.14.0
 </code></pre>
 <h3 id="running-the-tests"><a class="header" href="#running-the-tests">Running the tests</a></h3>
-<pre><code class="language-sh"># Using just — defaults CRUSTYWAD_FREEDOOM_DIR to tests/fixtures/freedoom:
+<pre><code class="language-sh"># Using just — defaults CRUSTYWAD_FREEDOOM_DIR to an absolute path under the repo root:
 just test-freedoom
 
 # Override the fixture directory:
 just test-freedoom dir=/path/to/freedoom
 
-# Or run cargo directly:
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom \
+# Or run cargo directly. The path must be ABSOLUTE: cargo sets the test binary's
+# working directory to the package root (crates/crustywad), so a relative path
+# never resolves and the fixture tests skip silently.
+CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" \
   cargo test -p crustywad --features freedoom-tests
 </code></pre>
 <h3 id="ci"><a class="header" href="#ci">CI</a></h3>
@@ -1222,7 +1471,8 @@ cargo bench --all-features --benches -- "write/roundtrip"
 <p>The <code>freedoom</code> group is skipped by default. To enable it, fetch the fixtures first and point
 the environment variable at the directory:</p>
 <pre><code class="language-sh">just fetch-fixtures                         # downloads freedoom1.wad / freedoom2.wad
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom just bench
+# Absolute path required — cargo runs the bench binary from the package root.
+CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" just bench
 </code></pre>
 <hr>
 <h2 id="ci-benchmark-workflow"><a class="header" href="#ci-benchmark-workflow">CI benchmark workflow</a></h2>
