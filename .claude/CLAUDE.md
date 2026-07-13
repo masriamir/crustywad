@@ -44,6 +44,7 @@ docs/
     src/               # Guide source pages (SUMMARY.md, *.md)
 scripts/
   check_doc_anchors.py # Living-docs anchor drift detector (ADR-0007); run via `just docs-sync`
+  check_doc_versions.py # Fails if a documented `crustywad = "X.Y"` pin disagrees with the crate's actual version; run via `just docs-sync`
 anchors.txt            # Anchor strings that must appear verbatim in all three main doc files
 tests/
   fixtures/
@@ -78,7 +79,7 @@ Install [just](https://github.com/casey/just), then:
 | Coverage | `just cov` (requires `cargo-llvm-cov`) |
 | Dependency audit | `just deny` (requires `cargo-deny`) |
 | Fetch Freedoom fixtures | `just fetch-fixtures` |
-| Anchor drift check | `just docs-sync` |
+| Doc drift check (anchors + version pins) | `just docs-sync` |
 | Benchmarks | `just bench` (criterion; HTML report in `target/criterion/`) |
 | Benchmarks + open report | `just bench-open` |
 | Full CI check | `just ci` |
@@ -344,13 +345,17 @@ The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:
 | `docs` | `cargo doc` with `RUSTDOCFLAGS=-D warnings` |
 | `coverage` | `cargo llvm-cov` + Codecov upload |
 | `security-deny` | `cargo deny check` |
-| `docs-sync` | `python3 scripts/check_doc_anchors.py` — verifies anchor strings are present in all three main doc files |
+| `docs-sync` | `python3 scripts/check_doc_anchors.py` — verifies anchor strings are present in all three main doc files; and `python3 scripts/check_doc_versions.py` — verifies every documented `crustywad = "X.Y"` pin matches the crate's actual version |
 
 CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `security-extended` and `security-and-quality` query suites.
 
 `bench` (`.github/workflows/bench.yml`) runs on push to `main` and `workflow_dispatch`. It is **non-blocking** (never gates merges). On each run it uploads a downloadable Criterion HTML artifact (90-day retention) and commits benchmark trend data to the `gh-pages` branch at `dev/bench/`. The `pages.yml` guide deploy and `bench.yml` share the `gh-pages` concurrency group so they never write to the branch simultaneously.
 
 `release-plz` (`.github/workflows/release-plz.yml`) runs two jobs on push to `main`, authenticated as a **GitHub App** (`RELEASE_PLZ_APP_ID` / `RELEASE_PLZ_APP_PRIVATE_KEY`) so its PRs and tags trigger downstream workflows. `release-pr` opens/updates the release PR; `release` publishes to crates.io via Trusted Publishing (OIDC — no stored `CARGO_REGISTRY_TOKEN`) and pushes tags. It does **not** create GitHub Releases (`git_release_enable = false`). Binary releases of the `cwad` CLI are handled by **dist** (`.github/workflows/release.yml`), which triggers on the `crustywad-cli-v*` tag and creates the GitHub Release with cross-platform binaries and installers. The library crate is excluded from dist (`[package.metadata.dist] dist = false`).
+
+**Documented version pins (minor releases):** the README and the guide show `Cargo.toml` snippets (`crustywad = "0.3"`). For a `0.x` crate, Cargo's caret requirement is *minor*-pinned — `"0.2"` means `>=0.2.0, <0.3.0` — so the moment a release bumps the minor version, every stale snippet stops resolving for readers. `scripts/check_doc_versions.py` (part of `just docs-sync`, and a required CI check) enforces this: it derives the expected pin from `crates/crustywad/Cargo.toml` and fails on any mismatch.
+
+**Consequence: a release PR that bumps the minor version will fail CI until its doc pins are updated.** That is intentional — the pins silently rotted through the `0.1` → `0.2` bump and nobody noticed for a month (#235). When `release-plz` opens a minor-bump release PR, push a commit onto its branch updating the pins in `README.md` and `docs/guide/src/{getting-started,features,writing-wads,converting-maps}.md`, then merge. Patch bumps (`0.3.0` → `0.3.1`) do not move the pin and need no change.
 
 **Version bump:** `crates/crustywad-cli/Cargo.toml` pins the `crustywad` path dependency with an explicit version (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`), which Cargo treats as a caret requirement — patch/compatible bumps to `crustywad`'s version need no change here. `cargo-deny` requires this field (`wildcards = "deny"`) but it does not inherit `crustywad`'s version automatically. Crates are versioned independently (ADR-0011 §3, no `version.workspace = true`); update this field only when `crustywad`'s version moves outside the current caret range (e.g. `0.1.z` → `0.2.0`), or `cargo deny check` will fail.
 

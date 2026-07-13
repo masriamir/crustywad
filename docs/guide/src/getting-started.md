@@ -6,14 +6,14 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-crustywad = "0.1"
+crustywad = "0.3"
 ```
 
 Enable optional features as needed:
 
 ```toml
 [dependencies]
-crustywad = { version = "0.1", features = ["mmap"] }
+crustywad = { version = "0.3", features = ["mmap"] }
 ```
 
 ## Basic usage

@@ -67,5 +67,6 @@ bench-open:
 # Check that living-doc anchor strings are present in all three doc files (ADR-0007).
 docs-sync:
     python3 scripts/check_doc_anchors.py
+    python3 scripts/check_doc_versions.py
 
 ci: build test lint doc deny docs-sync

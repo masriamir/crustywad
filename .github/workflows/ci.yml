@@ -96,3 +96,4 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - run: python3 scripts/check_doc_anchors.py
+      - run: python3 scripts/check_doc_versions.py

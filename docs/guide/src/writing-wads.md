@@ -4,7 +4,7 @@
 or re-serializes an existing one.
 
 ```toml
-crustywad = { version = "0.1", features = ["write"] }
+crustywad = { version = "0.3", features = ["write"] }
 ```
 
 ## Building from scratch

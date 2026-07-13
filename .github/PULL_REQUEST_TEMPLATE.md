@@ -20,6 +20,10 @@ If this PR renames or introduces a shared convention phrase:
 - [ ] Updated `anchors.txt` (added new anchor or updated existing wording)
 - [ ] `just docs-sync` passes locally
 
+If this PR bumps the crate's **minor** version (a `release-plz` release PR):
+
+- [ ] Updated the `crustywad = "X.Y"` pins in `README.md` and `docs/guide/src/` (a 0.x caret is minor-pinned, so a stale pin stops resolving for readers; `just docs-sync` enforces this)
+
 ## Roadmap milestones
 
 - [ ] Header and directory parsing
