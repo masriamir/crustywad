@@ -171,7 +171,10 @@ pub(crate) enum SubCommand {
     /// and names each such lump; `--lenient` drops them and warns.
     ///
     /// Exits 0 on success, 2 on I/O or parse error, 3 if a map cannot be
-    /// converted or if `--map NAME` matches no map in the WAD.
+    /// converted, if `--map NAME` matches no map in the WAD, or if the output
+    /// WAD fails write validation (e.g. a pass-through lump whose name is not
+    /// ASCII — such a name decodes under a lenient read but is rejected on
+    /// write, in both strictness modes).
     Convert {
         /// Path to the input WAD file.
         input: PathBuf,
