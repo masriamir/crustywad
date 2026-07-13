@@ -12,7 +12,7 @@ use std::fmt::Write as _;
 
 use crate::Strictness;
 use crate::map::Map;
-use crate::map::graph::{MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
+use crate::map::graph::{MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
 use crate::write::{WadBuilder, WriteOptions};
 
 /// Message for the infallible `write!`-into-`String` calls.
@@ -141,7 +141,7 @@ impl Writer {
         (8, "mapped"),
     ];
 
-    fn push_linedef(&mut self, l: &MapLinedef) {
+    fn push_linedef(&mut self, l: &MapLinedef, format: MapFormat) {
         self.out.push_str("linedef { ");
         write!(
             self.out,
@@ -152,7 +152,12 @@ impl Writer {
         if let Some(back) = l.left {
             write!(self.out, "sideback = {}; ", back.0).expect(INFALLIBLE);
         }
-        if l.id != -1 {
+        // The "no id" sentinel differs by source: UDMF's spec default is -1,
+        // while Doom/Hexen maps use 0 (the graph convention). Omitting the
+        // source's sentinel keeps a Doom/Hexen line from being written as a real
+        // UDMF `id = 0` and preserves a genuine UDMF `id = 0`.
+        let id_unset = if format == MapFormat::Udmf { -1 } else { 0 };
+        if l.id != id_unset {
             write!(self.out, "id = {}; ", l.id).expect(INFALLIBLE);
         }
         if l.special.special != 0 {
@@ -231,10 +236,11 @@ impl Writer {
             let h = self.fmt_float("thing", "height", index, t.height)?;
             write!(self.out, "height = {h}; ").expect(INFALLIBLE);
         }
-        // Normalize to the conventional UDMF 0..360 range so the write path is
-        // idempotent: UDMF assembly re-reads angles through `rem_euclid(360)`, so
-        // a raw Doom angle >= 360 (preserved verbatim in the graph) would not
-        // otherwise survive write -> read unchanged.
+        // Normalize to the conventional UDMF 0..360 range. UDMF assembly re-reads
+        // angles through `rem_euclid(360)`, so emitting a raw Doom angle >= 360
+        // (preserved verbatim in the graph) would wrap on re-read; normalizing
+        // here keeps the emitted UDMF in-range and the serialized output stable
+        // across repeated write/read cycles.
         let angle = t.angle % 360;
         if angle != 0 {
             write!(self.out, "angle = {angle}; ").expect(INFALLIBLE);
@@ -311,7 +317,7 @@ pub fn write_udmf(
     }
 
     for l in map.linedefs() {
-        w.push_linedef(l);
+        w.push_linedef(l, map.format());
     }
 
     for s in map.sidedefs() {

@@ -347,6 +347,19 @@ fn none_namespace_lenient_defaults_with_warning() {
     );
 }
 
+#[test]
+fn doom_sourced_linedef_omits_id_zero() {
+    // A Doom map's line has `id == 0` ("no id" in the graph). Because the source
+    // is not UDMF, the writer must NOT emit `id = 0` (which would assert a real
+    // UDMF line id of 0) — it omits it. A genuine UDMF line with `id = 0` is
+    // still emitted (covered by the UDMF-path tests above).
+    let map = assemble_doom_map();
+    assert_eq!(map.format(), crustywad::map::MapFormat::Doom);
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    let line = out.lines().find(|l| l.starts_with("linedef")).unwrap();
+    assert!(!line.contains("id = "), "{line}");
+}
+
 // --- Coverage: `map.namespace()` is `Some("")` (an explicitly empty UDMF namespace). ---
 
 const EMPTY_NAMESPACE_MAP: &str = concat!(
