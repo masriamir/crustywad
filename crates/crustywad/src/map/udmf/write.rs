@@ -228,8 +228,13 @@ impl Writer {
             let h = self.fmt_float("thing", "height", index, t.height)?;
             write!(self.out, "height = {h}; ").expect(INFALLIBLE);
         }
-        if t.angle != 0 {
-            write!(self.out, "angle = {}; ", t.angle).expect(INFALLIBLE);
+        // Normalize to the conventional UDMF 0..360 range so the write path is
+        // idempotent: UDMF assembly re-reads angles through `rem_euclid(360)`, so
+        // a raw Doom angle >= 360 (preserved verbatim in the graph) would not
+        // otherwise survive write -> read unchanged.
+        let angle = t.angle % 360;
+        if angle != 0 {
+            write!(self.out, "angle = {angle}; ").expect(INFALLIBLE);
         }
         if t.id != 0 {
             write!(self.out, "id = {}; ", t.id).expect(INFALLIBLE);
@@ -437,6 +442,23 @@ mod tests {
                 index: 0
             }]
         );
+    }
+
+    #[test]
+    fn thing_angle_is_normalized_modulo_360() {
+        // A raw angle >= 360 is normalized to the conventional 0..360 range.
+        let mut w = Writer::new(Strictness::Strict);
+        let mut t = thing(0);
+        t.angle = 450;
+        w.push_thing(0, &t).unwrap();
+        assert!(w.out.contains("angle = 90; "), "{}", w.out);
+
+        // 360 normalizes to 0 (the default) and is omitted.
+        let mut w2 = Writer::new(Strictness::Strict);
+        let mut t2 = thing(0);
+        t2.angle = 360;
+        w2.push_thing(0, &t2).unwrap();
+        assert!(!w2.out.contains("angle"), "{}", w2.out);
     }
 
     #[test]
