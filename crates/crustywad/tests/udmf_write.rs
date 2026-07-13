@@ -51,3 +51,41 @@ fn empty_namespace_errors_in_strict_defaults_in_lenient() {
     // Reference the error type so the import is exercised.
     let _ = UdmfWriteError::EmptyNamespace;
 }
+
+#[test]
+fn writes_linedef_flags_sideback_and_special() {
+    // Two-sided line with blocking+twosided flags, a special+arg, and an id.
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 8; y = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; sideback = 1; id = 7;\n",
+        "  blocking = true; twosided = true; special = 13; arg0 = 99; }\n",
+        "sidedef { sector = 0; }\n",
+        "sidedef { sector = 0; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+    );
+    let map = assemble_udmf(text);
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    let line = out.lines().find(|l| l.starts_with("linedef")).unwrap();
+    assert!(line.contains("v1 = 0; v2 = 1; sidefront = 0; "), "{line}");
+    assert!(line.contains("sideback = 1; "), "{line}");
+    assert!(line.contains("id = 7; "), "{line}");
+    assert!(line.contains("special = 13; "), "{line}");
+    assert!(line.contains("arg0 = 99; "), "{line}");
+    assert!(line.contains("blocking = true; "), "{line}");
+    assert!(line.contains("twosided = true; "), "{line}");
+    // Defaults omitted:
+    assert!(!line.contains("arg1"), "{line}");
+    assert!(!line.contains("dontpegtop"), "{line}");
+}
+
+#[test]
+fn writes_one_sided_linedef_omits_sideback_and_id() {
+    let map = assemble_udmf(FULL_MAP);
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    let line = out.lines().find(|l| l.starts_with("linedef")).unwrap();
+    assert!(!line.contains("sideback = "), "{line}"); // left is None
+    assert!(!line.contains("id = "), "{line}"); // id == -1 default
+    assert!(!line.contains("special = "), "{line}"); // special == 0
+}

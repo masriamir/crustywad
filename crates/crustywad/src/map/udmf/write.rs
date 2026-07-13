@@ -12,7 +12,7 @@ use std::fmt::Write as _;
 
 use crate::Strictness;
 use crate::map::Map;
-use crate::map::graph::MapVertex;
+use crate::map::graph::{MapLinedef, MapVertex};
 use crate::write::WriteOptions;
 
 /// Message for the infallible `write!`-into-`String` calls.
@@ -119,6 +119,50 @@ impl Writer {
         writeln!(self.out, "vertex {{ x = {x}; y = {y}; }}").expect(INFALLIBLE);
         Ok(())
     }
+
+    /// UDMF linedef flag booleans by their `MapLinedef.flags` bit (reverse of the
+    /// read mapping in `udmf/parse.rs`).
+    const LINEDEF_FLAGS: [(u32, &str); 9] = [
+        (0, "blocking"),
+        (1, "blockmonsters"),
+        (2, "twosided"),
+        (3, "dontpegtop"),
+        (4, "dontpegbottom"),
+        (5, "secret"),
+        (6, "blocksound"),
+        (7, "dontdraw"),
+        (8, "mapped"),
+    ];
+
+    fn push_linedef(&mut self, l: &MapLinedef) {
+        self.out.push_str("linedef { ");
+        write!(
+            self.out,
+            "v1 = {}; v2 = {}; sidefront = {}; ",
+            l.start.0, l.end.0, l.right.0
+        )
+        .expect(INFALLIBLE);
+        if let Some(back) = l.left {
+            write!(self.out, "sideback = {}; ", back.0).expect(INFALLIBLE);
+        }
+        if l.id != -1 {
+            write!(self.out, "id = {}; ", l.id).expect(INFALLIBLE);
+        }
+        if l.special.special != 0 {
+            write!(self.out, "special = {}; ", l.special.special).expect(INFALLIBLE);
+        }
+        for (i, arg) in l.special.args.iter().enumerate() {
+            if *arg != 0 {
+                write!(self.out, "arg{i} = {arg}; ").expect(INFALLIBLE);
+            }
+        }
+        for (bit, name) in Self::LINEDEF_FLAGS {
+            if l.flags & (1 << bit) != 0 {
+                write!(self.out, "{name} = true; ").expect(INFALLIBLE);
+            }
+        }
+        self.out.push_str("}\n");
+    }
 }
 
 /// Serializes an assembled map to UDMF `TEXTMAP` text.
@@ -157,6 +201,10 @@ pub fn write_udmf(
 
     for (i, v) in map.vertices().iter().enumerate() {
         w.push_vertex(i, v)?;
+    }
+
+    for l in map.linedefs() {
+        w.push_linedef(l);
     }
 
     Ok((w.out, w.warnings))
