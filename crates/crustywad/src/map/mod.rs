@@ -33,12 +33,12 @@ pub mod udmf;
 
 pub use assemble::MapAssembleError;
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
+pub use doom64::is_doom64_map_lump;
 pub use graph::{
     LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning,
     SectorIdx, SidedefIdx, Special, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
-pub use doom64::is_doom64_map_lump;
 pub use udmf::{UdmfParseError, parse_udmf};
 
 /// Errors returned when decoding typed map records from a lump byte slice.
