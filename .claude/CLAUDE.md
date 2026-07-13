@@ -97,12 +97,15 @@ cargo fmt --all --check
 cargo doc --workspace --all-features --no-deps
 ```
 
-Freedoom fixture tests require both the feature flag and the env var:
+Freedoom fixture tests require both the feature flag and the env var. **The path
+must be absolute.** Cargo runs each test binary with its CWD set to the *package*
+root (`crates/crustywad`), not the workspace root, so a workspace-relative path
+never resolves — the fixture tests then skip silently and appear to pass:
 
 ```bash
 just fetch-fixtures                         # default version
 just fetch-fixtures version=v0.14.0        # specific version
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom cargo test --workspace --all-features
+CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" cargo test --workspace --all-features
 ```
 
 ## Code conventions

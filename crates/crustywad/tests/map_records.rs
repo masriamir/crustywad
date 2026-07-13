@@ -4,6 +4,11 @@ use crustywad::map::doom::{Linedef, Thing};
 use crustywad::map::{Name8, Node, Sector, Seg, Sidedef, Subsector, Vertex, parse_records};
 use proptest::prelude::*;
 
+#[cfg(feature = "write")]
+use binrw::BinWrite;
+#[cfg(feature = "write")]
+use std::io::Cursor;
+
 #[test]
 fn parses_things() {
     let bytes = [1, 0, 2, 0, 90, 0, 4, 0, 5, 0];
@@ -312,6 +317,44 @@ fn decodes_hexen_linedef_fields() {
     assert_eq!(l.args, [99, 0, 0, 0, 0]);
     assert_eq!(l.right_sidedef, 0);
     assert_eq!(l.left_sidedef, 0xffff);
+}
+
+/// Serializing a record and re-parsing it must reproduce it exactly — this is
+/// what lets the conversion writer trust the typed records as its encoder.
+#[cfg(feature = "write")]
+#[test]
+fn doom_records_round_trip_through_binwrite() {
+    let thing = Thing {
+        x: -32,
+        y: 4096,
+        angle: 90,
+        type_id: 3001,
+        flags: 0x00f7,
+    };
+    let mut buf = Cursor::new(Vec::new());
+    thing.write_le(&mut buf).unwrap();
+    assert_eq!(buf.get_ref().len(), 10, "a Doom THINGS record is 10 bytes");
+    let parsed: Vec<Thing> = parse_records(buf.get_ref()).unwrap();
+    assert_eq!(parsed, vec![thing]);
+}
+
+#[cfg(feature = "write")]
+#[test]
+fn common_records_round_trip_through_binwrite() {
+    let sector = Sector {
+        floor_height: -8,
+        ceiling_height: 128,
+        floor_texture: Name8(*b"FLOOR4_8"),
+        ceiling_texture: Name8(*b"CEIL3_5\0"),
+        light_level: 160,
+        special_type: 9,
+        tag: 3,
+    };
+    let mut buf = Cursor::new(Vec::new());
+    sector.write_le(&mut buf).unwrap();
+    assert_eq!(buf.get_ref().len(), 26, "a Doom SECTORS record is 26 bytes");
+    let parsed: Vec<Sector> = parse_records(buf.get_ref()).unwrap();
+    assert_eq!(parsed, vec![sector]);
 }
 
 proptest! {

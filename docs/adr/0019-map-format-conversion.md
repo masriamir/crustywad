@@ -162,19 +162,33 @@ it through instead of hardcoding `0`. Nothing else in ADR-0017 is disturbed.
 The packing uses the Doom/Boom-MBF bit layout, so `MapThing.flags` means one
 thing across every format:
 
-| UDMF boolean(s) | UDMF default | `flags` bit | Doom meaning |
+| UDMF boolean(s) | UDMF default | `flags` bit | Doom meaning — the bit is set when |
 |---|---|---|---|
-| `skill1` \| `skill2` | `false` | 0 (`0x0001`) | appears on skill 1–2 |
+| `skill1` \| `skill2` | `false` | 0 (`0x0001`) | appears on skill 1–2 (either boolean is `true`) |
 | `skill3` | `false` | 1 (`0x0002`) | appears on skill 3 |
-| `skill4` \| `skill5` | `false` | 2 (`0x0004`) | appears on skill 4–5 |
+| `skill4` \| `skill5` | `false` | 2 (`0x0004`) | appears on skill 4–5 (either boolean is `true`) |
 | `ambush` | `false` | 3 (`0x0008`) | deaf / ambush |
-| `!single` | `true` | 4 (`0x0010`) | multiplayer only |
-| `!dm` | `true` | 5 (`0x0020`) | not in deathmatch (Boom) |
-| `!coop` | `true` | 6 (`0x0040`) | not in co-op (Boom) |
+| `single` | `false` | 4 (`0x0010`) | multiplayer only (`single` is `false`) |
+| `dm` | `false` | 5 (`0x0020`) | not in deathmatch, Boom (`dm` is `false`) |
+| `coop` | `false` | 6 (`0x0040`) | not in co-op, Boom (`coop` is `false`) |
 | `friend` | `false` | 7 (`0x0080`) | friendly (MBF) |
 
-`single`/`dm`/`coop` default to `true` in UDMF (the thing appears in that mode
-unless excluded), which is why the Doom "not in X" bits are their inverse.
+**Every UDMF flag defaults to `false`** — the spec says so in as many words:
+*"All flags default to false."* That includes `single`, `dm`, and `coop`.
+Doom's game-mode bits are *negative* ("not in X") while UDMF's are *positive*
+("in X"), so the two are inverses: a `thing` block naming none of the three
+packs to `0x70` — it appears in no game mode, which is exactly what the spec
+says an unflagged thing means.
+
+The spec's separate remark that *"suggested editor defaults for all skill,
+gamemode, and player class flags is true rather than the UDMF default of
+false"* is a hint about what an **editor should pre-fill in its UI**. It is not
+parse semantics, and reading it as such is a real bug: a writer that treats
+`true` as the default omits `single`/`dm`/`coop` for an ordinary Doom thing
+(flags `0x07`), and a spec-conformant consumer then spawns that thing in **no**
+game mode. The writer therefore emits the *positive* key — `single = true;`
+when Doom's bit 4 is clear, and likewise for `dm`/`coop` — and omits it when
+the bit is set (§5).
 
 **Accepted lossiness.** `skill1`/`skill2` and `skill4`/`skill5` are independent
 booleans in UDMF and a single bit each in Doom; they are **OR-folded**. A UDMF
@@ -184,6 +198,34 @@ dropped. This is inherent to the Decision 1 contract — it is loss at read time
 not at conversion time — so it is **not** reported as a warning, consistent with
 every other unmodeled UDMF field, which ADR-0017 drops silently. It is
 documented on `MapThing.flags` and here.
+
+**Hexen is normalized into the same layout.** The layout above is a contract for
+*every* format, not just UDMF, and Hexen's on-disk thing flags do **not** match
+it: Hexen's game-mode bits are *positive* and sit at `0x0100`/`0x0200`/`0x0400`,
+and it spends bits 4–7 on `dormant` plus the fighter/cleric/mage class filters
+(verified against the vanilla Hexen `MTF_*` constants and the Doom Wiki `Thing`
+article). Copying that word through verbatim — which `normalize_things_hexen`
+originally did — would leave a Hexen-sourced `Map` in violation of the contract,
+and `write_udmf` (which accepts Hexen maps, §5) would then emit **inverted**
+`single`/`dm`/`coop` for it. Hexen `THINGS` flags are therefore translated at
+assembly, exactly as the UDMF path packs its booleans:
+
+| Hexen (on disk) | `flags` bit | Set when |
+|---|---|---|
+| skill 1&2 / 3 / 4&5 (`0x0001`/`0x0002`/`0x0004`) | 0 / 1 / 2 | copied unchanged |
+| ambush (`0x0008`) | 3 (`0x0008`) | copied unchanged |
+| appears in single-player (`0x0100`) | 4 (`0x0010`) | the Hexen bit is **clear** (inverted) |
+| appears in deathmatch (`0x0400`) | 5 (`0x0020`) | the Hexen bit is **clear** (inverted) |
+| appears in co-op (`0x0200`) | 6 (`0x0040`) | the Hexen bit is **clear** (inverted) |
+| — | 7 (`0x0080`) | never — Hexen has no friend (MBF) flag |
+
+`dormant` (`0x0010`) and the class filters (`0x0020`/`0x0040`/`0x0080`) have no
+Doom bit and are **dropped**, silently and unwarned, on the same reasoning as the
+UDMF `class1`–`class3`/`dormant`/`standing` loss above. A Hexen thing that
+appears in all three game modes therefore normalizes to bits 4/5/6 all clear (so
+`write_udmf` emits `single = true; dm = true; coop = true;`), and one that names
+no game mode normalizes to bits 4/5/6 all set — appearing nowhere, which is what
+the on-disk word said.
 
 ### 3. The binary write path: `map::doom::write`, and a three-tier loss policy
 
@@ -246,8 +288,39 @@ strictness modes.
 | Linedef `special` outside `u16`; `args[0]` (the sector tag) outside `u16` | clamp |
 | Sidedef `x_offset` / `y_offset` outside `i16` | clamp |
 | Sector `floor_height` / `ceiling_height` / `light` / `special` / `tag` outside `i16` | clamp |
-| Thing `flags` with any bit above 15 set | truncate to `u16` |
-| Texture/flat name longer than 8 bytes, or non-ASCII | truncate to 8 bytes (mirrors the existing `WriteWarning::NameTruncated`) |
+| Thing or linedef `flags` with any bit above 15 set | **truncate** to `u16` (`& 0xFFFF`) |
+| Texture/flat name longer than 8 bytes | truncate to 8 bytes (mirrors the existing `WriteWarning::NameTruncated`) |
+
+`flags` is the one field that **truncates rather than clamps**, and the
+distinction is deliberate: a bit field is not a magnitude. Clamping `0x1_0001`
+to `0xFFFF` would turn one stray high bit into *all sixteen* Doom flags at once
+(blocking, secret, two-sided, …); masking keeps the bits Doom can hold and drops
+only the ones it cannot. Lenient reports it as
+`DoomWriteWarning::ValueTruncated { from, to }`; strict still errors with
+`ValueOutOfRange`.
+
+**Name fidelity, stated honestly.** A texture/flat name survives conversion
+byte-for-byte **only if it is valid UTF-8 and NUL-clean** — i.e. valid UTF-8 up
+to its first NUL, with nothing but NUL padding after it. That covers every name
+in practice (they are ASCII), but it is not unconditional, and the boundary is
+in the graph, not in the writer:
+
+- Doom's on-disk field is a raw `[u8; 8]` and `map::common::Name8` does preserve
+  those bytes verbatim. **The `Map` graph does not.** `MapSidedef`/`MapSector`
+  store `String`, and assembly fills them via `Name8::as_str_lossy`, which
+  trims at the first NUL and then decodes with `String::from_utf8_lossy`.
+- So a name with **invalid UTF-8 bytes** is normalized at *read* time: an
+  on-disk `b"\x81OCK\0\0\0\0"` becomes `"\u{FFFD}OCK"` in the graph, and the
+  writer re-emits `EF BF BD 4F 43 4B 00 00` — different bytes, no warning. An
+  8-byte all-invalid name inflates to a 24-byte replacement-character string and
+  then **errors** as `NameTooLong` in strict mode.
+- Likewise, **bytes after the NUL terminator** are dropped by the `trim_nul` on
+  read. Real IWADs do contain them.
+
+Carrying raw `Name8` bytes through `Map` would fix this and is a larger design
+change; it is **out of scope here**. Within this ADR: only a name longer than 8
+bytes is *conversion* loss (tier 2, above); invalid-UTF-8 and post-NUL bytes are
+*read-time* normalization, the same class of loss as §1's dropped UDMF fields.
 
 Non-finite (`NaN`/`∞`) coordinates follow the precedent `write_udmf` already
 set: strict errors, lenient substitutes `0` and warns.
@@ -293,9 +366,11 @@ pub enum DoomWriteWarning {
 }
 ```
 
-Each strict-mode `DoomWriteError` has exactly one lenient-mode
-`DoomWriteWarning` counterpart, so the two modes are a single decision table
-read twice.
+Every strict-mode `DoomWriteError` has a lenient-mode `DoomWriteWarning`
+counterpart naming the recovery it took, so the two modes are a single decision
+table read twice. The mapping is one-to-one except for `ValueOutOfRange`, whose
+recovery depends on the field: a magnitude clamps (`ValueClamped`), a `flags`
+bit field truncates (`ValueTruncated`) — see tier 2.
 
 ### 4. Empty node lumps, and an always-on warning
 
@@ -321,16 +396,32 @@ Two defects in `map/udmf/write.rs` (both verified above) are corrected:
    `MapFormat::Hexen → "hexen"` — keeping
    `UdmfWriteWarning::NamespaceDefaulted { used }` to report what was chosen.
 2. **Incomplete thing-flag emission.** The writer emits bits 0–4 only. Extend it
-   to bits 5–7 — `dm = false` (bit 5), `coop = false` (bit 6), `friend = true`
-   (bit 7) — making it the exact inverse of the read-side packing in §2.
+   to bits 5–7 and correct the game-mode keys to the spec's false-by-default
+   semantics (§2): emit `single = true` when bit 4 is **clear**, `dm = true`
+   when bit 5 is clear, `coop = true` when bit 6 is clear (omitting the key
+   otherwise, since omission means `false`), and `friend = true` when bit 7 is
+   set — making it the exact inverse of the read-side packing in §2.
 
 With both fixed, the two directions are **not** symmetric, and the ADR states
 this plainly rather than implying otherwise:
 
-- **Doom → UDMF → Doom is a byte-identical round-trip** for the five data lumps.
-  Every Doom on-disk field has an exact UDMF representation, and the read-side
-  packing and write-side emission of §2/§5 are inverses. This becomes the
-  headline property test.
+- **Doom → UDMF → Doom is a byte-identical round-trip** for `VERTEXES`,
+  `LINEDEFS`, `SIDEDEFS`, and `SECTORS`, and for `THINGS` within the envelope
+  below. The read-side packing and write-side emission of §2/§5 are inverses.
+  This becomes the headline property test.
+
+  Three fields fall outside the envelope, because the UDMF leg has no
+  representation for them: a linedef flag bit ≥ 9 (e.g. Boom's `passuse`) and a
+  thing flag bit ≥ 8 have no UDMF boolean and are dropped, and a thing `angle`
+  ≥ 360 comes back reduced modulo 360 (the read path applies `rem_euclid(360)`,
+  per ADR-0017). The angle case is the only one that occurs in real content —
+  226 things across 10 Freedoom maps store `angle = 360` and return as `0` — and
+  it is a **semantic no-op**: Doom's `P_SpawnMapThing` computes
+  `ANG45 * (angle / 45)` with integer division, so 360 and 0 spawn the identical
+  facing. The fixture test pins this exactly: the four geometry lumps must be
+  byte-identical unconditionally, and every `THINGS` divergence must be
+  angle-only, with source ≥ 360 and result exactly `source % 360`. A dropped
+  flag bit or a moved vertex still fails.
 - **UDMF → Doom → UDMF is *not* reversible.** `f64` → `i16` rounding and the
   Tier-3 drops are one-way, and the OR-folding of §2 is one-way on top of that.
   No option, flag, or mode makes it reversible. This is documented in the module

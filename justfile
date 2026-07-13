@@ -44,8 +44,11 @@ test-mmap:
 # Run Freedoom fixture tests. Tests skip gracefully when fixtures are missing.
 # Fetch fixtures first with `just fetch-fixtures`, then override the directory if needed:
 # just test-freedoom dir=/path/to/freedoom
-test-freedoom dir="tests/fixtures/freedoom":
-    CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests
+# The default must be absolute: cargo runs the test binary with its CWD at the
+# package root (crates/crustywad), so a workspace-relative path never resolves and
+# the fixture tests skip silently instead of failing.
+test-freedoom dir=(justfile_directory() / "tests/fixtures/freedoom"):
+    CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests,write
 
 # Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
 fuzz target="fuzz_wad_strict":

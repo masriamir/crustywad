@@ -9,6 +9,7 @@ use binrw::BinRead;
 /// Doom stores texture and flat names in 8-byte fields padded with `\0` bytes.
 /// This wrapper preserves the raw bytes for round-trip fidelity while
 /// [`as_str_lossy`][Name8::as_str_lossy] provides a human-readable view.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 pub struct Name8(
     /// The raw 8-byte encoded name, NUL-padded on the right.
@@ -38,6 +39,8 @@ impl Name8 {
 ///
 /// The `SIDEDEFS` lump contains `N` records of exactly 30 bytes each.  Use
 /// [`parse_records::<Sidedef>`](crate::map::parse_records) to decode the whole lump at once.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Sidedef {
@@ -77,6 +80,8 @@ pub struct Sidedef {
 /// Vertices are the endpoints of linedefs and the control points for
 /// [`Seg`]s.  All map geometry is built from them.  The `VERTEXES` lump
 /// contains `N` records of exactly 4 bytes each.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Vertex {
@@ -200,6 +205,8 @@ pub struct Node {
 ///
 /// The `SECTORS` lump contains `N` records of exactly 26 bytes each.  Use
 /// [`parse_records::<Sector>`](crate::map::parse_records) to decode the whole lump at once.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Sector {

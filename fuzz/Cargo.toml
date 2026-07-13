@@ -48,9 +48,15 @@ path = "fuzz_targets/fuzz_doom64_map.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_write_doom_map"
+path = "fuzz_targets/fuzz_write_doom_map.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
-crustywad = { path = "../crates/crustywad" }
+crustywad = { path = "../crates/crustywad", features = ["write"] }
 
 [profile.release]
 debug = 1

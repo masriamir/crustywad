@@ -29,8 +29,12 @@ pub struct Thing {
     pub angle: u16,
     /// Numeric thing-type identifier (doomednum) selecting the actor class.
     pub type_id: u16,
-    /// Bitfield of Hexen spawn/behavior flags (skill levels, class filters,
-    /// dormant, etc.). Stored opaquely; individual bits are not interpreted here.
+    /// Bitfield of Hexen spawn/behavior flags (skill levels, `dormant`, the
+    /// fighter/cleric/mage class filters, and the *positive* single/co-op/
+    /// deathmatch bits `0x0100`/`0x0200`/`0x0400`). Stored opaquely here — the
+    /// raw record keeps the on-disk word verbatim. Map assembly translates it
+    /// into the graph's single Doom/Boom-MBF layout
+    /// ([`MapThing::flags`](super::MapThing::flags)).
     pub flags: u16,
     /// Activation special (action number, `0`–`255`) run when the thing is used
     /// or triggered; `0` means none.
