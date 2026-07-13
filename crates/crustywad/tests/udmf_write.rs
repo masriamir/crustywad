@@ -3,7 +3,7 @@
 
 mod common;
 
-use crustywad::map::udmf::UdmfWriteError;
+use crustywad::map::udmf::{UdmfWriteError, UdmfWriteWarning};
 use crustywad::map::{Map, write_udmf};
 use crustywad::{ParseOptions, Wad, WriteOptions};
 
@@ -166,3 +166,212 @@ fn writes_thing_fields_omitting_defaults() {
 // Thing-flag mapping and non-finite handling are covered by unit tests inside
 // write.rs (they need direct `Map`/`Writer` construction that the public
 // assembly path cannot easily produce for flags/NaN). See Step 3b.
+
+use crustywad::map::add_udmf_map;
+use crustywad::{WadBuilder, WadKind};
+
+fn assert_maps_eq(a: &Map, b: &Map) {
+    assert_eq!(a.namespace(), b.namespace());
+    assert_eq!(a.format(), b.format());
+    assert_eq!(a.vertices(), b.vertices());
+    assert_eq!(a.linedefs(), b.linedefs());
+    assert_eq!(a.sidedefs(), b.sidedefs());
+    assert_eq!(a.sectors(), b.sectors());
+    assert_eq!(a.things(), b.things());
+}
+
+#[test]
+fn write_then_read_round_trips_the_map() {
+    let original = assemble_udmf(FULL_MAP);
+    let (text, warnings) = write_udmf(&original, &WriteOptions::strict()).unwrap();
+    assert!(warnings.is_empty());
+    let reparsed = assemble_udmf(&text);
+    assert_maps_eq(&original, &reparsed);
+}
+
+#[test]
+fn add_udmf_map_builds_a_readable_udmf_wad() {
+    let original = assemble_udmf(FULL_MAP);
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings = add_udmf_map(&mut builder, "MAP01", &original, &WriteOptions::strict()).unwrap();
+    assert!(warnings.is_empty());
+    let bytes = builder.build().unwrap();
+
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::default()).unwrap();
+    // The three group lumps are present and named.
+    let names: Vec<&str> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(names, vec!["MAP01", "TEXTMAP", "ENDMAP"]);
+    let group = wad.map_group("MAP01").unwrap();
+    let reassembled = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap();
+    assert_maps_eq(&original, &reassembled);
+}
+
+use proptest::prelude::*;
+
+proptest! {
+    // Round-trip arbitrary scalar values through a fixed map structure: build
+    // UDMF text with random field values, assemble, write, re-assemble, and
+    // assert the two Maps are identical (write reproduces the source exactly).
+    #[test]
+    fn round_trip_arbitrary_scalars(
+        vx in -32768.0f64..32768.0,
+        vy in -32768.0f64..32768.0,
+        floor in -32768i32..32768,
+        ceil in -32768i32..32768,
+        light in 0i32..=255,
+        angle in 0i32..360,
+        ty in 1i32..=32767,
+    ) {
+        // Single multi-line literal with inline captures (no concat!, no explicit
+        // args) — clippy-clean and unambiguous. Braces are doubled for UDMF blocks.
+        let text = format!(
+"namespace = \"doom\";
+vertex {{ x = {vx}; y = {vy}; }}
+vertex {{ x = 0; y = 0; }}
+linedef {{ v1 = 0; v2 = 1; sidefront = 0; }}
+sidedef {{ sector = 0; }}
+sector {{ texturefloor = \"F\"; textureceiling = \"C\"; heightfloor = {floor}; heightceiling = {ceil}; lightlevel = {light}; }}
+thing {{ x = 0; y = 0; type = {ty}; angle = {angle}; }}
+");
+        let original = assemble_udmf(&text);
+        let (out, warnings) = write_udmf(&original, &WriteOptions::strict()).unwrap();
+        prop_assert!(warnings.is_empty());
+        let reparsed = assemble_udmf(&out);
+        prop_assert_eq!(original.vertices(), reparsed.vertices());
+        prop_assert_eq!(original.sectors(), reparsed.sectors());
+        prop_assert_eq!(original.things(), reparsed.things());
+        prop_assert_eq!(original.linedefs(), reparsed.linedefs());
+        prop_assert_eq!(original.sidedefs(), reparsed.sidedefs());
+    }
+}
+
+// --- Coverage: `map.namespace()` is `None` (a binary Doom map). ---
+
+fn doom_vertex(x: i16, y: i16) -> Vec<u8> {
+    [x.to_le_bytes(), y.to_le_bytes()].concat()
+}
+
+fn doom_sector() -> Vec<u8> {
+    // 26 bytes: floor(i16), ceiling(i16), floor_flat(8), ceiling_flat(8), light(i16), special(i16), tag(i16).
+    let mut b = Vec::new();
+    b.extend(0i16.to_le_bytes());
+    b.extend(128i16.to_le_bytes());
+    b.extend(b"FLOOR\0\0\0");
+    b.extend(b"CEIL\0\0\0\0");
+    b.extend(160i16.to_le_bytes());
+    b.extend(0i16.to_le_bytes());
+    b.extend(0i16.to_le_bytes());
+    b
+}
+
+fn doom_sidedef(offset_y: i16, sector: u16) -> Vec<u8> {
+    // 30 bytes: x_off(i16), y_off(i16), upper(8), lower(8), middle(8), sector(u16).
+    let mut b = Vec::new();
+    b.extend(0i16.to_le_bytes());
+    b.extend(offset_y.to_le_bytes());
+    b.extend(b"-\0\0\0\0\0\0\0");
+    b.extend(b"-\0\0\0\0\0\0\0");
+    b.extend(b"WALL\0\0\0\0");
+    b.extend(sector.to_le_bytes());
+    b
+}
+
+fn doom_linedef(v1: u16, v2: u16, right: u16, left: u16) -> Vec<u8> {
+    // 14 bytes: v1, v2, flags, special, tag, sidefront, sideback.
+    [
+        v1.to_le_bytes(),
+        v2.to_le_bytes(),
+        0u16.to_le_bytes(),
+        0u16.to_le_bytes(),
+        0u16.to_le_bytes(),
+        right.to_le_bytes(),
+        left.to_le_bytes(),
+    ]
+    .concat()
+}
+
+fn assemble_doom_map() -> Map {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        /* things */ Vec::new(),
+        /* linedefs */ doom_linedef(0, 1, 0, 0xffff),
+        /* sidedefs */ doom_sidedef(0, 0),
+        /* vertexes */ [doom_vertex(0, 0), doom_vertex(64, 0)].concat(),
+        /* sectors */ doom_sector(),
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    Map::assemble(&wad, &group).unwrap()
+}
+
+#[test]
+fn none_namespace_strict_defaults_without_warning() {
+    let map = assemble_doom_map();
+    assert_eq!(map.namespace(), None);
+    let (text, warnings) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    assert!(text.starts_with("namespace = \"doom\";"), "got:\n{text}");
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn none_namespace_lenient_defaults_with_warning() {
+    let map = assemble_doom_map();
+    let (text, warnings) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+    assert!(text.starts_with("namespace = \"doom\";"), "got:\n{text}");
+    assert_eq!(
+        warnings,
+        vec![UdmfWriteWarning::NamespaceDefaulted { used: "doom" }]
+    );
+}
+
+// --- Coverage: `map.namespace()` is `Some("")` (an explicitly empty UDMF namespace). ---
+
+const EMPTY_NAMESPACE_MAP: &str = concat!(
+    "namespace = \"\";\n",
+    "vertex { x = 0; y = 0; }\n",
+    "vertex { x = 64; y = 0; }\n",
+    "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+    "sidedef { sector = 0; }\n",
+    "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+);
+
+#[test]
+fn empty_namespace_strict_errors() {
+    let map = assemble_udmf(EMPTY_NAMESPACE_MAP);
+    assert_eq!(map.namespace(), Some(""));
+    let err = write_udmf(&map, &WriteOptions::strict()).unwrap_err();
+    assert_eq!(err, UdmfWriteError::EmptyNamespace);
+}
+
+#[test]
+fn empty_namespace_lenient_defaults_with_warning() {
+    let map = assemble_udmf(EMPTY_NAMESPACE_MAP);
+    let (text, warnings) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+    assert!(text.starts_with("namespace = \"doom\";"), "got:\n{text}");
+    assert_eq!(
+        warnings,
+        vec![UdmfWriteWarning::NamespaceDefaulted { used: "doom" }]
+    );
+}
+
+// --- Coverage: sidedef `offsety` and sector `special`, neither exercised above. ---
+
+#[test]
+fn writes_sidedef_offsety_and_sector_special() {
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 8; y = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "sidedef { sector = 0; offsety = 5; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; special = 9; }\n",
+    );
+    let map = assemble_udmf(text);
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+
+    let side = out.lines().find(|l| l.starts_with("sidedef")).unwrap();
+    assert!(side.contains("offsety = 5; "), "{side}");
+
+    let sector = out.lines().find(|l| l.starts_with("sector")).unwrap();
+    assert!(sector.contains("special = 9; "), "{sector}");
+}

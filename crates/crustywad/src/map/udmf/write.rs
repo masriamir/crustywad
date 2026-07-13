@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 use crate::Strictness;
 use crate::map::Map;
 use crate::map::graph::{MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
-use crate::write::WriteOptions;
+use crate::write::{WadBuilder, WriteOptions};
 
 /// Message for the infallible `write!`-into-`String` calls.
 const INFALLIBLE: &str = "writing to a String never fails";
@@ -312,6 +312,28 @@ pub fn write_udmf(
     }
 
     Ok((w.out, w.warnings))
+}
+
+/// Serializes `map` and adds a complete UDMF map group — the `name` marker
+/// lump, a `TEXTMAP` lump, and an `ENDMAP` lump — to `builder`.
+///
+/// The caller invokes [`WadBuilder::build`] afterward (which returns
+/// [`WriteError`](crate::WriteError)).
+///
+/// # Errors
+/// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`] and
+/// [`UdmfWriteError::NonFiniteCoordinate`] (strict mode).
+pub fn add_udmf_map(
+    builder: &mut WadBuilder,
+    name: &str,
+    map: &Map,
+    opts: &WriteOptions,
+) -> Result<Vec<UdmfWriteWarning>, UdmfWriteError> {
+    let (text, warnings) = write_udmf(map, opts)?;
+    builder.add_lump(name, b"");
+    builder.add_lump("TEXTMAP", text.into_bytes());
+    builder.add_lump("ENDMAP", b"");
+    Ok(warnings)
 }
 
 #[cfg(test)]
