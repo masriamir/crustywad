@@ -102,7 +102,9 @@ pub enum DoomWriteError {
         /// The maximum Doom can index.
         max: usize,
     },
-    /// A coordinate or height was NaN or infinite (strict; lenient writes `0`).
+    /// An `x`/`y` coordinate (of a vertex or a thing) was NaN or infinite
+    /// (strict; lenient writes `0`). Doom has no thing `height` field — the
+    /// graph's `height` is dropped by this writer, so it is never checked here.
     #[error("non-finite {field} in {block} #{index}")]
     NonFiniteCoordinate {
         /// The block kind (e.g. `"vertex"`, `"thing"`).

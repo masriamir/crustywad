@@ -147,10 +147,25 @@ pub struct MapThing {
     /// The thing's doomednum, identifying its type.
     pub type_id: u16,
     /// The thing's bit flags in the Doom/Boom-MBF layout — skill 1–2 (bit 0),
-    /// skill 3 (bit 1), skill 4–5 (bit 2), ambush (bit 3), multiplayer-only
+    /// skill 3 (bit 1), skill 4–5 (bit 2), ambush (bit 3), not-in-single-player
     /// (bit 4), not-in-deathmatch (bit 5), not-in-co-op (bit 6), friendly
-    /// (bit 7). UDMF's discrete booleans are packed into this layout on read
-    /// (ADR-0019), so the field means the same thing for every format.
+    /// (bit 7). Note that bits 4–6 are *negative*: a clear bit means the thing
+    /// **does** appear in that game mode.
+    ///
+    /// This layout is the graph's single contract — every source format is
+    /// normalized into it on read (ADR-0019 §2), so the field means the same
+    /// thing regardless of where the map came from:
+    ///
+    /// - **Doom/Heretic**: the on-disk word, used as-is.
+    /// - **Hexen**: translated on assembly. Hexen's game-mode bits are positive
+    ///   and live elsewhere (`0x0100` single-player, `0x0200` co-op, `0x0400`
+    ///   deathmatch), so they are inverted into bits 4/5/6; Hexen's `dormant`
+    ///   (`0x0010`) and fighter/cleric/mage class filters
+    ///   (`0x0020`/`0x0040`/`0x0080`) have no Doom equivalent and are dropped.
+    ///   Bit 7 (friend) is always `0` — Hexen has no such flag.
+    /// - **UDMF**: the discrete booleans (`skill1`…`skill5`, `ambush`, `single`,
+    ///   `dm`, `coop`, `friend`) are packed into this layout; the skill pairs
+    ///   OR-fold into one bit each and `single`/`dm`/`coop` are inverted.
     pub flags: u32,
     /// The thing's identification tag (Hexen/UDMF tid); `0` for Doom maps and untagged things.
     pub id: i32,

@@ -375,7 +375,53 @@ fn normalize_linedefs(
     Ok(linedefs)
 }
 
-/// Widens raw Hexen `THINGS` records into normalized [`MapThing`]s.
+/// Translates a raw Hexen `THINGS` flag word into the graph's single
+/// Doom/Boom-MBF thing-flag layout ([`MapThing::flags`], ADR-0019 §2).
+///
+/// Hexen's on-disk bits are *not* Doom's: its game-mode bits are **positive**
+/// ("appears in X") and live at `0x0100`/`0x0200`/`0x0400`, where Doom's are
+/// **negative** ("not in X") at bits 4/5/6; and Hexen spends bits 4–7 on
+/// `dormant` plus the fighter/cleric/mage class filters. Translating here keeps
+/// [`MapThing::flags`] meaning exactly one thing for every source format, so the
+/// writers ([`write_udmf`](crate::map::write_udmf),
+/// [`write_doom_map`](crate::map::write_doom_map)) can interpret it uniformly.
+///
+/// | Hexen (on disk) | Normalized |
+/// |---|---|
+/// | skill 1&2 / 3 / 4&5 (bits 0–2), ambush (bit 3) | copied unchanged |
+/// | appears in single-player (`0x0100`) | bit 4 — *not* in single-player (inverted) |
+/// | appears in deathmatch (`0x0400`) | bit 5 — *not* in deathmatch (inverted) |
+/// | appears in co-op (`0x0200`) | bit 6 — *not* in co-op (inverted) |
+/// | dormant (`0x0010`), class filters (`0x0020`/`0x0040`/`0x0080`) | dropped — no Doom equivalent |
+/// | — | bit 7 (friend, MBF) is always `0`; Hexen has no equivalent |
+///
+/// Dropping the dormant and class bits is silent and unwarned, consistent with
+/// how ADR-0017/ADR-0019 treat every other unmappable per-format boolean.
+fn normalize_hexen_thing_flags(flags: u16) -> u32 {
+    /// Hexen "appears in single-player games".
+    const HEXEN_SINGLE: u16 = 0x0100;
+    /// Hexen "appears in cooperative games".
+    const HEXEN_COOP: u16 = 0x0200;
+    /// Hexen "appears in deathmatch games".
+    const HEXEN_DEATHMATCH: u16 = 0x0400;
+
+    // Skills (bits 0-2) and ambush (bit 3) share Doom's meaning and position.
+    let mut out = u32::from(flags & 0x000F);
+    if flags & HEXEN_SINGLE == 0 {
+        out |= 0x0010; // not in single-player
+    }
+    if flags & HEXEN_DEATHMATCH == 0 {
+        out |= 0x0020; // not in deathmatch
+    }
+    if flags & HEXEN_COOP == 0 {
+        out |= 0x0040; // not in co-op
+    }
+    out
+}
+
+/// Widens raw Hexen `THINGS` records into normalized [`MapThing`]s, translating
+/// the Hexen flag word into the graph's Doom/Boom-MBF layout (see
+/// [`normalize_hexen_thing_flags`]).
 fn normalize_things_hexen(raw: &[hexen::Thing]) -> Vec<MapThing> {
     raw.iter()
         .map(|t| MapThing {
@@ -383,7 +429,7 @@ fn normalize_things_hexen(raw: &[hexen::Thing]) -> Vec<MapThing> {
             y: f64::from(t.y),
             angle: t.angle,
             type_id: t.type_id,
-            flags: u32::from(t.flags),
+            flags: normalize_hexen_thing_flags(t.flags),
             id: i32::from(t.tid),
             height: f64::from(t.z),
             special: Special {
@@ -736,9 +782,9 @@ fn assemble_udmf(
 #[cfg(test)]
 mod tests {
     use super::{
-        Map, MapAssembleError, normalize_udmf_linedefs, normalize_udmf_sidedefs,
-        normalize_udmf_things, normalize_udmf_vertices, resolve_left, resolve_optional,
-        resolve_required,
+        Map, MapAssembleError, normalize_hexen_thing_flags, normalize_udmf_linedefs,
+        normalize_udmf_sidedefs, normalize_udmf_things, normalize_udmf_vertices, resolve_left,
+        resolve_optional, resolve_required,
     };
     use crate::map::graph::{MapFormat, SidedefIdx, VertexIdx};
     use crate::map::udmf::{UdmfLinedef, UdmfSidedef, UdmfThing};
@@ -1008,6 +1054,62 @@ mod tests {
         }];
         let err = normalize_udmf_linedefs(&lines, 2, 1, Strictness::Strict, &mut w).unwrap_err();
         assert!(matches!(err, MapAssembleError::DanglingReference { .. }));
+    }
+
+    /// A Hexen thing present in all three game modes (`0x0100` single |
+    /// `0x0200` co-op | `0x0400` deathmatch) must normalize to Doom's *negative*
+    /// bits 4/5/6 all **clear** — the graph says "not excluded from any mode".
+    #[test]
+    fn hexen_thing_in_all_game_modes_clears_the_negative_bits() {
+        let normalized = normalize_hexen_thing_flags(0x0100 | 0x0200 | 0x0400);
+        assert_eq!(normalized & 0x0070, 0, "bits 4/5/6 must all be clear");
+        assert_eq!(normalized, 0x0000);
+    }
+
+    /// The converse: a Hexen thing naming no game mode appears nowhere, which in
+    /// Doom's negative encoding is bits 4/5/6 all **set**.
+    #[test]
+    fn hexen_thing_in_no_game_mode_sets_the_negative_bits() {
+        let normalized = normalize_hexen_thing_flags(0x0000);
+        assert_eq!(normalized & 0x0070, 0x0070, "bits 4/5/6 must all be set");
+        assert_eq!(normalized, 0x0070);
+    }
+
+    /// Each Hexen game-mode bit maps to its own Doom bit, inverted. Note the
+    /// crossover: Hexen orders the bits single/co-op/deathmatch, Doom orders
+    /// them single/deathmatch/co-op, so co-op and deathmatch swap positions.
+    #[test]
+    fn hexen_game_mode_bits_invert_into_their_doom_positions() {
+        // Single-player only: DM (bit 5) and co-op (bit 6) excluded, SP not.
+        assert_eq!(normalize_hexen_thing_flags(0x0100), 0x0060);
+        // Co-op only (Hexen 0x0200) -> Doom bit 6 clear, bits 4 and 5 set.
+        assert_eq!(normalize_hexen_thing_flags(0x0200), 0x0030);
+        // Deathmatch only (Hexen 0x0400) -> Doom bit 5 clear, bits 4 and 6 set.
+        assert_eq!(normalize_hexen_thing_flags(0x0400), 0x0050);
+    }
+
+    /// Skills (bits 0–2) and ambush (bit 3) share Doom's meaning *and* position,
+    /// so they survive verbatim.
+    #[test]
+    fn hexen_skill_and_ambush_bits_are_preserved() {
+        // All skills + ambush, no game modes: low nibble kept, bits 4/5/6 set.
+        assert_eq!(normalize_hexen_thing_flags(0x000F), 0x007F);
+        // Skill 3 only, in every game mode.
+        assert_eq!(normalize_hexen_thing_flags(0x0002 | 0x0700), 0x0002);
+    }
+
+    /// `dormant` and the fighter/cleric/mage class filters have no Doom bit and
+    /// are dropped — crucially, they must not leak into Doom's bits 4–7, which
+    /// they collide with on disk.
+    #[test]
+    fn hexen_dormant_and_class_bits_are_dropped() {
+        // dormant | fighter | cleric | mage, in all three game modes: every one
+        // of those bits is unmappable, so nothing but 0 survives.
+        let raw = 0x0010 | 0x0020 | 0x0040 | 0x0080 | 0x0100 | 0x0200 | 0x0400;
+        assert_eq!(normalize_hexen_thing_flags(raw), 0x0000);
+        // Bit 7 (friend, MBF) has no Hexen source and is never set — not even by
+        // Hexen's `mage` bit, which occupies that same on-disk position.
+        assert_eq!(normalize_hexen_thing_flags(0x0080) & 0x0080, 0);
     }
 
     proptest! {

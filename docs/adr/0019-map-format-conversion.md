@@ -199,6 +199,34 @@ not at conversion time — so it is **not** reported as a warning, consistent wi
 every other unmodeled UDMF field, which ADR-0017 drops silently. It is
 documented on `MapThing.flags` and here.
 
+**Hexen is normalized into the same layout.** The layout above is a contract for
+*every* format, not just UDMF, and Hexen's on-disk thing flags do **not** match
+it: Hexen's game-mode bits are *positive* and sit at `0x0100`/`0x0200`/`0x0400`,
+and it spends bits 4–7 on `dormant` plus the fighter/cleric/mage class filters
+(verified against the vanilla Hexen `MTF_*` constants and the Doom Wiki `Thing`
+article). Copying that word through verbatim — which `normalize_things_hexen`
+originally did — would leave a Hexen-sourced `Map` in violation of the contract,
+and `write_udmf` (which accepts Hexen maps, §5) would then emit **inverted**
+`single`/`dm`/`coop` for it. Hexen `THINGS` flags are therefore translated at
+assembly, exactly as the UDMF path packs its booleans:
+
+| Hexen (on disk) | `flags` bit | Set when |
+|---|---|---|
+| skill 1&2 / 3 / 4&5 (`0x0001`/`0x0002`/`0x0004`) | 0 / 1 / 2 | copied unchanged |
+| ambush (`0x0008`) | 3 (`0x0008`) | copied unchanged |
+| appears in single-player (`0x0100`) | 4 (`0x0010`) | the Hexen bit is **clear** (inverted) |
+| appears in deathmatch (`0x0400`) | 5 (`0x0020`) | the Hexen bit is **clear** (inverted) |
+| appears in co-op (`0x0200`) | 6 (`0x0040`) | the Hexen bit is **clear** (inverted) |
+| — | 7 (`0x0080`) | never — Hexen has no friend (MBF) flag |
+
+`dormant` (`0x0010`) and the class filters (`0x0020`/`0x0040`/`0x0080`) have no
+Doom bit and are **dropped**, silently and unwarned, on the same reasoning as the
+UDMF `class1`–`class3`/`dormant`/`standing` loss above. A Hexen thing that
+appears in all three game modes therefore normalizes to bits 4/5/6 all clear (so
+`write_udmf` emits `single = true; dm = true; coop = true;`), and one that names
+no game mode normalizes to bits 4/5/6 all set — appearing nowhere, which is what
+the on-disk word said.
+
 ### 3. The binary write path: `map::doom::write`, and a three-tier loss policy
 
 `map::doom` becomes a directory module (`map/doom/mod.rs` for the records,

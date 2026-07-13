@@ -453,6 +453,43 @@ fn assembles_hexen_map_with_superset_fields() {
     assert_eq!(l.special.args, [99, 0, 0, 0, 0]);
     assert_eq!(l.id, 0); // line id is UDMF-only; Hexen linedefs leave it 0
     assert!(l.left.is_none()); // 0xffff == one-sided
+    // The fixture's on-disk Hexen flags are 0x0007 (all skills, no game-mode
+    // bits). Hexen's game-mode bits are positive, Doom's are negative, so a
+    // thing naming no mode normalizes to bits 4/5/6 SET — it appears nowhere.
+    assert_eq!(t.flags, 0x0077);
+}
+
+/// Hexen `THINGS` flags are translated into the graph's Doom/Boom-MBF layout at
+/// assembly (ADR-0019 §2), end to end: the positive Hexen game-mode bits
+/// (`0x0100` single / `0x0200` co-op / `0x0400` deathmatch) invert into Doom's
+/// negative bits 4/5/6, and `dormant` plus the class filters — which collide
+/// with Doom's bits 4–7 on disk — are dropped rather than misread.
+#[test]
+fn hexen_thing_flags_are_normalized_to_the_doom_layout() {
+    use crustywad::map::Map;
+
+    /// Builds a Hexen map whose single thing carries the on-disk `flags` word,
+    /// and returns the assembled (normalized) `MapThing::flags`.
+    fn normalized_flags(flags: u16) -> u32 {
+        let bytes = common::hexen_map_bytes_with_thing_flags(flags);
+        let wad = crustywad::Wad::from_bytes(bytes).expect("parses");
+        let group = wad.map_group("MAP01").expect("group");
+        let map = Map::assemble(&wad, &group).expect("assembles");
+        map.things()[0].flags
+    }
+
+    // Present in all three game modes -> Doom's "not in X" bits 4/5/6 all clear.
+    assert_eq!(normalized_flags(0x0100 | 0x0200 | 0x0400), 0x0000);
+    // Present in none -> bits 4/5/6 all set.
+    assert_eq!(normalized_flags(0x0000), 0x0070);
+    // Skills and ambush survive verbatim (same meaning, same position).
+    assert_eq!(normalized_flags(0x000F | 0x0700), 0x000F);
+    // dormant (0x0010) and the fighter/cleric/mage class filters
+    // (0x0020/0x0040/0x0080) have no Doom equivalent and are dropped — they must
+    // not be mistaken for Doom's game-mode or friend bits.
+    assert_eq!(normalized_flags(0x00F0 | 0x0700), 0x0000);
+    // Single-player only: excluded from deathmatch (bit 5) and co-op (bit 6).
+    assert_eq!(normalized_flags(0x0100), 0x0060);
 }
 
 #[test]

@@ -103,6 +103,14 @@ pub fn build_hexen_map_wad(
 /// (special=13, args=[99,0,0,0,0], left=0xffff).
 #[allow(dead_code)]
 pub fn hexen_sample_map_bytes() -> Vec<u8> {
+    hexen_map_bytes_with_thing_flags(0x0007)
+}
+
+/// The same map as [`hexen_sample_map_bytes`], with the thing's on-disk Hexen
+/// `flags` word set to `flags` — used to exercise Hexen thing-flag normalization
+/// (ADR-0019 §2), where the on-disk bits differ from the graph's Doom layout.
+#[allow(dead_code)]
+pub fn hexen_map_bytes_with_thing_flags(flags: u16) -> Vec<u8> {
     let vertexes = [0i16, 0, 64, 0] // (0,0) and (64,0)
         .iter()
         .flat_map(|v| v.to_le_bytes())
@@ -122,11 +130,12 @@ pub fn hexen_sample_map_bytes() -> Vec<u8> {
     sector.extend_from_slice(&160i16.to_le_bytes());
     sector.extend_from_slice(&0i16.to_le_bytes());
     sector.extend_from_slice(&0i16.to_le_bytes());
-    // Hexen thing (20 B): tid=7, x=16, y=16, z=24, angle=90, type=1, flags=7, special=80, args=[1..5].
-    let thing: Vec<u8> = vec![
-        0x07, 0x00, 0x10, 0x00, 0x10, 0x00, 0x18, 0x00, 0x5A, 0x00, 0x01, 0x00, 0x07, 0x00, 0x50,
-        0x01, 0x02, 0x03, 0x04, 0x05,
+    // Hexen thing (20 B): tid=7, x=16, y=16, z=24, angle=90, type=1, `flags`, special=80, args=[1..5].
+    let mut thing: Vec<u8> = vec![
+        0x07, 0x00, 0x10, 0x00, 0x10, 0x00, 0x18, 0x00, 0x5A, 0x00, 0x01, 0x00,
     ];
+    thing.extend_from_slice(&flags.to_le_bytes());
+    thing.extend_from_slice(&[0x50, 0x01, 0x02, 0x03, 0x04, 0x05]);
     // Hexen linedef (16 B): start=0,end=1,flags=1,special=13,args=[99,0,0,0,0],right=0,left=0xffff.
     let linedef: Vec<u8> = vec![
         0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x0D, 0x63, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,

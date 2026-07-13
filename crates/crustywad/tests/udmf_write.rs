@@ -411,3 +411,30 @@ fn writes_sidedef_offsety_and_sector_special() {
     let sector = out.lines().find(|l| l.starts_with("sector")).unwrap();
     assert!(sector.contains("special = 9; "), "{sector}");
 }
+
+// --- Hexen -> UDMF: thing flags must not come out inverted (ADR-0019 §2). ---
+
+/// A Hexen map's thing flags are normalized into the Doom/Boom-MBF layout at
+/// assembly, so `write_udmf` — which accepts Hexen maps — emits the *correct*
+/// game-mode booleans for them. Hexen's bits are positive and sit at
+/// `0x0100`/`0x0200`/`0x0400`; before normalization they were copied through
+/// verbatim and this thing (present in all three modes) serialized as present in
+/// none.
+#[test]
+fn hexen_thing_present_in_all_modes_writes_all_three_udmf_game_modes() {
+    // All skills (0x0007) + single (0x0100) + co-op (0x0200) + deathmatch (0x0400).
+    let bytes = common::hexen_map_bytes_with_thing_flags(0x0007 | 0x0100 | 0x0200 | 0x0400);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let map = Map::assemble(&wad, &group).unwrap();
+
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    assert!(out.starts_with("namespace = \"hexen\";"), "got:\n{out}");
+    let thing = out.lines().find(|l| l.starts_with("thing")).unwrap();
+    assert!(thing.contains("single = true; "), "{thing}");
+    assert!(thing.contains("dm = true; "), "{thing}");
+    assert!(thing.contains("coop = true; "), "{thing}");
+    // All skills carried across; no `friend` (Hexen has no such flag).
+    assert!(thing.contains("skill1 = true; skill2 = true; "), "{thing}");
+    assert!(!thing.contains("friend"), "{thing}");
+}
