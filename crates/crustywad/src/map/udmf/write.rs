@@ -61,11 +61,18 @@ pub enum UdmfWriteWarning {
     },
 }
 
-/// Quotes and escapes `s` as a UDMF string literal (mirrors the lexer, which
-/// resolves `\"` and `\\`). Backslash is escaped first so an escaped quote is
-/// not double-escaped.
+/// Quotes and escapes `s` as a UDMF string literal, mirroring every escape the
+/// lexer resolves (`\\`, `\"`, `\n`, `\t`) so any string round-trips. Backslash
+/// is escaped first so the backslashes introduced for the other escapes are not
+/// themselves doubled.
 fn escape_udmf_string(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        s.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\t', "\\t")
+    )
 }
 
 /// Accumulates UDMF text and lenient-mode warnings.
@@ -435,6 +442,15 @@ mod tests {
     #[test]
     fn escape_handles_quote_and_backslash() {
         assert_eq!(escape_udmf_string(r#"a"b\c"#), r#""a\"b\\c""#);
+    }
+
+    #[test]
+    fn escape_handles_newline_and_tab() {
+        // Every escape the lexer resolves must be produced so any string
+        // round-trips: backslash, quote, newline, and tab.
+        assert_eq!(escape_udmf_string("a\nb\tc"), r#""a\nb\tc""#);
+        // A backslash preceding an escaped char is not double-escaped.
+        assert_eq!(escape_udmf_string("\\\n"), r#""\\\n""#);
     }
 
     #[test]
