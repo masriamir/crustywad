@@ -54,6 +54,51 @@ assert_eq!(Wad::from_bytes(rebuilt)?.lump_count(), 2);
 All lump data is copied into the builder during the conversion, so memory
 usage roughly doubles for the duration.
 
+## Writing UDMF maps
+
+Use `write_udmf()` to serialize an assembled `Map` into a UDMF `TEXTMAP` string,
+or `add_udmf_map()` to add a complete map group to a `WadBuilder`. Both are
+available with the `write` feature:
+
+```rust
+use crustywad::{Wad, WadBuilder, WadKind, WriteOptions};
+use crustywad::map::{Map, add_udmf_map, write_udmf};
+
+# // Assemble a Map to write out (here from a small in-memory UDMF WAD).
+# let textmap = concat!(
+#     "namespace = \"doom\";\n",
+#     "vertex { x = 0; y = 0; }\n",
+#     "vertex { x = 8; y = 0; }\n",
+#     "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+#     "sidedef { sector = 0; }\n",
+#     "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+# );
+# let mut src = WadBuilder::new(WadKind::Pwad);
+# src.add_lump("MAP01", b"");
+# src.add_lump("TEXTMAP", textmap.as_bytes().to_vec());
+# src.add_lump("ENDMAP", b"");
+# let wad = Wad::from_bytes(src.build()?)?;
+# let group = wad.map_group("MAP01").unwrap();
+let map: Map = Map::assemble(&wad, &group)?;
+
+// Serialize the map to a UDMF TEXTMAP string:
+let (textmap_out, _warnings) = write_udmf(&map, &WriteOptions::strict())?;
+assert!(textmap_out.starts_with("namespace"));
+
+// Or add a complete map group (MAP01 + TEXTMAP + ENDMAP) to a builder:
+let mut builder = WadBuilder::new(WadKind::Pwad);
+add_udmf_map(&mut builder, "MAP01", &map, &WriteOptions::strict())?;
+let bytes = builder.build()?;
+# assert!(!bytes.is_empty());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Fields are emitted only when they differ from UDMF spec defaults; float coordinates
+are narrowed to integer form when whole (e.g. `64.0` is written as `64`). The
+[Strict vs. lenient write validation](#strict-vs-lenient-write-validation) section
+below covers the `WriteOptions` modes; see [Map records](map-records.md) for the
+`Map` graph types these APIs consume.
+
 ## Strict vs. lenient write validation
 
 `build()` always uses strict validation. `build_with_options()` takes a
