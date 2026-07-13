@@ -25,6 +25,7 @@ use thiserror::Error;
 pub mod assemble;
 pub mod common;
 pub mod doom;
+pub mod doom64;
 pub mod graph;
 pub mod group;
 pub mod hexen;
