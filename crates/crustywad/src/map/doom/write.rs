@@ -24,6 +24,24 @@
 //! returns [`DoomWriteWarning::NodesNotBuilt`]: run an external nodebuilder
 //! (`zdbsp`, `bsp`, …) before the map is playable.
 //!
+//! # Name fidelity
+//!
+//! A texture/flat name survives conversion byte-for-byte **only if it is valid
+//! UTF-8 and NUL-clean** — valid UTF-8 up to its first NUL, with nothing but
+//! NUL padding after it. That holds for every name in practice (they are
+//! ASCII), but not unconditionally, and the limit is the graph, not this
+//! writer: [`Name8`] does keep the raw `[u8; 8]`, whereas [`MapSidedef`] and
+//! [`MapSector`] store `String`, filled on read via
+//! [`Name8::as_str_lossy`](Name8::as_str_lossy) — which trims at the first NUL
+//! and decodes with `String::from_utf8_lossy`. So an on-disk
+//! `b"\x81OCK\0\0\0\0"` reaches the graph as `"\u{FFFD}OCK"` and is written
+//! back as `EF BF BD 4F 43 4B 00 00` — different bytes, no warning — and an
+//! 8-byte all-invalid name becomes a 24-byte replacement-character string that
+//! then fails as [`DoomWriteError::NameTooLong`] in strict mode. Bytes after
+//! the NUL terminator (which real IWADs do contain) are dropped on read for
+//! the same reason. This is read-time normalization, not conversion loss; only
+//! a name longer than 8 bytes is tier-2 loss below.
+//!
 //! # Round-tripping
 //!
 //! Doom → UDMF → Doom is byte-identical **for maps whose linedef flags fit the

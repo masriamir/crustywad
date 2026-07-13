@@ -196,9 +196,25 @@ Reported as `DoomWriteError::TooManyElements { kind, count, max }`.
 | Texture/flat name longer than 8 bytes | truncate to 8 bytes |
 | Non-finite (`NaN`/infinite) coordinate | strict errors, lenient substitutes `0` |
 
-A non-ASCII name that fits in 8 bytes is **not** loss — Doom's on-disk name
-field is a raw `[u8; 8]`, so it writes and reads back byte-for-byte. Only
-exceeding 8 bytes is loss.
+**Name fidelity has a caveat.** A texture/flat name round-trips byte-for-byte
+**only if it is valid UTF-8 and NUL-clean** — valid UTF-8 up to its first NUL,
+with nothing but NUL padding after it. Every name in practice is ASCII, so this
+holds for real maps, but the exceptions are real and are not warned about:
+
+- Doom's on-disk name field is a raw `[u8; 8]`, and `map::common::Name8` keeps
+  those bytes verbatim — but the `Map` graph does **not**. `MapSidedef` and
+  `MapSector` store `String`, filled on read via `Name8::as_str_lossy`, which
+  trims at the first NUL and decodes with `String::from_utf8_lossy`.
+- A name containing **invalid UTF-8** is therefore normalized on *read*:
+  `b"\x81OCK\0\0\0\0"` becomes `"\u{FFFD}OCK"` in the graph and is written back
+  as `EF BF BD 4F 43 4B 00 00` — different bytes, no warning. An 8-byte
+  all-invalid name expands to a 24-byte replacement-character string and then
+  **fails** as `DoomWriteError::NameTooLong` in strict mode.
+- **Bytes after the NUL terminator** (which real IWADs do contain) are dropped
+  on read for the same reason.
+
+Only a name longer than 8 bytes is *conversion* loss; the two cases above are
+read-time normalization, and no `WriteOptions` mode changes them.
 
 ### Tier 3 — no slot in the Doom format: strict errors, lenient drops and warns
 
