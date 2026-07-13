@@ -157,9 +157,9 @@ pub(crate) enum SubCommand {
     /// unchanged in directory order. Conversion is lossy in one direction:
     /// Doom -> UDMF -> Doom is exact, but UDMF -> Doom rounds fractional
     /// coordinates and drops fields Doom cannot represent (linedef args and id;
-    /// thing special, args, height, and tid). In strict mode any such loss is an
-    /// error; `--lenient` accepts the loss and reports each instance as a
-    /// warning.
+    /// thing special, args, height, and id — the UDMF/Hexen tid). In strict mode
+    /// any such loss is an error; `--lenient` accepts the loss and reports each
+    /// instance as a warning, naming the field exactly as listed here.
     ///
     /// Converting to `doom` emits empty SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
     /// lumps — run an external nodebuilder (zdbsp, bsp) before playing the map.
