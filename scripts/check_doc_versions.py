@@ -4,12 +4,14 @@
 The README and the mdBook guide show ``Cargo.toml`` snippets telling readers
 which version of ``crustywad`` to depend on::
 
-    crustywad = "0.3"
-    crustywad = { version = "0.3", features = ["write"] }
+    crustywad = "0.3.0"
+    crustywad = { version = "0.3.0", features = ["write"] }
+
+The pins use the full ``X.Y.Z`` -- the form ``cargo add`` itself writes.
 
 Cargo treats a bare version as a caret requirement, and for a ``0.x`` crate a
-caret is *minor*-pinned: ``"0.1"`` means ``>=0.1.0, <0.2.0``. So once the crate
-released ``0.2.0``, every snippet still saying ``"0.1"`` stopped resolving --
+caret is *minor*-pinned: ``"0.1.0"`` means ``>=0.1.0, <0.2.0``. So once the crate
+released ``0.2.0``, every snippet still saying ``"0.1.0"`` stopped resolving --
 readers copy-pasting them got a version that cannot be fetched. That is exactly
 what happened (issue #235): the pins silently rotted through a minor bump and
 went unnoticed until a reviewer spotted them in an unrelated PR.
@@ -39,6 +41,7 @@ from pathlib import Path
 
 CARGO_TOML = Path("crates/crustywad/Cargo.toml")
 
+
 def checked_files() -> list[Path]:
     """Returns the *reader-facing* docs whose pins must stay installable.
 
@@ -58,8 +61,8 @@ def checked_files() -> list[Path]:
     return [p for p in paths if p.exists()]
 
 # Matches both snippet forms, capturing the version string:
-#   crustywad = "0.3"
-#   crustywad = { version = "0.3", features = ["write"] }
+#   crustywad = "0.3.0"
+#   crustywad = { version = "0.3.0", features = ["write"] }
 # The negative lookahead on the name keeps `crustywad-cli = ...` from matching.
 PIN_RE = re.compile(
     r'crustywad(?!-)\s*=\s*(?:"(?P<bare>[^"]+)"|\{[^}]*?version\s*=\s*"(?P<table>[^"]+)")'
