@@ -138,6 +138,30 @@ fn omits_lightlevel_at_udmf_default_160() {
 }
 
 #[test]
+fn explicitly_empty_texture_round_trips_distinct_from_default() {
+    // An explicit `texturetop = ""` is preserved by the read side as an empty
+    // string, distinct from the `"-"` default. The writer must emit it (not omit
+    // it as if it were the default) so it survives a write -> read round-trip.
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 8; y = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "sidedef { sector = 0; texturetop = \"\"; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+    );
+    let map = assemble_udmf(text);
+    assert_eq!(map.sidedefs()[0].upper, "");
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    let side = out.lines().find(|l| l.starts_with("sidedef")).unwrap();
+    assert!(side.contains("texturetop = \"\"; "), "{side}");
+    // `texturebottom`/`texturemiddle` default to `"-"` and stay omitted.
+    assert!(!side.contains("texturebottom"), "{side}");
+    let reparsed = assemble_udmf(&out);
+    assert_eq!(reparsed.sidedefs()[0].upper, "");
+}
+
+#[test]
 fn writes_thing_fields_omitting_defaults() {
     let text = concat!(
         "namespace = \"doom\";\n",

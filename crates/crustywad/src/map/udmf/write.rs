@@ -185,7 +185,10 @@ impl Writer {
             ("texturebottom", &s.lower),
             ("texturemiddle", &s.middle),
         ] {
-            if !tex.is_empty() && tex != "-" {
+            // Emit whenever the texture differs from the UDMF default `"-"`.
+            // An explicitly-empty texture (`""`) is preserved distinct from the
+            // default by the read side, so it must be emitted to round-trip.
+            if tex != "-" {
                 write!(self.out, "{key} = {}; ", escape_udmf_string(tex)).expect(INFALLIBLE);
             }
         }
