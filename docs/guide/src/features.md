@@ -102,8 +102,10 @@ just test-freedoom
 # Override the fixture directory:
 just test-freedoom dir=/path/to/freedoom
 
-# Or run cargo directly:
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom \
+# Or run cargo directly. The path must be ABSOLUTE: cargo sets the test binary's
+# working directory to the package root (crates/crustywad), so a relative path
+# never resolves and the fixture tests skip silently.
+CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" \
   cargo test -p crustywad --features freedoom-tests
 ```
 

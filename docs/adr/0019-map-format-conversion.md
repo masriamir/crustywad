@@ -331,10 +331,23 @@ Two defects in `map/udmf/write.rs` (both verified above) are corrected:
 With both fixed, the two directions are **not** symmetric, and the ADR states
 this plainly rather than implying otherwise:
 
-- **Doom → UDMF → Doom is a byte-identical round-trip** for the five data lumps.
-  Every Doom on-disk field has an exact UDMF representation, and the read-side
-  packing and write-side emission of §2/§5 are inverses. This becomes the
-  headline property test.
+- **Doom → UDMF → Doom is a byte-identical round-trip** for `VERTEXES`,
+  `LINEDEFS`, `SIDEDEFS`, and `SECTORS`, and for `THINGS` within the envelope
+  below. The read-side packing and write-side emission of §2/§5 are inverses.
+  This becomes the headline property test.
+
+  Three fields fall outside the envelope, because the UDMF leg has no
+  representation for them: a linedef flag bit ≥ 9 (e.g. Boom's `passuse`) and a
+  thing flag bit ≥ 8 have no UDMF boolean and are dropped, and a thing `angle`
+  ≥ 360 comes back reduced modulo 360 (the read path applies `rem_euclid(360)`,
+  per ADR-0017). The angle case is the only one that occurs in real content —
+  226 things across 10 Freedoom maps store `angle = 360` and return as `0` — and
+  it is a **semantic no-op**: Doom's `P_SpawnMapThing` computes
+  `ANG45 * (angle / 45)` with integer division, so 360 and 0 spawn the identical
+  facing. The fixture test pins this exactly: the four geometry lumps must be
+  byte-identical unconditionally, and every `THINGS` divergence must be
+  angle-only, with source ≥ 360 and result exactly `source % 360`. A dropped
+  flag bit or a moved vertex still fails.
 - **UDMF → Doom → UDMF is *not* reversible.** `f64` → `i16` rounding and the
   Tier-3 drops are one-way, and the OR-folding of §2 is one-way on top of that.
   No option, flag, or mode makes it reversible. This is documented in the module

@@ -86,7 +86,8 @@ the environment variable at the directory:
 
 ```sh
 just fetch-fixtures                         # downloads freedoom1.wad / freedoom2.wad
-CRUSTYWAD_FREEDOOM_DIR=tests/fixtures/freedoom just bench
+# Absolute path required — cargo runs the bench binary from the package root.
+CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" just bench
 ```
 
 ---
