@@ -39,14 +39,16 @@ from pathlib import Path
 
 CARGO_TOML = Path("crates/crustywad/Cargo.toml")
 
-# Files that document a dependency version for library consumers.
-CHECKED_FILES = [
-    Path("README.md"),
-    Path("docs/guide/src/getting-started.md"),
-    Path("docs/guide/src/features.md"),
-    Path("docs/guide/src/writing-wads.md"),
-    Path("docs/guide/src/converting-maps.md"),
-]
+# Every doc that could carry a dependency snippet is discovered, not listed: a
+# hardcoded list is itself a drift source — a new guide page with a pin would
+# silently escape the check, which is the exact failure this script exists to
+# prevent (a guard with a blind spot is worse than none, because it reads as
+# coverage).
+def checked_files() -> list[Path]:
+    """Returns every documentation file that may pin a `crustywad` version."""
+    paths = [Path("README.md"), Path("CONTRIBUTING.md")]
+    paths.extend(sorted(Path("docs/guide/src").glob("*.md")))
+    return [p for p in paths if p.exists()]
 
 # Matches both snippet forms, capturing the version string:
 #   crustywad = "0.3"
@@ -115,6 +117,35 @@ def expected_pin(version: str) -> str:
     return f"0.0.{patch}"
 
 
+def pin_resolves(pin: str, version: str) -> bool:
+    """Whether the caret requirement `pin` would actually fetch `version`.
+
+    A pin is judged by what Cargo does with it, not by string equality against
+    one canonical spelling: `"0.3"` and `"0.3.0"` are both valid requirements
+    that fetch 0.3.0 (the docs legitimately use both -- the short form in install
+    snippets, the full form when illustrating the caret rules themselves).
+
+    `^REQ` matches a version when the leading non-zero component agrees and the
+    version is not below the requirement.
+    """
+    try:
+        want = [int(part) for part in pin.split(".")]
+        have = [int(part) for part in version.split(".")]
+    except ValueError:
+        return False
+
+    want += [0] * (3 - len(want))
+    have += [0] * (3 - len(have))
+
+    # The caret's "compatible" component is the first non-zero one; every
+    # component up to and including it must match exactly.
+    lead = next((i for i, part in enumerate(want) if part != 0), 2)
+    if want[: lead + 1] != have[: lead + 1]:
+        return False
+    # And the version must not predate the requirement (^0.3.1 does not fetch 0.3.0).
+    return have >= want
+
+
 def main() -> int:
     version = crate_version()
     want = expected_pin(version)
@@ -122,10 +153,7 @@ def main() -> int:
     problems: list[str] = []
     checked = 0
 
-    for path in CHECKED_FILES:
-        if not path.exists():
-            problems.append(f"{path}: checked file is missing")
-            continue
+    for path in checked_files():
         # Scan the whole file, not line by line: a snippet split across lines
         # (`crustywad = {\n  version = "0.3",\n  ...\n}`) is valid TOML and just
         # as copy-pastable, and a per-line scan would miss it entirely — letting
@@ -134,8 +162,16 @@ def main() -> int:
         for match in PIN_RE.finditer(text):
             found = match.group("bare") or match.group("table")
             lineno = text.count("\n", 0, match.start()) + 1
+
+            # Skip deliberate placeholders (`version = "X.Y.Z"` in a template
+            # snippet). They instruct nobody to install anything, so pinning them
+            # to a real version would be wrong. Anything else non-numeric is a
+            # malformed pin and still reported.
+            if any(char.isalpha() for char in found):
+                continue
+
             checked += 1
-            if found != want:
+            if not pin_resolves(found, version):
                 problems.append(
                     f"{path}:{lineno}: pins crustywad = {found!r}, "
                     f"but the crate is {version} (expected {want!r})"
