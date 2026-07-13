@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3eac88fb.js";
+            window.path_to_searchindex_js = "searchindex-2098619d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -224,6 +224,48 @@ assert_eq!(Wad::from_bytes(rebuilt)?.lump_count(), 2);
 </span><span class="boring">}</span></code></pre>
 <p>All lump data is copied into the builder during the conversion, so memory
 usage roughly doubles for the duration.</p>
+<h2 id="writing-udmf-maps"><a class="header" href="#writing-udmf-maps">Writing UDMF maps</a></h2>
+<p>Use <code>write_udmf()</code> to serialize an assembled <code>Map</code> into a UDMF <code>TEXTMAP</code> string,
+or <code>add_udmf_map()</code> to add a complete map group to a <code>WadBuilder</code>. Both are
+available with the <code>write</code> feature:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{Wad, WadBuilder, WadKind, WriteOptions};
+use crustywad::map::{Map, add_udmf_map, write_udmf};
+
+<span class="boring">// Assemble a Map to write out (here from a small in-memory UDMF WAD).
+</span><span class="boring">let textmap = concat!(
+</span><span class="boring">    "namespace = \"doom\";\n",
+</span><span class="boring">    "vertex { x = 0; y = 0; }\n",
+</span><span class="boring">    "vertex { x = 8; y = 0; }\n",
+</span><span class="boring">    "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+</span><span class="boring">    "sidedef { sector = 0; }\n",
+</span><span class="boring">    "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+</span><span class="boring">);
+</span><span class="boring">let mut src = WadBuilder::new(WadKind::Pwad);
+</span><span class="boring">src.add_lump("MAP01", b"");
+</span><span class="boring">src.add_lump("TEXTMAP", textmap.as_bytes().to_vec());
+</span><span class="boring">src.add_lump("ENDMAP", b"");
+</span><span class="boring">let wad = Wad::from_bytes(src.build()?)?;
+</span><span class="boring">let group = wad.map_group("MAP01").unwrap();
+</span>let map: Map = Map::assemble(&amp;wad, &amp;group)?;
+
+// Serialize the map to a UDMF TEXTMAP string:
+let (textmap_out, _warnings) = write_udmf(&amp;map, &amp;WriteOptions::strict())?;
+assert!(textmap_out.starts_with("namespace"));
+
+// Or add a complete map group (MAP01 + TEXTMAP + ENDMAP) to a builder:
+let mut builder = WadBuilder::new(WadKind::Pwad);
+add_udmf_map(&amp;mut builder, "MAP01", &amp;map, &amp;WriteOptions::strict())?;
+let bytes = builder.build()?;
+<span class="boring">assert!(!bytes.is_empty());
+</span><span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p>Fields are emitted only when they differ from UDMF spec defaults; float coordinates
+are narrowed to integer form when whole (e.g. <code>64.0</code> is written as <code>64</code>). The
+<a href="#strict-vs-lenient-write-validation">Strict vs. lenient write validation</a> section
+below covers the <code>WriteOptions</code> modes; see <a href="map-records.html">Map records</a> for the
+<code>Map</code> graph types these APIs consume.</p>
 <h2 id="strict-vs-lenient-write-validation"><a class="header" href="#strict-vs-lenient-write-validation">Strict vs. lenient write validation</a></h2>
 <p><code>build()</code> always uses strict validation. <code>build_with_options()</code> takes a
 <code>WriteOptions</code> for either mode, and returns any collected <code>WriteWarning</code>s

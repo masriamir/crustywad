@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3eac88fb.js";
+            window.path_to_searchindex_js = "searchindex-2098619d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ed427db4.js"></script>
@@ -294,13 +294,13 @@ size (e.g. a <code>THINGS</code> lump whose byte count is not divisible by 10).<
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don’t
 have to index arenas by hand.</p>
 <blockquote>
-<p><strong>Multi-format assembly.</strong> <code>Map::assemble</code> detects the binary map format from its lumps: a
-<code>BEHAVIOR</code> lump marks a Hexen map, otherwise it is treated as the classic Doom binary layout.
-The assembled <code>Map</code> carries its format via <code>map.format()</code>, which returns <code>MapFormat::Doom</code>
-for classic Doom/Doom II/Heretic maps (which share the same binary record layout and differ
-only in map-marker naming, e.g. <code>MAP01</code> vs <code>E1M1</code>), or <code>MapFormat::Hexen</code> for Hexen maps.
-A <code>TEXTMAP</code> (UDMF) map is not yet supported — assembly returns
-<code>MapAssembleError::UnsupportedFormat</code> for it until UDMF support lands (Epic #17).</p>
+<p><strong>Multi-format assembly.</strong> <code>Map::assemble</code> detects the map format from its lumps: a
+<code>TEXTMAP</code> lump marks a UDMF map, a <code>BEHAVIOR</code> lump marks a Hexen map, otherwise it is treated
+as the classic Doom binary layout. The assembled <code>Map</code> carries its format via <code>map.format()</code>,
+which returns <code>MapFormat::Doom</code> for classic Doom/Doom II/Heretic maps (which share the same
+binary record layout and differ only in map-marker naming, e.g. <code>MAP01</code> vs <code>E1M1</code>),
+<code>MapFormat::Hexen</code> for Hexen maps, or <code>MapFormat::Udmf</code> for UDMF (<code>TEXTMAP</code>) maps. UDMF maps
+can also be written back out with <code>write_udmf</code> / <code>add_udmf_map</code> (the <code>write</code> feature).</p>
 </blockquote>
 <h3 id="finding-a-maps-lumps"><a class="header" href="#finding-a-maps-lumps">Finding a map’s lumps</a></h3>
 <p>A WAD stores maps as a marker lump (e.g. <code>E1M1</code>, <code>MAP01</code>) followed by a run of data lumps
