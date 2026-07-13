@@ -258,10 +258,9 @@ consume, and [Writing WAD Files](writing-wads.md) for the general
 ## From the CLI
 
 The `cwad convert` subcommand wraps this same `read → Map → write` path for
-whole WAD files, without writing any Rust. It walks the input WAD once,
-replacing each map's lump run with its converted form; non-map lumps and
-maps already in the target format pass through unchanged, in directory
-order:
+whole WAD files, without writing any Rust. It replaces each map's lump run
+with its converted form; non-map lumps and maps already in the target format
+pass through unchanged, in directory order:
 
 ```bash
 cwad convert doom.wad -o udmf.wad --to udmf
