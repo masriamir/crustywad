@@ -12,7 +12,7 @@ use std::fmt::Write as _;
 
 use crate::Strictness;
 use crate::map::Map;
-use crate::map::graph::{MapLinedef, MapVertex};
+use crate::map::graph::{MapLinedef, MapSector, MapSidedef, MapVertex};
 use crate::write::WriteOptions;
 
 /// Message for the infallible `write!`-into-`String` calls.
@@ -163,6 +163,54 @@ impl Writer {
         }
         self.out.push_str("}\n");
     }
+
+    fn push_sidedef(&mut self, s: &MapSidedef) {
+        self.out.push_str("sidedef { ");
+        write!(self.out, "sector = {}; ", s.sector.0).expect(INFALLIBLE);
+        if s.x_offset != 0 {
+            write!(self.out, "offsetx = {}; ", s.x_offset).expect(INFALLIBLE);
+        }
+        if s.y_offset != 0 {
+            write!(self.out, "offsety = {}; ", s.y_offset).expect(INFALLIBLE);
+        }
+        for (key, tex) in [
+            ("texturetop", &s.upper),
+            ("texturebottom", &s.lower),
+            ("texturemiddle", &s.middle),
+        ] {
+            if !tex.is_empty() && tex != "-" {
+                write!(self.out, "{key} = {}; ", escape_udmf_string(tex)).expect(INFALLIBLE);
+            }
+        }
+        self.out.push_str("}\n");
+    }
+
+    fn push_sector(&mut self, s: &MapSector) {
+        self.out.push_str("sector { ");
+        write!(
+            self.out,
+            "texturefloor = {}; textureceiling = {}; ",
+            escape_udmf_string(&s.floor_flat),
+            escape_udmf_string(&s.ceiling_flat)
+        )
+        .expect(INFALLIBLE);
+        if s.floor_height != 0 {
+            write!(self.out, "heightfloor = {}; ", s.floor_height).expect(INFALLIBLE);
+        }
+        if s.ceiling_height != 0 {
+            write!(self.out, "heightceiling = {}; ", s.ceiling_height).expect(INFALLIBLE);
+        }
+        if s.light != 160 {
+            write!(self.out, "lightlevel = {}; ", s.light).expect(INFALLIBLE);
+        }
+        if s.special != 0 {
+            write!(self.out, "special = {}; ", s.special).expect(INFALLIBLE);
+        }
+        if s.tag != 0 {
+            write!(self.out, "id = {}; ", s.tag).expect(INFALLIBLE);
+        }
+        self.out.push_str("}\n");
+    }
 }
 
 /// Serializes an assembled map to UDMF `TEXTMAP` text.
@@ -205,6 +253,14 @@ pub fn write_udmf(
 
     for l in map.linedefs() {
         w.push_linedef(l);
+    }
+
+    for s in map.sidedefs() {
+        w.push_sidedef(s);
+    }
+
+    for s in map.sectors() {
+        w.push_sector(s);
     }
 
     Ok((w.out, w.warnings))

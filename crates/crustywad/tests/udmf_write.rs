@@ -89,3 +89,51 @@ fn writes_one_sided_linedef_omits_sideback_and_id() {
     assert!(!line.contains("id = "), "{line}"); // id == -1 default
     assert!(!line.contains("special = "), "{line}"); // special == 0
 }
+
+#[test]
+fn writes_sidedef_textures_and_offsets_omitting_defaults() {
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 8; y = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "sidedef { sector = 0; offsetx = 4; texturetop = \"BRICK\"; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; heightceiling = 128; lightlevel = 200; id = 5; }\n",
+    );
+    let map = assemble_udmf(text);
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+
+    let side = out.lines().find(|l| l.starts_with("sidedef")).unwrap();
+    assert!(side.contains("sector = 0; "), "{side}");
+    assert!(side.contains("offsetx = 4; "), "{side}");
+    assert!(side.contains("texturetop = \"BRICK\"; "), "{side}");
+    assert!(!side.contains("offsety = "), "{side}"); // 0 default
+    assert!(!side.contains("texturebottom = "), "{side}"); // "-"/"" default
+
+    let sector = out.lines().find(|l| l.starts_with("sector")).unwrap();
+    assert!(
+        sector.contains("texturefloor = \"F\"; textureceiling = \"C\"; "),
+        "{sector}"
+    );
+    assert!(sector.contains("heightceiling = 128; "), "{sector}");
+    assert!(sector.contains("lightlevel = 200; "), "{sector}");
+    assert!(sector.contains("id = 5; "), "{sector}");
+    assert!(!sector.contains("heightfloor = "), "{sector}"); // 0 default
+    assert!(!sector.contains("special = "), "{sector}"); // 0 default
+}
+
+#[test]
+fn omits_lightlevel_at_udmf_default_160() {
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 8; y = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "sidedef { sector = 0; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; lightlevel = 160; }\n",
+    );
+    let map = assemble_udmf(text);
+    let (out, _) = write_udmf(&map, &WriteOptions::strict()).unwrap();
+    let sector = out.lines().find(|l| l.starts_with("sector")).unwrap();
+    assert!(!sector.contains("lightlevel = "), "{sector}");
+}
