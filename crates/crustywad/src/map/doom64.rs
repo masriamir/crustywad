@@ -219,8 +219,8 @@ impl Doom64Map {
     /// Returns the non-fatal warnings collected during a lenient-mode read.
     ///
     /// Always empty after a successful strict-mode read. These are only Doom 64
-    /// map-specific warnings (missing record lumps / trailing bytes); recoverable
-    /// warnings from parsing the nested WAD container itself are not included.
+    /// map-specific, record-level warnings (missing record lumps / trailing
+    /// bytes); the nested WAD container is parsed strictly and produces none.
     #[must_use]
     pub fn warnings(&self) -> &[Doom64Warning] {
         &self.warnings
@@ -284,32 +284,30 @@ pub enum Doom64ReadError {
 ///
 /// The `bytes` must be a Doom 64 map lump — leading `IWAD`/`PWAD` magic is
 /// required (see [`is_doom64_map_lump`]) and enforced in **both** strictness
-/// modes, so non-Doom 64 data cannot be silently misread as an empty map. The
-/// `bytes` are then parsed with [`Wad::from_bytes_with_options`]; each record
-/// sub-lump is looked up by name and decoded with
-/// [`parse_records`]. BSP lumps reuse the classic
-/// [`common`](crate::map::common) records. `REJECT`/`BLOCKMAP`/`LEAFS`/`MACROS`
-/// are kept as raw bytes.
+/// modes, so non-Doom 64 data cannot be silently misread as an empty map.
+///
+/// The nested-WAD **container** is always parsed strictly, regardless of the
+/// caller's mode: a structurally corrupt container (e.g. a truncated or
+/// out-of-bounds directory) errors in both modes rather than being recovered
+/// into an empty map. The caller's [`Strictness`] governs only the per-record
+/// recovery below. Each record sub-lump is looked up by name and decoded with
+/// [`parse_records`]; BSP lumps reuse the classic [`common`](crate::map::common)
+/// records, and `REJECT`/`BLOCKMAP`/`LEAFS`/`MACROS` are kept as raw bytes.
 ///
 /// In [`Strictness::Lenient`] mode, a missing expected sub-lump yields an empty
 /// vector plus a [`Doom64Warning::MissingLump`], and a sub-lump whose size is
 /// not a whole multiple of the record size keeps the whole records and warns
 /// with [`Doom64Warning::TrailingBytes`]. In [`Strictness::Strict`] mode either
-/// condition is an error.
-///
-/// The returned [`Doom64Map::warnings`] hold only Doom 64-map-specific warnings
-/// (missing record lumps / trailing bytes). Any recoverable [`ParseWarning`]
-/// produced while parsing the nested WAD container in lenient mode is **not**
-/// surfaced here.
-///
-/// [`ParseWarning`]: crate::ParseWarning
+/// condition is an error. The returned [`Doom64Map::warnings`] therefore hold
+/// only these record-level warnings (the container is parsed strictly and
+/// produces none).
 ///
 /// # Errors
 ///
 /// - [`Doom64ReadError::NotADoom64Map`] — `bytes` lack the `IWAD`/`PWAD` magic
 ///   (both modes).
-/// - [`Doom64ReadError::NestedWad`] — `bytes` have valid magic but do not parse
-///   as a WAD (both modes).
+/// - [`Doom64ReadError::NestedWad`] — `bytes` have valid magic but the nested
+///   container does not parse as a WAD (both modes).
 /// - [`Doom64ReadError::MissingLump`] — an expected sub-lump is absent (strict).
 /// - [`Doom64ReadError::Records`] — a record sub-lump failed to decode (strict,
 ///   or a corrupt record mid-stream in either mode).
@@ -317,7 +315,16 @@ pub fn read_doom64_map(bytes: &[u8], options: &ParseOptions) -> Result<Doom64Map
     if !is_doom64_map_lump(bytes) {
         return Err(Doom64ReadError::NotADoom64Map);
     }
-    let nested = Wad::from_bytes_with_options(bytes.to_vec(), *options)?;
+    // Parse the nested-WAD container strictly regardless of the caller's mode: a
+    // corrupt container is a structural failure, not a recoverable record-level
+    // issue, so it errors in both modes. The caller's strictness governs only the
+    // per-sub-lump record decoding below. (Limits are carried through but are
+    // ignored by binary WAD parsing.)
+    let container_options = ParseOptions {
+        strictness: Strictness::Strict,
+        limits: options.limits,
+    };
+    let nested = Wad::from_bytes_with_options(bytes.to_vec(), container_options)?;
     let strictness = options.strictness;
     let mut warnings = Vec::new();
 

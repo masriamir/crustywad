@@ -218,15 +218,20 @@ fn non_doom64_bytes_rejected_both_modes() {
 }
 
 #[test]
-fn valid_magic_but_corrupt_directory_strict_errors() {
+fn valid_magic_but_corrupt_directory_errors_both_modes() {
     // Passes the magic guard (12 bytes, IWAD magic) but the directory claims 100
-    // lumps at an out-of-bounds offset — strict mode rejects it as an unparseable
-    // nested WAD.
+    // lumps at an out-of-bounds offset. The nested container is parsed strictly
+    // regardless of the caller's mode, so a corrupt container errors in BOTH
+    // modes rather than being recovered into an empty map with warnings.
     let mut bytes = b"IWAD".to_vec();
     bytes.extend_from_slice(&100_i32.to_le_bytes()); // num_lumps
     bytes.extend_from_slice(&4096_i32.to_le_bytes()); // directory offset, out of bounds
     assert!(matches!(
         read_doom64_map(&bytes, &ParseOptions::strict()),
+        Err(Doom64ReadError::NestedWad(_))
+    ));
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::lenient()),
         Err(Doom64ReadError::NestedWad(_))
     ));
 }
