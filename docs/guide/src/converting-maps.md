@@ -117,7 +117,7 @@ let bytes = builder.build()?;
 > **zero-length `SEGS`, `SSECTORS`, `NODES`, `REJECT`, and `BLOCKMAP`**
 > lumps — the canonical Doom lump run editors and nodebuilders expect to
 > find, but with no node data in them. Every call returns
-> [`DoomWriteWarning::NodesNotBuilt`], in **both** strictness modes: it is
+> `DoomWriteWarning::NodesNotBuilt`, in **both** strictness modes: it is
 > a property of the output, not a defect strictness can fix. The result is
 > **editor- and nodebuilder-ready, not engine-playable** — run an external
 > nodebuilder (`zdbsp`, `bsp`, …) over it before loading it in a source
