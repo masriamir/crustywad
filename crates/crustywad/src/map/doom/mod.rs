@@ -18,6 +18,8 @@ use binrw::BinRead;
 ///
 /// See the [Doom Wiki — THINGS](https://doomwiki.org/wiki/Things) for the
 /// authoritative field descriptions and type-ID tables.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Thing {
@@ -65,6 +67,8 @@ pub struct Thing {
 ///
 /// The `LINEDEFS` lump contains `N` records of exactly 14 bytes each.  Use
 /// [`parse_records::<Linedef>`](crate::map::parse_records) to decode the whole lump at once.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Linedef {
