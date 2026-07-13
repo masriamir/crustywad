@@ -143,7 +143,8 @@ Hexen is detected via the `BEHAVIOR` lump and assembles with format-tagged exten
 **Doom 64** maps use a different nested-WAD container and are **read into raw typed records** via
 `map::doom64` / `read_doom64_map` (textures, flats, and colors are kept as raw indices) — they do **not**
 assemble into the `Map` graph yet; graph normalization is planned as a future milestone.
-UDMF support is planned as part of future multi-format maps.
+UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with
+`write_udmf` / `add_udmf_map` (the `write` feature).
 
 ### CLI
 
