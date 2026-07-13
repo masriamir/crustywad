@@ -2676,6 +2676,64 @@ fn convert_lenient_reports_parse_warnings_from_the_input() {
 }
 
 #[test]
+fn convert_lenient_reports_assembly_warnings() {
+    // A linedef pointing at a vertex that does not exist is a dangling
+    // cross-reference: strict assembly rejects it, lenient assembly clamps it to
+    // an in-range vertex and records a MapWarning. That repair changes the
+    // geometry being written out, so `convert --lenient` must surface it rather
+    // than silently emitting a repaired map that looks clean.
+    let m = doom_map_lumps();
+    let mut linedefs = m.linedefs.clone();
+    // Point the linedef's start vertex (first u16) at index 999 — well past the
+    // two vertices the map actually has.
+    linedefs[0..2].copy_from_slice(&999_u16.to_le_bytes());
+
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    // Strict refuses the dangling reference outright.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3);
+
+    // Lenient converts, but must report the repair it made.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--lenient",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("MAP01"))
+        .stderr(predicate::str::contains("vertex"));
+}
+
+#[test]
 fn convert_non_ascii_lump_name_fails_write_validation_exits_3() {
     // A non-ASCII lump name decodes under a lenient *read* but `WriteError::
     // NonAsciiName` is rejected in both write modes, so building the converted

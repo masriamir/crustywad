@@ -735,6 +735,15 @@ fn run(cli: Cli) -> Result<i32> {
                             return Ok(3);
                         }
                     };
+                    // Lenient assembly repairs what it can (clamping an
+                    // out-of-range cross-reference, coercing a field) and records
+                    // each repair. Those are changes to the map the user is about
+                    // to write out, so surface them alongside the write warnings
+                    // rather than dropping them — otherwise a repaired map looks
+                    // like a clean one.
+                    for w in assembled.warnings() {
+                        eprintln!("warning: {}: {w}", group.name);
+                    }
                     // Conversion warnings (rounding, clamping, dropped fields,
                     // and the unconditional `NodesNotBuilt` when targeting Doom)
                     // are reported to stderr; a strict-mode refusal is fatal.
