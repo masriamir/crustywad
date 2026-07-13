@@ -256,7 +256,13 @@ impl Writer {
                 write!(self.out, "arg{i} = {arg}; ").expect(INFALLIBLE);
             }
         }
-        // Thing flags: Doom bits -> UDMF booleans (single/dm/coop default true).
+        // Thing flags: map the Doom flag bits to the UDMF booleans this writer
+        // emits — `skill1`..`skill5`, `ambush`, and `single` (`single = false`
+        // for the "multiplayer only" bit, since UDMF's `single`/`dm`/`coop`
+        // default to `true`). These are emitted from a Doom/Hexen-sourced map's
+        // flags; UDMF-sourced maps have `flags == 0` (UDMF thing flags are not
+        // modeled on the read/assembly path — normalization sets them to 0), so
+        // this mapping is currently one-way within the crate.
         let f = t.flags;
         if f & 0x0001 != 0 {
             self.out.push_str("skill1 = true; skill2 = true; ");
