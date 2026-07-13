@@ -94,9 +94,10 @@ let bytes = builder.build()?;
 ```
 
 Fields are emitted only when they differ from UDMF spec defaults; float coordinates
-are narrowed to integer form when whole (e.g. `64.0` is written as `64`). See
-[UDMF](map-records.md) for the complete API and
-strictness options.
+are narrowed to integer form when whole (e.g. `64.0` is written as `64`). The
+[Strict vs. lenient write validation](#strict-vs-lenient-write-validation) section
+below covers the `WriteOptions` modes; see [Map records](map-records.md) for the
+`Map` graph types these APIs consume.
 
 ## Strict vs. lenient write validation
 
