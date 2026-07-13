@@ -1,6 +1,6 @@
 # ADR-0018: Doom 64 map format — nested-WAD structure and raw-record reading
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-12
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/54
