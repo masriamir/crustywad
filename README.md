@@ -18,7 +18,7 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 
 ## Status
 
-`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
+`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
 
 Integration tests for each layer live in `crates/crustywad/tests/`:
 - `wad_reader.rs` — WAD header and directory parsing
@@ -144,7 +144,10 @@ Hexen is detected via the `BEHAVIOR` lump and assembles with format-tagged exten
 `map::doom64` / `read_doom64_map` (textures, flats, and colors are kept as raw indices) — they do **not**
 assemble into the `Map` graph yet; graph normalization is planned as a future milestone.
 UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with
-`write_udmf` / `add_udmf_map` (the `write` feature).
+`write_udmf` / `add_udmf_map` (the `write` feature). The same `Map` graph converts a UDMF
+map to the classic Doom binary lumps with `write_doom_map` / `add_doom_map` — see
+[Converting maps](https://crustywad.dev/converting-maps.html) in the guide for the
+round-trip envelope and the three-tier data-loss policy.
 
 ### CLI
 
