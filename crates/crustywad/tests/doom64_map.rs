@@ -1,0 +1,429 @@
+//! Integration tests for Doom 64 map-record parsing and the nested-WAD reader.
+
+mod common;
+
+use crustywad::map::doom64::{Light, Linedef, Sector, Sidedef, Thing, Vertex};
+use crustywad::map::parse_records;
+
+#[test]
+fn parses_doom64_vertex_fixed_point() {
+    // 16.16 fixed-point: 20971520 == 320.0, -65536 == -1.0.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&20_971_520_i32.to_le_bytes());
+    bytes.extend_from_slice(&(-65_536_i32).to_le_bytes());
+    let verts: Vec<Vertex> = parse_records(&bytes).unwrap();
+    assert_eq!(verts.len(), 1);
+    assert_eq!(verts[0].x, 20_971_520);
+    assert_eq!(verts[0].y, -65_536);
+}
+
+#[test]
+fn parses_doom64_thing_fourteen_bytes() {
+    let mut b = Vec::new();
+    for v in [10_i16, 20, 24, 90, 3001, 7, 42] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    assert_eq!(b.len(), 14);
+    let things: Vec<Thing> = parse_records(&b).unwrap();
+    let t = &things[0];
+    assert_eq!(t.x, 10);
+    assert_eq!(t.y, 20);
+    assert_eq!(t.z, 24);
+    assert_eq!(t.angle, 90);
+    assert_eq!(t.type_id, 3001);
+    assert_eq!(t.flags, 7);
+    assert_eq!(t.id, 42);
+}
+
+#[test]
+fn parses_doom64_linedef_sixteen_bytes() {
+    let mut b = Vec::new();
+    b.extend_from_slice(&1_u16.to_le_bytes()); // v1
+    b.extend_from_slice(&2_u16.to_le_bytes()); // v2
+    b.extend_from_slice(&0x0001_0004_u32.to_le_bytes()); // flags (u32)
+    b.extend_from_slice(&48_u16.to_le_bytes()); // special
+    b.extend_from_slice(&99_u16.to_le_bytes()); // tag
+    b.extend_from_slice(&5_u16.to_le_bytes()); // sidefront
+    b.extend_from_slice(&0xffff_u16.to_le_bytes()); // sideback (one-sided)
+    assert_eq!(b.len(), 16);
+    let lines: Vec<Linedef> = parse_records(&b).unwrap();
+    let l = &lines[0];
+    assert_eq!(l.v1, 1);
+    assert_eq!(l.v2, 2);
+    assert_eq!(l.flags, 0x0001_0004);
+    assert_eq!(l.special, 48);
+    assert_eq!(l.tag, 99);
+    assert_eq!(l.sidefront, 5);
+    assert_eq!(l.sideback, 0xffff);
+}
+
+#[test]
+fn parses_doom64_sidedef_twelve_bytes() {
+    let mut b = Vec::new();
+    for v in [-4_i16, 8] {
+        b.extend_from_slice(&v.to_le_bytes()); // x_offset, y_offset
+    }
+    for v in [11_u16, 22, 33, 3] {
+        b.extend_from_slice(&v.to_le_bytes()); // upper, lower, middle, sector
+    }
+    assert_eq!(b.len(), 12);
+    let sides: Vec<Sidedef> = parse_records(&b).unwrap();
+    let s = &sides[0];
+    assert_eq!(s.x_offset, -4);
+    assert_eq!(s.y_offset, 8);
+    assert_eq!(s.upper, 11);
+    assert_eq!(s.lower, 22);
+    assert_eq!(s.middle, 33);
+    assert_eq!(s.sector, 3);
+}
+
+#[test]
+fn parses_doom64_sector_twenty_four_bytes() {
+    let mut b = Vec::new();
+    b.extend_from_slice(&0_i16.to_le_bytes()); // floor_height
+    b.extend_from_slice(&128_i16.to_le_bytes()); // ceiling_height
+    b.extend_from_slice(&5_u16.to_le_bytes()); // floor_tex
+    b.extend_from_slice(&6_u16.to_le_bytes()); // ceiling_tex
+    for c in [100_u16, 101, 102, 103, 104] {
+        b.extend_from_slice(&c.to_le_bytes()); // colors[5]
+    }
+    b.extend_from_slice(&9_u16.to_le_bytes()); // special
+    b.extend_from_slice(&77_u16.to_le_bytes()); // tag
+    b.extend_from_slice(&1_u16.to_le_bytes()); // flags
+    assert_eq!(b.len(), 24);
+    let secs: Vec<Sector> = parse_records(&b).unwrap();
+    let s = &secs[0];
+    assert_eq!(s.floor_height, 0);
+    assert_eq!(s.ceiling_height, 128);
+    assert_eq!(s.floor_tex, 5);
+    assert_eq!(s.ceiling_tex, 6);
+    assert_eq!(s.colors, [100, 101, 102, 103, 104]);
+    assert_eq!(s.special, 9);
+    assert_eq!(s.tag, 77);
+    assert_eq!(s.flags, 1);
+}
+
+#[test]
+fn parses_doom64_light_six_bytes() {
+    // Measured record: r,g,b,tag: u8 then unknown: u16 LE (high byte 0 in real data).
+    let b = [0x64_u8, 0x64, 0xc8, 0x02, 0x05, 0x00];
+    let lights: Vec<Light> = parse_records(&b).unwrap();
+    let l = &lights[0];
+    assert_eq!(l.r, 0x64);
+    assert_eq!(l.g, 0x64);
+    assert_eq!(l.b, 0xc8);
+    assert_eq!(l.tag, 0x02);
+    assert_eq!(l.unknown, 5);
+}
+
+use crustywad::map::is_doom64_map_lump;
+
+#[test]
+fn detects_doom64_map_lump_by_nested_magic() {
+    // Minimal 12-byte WAD header with IWAD / PWAD magic.
+    let mut iwad = b"IWAD".to_vec();
+    iwad.extend_from_slice(&[0u8; 8]);
+    assert!(is_doom64_map_lump(&iwad));
+
+    let mut pwad = b"PWAD".to_vec();
+    pwad.extend_from_slice(&[0u8; 8]);
+    assert!(is_doom64_map_lump(&pwad));
+
+    // A classic 0-byte marker lump is not a Doom 64 map.
+    assert!(!is_doom64_map_lump(&[]));
+    // Too short to hold a WAD header.
+    assert!(!is_doom64_map_lump(b"IWA"));
+    // Right length, wrong magic.
+    assert!(!is_doom64_map_lump(&[0u8; 12]));
+    assert!(!is_doom64_map_lump(b"THINGS\0\0\0\0\0\0"));
+}
+
+use crustywad::ParseOptions;
+use crustywad::map::{Doom64ReadError, Doom64Warning, read_doom64_map};
+
+/// Builds a minimal Doom 64 map lump (a nested IWAD) with one record per lump.
+/// Returns the bytes that a `MAPxx` lump would contain.
+fn sample_doom64_map_bytes() -> Vec<u8> {
+    // One record each; sizes: THINGS 14, LINEDEFS 16, SIDEDEFS 12, VERTEXES 8,
+    // SEGS 12, SSECTORS 4, NODES 28, SECTORS 24, LIGHTS 6.
+    let things = vec![0u8; 14];
+    let linedefs = vec![0u8; 16];
+    let sidedefs = vec![0u8; 12];
+    let vertexes = vec![0u8; 8];
+    let segs = vec![0u8; 12];
+    let ssectors = vec![0u8; 4];
+    let nodes = vec![0u8; 28];
+    let sector_records = vec![0u8; 24];
+    let lights = vec![0u8; 6];
+    common::build_wad(
+        *b"IWAD",
+        &[
+            ("MAP01", &[]),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SEGS", &segs),
+            ("SSECTORS", &ssectors),
+            ("NODES", &nodes),
+            ("SECTORS", &sector_records),
+            ("REJECT", &[1, 2, 3]),
+            ("BLOCKMAP", &[4, 5]),
+            ("LEAFS", &[6]),
+            ("LIGHTS", &lights),
+            ("MACROS", &[7, 8]),
+        ],
+    )
+}
+
+#[test]
+fn reads_doom64_map_strict() {
+    let bytes = sample_doom64_map_bytes();
+    let map = read_doom64_map(&bytes, &ParseOptions::strict()).unwrap();
+    assert_eq!(map.things.len(), 1);
+    assert_eq!(map.linedefs.len(), 1);
+    assert_eq!(map.sidedefs.len(), 1);
+    assert_eq!(map.vertexes.len(), 1);
+    assert_eq!(map.segs.len(), 1);
+    assert_eq!(map.subsectors.len(), 1);
+    assert_eq!(map.nodes.len(), 1);
+    assert_eq!(map.sectors.len(), 1);
+    assert_eq!(map.lights.len(), 1);
+    assert_eq!(map.reject, vec![1, 2, 3]);
+    assert_eq!(map.blockmap, vec![4, 5]);
+    assert_eq!(map.leafs, vec![6]);
+    assert_eq!(map.macros, vec![7, 8]);
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn non_doom64_bytes_rejected_both_modes() {
+    // Data lacking the leading IWAD/PWAD magic is not a Doom 64 map lump. The
+    // reader must reject it in BOTH modes (before any parsing) rather than let
+    // lenient mode misread it as an empty map with missing-lump warnings.
+    let junk = b"not a wad at all!!".to_vec(); // 18 bytes, no WAD magic
+    assert!(matches!(
+        read_doom64_map(&junk, &ParseOptions::strict()),
+        Err(Doom64ReadError::NotADoom64Map)
+    ));
+    assert!(matches!(
+        read_doom64_map(&junk, &ParseOptions::lenient()),
+        Err(Doom64ReadError::NotADoom64Map)
+    ));
+    // A classic 0-byte map marker is likewise not a Doom 64 map lump.
+    assert!(matches!(
+        read_doom64_map(&[], &ParseOptions::lenient()),
+        Err(Doom64ReadError::NotADoom64Map)
+    ));
+}
+
+#[test]
+fn valid_magic_but_corrupt_directory_errors_both_modes() {
+    // Passes the magic guard (12 bytes, IWAD magic) but the directory claims 100
+    // lumps at an out-of-bounds offset. The nested container is parsed strictly
+    // regardless of the caller's mode, so a corrupt container errors in BOTH
+    // modes rather than being recovered into an empty map with warnings.
+    let mut bytes = b"IWAD".to_vec();
+    bytes.extend_from_slice(&100_i32.to_le_bytes()); // num_lumps
+    bytes.extend_from_slice(&4096_i32.to_le_bytes()); // directory offset, out of bounds
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::strict()),
+        Err(Doom64ReadError::NestedWad(_))
+    ));
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::lenient()),
+        Err(Doom64ReadError::NestedWad(_))
+    ));
+}
+
+#[test]
+fn missing_lump_strict_errors_lenient_warns() {
+    // Build a map WAD lacking LIGHTS.
+    let things = vec![0u8; 14];
+    let linedefs = vec![0u8; 16];
+    let sidedefs = vec![0u8; 12];
+    let vertexes = vec![0u8; 8];
+    let segs = vec![0u8; 12];
+    let ssectors = vec![0u8; 4];
+    let nodes = vec![0u8; 28];
+    let sector_records = vec![0u8; 24];
+    let bytes = common::build_wad(
+        *b"IWAD",
+        &[
+            ("MAP01", &[]),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SEGS", &segs),
+            ("SSECTORS", &ssectors),
+            ("NODES", &nodes),
+            ("SECTORS", &sector_records),
+            // LIGHTS omitted
+        ],
+    );
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::strict()),
+        Err(Doom64ReadError::MissingLump { name: "LIGHTS" })
+    ));
+    let map = read_doom64_map(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(map.lights.is_empty());
+    assert_eq!(
+        map.warnings(),
+        &[Doom64Warning::MissingLump { name: "LIGHTS" }]
+    );
+}
+
+#[test]
+fn trailing_bytes_strict_errors_lenient_salvages() {
+    // SECTORS lump of 24*2 + 5 bytes: two whole records + a 5-byte remainder.
+    let mut sectors = vec![0u8; 48];
+    sectors.extend_from_slice(&[9, 9, 9, 9, 9]);
+    let build = |sectors: &[u8]| {
+        common::build_wad(
+            *b"IWAD",
+            &[
+                ("MAP01", &[]),
+                ("THINGS", &[0u8; 14]),
+                ("LINEDEFS", &[0u8; 16]),
+                ("SIDEDEFS", &[0u8; 12]),
+                ("VERTEXES", &[0u8; 8]),
+                ("SEGS", &[0u8; 12]),
+                ("SSECTORS", &[0u8; 4]),
+                ("NODES", &[0u8; 28]),
+                ("SECTORS", sectors),
+                ("LIGHTS", &[0u8; 6]),
+            ],
+        )
+    };
+    let bytes = build(&sectors);
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::strict()),
+        Err(Doom64ReadError::Records {
+            lump: "SECTORS",
+            ..
+        })
+    ));
+    let map = read_doom64_map(&bytes, &ParseOptions::lenient()).unwrap();
+    assert_eq!(map.sectors.len(), 2);
+    assert_eq!(
+        map.warnings(),
+        &[Doom64Warning::TrailingBytes {
+            lump: "SECTORS",
+            offset: 48
+        }]
+    );
+}
+
+#[test]
+fn reads_doom64_map_lenient_clean_no_warnings() {
+    // A well-formed sample Doom 64 map read with lenient mode must produce
+    // zero warnings—clean input has no issues to warn about.
+    let bytes = sample_doom64_map_bytes();
+    let map = read_doom64_map(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(map.warnings().is_empty());
+}
+
+use proptest::prelude::*;
+
+proptest! {
+    // Doom 64 record types are plain integer records (no field validation),
+    // so a buffer whose length is an exact multiple of the record size must
+    // always parse successfully to exactly len / size records.
+
+    #[test]
+    fn doom64_vertex_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const VERTEX_SIZE: usize = 8;
+        let result = parse_records::<Vertex>(&data);
+        if data.len() % VERTEX_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Vertex> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), VERTEX_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / VERTEX_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_thing_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const THING_SIZE: usize = 14;
+        let result = parse_records::<Thing>(&data);
+        if data.len() % THING_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Thing> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), THING_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / THING_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_linedef_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const LINEDEF_SIZE: usize = 16;
+        let result = parse_records::<Linedef>(&data);
+        if data.len() % LINEDEF_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Linedef> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), LINEDEF_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / LINEDEF_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_sidedef_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const SIDEDEF_SIZE: usize = 12;
+        let result = parse_records::<Sidedef>(&data);
+        if data.len() % SIDEDEF_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Sidedef> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), SIDEDEF_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / SIDEDEF_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_sector_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const SECTOR_SIZE: usize = 24;
+        let result = parse_records::<Sector>(&data);
+        if data.len() % SECTOR_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Sector> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), SECTOR_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / SECTOR_SIZE);
+        }
+    }
+
+    #[test]
+    fn doom64_light_exact_multiple_parses(
+        data in proptest::collection::vec(any::<u8>(), 0..4096usize)
+    ) {
+        const LIGHT_SIZE: usize = 6;
+        let result = parse_records::<Light>(&data);
+        if data.len() % LIGHT_SIZE == 0 {
+            prop_assert!(
+                result.is_ok(),
+                "parse_records::<Light> must succeed on {}-byte input (exact multiple of {}): got {:?}",
+                data.len(), LIGHT_SIZE, result
+            );
+            prop_assert_eq!(result.unwrap().len(), data.len() / LIGHT_SIZE);
+        }
+    }
+}

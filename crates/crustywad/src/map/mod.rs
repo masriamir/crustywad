@@ -25,6 +25,7 @@ use thiserror::Error;
 pub mod assemble;
 pub mod common;
 pub mod doom;
+pub mod doom64;
 pub mod graph;
 pub mod group;
 pub mod hexen;
@@ -32,6 +33,7 @@ pub mod udmf;
 
 pub use assemble::MapAssembleError;
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
+pub use doom64::{Doom64Map, Doom64ReadError, Doom64Warning, is_doom64_map_lump, read_doom64_map};
 pub use graph::{
     LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning,
     SectorIdx, SidedefIdx, Special, VertexIdx,
