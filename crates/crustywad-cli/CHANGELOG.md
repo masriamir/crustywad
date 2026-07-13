@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.1.2...crustywad-cli-v0.1.3) - 2026-07-13
+
+### Added
+
+- *(cli)* cwad convert — UDMF <-> Doom map conversion ([#234](https://github.com/masriamir/crustywad/pull/234))
+- *(map)* UDMF <-> Doom map conversion (library) ([#233](https://github.com/masriamir/crustywad/pull/233))
+- *(map)* serialize maps to UDMF TEXTMAP (write_udmf / add_udmf_map) ([#231](https://github.com/masriamir/crustywad/pull/231))
+- *(map)* read Doom 64 nested-WAD maps into raw records (map::doom64) ([#230](https://github.com/masriamir/crustywad/pull/230))
+- *(map)* Hexen map format support + MapFormat substrate ([#55](https://github.com/masriamir/crustywad/pull/55)) ([#221](https://github.com/masriamir/crustywad/pull/221))
+
+### Other
+
+- *(fixtures)* generalize the local-fixture harness for Hexen & Doom 64 ([#216](https://github.com/masriamir/crustywad/pull/216)) ([#218](https://github.com/masriamir/crustywad/pull/218))
+- *(map)* Heretic and Doom II map support via the Doom path ([#56](https://github.com/masriamir/crustywad/pull/56)) ([#208](https://github.com/masriamir/crustywad/pull/208))
+
 ## [0.1.2](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.1.1...crustywad-cli-v0.1.2) - 2026-07-10
 
 ### Added
