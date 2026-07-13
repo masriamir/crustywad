@@ -339,7 +339,25 @@ pub fn add_udmf_map(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::graph::{MapThing, Special};
+    use crate::WadKind;
+    use crate::map::MapFormat;
+    use crate::map::graph::{MapThing, MapVertex, Special};
+
+    /// Builds a minimal `Map` with the given vertices/things (other arenas empty)
+    /// for exercising `write_udmf`'s error-propagation paths directly.
+    fn map_with(vertices: Vec<MapVertex>, things: Vec<MapThing>) -> Map {
+        Map {
+            name: "MAP01".to_string(),
+            format: MapFormat::Udmf,
+            namespace: Some("doom".to_string()),
+            vertices,
+            linedefs: Vec::new(),
+            sidedefs: Vec::new(),
+            sectors: Vec::new(),
+            things,
+            warnings: Vec::new(),
+        }
+    }
 
     fn thing(flags: u32) -> MapThing {
         MapThing {
@@ -417,5 +435,98 @@ mod tests {
     #[test]
     fn escape_handles_quote_and_backslash() {
         assert_eq!(escape_udmf_string(r#"a"b\c"#), r#""a\"b\\c""#);
+    }
+
+    #[test]
+    fn write_udmf_propagates_non_finite_vertex_x_strict() {
+        let map = map_with(
+            vec![MapVertex {
+                x: f64::NAN,
+                y: 0.0,
+            }],
+            vec![],
+        );
+        let err = write_udmf(&map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfWriteError::NonFiniteCoordinate {
+                block: "vertex",
+                field: "x",
+                index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn write_udmf_propagates_non_finite_vertex_y_strict() {
+        let map = map_with(
+            vec![MapVertex {
+                x: 0.0,
+                y: f64::INFINITY,
+            }],
+            vec![],
+        );
+        let err = write_udmf(&map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfWriteError::NonFiniteCoordinate {
+                block: "vertex",
+                field: "y",
+                index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn write_udmf_propagates_non_finite_thing_y_strict() {
+        let mut t = thing(0);
+        t.y = f64::NAN;
+        let map = map_with(vec![MapVertex { x: 0.0, y: 0.0 }], vec![t]);
+        let err = write_udmf(&map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfWriteError::NonFiniteCoordinate {
+                block: "thing",
+                field: "y",
+                index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn write_udmf_propagates_non_finite_thing_height_strict() {
+        let mut t = thing(0);
+        t.height = f64::NAN;
+        let map = map_with(vec![MapVertex { x: 0.0, y: 0.0 }], vec![t]);
+        let err = write_udmf(&map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfWriteError::NonFiniteCoordinate {
+                block: "thing",
+                field: "height",
+                index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn add_udmf_map_propagates_non_finite_error() {
+        let map = map_with(
+            vec![MapVertex {
+                x: f64::NAN,
+                y: 0.0,
+            }],
+            vec![],
+        );
+        let mut builder = WadBuilder::new(WadKind::Pwad);
+        let err = add_udmf_map(&mut builder, "MAP01", &map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfWriteError::NonFiniteCoordinate {
+                block: "vertex",
+                field: "x",
+                index: 0
+            }
+        );
     }
 }
