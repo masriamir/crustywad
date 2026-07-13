@@ -79,6 +79,23 @@ pub struct MapLinedef {
     pub id: i32,
 }
 
+/// The [`MapLinedef::id`] value that means "this linedef has no id", which is
+/// **source-dependent**: UDMF's spec default is `-1`, while a Doom/Hexen map's
+/// linedefs are assembled with `0` (the graph convention). Assembly copies each
+/// source's sentinel into `MapLinedef.id` verbatim, so any consumer asking
+/// "does this linedef carry a real id?" must know the format.
+///
+/// Both writers depend on this rule and must agree on it — `map::udmf::write`
+/// omits the sentinel so a Doom line is not written as a genuine UDMF `id = 0`,
+/// and `map::doom::write` treats it as the *absence* of an id rather than
+/// tier-3 data loss. Defining it once is what keeps a Doom → UDMF → Doom
+/// round-trip from resurrecting a sentinel as data.
+#[cfg(feature = "write")]
+#[must_use]
+pub(crate) fn linedef_id_unset(format: MapFormat) -> i32 {
+    if format == MapFormat::Udmf { -1 } else { 0 }
+}
+
 /// A normalized sidedef, referencing its sector by index into the owning
 /// [`Map`]'s sector arena.
 #[derive(Debug, Clone, PartialEq)]

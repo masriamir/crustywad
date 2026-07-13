@@ -12,7 +12,9 @@ use std::fmt::Write as _;
 
 use crate::Strictness;
 use crate::map::Map;
-use crate::map::graph::{MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
+use crate::map::graph::{
+    MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, linedef_id_unset,
+};
 use crate::write::{WadBuilder, WriteOptions};
 
 /// Message for the infallible `write!`-into-`String` calls.
@@ -153,12 +155,11 @@ impl Writer {
         if let Some(back) = l.left {
             write!(self.out, "sideback = {}; ", back.0).expect(INFALLIBLE);
         }
-        // The "no id" sentinel differs by source: UDMF's spec default is -1,
-        // while Doom/Hexen maps use 0 (the graph convention). Omitting the
-        // source's sentinel keeps a Doom/Hexen line from being written as a real
-        // UDMF `id = 0` and preserves a genuine UDMF `id = 0`.
-        let id_unset = if format == MapFormat::Udmf { -1 } else { 0 };
-        if l.id != id_unset {
+        // Omitting the source's "no id" sentinel (`linedef_id_unset`) keeps a
+        // Doom/Hexen line from being written as a real UDMF `id = 0`, and
+        // preserves a genuine UDMF `id = 0`. The rule is defined once, in
+        // `map::graph`, and shared with `map::doom::write`.
+        if l.id != linedef_id_unset(format) {
             write!(self.out, "id = {}; ", l.id).expect(INFALLIBLE);
         }
         if l.special.special != 0 {

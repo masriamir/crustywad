@@ -192,9 +192,15 @@ Reported as `DoomWriteError::TooManyElements { kind, count, max }`.
 | Linedef `special` outside `u16`; `args[0]` (the sector tag) outside `u16` | clamp |
 | Sidedef `x_offset` / `y_offset` outside `i16` | clamp |
 | Sector `floor_height` / `ceiling_height` / `light` / `special` / `tag` outside `i16` | clamp |
-| Thing `flags` with any bit above 15 set | truncate to `u16` |
+| Thing or linedef `flags` with any bit above 15 set | **truncate** to `u16` (`& 0xffff`) |
 | Texture/flat name longer than 8 bytes | truncate to 8 bytes |
 | Non-finite (`NaN`/infinite) coordinate | strict errors, lenient substitutes `0` |
+
+`flags` **truncates rather than clamps**, unlike every other integer field: a
+bit field is not a magnitude. Clamping `0x1_0001` to `0xffff` would set *all
+sixteen* Doom flags at once (blocking, secret, two-sided, …) from one stray high
+bit; masking keeps the bits Doom can hold and drops only those it cannot.
+Lenient reports `DoomWriteWarning::ValueTruncated`; strict still errors.
 
 **Name fidelity has a caveat.** A texture/flat name round-trips byte-for-byte
 **only if it is valid UTF-8 and NUL-clean** — valid UTF-8 up to its first NUL,
@@ -238,9 +244,12 @@ answer, and `WriteOptions::lenient()` is how a caller accepts that.
 `Result<(DoomMapLumps, Vec<DoomWriteWarning>), DoomWriteError>` and
 `Result<Vec<DoomWriteWarning>, DoomWriteError>` respectively — the warnings
 vector always contains at least `DoomWriteWarning::NodesNotBuilt`, in both
-strictness modes. Each strict-mode `DoomWriteError` variant has exactly one
-lenient-mode `DoomWriteWarning` counterpart, so the two modes read as a
-single decision table rather than two separate implementations.
+strictness modes. Every strict-mode `DoomWriteError` variant has a lenient-mode
+`DoomWriteWarning` counterpart naming the recovery it took, so the two modes
+read as a single decision table rather than two separate implementations. The
+mapping is one-to-one except for `ValueOutOfRange`, whose recovery depends on
+the field: a magnitude clamps (`ValueClamped`), a `flags` bit field truncates
+(`ValueTruncated`).
 
 See [Map Record Parsing](map-records.md) for the `Map` graph types these APIs
 consume, and [Writing WAD Files](writing-wads.md) for the general

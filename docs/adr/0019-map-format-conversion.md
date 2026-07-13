@@ -260,8 +260,16 @@ strictness modes.
 | Linedef `special` outside `u16`; `args[0]` (the sector tag) outside `u16` | clamp |
 | Sidedef `x_offset` / `y_offset` outside `i16` | clamp |
 | Sector `floor_height` / `ceiling_height` / `light` / `special` / `tag` outside `i16` | clamp |
-| Thing `flags` with any bit above 15 set | truncate to `u16` |
+| Thing or linedef `flags` with any bit above 15 set | **truncate** to `u16` (`& 0xFFFF`) |
 | Texture/flat name longer than 8 bytes | truncate to 8 bytes (mirrors the existing `WriteWarning::NameTruncated`) |
+
+`flags` is the one field that **truncates rather than clamps**, and the
+distinction is deliberate: a bit field is not a magnitude. Clamping `0x1_0001`
+to `0xFFFF` would turn one stray high bit into *all sixteen* Doom flags at once
+(blocking, secret, two-sided, …); masking keeps the bits Doom can hold and drops
+only the ones it cannot. Lenient reports it as
+`DoomWriteWarning::ValueTruncated { from, to }`; strict still errors with
+`ValueOutOfRange`.
 
 **Name fidelity, stated honestly.** A texture/flat name survives conversion
 byte-for-byte **only if it is valid UTF-8 and NUL-clean** — i.e. valid UTF-8 up
@@ -330,9 +338,11 @@ pub enum DoomWriteWarning {
 }
 ```
 
-Each strict-mode `DoomWriteError` has exactly one lenient-mode
-`DoomWriteWarning` counterpart, so the two modes are a single decision table
-read twice.
+Every strict-mode `DoomWriteError` has a lenient-mode `DoomWriteWarning`
+counterpart naming the recovery it took, so the two modes are a single decision
+table read twice. The mapping is one-to-one except for `ValueOutOfRange`, whose
+recovery depends on the field: a magnitude clamps (`ValueClamped`), a `flags`
+bit field truncates (`ValueTruncated`) — see tier 2.
 
 ### 4. Empty node lumps, and an always-on warning
 

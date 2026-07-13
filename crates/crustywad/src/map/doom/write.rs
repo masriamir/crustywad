@@ -67,7 +67,9 @@ use binrw::{BinWrite, BinWriterExt};
 use crate::Strictness;
 use crate::map::common::{Name8, Sector, Sidedef, Vertex};
 use crate::map::doom::{Linedef, Thing};
-use crate::map::graph::{Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex};
+use crate::map::graph::{
+    Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, linedef_id_unset,
+};
 use crate::write::{WadBuilder, WriteOptions};
 
 /// Message for the infallible `BinWrite`-into-`Vec` calls.
@@ -189,6 +191,22 @@ pub enum DoomWriteWarning {
         from: f64,
         /// The value written.
         to: i16,
+    },
+    /// A `flags` value wider than Doom's 16-bit field was **truncated** to its
+    /// low 16 bits. Bit fields truncate rather than clamp: clamping would turn
+    /// one stray high bit into all sixteen Doom flags at once.
+    #[error("{field} value {from} in {block} #{index} truncated to {to}")]
+    ValueTruncated {
+        /// The block kind.
+        block: &'static str,
+        /// The field name.
+        field: &'static str,
+        /// The 0-based element index.
+        index: usize,
+        /// The original value.
+        from: i64,
+        /// The value written.
+        to: i64,
     },
     /// An out-of-range value was clamped to the Doom field's range.
     #[error("{field} value {from} in {block} #{index} clamped to {to}")]
@@ -396,8 +414,9 @@ impl Narrower {
         Ok(i16::try_from(ok).expect("clamped to i16's range"))
     }
 
-    /// Narrows an unsigned integer to Doom's 16-bit fields (`flags`, `special`,
-    /// `sector_tag`), which are read back as `u16`.
+    /// Narrows an unsigned integer to Doom's 16-bit numeric fields (`special`,
+    /// `sector_tag`), which are read back as `u16`. Out-of-range values clamp
+    /// in lenient mode — the right recovery for a *magnitude*.
     fn uint16(
         &mut self,
         block: &'static str,
@@ -407,6 +426,44 @@ impl Narrower {
     ) -> Result<u16, DoomWriteError> {
         let ok = self.int(block, field, index, value, 0, 0xFFFF)?;
         Ok(u16::try_from(ok).expect("clamped to 0..=0xFFFF"))
+    }
+
+    /// Narrows a `flags` bit field to Doom's 16-bit on-disk field by
+    /// **truncation** (`& 0xFFFF`), not clamping. A bit field is not a
+    /// magnitude: clamping `0x1_0001` to `0xFFFF` would turn one stray high bit
+    /// into *all sixteen* Doom flags (blocking, secret, two-sided, …), while
+    /// truncation simply drops the bits Doom has no room for and keeps the ones
+    /// it does. Strict still errors; lenient warns with
+    /// [`DoomWriteWarning::ValueTruncated`].
+    fn flags16(
+        &mut self,
+        block: &'static str,
+        field: &'static str,
+        index: usize,
+        value: i64,
+    ) -> Result<u16, DoomWriteError> {
+        if let Ok(v) = u16::try_from(value) {
+            return Ok(v);
+        }
+        match self.strictness {
+            Strictness::Strict => Err(DoomWriteError::ValueOutOfRange {
+                block,
+                field,
+                index,
+                value,
+            }),
+            Strictness::Lenient => {
+                let truncated = u16::try_from(value & 0xFFFF).expect("masked to 0..=0xFFFF");
+                self.warnings.push(DoomWriteWarning::ValueTruncated {
+                    block,
+                    field,
+                    index,
+                    from: value,
+                    to: i64::from(truncated),
+                });
+                Ok(truncated)
+            }
+        }
     }
 
     /// Reports a field the Doom format cannot represent, when it carries a
@@ -479,20 +536,6 @@ impl Narrower {
     }
 }
 
-/// The graph's "no id" sentinel for a linedef, which is **source-dependent**:
-/// UDMF's spec default is `-1`, while a Doom/Hexen map's linedefs are assembled
-/// with `0` (the graph convention). Assembly copies each source's sentinel into
-/// `MapLinedef.id` verbatim, so the check for "does this linedef carry a real
-/// id?" must know the format.
-///
-/// This is the exact mirror of the `id_unset` logic in
-/// [`udmf::write`](crate::map::udmf::write_udmf); the two must agree, or a
-/// Doom → UDMF → Doom round-trip resurrects a sentinel as data and reports it
-/// as unrepresentable.
-fn id_unset(format: MapFormat) -> i32 {
-    if format == MapFormat::Udmf { -1 } else { 0 }
-}
-
 /// Serializes a slice of `BinWrite` records into a lump byte buffer.
 fn encode<T>(records: &[T]) -> Vec<u8>
 where
@@ -521,13 +564,13 @@ fn narrow_vertices(n: &mut Narrower, raw: &[MapVertex]) -> Result<Vec<Vertex>, D
 /// (`args[0]`); `args[1..=4]` and `id` have no slot (ADR-0019 tier 3).
 ///
 /// `format` selects the graph's "no id" sentinel, which is source-dependent —
-/// see [`id_unset`].
+/// see [`linedef_id_unset`].
 fn narrow_linedefs(
     n: &mut Narrower,
     raw: &[MapLinedef],
     format: MapFormat,
 ) -> Result<Vec<Linedef>, DoomWriteError> {
-    let unset = id_unset(format);
+    let unset = linedef_id_unset(format);
     let mut out = Vec::with_capacity(raw.len());
     for (i, l) in raw.iter().enumerate() {
         for (arg_i, field) in [(1, "arg1"), (2, "arg2"), (3, "arg3"), (4, "arg4")] {
@@ -539,7 +582,7 @@ fn narrow_linedefs(
         out.push(Linedef {
             start_vertex: n.index("linedef", "v1", i, l.start.0, MAX_INDEX)?,
             end_vertex: n.index("linedef", "v2", i, l.end.0, MAX_INDEX)?,
-            flags: n.uint16("linedef", "flags", i, i64::from(l.flags))?,
+            flags: n.flags16("linedef", "flags", i, i64::from(l.flags))?,
             special_type: n.uint16("linedef", "special", i, i64::from(l.special.special))?,
             sector_tag: n.uint16("linedef", "arg0", i, i64::from(l.special.args[0]))?,
             right_sidedef: n.index("linedef", "sidefront", i, l.right.0, MAX_SIDEDEF_INDEX)?,
@@ -603,7 +646,7 @@ fn narrow_things(n: &mut Narrower, raw: &[MapThing]) -> Result<Vec<Thing>, DoomW
             y: n.coord("thing", "y", i, t.y)?,
             angle: t.angle,
             type_id: t.type_id,
-            flags: n.uint16("thing", "flags", i, i64::from(t.flags))?,
+            flags: n.flags16("thing", "flags", i, i64::from(t.flags))?,
         });
     }
     Ok(out)
@@ -1021,8 +1064,11 @@ mod tests {
         }));
     }
 
+    /// A bit field truncates, it does not clamp: clamping `0x1_0001` to
+    /// `0xFFFF` would turn one stray high bit into every Doom linedef flag
+    /// (blocking, secret, two-sided, …). Strict still refuses the loss.
     #[test]
-    fn out_of_range_linedef_flags_error_in_strict_and_clamp_in_lenient() {
+    fn out_of_range_linedef_flags_error_in_strict_and_truncate_in_lenient() {
         let mut map = tiny_map();
         map.linedefs[0].flags = 0x1_0001;
         let err = write_doom_map(&map, &WriteOptions::strict()).unwrap_err();
@@ -1036,9 +1082,63 @@ mod tests {
             }
         );
 
-        let (lumps, _) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
         let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
-        assert_eq!(linedefs[0].flags, 0xFFFF);
+        assert_eq!(linedefs[0].flags, 0x0001, "the low 16 bits, not 0xFFFF");
+        assert!(warnings.contains(&DoomWriteWarning::ValueTruncated {
+            block: "linedef",
+            field: "flags",
+            index: 0,
+            from: 0x1_0001,
+            to: 0x0001
+        }));
+    }
+
+    /// The same for thing flags — the bits Doom can hold survive, the rest are
+    /// dropped and reported.
+    #[test]
+    fn out_of_range_thing_flags_error_in_strict_and_truncate_in_lenient() {
+        let mut map = tiny_map();
+        map.things[0].flags = 0x8000_0007;
+        let err = write_doom_map(&map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            DoomWriteError::ValueOutOfRange {
+                block: "thing",
+                field: "flags",
+                index: 0,
+                value: 0x8000_0007
+            }
+        );
+
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+        let things: Vec<crate::map::doom::Thing> = parse_records(&lumps.things).unwrap();
+        assert_eq!(things[0].flags, 0x0007);
+        assert!(warnings.contains(&DoomWriteWarning::ValueTruncated {
+            block: "thing",
+            field: "flags",
+            index: 0,
+            from: 0x8000_0007,
+            to: 0x0007
+        }));
+    }
+
+    /// Truncation is confined to the bit fields: a `special` or `tag` is a
+    /// magnitude, and out-of-range magnitudes still clamp.
+    #[test]
+    fn linedef_special_and_tag_still_clamp() {
+        let mut map = tiny_map();
+        map.linedefs[0].special.special = 0x1_0001;
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+        let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
+        assert_eq!(linedefs[0].special_type, 0xFFFF);
+        assert!(warnings.contains(&DoomWriteWarning::ValueClamped {
+            block: "linedef",
+            field: "special",
+            index: 0,
+            from: 0x1_0001,
+            to: 0xFFFF
+        }));
     }
 
     #[test]
@@ -1413,6 +1513,17 @@ mod tests {
             }
             .to_string(),
             "lightlevel value 99999 in sector #0 clamped to 32767"
+        );
+        assert_eq!(
+            DoomWriteWarning::ValueTruncated {
+                block: "linedef",
+                field: "flags",
+                index: 0,
+                from: 0x1_0001,
+                to: 0x0001
+            }
+            .to_string(),
+            "flags value 65537 in linedef #0 truncated to 1"
         );
         assert_eq!(
             DoomWriteWarning::FieldDropped {
