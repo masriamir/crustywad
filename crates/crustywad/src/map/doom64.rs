@@ -218,7 +218,9 @@ pub struct Doom64Map {
 impl Doom64Map {
     /// Returns the non-fatal warnings collected during a lenient-mode read.
     ///
-    /// Always empty after a successful strict-mode read.
+    /// Always empty after a successful strict-mode read. These are only Doom 64
+    /// map-specific warnings (missing record lumps / trailing bytes); recoverable
+    /// warnings from parsing the nested WAD container itself are not included.
     #[must_use]
     pub fn warnings(&self) -> &[Doom64Warning] {
         &self.warnings
@@ -248,7 +250,16 @@ pub enum Doom64Warning {
 /// An error that prevents reading a Doom 64 map.
 #[derive(Debug, thiserror::Error)]
 pub enum Doom64ReadError {
-    /// The map lump's bytes did not parse as a nested WAD (fatal in both modes).
+    /// The bytes are not a Doom 64 map lump: they lack the leading `IWAD`/`PWAD`
+    /// nested-WAD magic that structurally identifies a Doom 64 map.
+    ///
+    /// Returned in **both** strictness modes before any parsing, so non-Doom 64
+    /// data (e.g. a classic flat map marker or arbitrary bytes) can never be
+    /// silently misread as an empty Doom 64 map. See [`is_doom64_map_lump`].
+    #[error("bytes are not a Doom 64 map lump (missing nested IWAD/PWAD magic)")]
+    NotADoom64Map,
+    /// The map lump's bytes carried valid magic but did not parse as a nested
+    /// WAD (e.g. a truncated or out-of-bounds directory).
     #[error("Doom 64 map lump is not a valid nested WAD: {0}")]
     NestedWad(#[from] ParseError),
     /// A record sub-lump failed to decode (strict mode, or a corrupt record in
@@ -271,7 +282,10 @@ pub enum Doom64ReadError {
 /// Reads a Doom 64 `MAPxx` lump's bytes — themselves a nested WAD — into typed
 /// records.
 ///
-/// The `bytes` are parsed with [`Wad::from_bytes_with_options`]; each record
+/// The `bytes` must be a Doom 64 map lump — leading `IWAD`/`PWAD` magic is
+/// required (see [`is_doom64_map_lump`]) and enforced in **both** strictness
+/// modes, so non-Doom 64 data cannot be silently misread as an empty map. The
+/// `bytes` are then parsed with [`Wad::from_bytes_with_options`]; each record
 /// sub-lump is looked up by name and decoded with
 /// [`parse_records`]. BSP lumps reuse the classic
 /// [`common`](crate::map::common) records. `REJECT`/`BLOCKMAP`/`LEAFS`/`MACROS`
@@ -283,13 +297,26 @@ pub enum Doom64ReadError {
 /// with [`Doom64Warning::TrailingBytes`]. In [`Strictness::Strict`] mode either
 /// condition is an error.
 ///
+/// The returned [`Doom64Map::warnings`] hold only Doom 64-map-specific warnings
+/// (missing record lumps / trailing bytes). Any recoverable [`ParseWarning`]
+/// produced while parsing the nested WAD container in lenient mode is **not**
+/// surfaced here.
+///
+/// [`ParseWarning`]: crate::ParseWarning
+///
 /// # Errors
 ///
-/// - [`Doom64ReadError::NestedWad`] — `bytes` do not parse as a WAD (both modes).
+/// - [`Doom64ReadError::NotADoom64Map`] — `bytes` lack the `IWAD`/`PWAD` magic
+///   (both modes).
+/// - [`Doom64ReadError::NestedWad`] — `bytes` have valid magic but do not parse
+///   as a WAD (both modes).
 /// - [`Doom64ReadError::MissingLump`] — an expected sub-lump is absent (strict).
 /// - [`Doom64ReadError::Records`] — a record sub-lump failed to decode (strict,
 ///   or a corrupt record mid-stream in either mode).
 pub fn read_doom64_map(bytes: &[u8], options: &ParseOptions) -> Result<Doom64Map, Doom64ReadError> {
+    if !is_doom64_map_lump(bytes) {
+        return Err(Doom64ReadError::NotADoom64Map);
+    }
     let nested = Wad::from_bytes_with_options(bytes.to_vec(), *options)?;
     let strictness = options.strictness;
     let mut warnings = Vec::new();

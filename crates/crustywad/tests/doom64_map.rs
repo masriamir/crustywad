@@ -197,17 +197,36 @@ fn reads_doom64_map_strict() {
 }
 
 #[test]
-fn corrupt_container_errors_both_modes() {
-    // Shorter than the 12-byte WAD header: a truncated header is unrecoverable
-    // in both modes (unlike bad magic or an out-of-bounds directory offset,
-    // which lenient mode's `Wad` parser recovers from with warnings).
-    let junk = b"not a wad".to_vec();
+fn non_doom64_bytes_rejected_both_modes() {
+    // Data lacking the leading IWAD/PWAD magic is not a Doom 64 map lump. The
+    // reader must reject it in BOTH modes (before any parsing) rather than let
+    // lenient mode misread it as an empty map with missing-lump warnings.
+    let junk = b"not a wad at all!!".to_vec(); // 18 bytes, no WAD magic
     assert!(matches!(
         read_doom64_map(&junk, &ParseOptions::strict()),
-        Err(Doom64ReadError::NestedWad(_))
+        Err(Doom64ReadError::NotADoom64Map)
     ));
     assert!(matches!(
         read_doom64_map(&junk, &ParseOptions::lenient()),
+        Err(Doom64ReadError::NotADoom64Map)
+    ));
+    // A classic 0-byte map marker is likewise not a Doom 64 map lump.
+    assert!(matches!(
+        read_doom64_map(&[], &ParseOptions::lenient()),
+        Err(Doom64ReadError::NotADoom64Map)
+    ));
+}
+
+#[test]
+fn valid_magic_but_corrupt_directory_strict_errors() {
+    // Passes the magic guard (12 bytes, IWAD magic) but the directory claims 100
+    // lumps at an out-of-bounds offset — strict mode rejects it as an unparseable
+    // nested WAD.
+    let mut bytes = b"IWAD".to_vec();
+    bytes.extend_from_slice(&100_i32.to_le_bytes()); // num_lumps
+    bytes.extend_from_slice(&4096_i32.to_le_bytes()); // directory offset, out of bounds
+    assert!(matches!(
+        read_doom64_map(&bytes, &ParseOptions::strict()),
         Err(Doom64ReadError::NestedWad(_))
     ));
 }
