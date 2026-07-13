@@ -215,7 +215,7 @@ fn synthetic_doom_map_lumps() -> SyntheticDoomLumps {
         things.extend_from_slice(&0i16.to_le_bytes());
         things.extend_from_slice(&0u16.to_le_bytes());
         things.extend_from_slice(&1u16.to_le_bytes());
-        things.extend_from_slice(&0x0007u16.to_le_bytes()); // skill 1-3
+        things.extend_from_slice(&0x0007u16.to_le_bytes()); // all skills (bits 0-2: 1-2, 3, 4-5)
     }
 
     SyntheticDoomLumps {
