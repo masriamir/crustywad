@@ -247,7 +247,11 @@ strictness modes.
 | Sidedef `x_offset` / `y_offset` outside `i16` | clamp |
 | Sector `floor_height` / `ceiling_height` / `light` / `special` / `tag` outside `i16` | clamp |
 | Thing `flags` with any bit above 15 set | truncate to `u16` |
-| Texture/flat name longer than 8 bytes, or non-ASCII | truncate to 8 bytes (mirrors the existing `WriteWarning::NameTruncated`) |
+| Texture/flat name longer than 8 bytes | truncate to 8 bytes (mirrors the existing `WriteWarning::NameTruncated`) |
+
+Doom's on-disk name field is a raw `[u8; 8]` and `Name8` preserves those bytes
+verbatim, so a **non-ASCII name is not loss**: any name that fits in 8 bytes
+writes and reads back byte-for-byte. Only exceeding 8 bytes is loss.
 
 Non-finite (`NaN`/`∞`) coordinates follow the precedent `write_udmf` already
 set: strict errors, lenient substitutes `0` and warns.
