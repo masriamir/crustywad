@@ -115,4 +115,12 @@ pub struct UdmfThing {
     pub special: i32,
     /// The special arguments; all default to 0.
     pub args: [i32; 5],
+    /// The Doom/Boom-MBF-mapped thing flags, packed into bits 0–7 (ADR-0019).
+    ///
+    /// `skill1 | skill2` → bit 0, `skill3` → bit 1, `skill4 | skill5` → bit 2,
+    /// `ambush` → bit 3, `!single` → bit 4, `!dm` → bit 5, `!coop` → bit 6,
+    /// `friend` → bit 7. The skill pairs are OR-folded because Doom has one bit
+    /// per pair; UDMF booleans with no Doom bit (`class1`–`class3`, `dormant`,
+    /// `standing`) are dropped.
+    pub flags: u32,
 }

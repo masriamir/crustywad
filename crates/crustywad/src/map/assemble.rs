@@ -922,6 +922,7 @@ mod tests {
             id: 5,
             special: 0,
             args: [0; 5],
+            flags: 0,
         }];
         let out = normalize_udmf_things(&things, Strictness::Strict, &mut w).unwrap();
         assert_eq!((out[0].x, out[0].y, out[0].height), (1.0, 2.0, 3.0));
@@ -943,6 +944,7 @@ mod tests {
             id: 0,
             special: 0,
             args: [0; 5],
+            flags: 0,
         }];
         assert!(normalize_udmf_things(&bad, Strictness::Strict, &mut w).is_err());
         let out = normalize_udmf_things(&bad, Strictness::Lenient, &mut w).unwrap();

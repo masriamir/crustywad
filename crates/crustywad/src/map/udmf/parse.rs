@@ -503,6 +503,14 @@ impl SectorBuilder {
 }
 
 /// Accumulator for a `thing` block, seeded with spec defaults.
+///
+/// The ten skill/multiplayer booleans are collected as plain fields rather
+/// than packed incrementally into `flags`: `skill1`/`skill2` and
+/// `skill4`/`skill5` must be OR-folded into a single Doom bit each at
+/// [`finish`][ThingBuilder::finish], which an incremental `set_flag_bit` call
+/// per field cannot express (a later `false` would clear a bit set by an
+/// earlier `true` in the same pair).
+#[allow(clippy::struct_excessive_bools)]
 struct ThingBuilder {
     /// The `x` field, if assigned (required; no default).
     x: Option<f64>,
@@ -520,6 +528,26 @@ struct ThingBuilder {
     special: i32,
     /// The `arg0..arg4` fields (default 0 each).
     args: [i32; 5],
+    /// The `skill1` field (default false).
+    skill1: bool,
+    /// The `skill2` field (default false).
+    skill2: bool,
+    /// The `skill3` field (default false).
+    skill3: bool,
+    /// The `skill4` field (default false).
+    skill4: bool,
+    /// The `skill5` field (default false).
+    skill5: bool,
+    /// The `ambush` field (default false).
+    ambush: bool,
+    /// The `single` field (UDMF default **true**).
+    single: bool,
+    /// The `dm` field (UDMF default **true**).
+    dm: bool,
+    /// The `coop` field (UDMF default **true**).
+    coop: bool,
+    /// The `friend` field (default false).
+    friend: bool,
 }
 
 impl Default for ThingBuilder {
@@ -533,13 +561,25 @@ impl Default for ThingBuilder {
             id: 0,
             special: 0,
             args: [0; 5],
+            skill1: false,
+            skill2: false,
+            skill3: false,
+            skill4: false,
+            skill5: false,
+            ambush: false,
+            single: true,
+            dm: true,
+            coop: true,
+            friend: false,
         }
     }
 }
 
 impl ThingBuilder {
-    /// Applies a recognized field assignment; unmodeled recognized fields
-    /// (skill/mp booleans) and unknown fields are dropped.
+    /// Applies a recognized field assignment. The skill/multiplayer booleans are
+    /// packed into `flags` at [`finish`][Self::finish]; unmodeled recognized
+    /// fields (`class1`–`class3`, `dormant`, `standing`, Strife booleans) and
+    /// unknown fields are dropped.
     fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
         match name {
             "x" => self.x = Some(as_f64(value)?),
@@ -554,6 +594,16 @@ impl ThingBuilder {
             "arg2" => self.args[2] = as_i32(value)?,
             "arg3" => self.args[3] = as_i32(value)?,
             "arg4" => self.args[4] = as_i32(value)?,
+            "skill1" => self.skill1 = as_bool(value)?,
+            "skill2" => self.skill2 = as_bool(value)?,
+            "skill3" => self.skill3 = as_bool(value)?,
+            "skill4" => self.skill4 = as_bool(value)?,
+            "skill5" => self.skill5 = as_bool(value)?,
+            "ambush" => self.ambush = as_bool(value)?,
+            "single" => self.single = as_bool(value)?,
+            "dm" => self.dm = as_bool(value)?,
+            "coop" => self.coop = as_bool(value)?,
+            "friend" => self.friend = as_bool(value)?,
             _ => {}
         }
         Ok(())
@@ -564,6 +614,18 @@ impl ThingBuilder {
         let x = self.x.ok_or_else(|| missing_field("thing", "x"))?;
         let y = self.y.ok_or_else(|| missing_field("thing", "y"))?;
         let type_id = self.type_id.ok_or_else(|| missing_field("thing", "type"))?;
+        // Pack per ADR-0019. The skill pairs are OR-folded (Doom has one bit per
+        // pair); single/dm/coop default to true in UDMF, so Doom's "not in X"
+        // bits are their inverse.
+        let mut flags = 0u32;
+        set_flag_bit(&mut flags, 0, self.skill1 || self.skill2);
+        set_flag_bit(&mut flags, 1, self.skill3);
+        set_flag_bit(&mut flags, 2, self.skill4 || self.skill5);
+        set_flag_bit(&mut flags, 3, self.ambush);
+        set_flag_bit(&mut flags, 4, !self.single);
+        set_flag_bit(&mut flags, 5, !self.dm);
+        set_flag_bit(&mut flags, 6, !self.coop);
+        set_flag_bit(&mut flags, 7, self.friend);
         Ok(UdmfThing {
             x,
             y,
@@ -573,6 +635,7 @@ impl ThingBuilder {
             id: self.id,
             special: self.special,
             args: self.args,
+            flags,
         })
     }
 }
@@ -1031,6 +1094,43 @@ mod tests {
         assert_eq!((th.height, th.angle), (8.0, 90));
         assert_eq!((th.id, th.special), (9, 3));
         assert_eq!(th.args, [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn thing_flags_pack_into_doom_bit_layout() {
+        let text = r#"
+            namespace = "doom";
+            thing { x = 0; y = 0; type = 1; skill1 = true; skill3 = true;
+                    skill5 = true; ambush = true; single = false; dm = false;
+                    coop = false; friend = true; }
+        "#;
+        let map = parse_udmf(text, Limits::default()).unwrap();
+        // skill1|skill2 -> bit0, skill3 -> bit1, skill4|skill5 -> bit2,
+        // ambush -> bit3, !single -> bit4, !dm -> bit5, !coop -> bit6, friend -> bit7.
+        assert_eq!(map.things[0].flags, 0b1111_1111);
+    }
+
+    #[test]
+    fn thing_flags_default_to_zero() {
+        // single/dm/coop default to true in UDMF, so the Doom "not in X" bits are clear.
+        let text = r#"
+            namespace = "doom";
+            thing { x = 0; y = 0; type = 1; }
+        "#;
+        let map = parse_udmf(text, Limits::default()).unwrap();
+        assert_eq!(map.things[0].flags, 0);
+    }
+
+    #[test]
+    fn thing_skill_pairs_are_or_folded() {
+        // skill1 and skill2 collapse to one Doom bit; setting either sets bit 0.
+        // Order matters: a naive set-then-clear would leave bit 0 clear here.
+        let text = r#"
+            namespace = "doom";
+            thing { x = 0; y = 0; type = 1; skill1 = true; skill2 = false; }
+        "#;
+        let map = parse_udmf(text, Limits::default()).unwrap();
+        assert_eq!(map.things[0].flags, 0b0000_0001);
     }
 
     #[test]
