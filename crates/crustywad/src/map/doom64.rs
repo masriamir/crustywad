@@ -269,6 +269,7 @@ pub enum Doom64ReadError {
         /// The sub-lump's name.
         lump: &'static str,
         /// The underlying record-parse error.
+        #[source]
         source: MapParseError,
     },
     /// An expected record sub-lump was absent (strict mode only).
