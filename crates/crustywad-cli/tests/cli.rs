@@ -2246,6 +2246,16 @@ fn write_udmf_map_wad(zdoom_fields: bool) -> NamedTempFile {
     )
 }
 
+/// Reads the data of the named lump from a WAD file.
+fn lump_bytes(path: &std::path::Path, name: &str) -> Vec<u8> {
+    let bytes = std::fs::read(path).expect("output WAD should be readable");
+    let wad = crustywad::Wad::from_bytes(bytes).expect("output WAD should parse");
+    let lump = wad
+        .lump_by_name(name)
+        .unwrap_or_else(|| panic!("{name} should be present"));
+    wad.lump_data(lump).to_vec()
+}
+
 /// Reads the lump names of a WAD file, in directory order.
 fn lump_names(path: &std::path::Path) -> Vec<String> {
     let bytes = std::fs::read(path).expect("output WAD should be readable");
@@ -2281,6 +2291,10 @@ fn convert_doom_to_udmf_replaces_map_lumps_in_place() {
         lump_names(out.path()),
         vec!["PLAYPAL", "MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
     );
+    // Non-map lumps pass through byte for byte, not merely by name — conversion
+    // must not rewrite payloads it does not own.
+    assert_eq!(lump_bytes(out.path(), "PLAYPAL"), vec![1, 2, 3]);
+    assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4, 5, 6]);
 }
 
 #[test]
