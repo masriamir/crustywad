@@ -58,12 +58,38 @@ PIN_RE = re.compile(
 
 
 def crate_version() -> str:
-    """Returns the `version` from the library crate's Cargo.toml."""
-    for line in CARGO_TOML.read_text(encoding="utf-8").splitlines():
-        match = re.match(r'^version\s*=\s*"([^"]+)"', line.strip())
-        if match:
-            return match.group(1)
-    sys.exit(f"error: no version found in {CARGO_TOML}")
+    """Returns `[package].version` from the library crate's Cargo.toml.
+
+    Reads the key from its table rather than grabbing the first `version = ...`
+    line in the file: `[dependencies]` entries and any future table could also
+    carry a `version` key, and matching the wrong one would make this check
+    silently wrong in either direction.
+    """
+    text = CARGO_TOML.read_text(encoding="utf-8")
+
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:
+        pass
+    else:
+        version = tomllib.loads(text).get("package", {}).get("version")
+        if isinstance(version, str):
+            return version
+        sys.exit(f"error: no [package].version found in {CARGO_TOML}")
+
+    # Fallback for Python < 3.11: a table-aware scan, so a `version` key in any
+    # other table cannot be mistaken for the package's own.
+    table = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            table = stripped[1:-1].strip()
+            continue
+        if table == "package":
+            match = re.match(r'^version\s*=\s*"([^"]+)"', stripped)
+            if match:
+                return match.group(1)
+    sys.exit(f"error: no [package].version found in {CARGO_TOML}")
 
 
 def expected_pin(version: str) -> str:
@@ -90,15 +116,20 @@ def main() -> int:
         if not path.exists():
             problems.append(f"{path}: checked file is missing")
             continue
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            for match in PIN_RE.finditer(line):
-                found = match.group("bare") or match.group("table")
-                checked += 1
-                if found != want:
-                    problems.append(
-                        f"{path}:{lineno}: pins crustywad = {found!r}, "
-                        f"but the crate is {version} (expected {want!r})"
-                    )
+        # Scan the whole file, not line by line: a snippet split across lines
+        # (`crustywad = {\n  version = "0.3",\n  ...\n}`) is valid TOML and just
+        # as copy-pastable, and a per-line scan would miss it entirely — letting
+        # drift slip through simply by reformatting.
+        text = path.read_text(encoding="utf-8")
+        for match in PIN_RE.finditer(text):
+            found = match.group("bare") or match.group("table")
+            lineno = text.count("\n", 0, match.start()) + 1
+            checked += 1
+            if found != want:
+                problems.append(
+                    f"{path}:{lineno}: pins crustywad = {found!r}, "
+                    f"but the crate is {version} (expected {want!r})"
+                )
 
     if problems:
         print("docs-versions: version-pin drift detected\n", file=sys.stderr)
