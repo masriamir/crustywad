@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-909fb432.js";
+            window.path_to_searchindex_js = "searchindex-1d186816.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -777,6 +777,28 @@ the field: a magnitude clamps (<code>ValueClamped</code>), a <code>flags</code> 
 <p>See <a href="#map-record-parsing">Map Record Parsing</a> for the <code>Map</code> graph types these APIs
 consume, and <a href="#writing-wad-files">Writing WAD Files</a> for the general
 <code>WadBuilder</code> / <code>WriteOptions</code> contract.</p>
+<h2 id="from-the-cli"><a class="header" href="#from-the-cli">From the CLI</a></h2>
+<p>The <code>cwad convert</code> subcommand wraps this same <code>read → Map → write</code> path for
+whole WAD files, without writing any Rust. It replaces each map’s lump run
+with its converted form; non-map lumps and maps already in the target format
+pass through unchanged, in directory order:</p>
+<pre><code class="language-bash">cwad convert doom.wad -o udmf.wad --to udmf
+cwad convert udmf.wad -o doom.wad --to doom --lenient
+</code></pre>
+<p>The second command needs <code>--lenient</code> for the same reason described above:
+strict mode refuses any UDMF field the Doom format cannot represent.</p>
+<p>A converted group contains only what the target format defines — the marker
+plus <code>TEXTMAP</code>/<code>ENDMAP</code>, or the marker plus the classic data lumps and the
+empty node lumps. Any other lump that lived inside the map group (<code>BEHAVIOR</code>,
+<code>SCRIPTS</code>, <code>ZNODES</code>, <code>DIALOGUE</code>, GL nodes) is <strong>dropped</strong>, not passed
+through: compiled ACS is bound to the source map’s specials and node lumps
+describe the source geometry, so carrying either across would look intact
+while being subtly wrong. That is data loss under the same policy as any
+other: strict mode refuses (exit <code>3</code>, naming each lump), <code>--lenient</code> drops
+them and warns. A map already in the target format is not converted, so
+nothing in its group is dropped.</p>
+<p>See <a href="#convert">CLI Usage</a> for the full flag reference, example output,
+and exit codes.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="map-record-parsing"><a class="header" href="#map-record-parsing">Map Record Parsing</a></h1>
 <p>Doom maps are stored as a group of sequentially named lumps. After the marker lump
@@ -1124,6 +1146,57 @@ wrote custom.wad: kind=Pwad lumps: 2
 </code></pre>
 <p>Use <code>--kind iwad</code> to build an IWAD instead of the default PWAD. Lump-name or
 size validation failures exit <code>3</code>.</p>
+<h3 id="convert"><a class="header" href="#convert">convert</a></h3>
+<p>Convert every map in a WAD between the classic Doom binary format and UDMF,
+replacing each map’s lump run in place; non-map lumps, and maps already in
+the target format, pass through unchanged in directory order.</p>
+<pre><code class="language-text">$ cwad convert doom.wad -o udmf.wad --to udmf
+wrote udmf.wad: converted 1 map to udmf
+</code></pre>
+<p><code>--to</code> is required and takes <code>doom</code> or <code>udmf</code>. Use <code>--map NAME</code> to convert
+only the named map (e.g. <code>--map MAP01</code>) and pass every other map through
+unchanged; omit it to convert every map in the WAD. A <code>--map NAME</code> that
+matches no map in the WAD is an error (exit <code>3</code>), not a no-op. Use <code>--kind</code>
+to set the output WAD kind (<code>iwad</code> or <code>pwad</code>; default <code>pwad</code>).</p>
+<blockquote>
+<p><strong>Converting to <code>doom</code> is not engine-playable without a nodebuilder.</strong>
+<code>--to doom</code> emits empty <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/<code>REJECT</code>/<code>BLOCKMAP</code>
+lumps and always prints a <code>NodesNotBuilt</code> warning to stderr — run an
+external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output before loading
+it in a source port. See <a href="#converting-maps">Converting maps</a> for
+details.</p>
+</blockquote>
+<p><strong>Strict mode refuses data loss.</strong> Converting a typical ZDoom-namespace UDMF
+map (linedef <code>args</code>, thing <code>height</code>/<code>id</code>/<code>special</code>, …) to <code>doom</code> exits <code>3</code>,
+naming the offending field on stderr:</p>
+<pre><code class="language-text">$ cwad convert udmf.wad -o doom.wad --to doom
+error: cannot convert map MAP01 to doom: thing #0 has a height value, which the Doom format cannot represent
+note: re-run with --lenient to accept the data loss
+</code></pre>
+<p>This is intended, not a bug: <code>--to doom</code> succeeding is the answer to “does
+this map fit in the Doom format?” Pass the global <code>--lenient</code> flag to accept
+the loss and convert anyway; each dropped or rounded field is then reported
+as a warning on stderr instead. See <a href="#converting-maps">Converting maps</a>
+for the full loss policy.</p>
+<p><strong>A converted map keeps only the lumps its target format defines.</strong> A
+converted group is rebuilt from the assembled map: the marker plus <code>TEXTMAP</code>
+and <code>ENDMAP</code> (<code>--to udmf</code>), or the marker plus the classic
+<code>THINGS</code>/<code>LINEDEFS</code>/<code>SIDEDEFS</code>/<code>VERTEXES</code>/<code>SECTORS</code> run and the empty node
+lumps (<code>--to doom</code>). Any <em>other</em> lump that lived inside the map group —
+<code>BEHAVIOR</code> (compiled ACS), <code>SCRIPTS</code>, <code>ZNODES</code>, <code>DIALOGUE</code>, GL node lumps —
+is dropped. It is not passed through: compiled ACS is bound to the source
+map’s specials and node lumps describe the source geometry, so carrying
+either into a converted map would produce something that looks intact and is
+subtly broken. Dropping it is data loss, and is treated like any other:</p>
+<pre><code class="language-text">$ cwad convert hexen.wad -o udmf.wad --to udmf
+error: cannot convert map MAP01 to udmf: it contains lump(s) that cannot be carried into the converted map: BEHAVIOR
+note: re-run with --lenient to convert anyway and drop them
+</code></pre>
+<p>With <code>--lenient</code> the conversion proceeds and each dropped lump is named in a
+warning on stderr. A map already in the target format is not converted, so
+nothing in its group is dropped.</p>
+<p>Exits <code>0</code> on success, <code>2</code> on I/O or parse error, <code>3</code> if a map cannot be
+assembled, cannot be converted without loss in strict mode, or if <code>--map NAME</code> matches no map in the WAD.</p>
 <h2 id="global-options"><a class="header" href="#global-options">Global options</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1200,7 +1273,7 @@ true
 <tr><td><code>0</code></td><td>Success</td></tr>
 <tr><td><code>1</code></td><td>Differences found (<code>diff</code> only)</td></tr>
 <tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.); for <code>extract</code>, also a nonexistent <code>--output</code> directory or a <code>--lump</code> name not found</td></tr>
-<tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for <code>build</code>/<code>merge</code>)</td></tr>
+<tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for <code>build</code>, <code>merge</code>, or <code>convert</code> — note a non-ASCII lump name decodes under a lenient <em>read</em> but is rejected on <em>write</em> in both strictness modes); for <code>convert</code>, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as <code>BEHAVIOR</code> that the target format cannot carry), or a <code>--map NAME</code> that matches no map in the WAD</td></tr>
 </tbody>
 </table>
 </div>
@@ -1672,7 +1745,7 @@ they never write to the branch simultaneously.</p>
 <blockquote>
 <p><strong>Audience:</strong> Library users</p>
 </blockquote>
-<p>The <code>cwad</code> binary exposes seven subcommands: <code>info</code>, <code>list</code>, <code>validate</code>, <code>diff</code>, and <code>extract</code> (read-only) plus <code>merge</code> and <code>build</code> (write-path, backed by <code>crustywad</code>’s <code>write</code> feature). <code>crustywad-cli</code>’s <code>Cargo.toml</code> enables that feature unconditionally on its <code>crustywad</code> dependency, so <code>merge</code> and <code>build</code> are always available in <code>cwad</code> — there is no user-facing flag to opt in. <code>--lenient</code> and <code>--format</code> (<code>-F</code>; <code>human</code> default, <code>json</code>, or <code>csv</code>) are global flags that apply to every subcommand. Warnings are always written to stderr; normal output routes through <code>--format</code>. Argument-parsing failures (via <code>clap</code>) exit <code>3</code> before any subcommand runs, regardless of which subcommand was given.</p>
+<p>The <code>cwad</code> binary exposes eight subcommands: <code>info</code>, <code>list</code>, <code>validate</code>, <code>diff</code>, and <code>extract</code> (read-only) plus <code>merge</code>, <code>build</code>, and <code>convert</code> (write-path, backed by <code>crustywad</code>’s <code>write</code> feature). <code>crustywad-cli</code>’s <code>Cargo.toml</code> enables that feature unconditionally on its <code>crustywad</code> dependency, so the write-path subcommands are always available in <code>cwad</code> — there is no user-facing flag to opt in. <code>--lenient</code> and <code>--format</code> (<code>-F</code>; <code>human</code> default, <code>json</code>, or <code>csv</code>) are global flags that apply to every subcommand. Warnings are always written to stderr; normal output routes through <code>--format</code>. Argument-parsing failures (via <code>clap</code>) exit <code>3</code> before any subcommand runs, regardless of which subcommand was given.</p>
 <h2 id="read-path-dispatch"><a class="header" href="#read-path-dispatch">Read-path dispatch</a></h2>
 <p><code>info</code>, <code>list</code>, <code>validate</code>, <code>diff</code>, and <code>extract</code> all read one or more WADs via <code>Wad::from_path_with_options</code> under <code>ParseOptions::strict()</code>/<code>lenient()</code>. <code>validate</code> handles its load <code>Result</code> explicitly so it can route both outcomes through <code>--format</code>; the other read subcommands propagate load failures via <code>anyhow</code>’s <code>?</code>, which <code>main</code> catches and turns into exit <code>2</code>. <code>extract</code> additionally exits <code>2</code> if a requested <code>--lump NAME</code> isn’t found in the WAD (a separate explicit check after a successful load).</p>
 <pre class="mermaid">flowchart TD
@@ -1721,7 +1794,8 @@ they never write to the branch simultaneously.</p>
 </pre>
 
 <h2 id="write-path-dispatch"><a class="header" href="#write-path-dispatch">Write-path dispatch</a></h2>
-<p><code>merge</code> and <code>build</code> construct a WAD via <code>WadBuilder</code>. <code>crustywad-cli</code> gets <code>WadBuilder</code> by unconditionally enabling <code>crustywad</code>’s <code>write</code> feature in its <code>Cargo.toml</code> — both subcommands are always available in <code>cwad</code>, with no user-facing flag required. <code>--lenient</code> selects <code>WriteOptions::strict()</code>/<code>lenient()</code> for the build step, distinct from (but analogous to) the read-side <code>ParseOptions</code>. <code>WriteError</code> from <code>build_with_options</code> is a usage/data error and exits <code>3</code>; I/O failures (reading input files, writing the output file) still propagate via <code>?</code> and exit <code>2</code>, mirroring the read-path exit codes. <code>merge</code> additionally reads each input WAD under <code>ParseOptions</code>, so it prints that WAD’s <code>ParseWarning</code>s (path-prefixed) as each input is loaded, in addition to the <code>WriteWarning</code>s from the build step.</p>
+<p><code>merge</code>, <code>build</code>, and <code>convert</code> construct a WAD via <code>WadBuilder</code>. <code>crustywad-cli</code> gets <code>WadBuilder</code> by unconditionally enabling <code>crustywad</code>’s <code>write</code> feature in its <code>Cargo.toml</code> — all three subcommands are always available in <code>cwad</code>, with no user-facing flag required. <code>--lenient</code> selects <code>WriteOptions::strict()</code>/<code>lenient()</code> for the build step, distinct from (but analogous to) the read-side <code>ParseOptions</code>. <code>WriteError</code> from <code>build_with_options</code> is a usage/data error and exits <code>3</code>; I/O failures (reading input files, writing the output file) still propagate via <code>?</code> and exit <code>2</code>, mirroring the read-path exit codes. <code>merge</code> additionally reads each input WAD under <code>ParseOptions</code>, so it prints that WAD’s <code>ParseWarning</code>s (path-prefixed) as each input is loaded, in addition to the <code>WriteWarning</code>s from the build step.</p>
+<p><code>convert</code> reads one WAD, re-emits every map group in the requested target format (<code>--to doom|udmf</code>), and passes all other lumps through unchanged in directory order. It exits <code>3</code> when a map cannot be converted — in strict mode, that includes any data loss the target format cannot represent, and the message names the offending field and points at <code>--lenient</code>. Converting to <code>doom</code> emits empty node lumps and always warns <code>NodesNotBuilt</code>: the output needs an external nodebuilder before it is engine-playable. See <a href="#converting-maps">Converting maps</a>.</p>
 <pre class="mermaid">flowchart TD
     A["cwad [--lenient] [--format FMT] merge|build ..."]
     B{"--lenient flag?"}

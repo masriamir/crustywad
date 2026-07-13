@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-909fb432.js";
+            window.path_to_searchindex_js = "searchindex-1d186816.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -423,6 +423,28 @@ the field: a magnitude clamps (<code>ValueClamped</code>), a <code>flags</code> 
 <p>See <a href="map-records.html">Map Record Parsing</a> for the <code>Map</code> graph types these APIs
 consume, and <a href="writing-wads.html">Writing WAD Files</a> for the general
 <code>WadBuilder</code> / <code>WriteOptions</code> contract.</p>
+<h2 id="from-the-cli"><a class="header" href="#from-the-cli">From the CLI</a></h2>
+<p>The <code>cwad convert</code> subcommand wraps this same <code>read → Map → write</code> path for
+whole WAD files, without writing any Rust. It replaces each map’s lump run
+with its converted form; non-map lumps and maps already in the target format
+pass through unchanged, in directory order:</p>
+<pre><code class="language-bash">cwad convert doom.wad -o udmf.wad --to udmf
+cwad convert udmf.wad -o doom.wad --to doom --lenient
+</code></pre>
+<p>The second command needs <code>--lenient</code> for the same reason described above:
+strict mode refuses any UDMF field the Doom format cannot represent.</p>
+<p>A converted group contains only what the target format defines — the marker
+plus <code>TEXTMAP</code>/<code>ENDMAP</code>, or the marker plus the classic data lumps and the
+empty node lumps. Any other lump that lived inside the map group (<code>BEHAVIOR</code>,
+<code>SCRIPTS</code>, <code>ZNODES</code>, <code>DIALOGUE</code>, GL nodes) is <strong>dropped</strong>, not passed
+through: compiled ACS is bound to the source map’s specials and node lumps
+describe the source geometry, so carrying either across would look intact
+while being subtly wrong. That is data loss under the same policy as any
+other: strict mode refuses (exit <code>3</code>, naming each lump), <code>--lenient</code> drops
+them and warns. A map already in the target format is not converted, so
+nothing in its group is dropped.</p>
+<p>See <a href="cli.html#convert">CLI Usage</a> for the full flag reference, example output,
+and exit codes.</p>
 
                     </main>
 
