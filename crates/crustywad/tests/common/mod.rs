@@ -232,12 +232,15 @@ pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
         eprintln!("skipping fixture test: {env_var} not set");
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        eprintln!(
-            "skipping fixture test: {env_var} ({}) is not a readable directory",
-            dir.display()
-        );
-        return Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!(
+                "skipping fixture test: {env_var} ({}) is not a readable directory: {e}",
+                dir.display()
+            );
+            return Vec::new();
+        }
     };
     // Fail fast on an unreadable entry rather than silently dropping it — a
     // sweep that skips part of the directory would pass without actually
