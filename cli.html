@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-77f023fa.js";
+            window.path_to_searchindex_js = "searchindex-8b317f0a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -218,6 +218,28 @@ ok: doom.wad
 error: broken.wad: invalid WAD magic
 </code></pre>
 <p>The error message goes to stderr in human format; the exit code is <code>2</code>.</p>
+<h4 id="deep-validation"><a class="header" href="#deep-validation">Deep validation</a></h4>
+<p><code>--deep</code> goes beyond the header and directory: after the container parses,
+every map in the WAD is assembled — all four formats, including Doom 64
+nested-WAD maps — with per-map errors and warnings reported. Validation
+continues past a failing map so one corrupt map cannot mask another.</p>
+<pre><code class="language-text">$ cwad validate --deep doom.wad
+ok: doom.wad (36 map(s) validated)
+</code></pre>
+<p>On a WAD whose <code>E1M1</code> has a corrupt lump:</p>
+<pre><code class="language-text">$ cwad validate --deep broken.wad
+error: map E1M1: failed to decode LINEDEFS records: record stream ended mid-record at byte offset 0
+error: broken.wad: 1 of 2 map(s) failed validation
+</code></pre>
+<p>Per-map diagnostics go to stderr; the exit code is <code>1</code> if any map fails —
+ADR-0008’s “validation errors found” code, distinct from <code>2</code> (the container
+itself is unreadable or malformed). The
+strictness flag applies: under <code>--lenient</code>, recoverable per-map issues become
+warnings on stderr and the exit code stays <code>0</code>. In JSON format, <code>--deep</code> emits
+one newline-delimited record per map (<code>{"map":"E1M1","ok":true,"warnings":0}</code>
+or <code>{"map":"E1M1","ok":false,"error":"..."}</code>) followed by the usual summary
+object; in CSV it emits a <code>map,ok,error</code> table instead of the shallow
+<code>ok</code>/<code>true</code> pair.</p>
 <h3 id="merge"><a class="header" href="#merge">merge</a></h3>
 <p>Combine multiple WAD files into one, writing lumps in the order the input
 files are given.</p>
@@ -379,7 +401,7 @@ true
 </thead>
 <tbody>
 <tr><td><code>0</code></td><td>Success</td></tr>
-<tr><td><code>1</code></td><td>Differences found (<code>diff</code> only)</td></tr>
+<tr><td><code>1</code></td><td>Negative result — the two WADs differ (<code>diff</code>), or <code>validate --deep</code> found map validation errors</td></tr>
 <tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.); for <code>extract</code>, also a nonexistent <code>--output</code> directory or a <code>--lump</code> name not found</td></tr>
 <tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for <code>build</code>, <code>merge</code>, or <code>convert</code> — note a non-ASCII lump name decodes under a lenient <em>read</em> but is rejected on <em>write</em> in both strictness modes); for <code>convert</code>, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as <code>BEHAVIOR</code> that the target format cannot carry), or a <code>--map NAME</code> that matches no map in the WAD</td></tr>
 </tbody>
