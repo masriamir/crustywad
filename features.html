@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1d186816.js";
+            window.path_to_searchindex_js = "searchindex-fb7ed83d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -207,7 +207,7 @@ actually accessed. The tradeoff is a small amount of <code>unsafe</code> code in
 of whether this feature is enabled.</p>
 <h3 id="usage"><a class="header" href="#usage">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.1", features = ["mmap"] }
+crustywad = { version = "0.3.0", features = ["mmap"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -303,7 +303,7 @@ copy locally.</p>
 <code>[12-byte header][lump data blobs][16-byte directory entries]</code>.</p>
 <h3 id="usage-1"><a class="header" href="#usage-1">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.1", features = ["write"] }
+crustywad = { version = "0.3.0", features = ["write"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
