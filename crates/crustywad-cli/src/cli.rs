@@ -74,8 +74,8 @@ pub(crate) enum SubCommand {
         /// Path to the WAD file.
         path: PathBuf,
     },
-    /// Validate WAD correctness. Exits 0 if clean, 2 on I/O or parse error
-    /// (with `--deep`, also on any map that fails to assemble).
+    /// Validate WAD correctness. Exits 0 if clean, 1 when `--deep` finds map
+    /// validation errors, 2 on I/O or parse error.
     Validate {
         /// Path to the WAD file.
         path: PathBuf,

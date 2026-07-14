@@ -428,7 +428,7 @@ fn validate_deep_names_the_failing_map_and_continues() {
         .unwrap()
         .args(["validate", "--deep", wad.path().to_str().unwrap()])
         .assert()
-        .code(2)
+        .code(1)
         .stderr(predicate::str::contains("error: map E1M1"))
         // "1 of 2" proves continuation: the denominator counts every group,
         // and E1M2 can only reach the summary if validation proceeded past
@@ -452,7 +452,7 @@ fn validate_deep_json_emits_per_map_rows_and_summary() {
             wad.path().to_str().unwrap(),
         ])
         .assert()
-        .code(2)
+        .code(1)
         .stdout(predicate::str::contains("\"map\":\"E1M1\",\"ok\":false"))
         .stdout(predicate::str::contains("\"map\":\"E1M2\",\"ok\":true"))
         .stdout(predicate::str::contains(
@@ -476,7 +476,7 @@ fn validate_deep_csv_emits_per_map_rows() {
             wad.path().to_str().unwrap(),
         ])
         .assert()
-        .code(2)
+        .code(1)
         .stdout(predicate::str::contains("map,ok,error\n"))
         .stdout(predicate::str::contains("E1M2,true,\n"));
 }
@@ -509,7 +509,7 @@ fn validate_deep_lenient_recovers_with_warnings_and_exits_zero() {
         .unwrap()
         .args(["validate", "--deep", wad.path().to_str().unwrap()])
         .assert()
-        .code(2)
+        .code(1)
         .stderr(predicate::str::contains("error: map E1M1"));
 }
 
@@ -523,7 +523,7 @@ fn validate_deep_covers_doom64_nested_maps() {
         .unwrap()
         .args(["validate", "--deep", wad.path().to_str().unwrap()])
         .assert()
-        .code(2)
+        .code(1)
         .stderr(predicate::str::contains("error: map MAP01"));
 }
 

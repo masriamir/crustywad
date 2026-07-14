@@ -21,8 +21,11 @@ use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 /// another. Per-map diagnostics go to stderr in human format; JSON emits one
 /// newline-delimited record per map followed by the same summary object the
 /// shallow mode prints; CSV emits a `map,ok,error` table. Exits `0` when every
-/// map assembles (lenient-mode warnings allowed, reported on stderr), `2` when
-/// any map fails — consistent with ADR-0008's malformed-WAD convention.
+/// map assembles (lenient-mode warnings allowed, reported on stderr) and `1`
+/// when any map fails — ADR-0008 §2's "negative result: validation errors
+/// found" code, distinct from exit `2` (the container itself is unreadable or
+/// malformed). Container-level lenient warnings print after the summary, per
+/// ADR-0008 §3.
 fn deep_validate(wad: &Wad, path: &std::path::Path, format: Format, options: ParseOptions) -> i32 {
     use crustywad::map::Map;
 
@@ -72,7 +75,7 @@ fn deep_validate(wad: &Wad, path: &std::path::Path, format: Format, options: Par
         }
     }
 
-    if failed == 0 {
+    let code = if failed == 0 {
         match format {
             Format::Human => {
                 println!("ok: {} ({} map(s) validated)", path.display(), groups.len());
@@ -90,8 +93,13 @@ fn deep_validate(wad: &Wad, path: &std::path::Path, format: Format, options: Par
             }
             Format::Csv => {}
         }
-        2
+        1
+    };
+    // ADR-0008 §3: container-level lenient warnings print after the result.
+    for w in wad.warnings() {
+        eprintln!("warning: {w}");
     }
+    code
 }
 
 /// Returns the marker-lump names of every map group in `wad`, in directory
@@ -462,9 +470,6 @@ fn run(cli: Cli) -> Result<i32> {
         SubCommand::Validate { path, deep } => {
             match Wad::from_path_with_options(&path, options) {
                 Ok(wad) => {
-                    for w in wad.warnings() {
-                        eprintln!("warning: {w}");
-                    }
                     if deep {
                         return Ok(deep_validate(&wad, &path, cli.format, options));
                     }
@@ -475,6 +480,11 @@ fn run(cli: Cli) -> Result<i32> {
                             println!("ok");
                             println!("true");
                         }
+                    }
+                    // ADR-0008 §3: lenient container warnings print after the
+                    // successful result.
+                    for w in wad.warnings() {
+                        eprintln!("warning: {w}");
                     }
                     Ok(0)
                 }
