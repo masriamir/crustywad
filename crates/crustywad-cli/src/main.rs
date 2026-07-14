@@ -18,9 +18,10 @@ use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 /// results (#251).
 ///
 /// Validation continues past failing maps so one corrupt map cannot mask
-/// another. Per-map diagnostics go to stderr in human format; JSON emits one
-/// newline-delimited record per map followed by the same summary object the
-/// shallow mode prints; CSV emits a `map,ok,error` table. Exits `0` when every
+/// another. Per-map diagnostics go to stderr in every output format (stdout
+/// stays machine-readable); JSON additionally emits one newline-delimited
+/// record per map followed by the same summary object the shallow mode
+/// prints, and CSV emits a `map,ok,error` table. Exits `0` when every
 /// map assembles (lenient-mode warnings allowed, reported on stderr) and `1`
 /// when any map fails — ADR-0008 §2's "negative result: validation errors
 /// found" code, distinct from exit `2` (the container itself is unreadable or
