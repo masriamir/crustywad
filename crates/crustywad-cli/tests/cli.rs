@@ -513,6 +513,53 @@ fn validate_deep_lenient_recovers_with_warnings_and_exits_zero() {
 }
 
 #[test]
+fn validate_deep_json_and_csv_success_summaries() {
+    // All-maps-pass summaries per format: JSON emits the per-map row plus the
+    // same {"ok":true} object shallow mode prints; CSV emits only the header
+    // and per-map rows (no summary pair).
+    let wad = write_wad_owned(*b"IWAD", &empty_map_lumps("E1M1"));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "json",
+            "validate",
+            "--deep",
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"map\":\"E1M1\",\"ok\":true"))
+        .stdout(predicate::str::contains("{\"ok\":true}\n"));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "csv",
+            "validate",
+            "--deep",
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_match("^map,ok,error\nE1M1,true,\n$").unwrap());
+}
+
+#[test]
+fn validate_deep_prints_container_warnings_after_the_summary() {
+    // An unknown magic parses only leniently, with a container-level warning;
+    // deep validation prints it after the summary (ADR-0008 §3).
+    let wad = write_wad_owned(*b"WADX", &empty_map_lumps("E1M1"));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["--lenient", "validate", "--deep", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 map(s) validated"))
+        .stderr(predicate::str::contains("warning:"));
+}
+
+#[test]
 fn validate_deep_covers_doom64_nested_maps() {
     // A Doom 64 nested-WAD map whose container is missing every record
     // sub-lump but THINGS: strict deep validation fails naming the map.
