@@ -39,8 +39,9 @@ pub enum UdmfWriteError {
     /// (strict mode; lenient falls back to `"doom"` and warns).
     #[error("map namespace is empty")]
     EmptyNamespace,
-    /// A linedef has no front sidedef (`MapLinedef::right == None`, the binary
-    /// `0xffff` sentinel; ADR-0020), which UDMF cannot represent — the spec
+    /// A linedef has no front sidedef (`MapLinedef::right == None` — whether
+    /// from the binary `0xffff` sentinel (ADR-0020) or a lenient-mode recovery
+    /// of a dangling UDMF `sidefront`), which UDMF cannot represent — the spec
     /// gives `sidefront` no valid default (strict mode; lenient writes
     /// `sidefront = -1` and warns).
     #[error("linedef #{index} has no front sidedef, which UDMF cannot represent")]

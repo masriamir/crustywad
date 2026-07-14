@@ -197,12 +197,13 @@ fn resolve_optional(
 /// a negative index (reachable only via the widened signed parameter) is
 /// simply out of range.
 ///
-/// `raw` is `i32` so binary and UDMF callers can share this validator, but the
-/// UDMF normalizer (#58b) must **not** route a raw sidedef index through this
-/// `0xffff` sentinel. Per ADR-0017 §2/§3 it receives `sideback` already
-/// normalized to `Option<i32>` (`-1` → `None` in the parser) and `sidefront`
-/// as a required raw integer, and range-checks real indices directly — so a
-/// valid UDMF sidedef index of 65535 is never mistaken for the binary sentinel.
+/// This helper is for the **binary** (Doom/Hexen) normalizers only. The UDMF
+/// normalizer must **not** call it: per ADR-0017 §2/§3 it range-checks UDMF
+/// sidedef indices directly via [`resolve_optional`] — with `sideback` already
+/// normalized to `Option<i32>` (`-1` → `None` in the parser) and `sidefront` a
+/// required raw integer — so a valid UDMF sidedef index of 65535 is never
+/// mistaken for the binary sentinel. (`raw` is `i32` only to reuse the shared
+/// range-check plumbing; binary `u16` fields widen into it losslessly.)
 fn resolve_binary_side(
     raw: i32,
     count: usize,
