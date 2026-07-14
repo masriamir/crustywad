@@ -707,14 +707,35 @@ fn doom64_nested_map_lump_forms_a_group() {
     assert!(wad.map_group("RESOURCE").is_none());
 }
 
+// A genuine (MAPxx-named, nested-magic) Doom 64 group whose container holds
+// only an empty THINGS sub-lump: strict assembly fails structurally on the
+// first absent record sub-lump; lenient recovers every absence into an empty
+// map, one warning per missing sub-lump (8 = the 9 expected record sub-lumps
+// minus the THINGS that is present). Neither mode may panic.
 #[test]
-fn doom64_group_assembles_or_errors_without_panicking() {
-    // Interim guard until the assemble arm lands: must not panic.
+fn minimal_doom64_group_errors_strict_and_recovers_lenient() {
     let nested = common::build_wad(*b"IWAD", &[("THINGS", &[])]);
     let bytes = common::build_named_lumps(&[("MAP01", nested)]);
     let wad = Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("MAP01").unwrap();
-    let _ = Map::assemble(&wad, &group); // Ok or Err both fine; no panic
+
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            MapAssembleError::Doom64 {
+                source: crustywad::map::Doom64ReadError::MissingLump { name: "LINEDEFS" }
+            }
+        ),
+        "expected Doom64/MissingLump(LINEDEFS), got {err:?}"
+    );
+
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
+        .expect("lenient recovers missing sub-lumps");
+    assert_eq!(map.format(), MapFormat::Doom64);
+    assert!(map.linedefs().is_empty());
+    assert_eq!(map.lights().len(), 256); // grayscale tier only
+    assert_eq!(map.warnings().len(), 8);
 }
 
 // A classically named marker whose data bytes happen to start with nested-WAD

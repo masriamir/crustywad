@@ -195,6 +195,8 @@ pub struct MapSector {
     // Doom stores sector special/tag as i16; widen losslessly to i32
     // (avoids an i16->u16 sign-loss cast that clippy::pedantic rejects).
     /// The light level, in the range `0..=255` on disk, widened to `i32`.
+    /// Always `0` for a Doom 64 map — the format has no scalar light level;
+    /// its lighting lives in [`MapSector::colors`] (ADR-0021 §4).
     pub light: i32,
     /// The sector special number.
     pub special: i32,

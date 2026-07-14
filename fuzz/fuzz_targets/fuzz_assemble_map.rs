@@ -13,7 +13,8 @@ fuzz_target!(|data: &[u8]| {
                 // (start/end vertex, right/left sidedef); normalize_sidedefs
                 // at most 1 per sidedef (sector reference); the Doom 64 arm
                 // additionally pushes at most 5 per sector (one per colored-
-                // lighting reference, `Sector::colors`), at most 1 per thing
+                // lighting reference resolved into `MapSector::colors` from
+                // the raw `doom64::Sector.colors`), at most 1 per thing
                 // (`type_id` range coercion, shared with the UDMF arm's
                 // `coerce_u16` call), and at most 9 container-level
                 // `Doom64Warning`s (one per expected nested-WAD sub-lump:
