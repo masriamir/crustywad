@@ -1097,6 +1097,39 @@ fn bsp_dangling_refs_strict_error_lenient_recover() {
     assert_eq!(map.warnings().len(), 3);
 }
 
+// Isolates the subsector-seg-range dangling error in strict mode: unlike
+// `bsp_dangling_refs_strict_error_lenient_recover` above (where the seg's own
+// vertex dangles first and short-circuits before the subsector check ever
+// runs), every seg/vertex/linedef reference here is in range, so the *only*
+// out-of-range cross-reference is the subsector's `first_seg + seg_count`
+// run past the one-entry `segs` arena.
+#[test]
+fn bsp_subsector_seg_range_dangling_strict_errors() {
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", vec![]),
+        ("THINGS", vec![]),
+        ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+        ("SIDEDEFS", sidedef(0)),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SEGS", seg(0, 1, 0, 0)),
+        ("SSECTORS", subsector(5, 0)),
+        ("NODES", node(0x8000, 0x8000)),
+        ("SECTORS", sector()),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "seg",
+            index: 5,
+            from: "subsector",
+            count: 1,
+        }
+    ));
+}
+
 // A NODES lump carrying a ZDBSP signature: strict -> structured error naming
 // the encoding; lenient -> empty BSP arenas + warning, geometry intact.
 #[test]
