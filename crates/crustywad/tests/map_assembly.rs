@@ -882,3 +882,89 @@ fn doom64_dangling_color_ref_strict_errors_lenient_warns() {
     ); // clamped
     assert_eq!(map.warnings().len(), 1);
 }
+
+#[test]
+fn doom64_dangling_sidedef_sector_ref_strict_errors_lenient_warns() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        // Only one sector (index 0) exists; this sidedef points at index 5.
+        &common::d64_sidedef(0, 0, 0, 5),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
+        &[],
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "sector",
+            index: 5,
+            count: 1,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.sidedefs()[0].sector, crustywad::map::SectorIdx(0)); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}
+
+#[test]
+fn doom64_dangling_linedef_vertex_ref_strict_errors_lenient_warns() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        // Only two vertices (0, 1) exist; this linedef's start vertex is 5.
+        &common::d64_linedef(5, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
+        &[],
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "vertex",
+            index: 5,
+            count: 2,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.linedefs()[0].start, crustywad::map::VertexIdx(0)); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}
+
+#[test]
+fn doom64_thing_type_out_of_range_strict_errors_lenient_clamps_and_warns() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        // A negative type_id is out of range for the widened `u16` field.
+        &common::d64_thing(0, 0, 0, 0, -1, 0, 0),
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
+        &[],
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::FieldOutOfRange {
+            field: "thing.type",
+            value: -1,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.things()[0].type_id, 0); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}

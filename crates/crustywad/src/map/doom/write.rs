@@ -1030,6 +1030,27 @@ mod tests {
         }
     }
 
+    /// The mirror case on the sector arena's *ceiling* field specifically:
+    /// `floor_flat` resolves fine, so the failure surfaces from the
+    /// `ceiling_texture` call site rather than being short-circuited by an
+    /// earlier field.
+    #[test]
+    fn sector_ceiling_texture_index_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.sectors[0].ceiling_flat = TextureRef::Index(9);
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_doom_map(&map, &opts).unwrap_err();
+            assert!(matches!(
+                err,
+                DoomWriteError::UnresolvedTextureIndex {
+                    block: "sector",
+                    field: "textureceiling",
+                    index: 0,
+                }
+            ));
+        }
+    }
+
     /// A Doom 64-sourced map has no classic representation (texture indices,
     /// colored lighting) until the texture layer (v0.5.0) exists, so it is
     /// rejected in both strictness modes (ADR-0021 §5) — before any per-field
