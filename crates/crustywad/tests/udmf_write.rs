@@ -450,6 +450,42 @@ fn writes_sidedef_offsety_and_sector_special() {
     assert!(sector.contains("special = 9; "), "{sector}");
 }
 
+// --- ADR-0021 §5: a Doom 64-sourced map has no classic/UDMF representation ---
+// --- (texture indices, colored lighting) until the texture layer (v0.5.0). ---
+
+#[test]
+fn doom64_sourced_map_is_rejected_by_both_writers_in_both_modes() {
+    use crustywad::map::doom::write_doom_map;
+
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0; 5], 0),
+        &common::d64_light(0, 0, 0, 0),
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert_eq!(map.format(), crustywad::map::MapFormat::Doom64);
+
+    for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+        assert!(matches!(
+            write_udmf(&map, &opts).unwrap_err(),
+            UdmfWriteError::UnsupportedSourceFormat {
+                format: crustywad::map::MapFormat::Doom64
+            }
+        ));
+        assert!(matches!(
+            write_doom_map(&map, &opts).unwrap_err(),
+            crustywad::map::doom::DoomWriteError::UnsupportedSourceFormat {
+                format: crustywad::map::MapFormat::Doom64
+            }
+        ));
+    }
+}
+
 // --- Hexen -> UDMF: thing flags must not come out inverted (ADR-0019 §2). ---
 
 /// A Hexen map's thing flags are normalized into the Doom/Boom-MBF layout at

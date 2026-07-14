@@ -170,6 +170,15 @@ pub enum DoomWriteError {
         /// The 0-based block index.
         index: usize,
     },
+    /// The map's source format cannot be expressed by this writer — a Doom 64
+    /// map's texture indices and colored lighting have no classic/UDMF
+    /// representation until the texture layer (v0.5.0) exists (both
+    /// strictness modes; ADR-0021 §5).
+    #[error("cannot write a {format:?}-sourced map")]
+    UnsupportedSourceFormat {
+        /// The assembled map's source format.
+        format: MapFormat,
+    },
 }
 
 /// A non-fatal issue recovered while writing a map to the Doom binary format in
@@ -698,6 +707,8 @@ fn narrow_things(n: &mut Narrower, raw: &[MapThing]) -> Result<Vec<Thing>, DoomW
 /// three-tier data-loss policy.
 ///
 /// # Errors
+/// - [`DoomWriteError::UnsupportedSourceFormat`] — `map.format()` is
+///   [`MapFormat::Doom64`] (returned in **both** strictness modes; ADR-0021 §5).
 /// - [`DoomWriteError::TooManyElements`] — an arena exceeds Doom's `u16` index
 ///   space (returned in **both** strictness modes).
 /// - [`DoomWriteError::UnresolvedTextureIndex`] — a sidedef/sector carries a
@@ -709,6 +720,12 @@ pub fn write_doom_map(
     map: &Map,
     opts: &WriteOptions,
 ) -> Result<(DoomMapLumps, Vec<DoomWriteWarning>), DoomWriteError> {
+    if map.format() == MapFormat::Doom64 {
+        return Err(DoomWriteError::UnsupportedSourceFormat {
+            format: map.format(),
+        });
+    }
+
     for (kind, count, max) in [
         ("vertices", map.vertices().len(), MAX_INDEXED),
         ("sectors", map.sectors().len(), MAX_INDEXED),
@@ -1010,6 +1027,26 @@ mod tests {
                     ..
                 }
             ));
+        }
+    }
+
+    /// A Doom 64-sourced map has no classic representation (texture indices,
+    /// colored lighting) until the texture layer (v0.5.0) exists, so it is
+    /// rejected in both strictness modes (ADR-0021 §5) — before any per-field
+    /// handling runs, so a Doom64 map's `TextureRef::Index` values never reach
+    /// the texture-resolving logic.
+    #[test]
+    fn doom64_sourced_map_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.format = MapFormat::Doom64;
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_doom_map(&map, &opts).unwrap_err();
+            assert_eq!(
+                err,
+                DoomWriteError::UnsupportedSourceFormat {
+                    format: MapFormat::Doom64
+                }
+            );
         }
     }
 

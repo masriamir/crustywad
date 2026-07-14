@@ -61,6 +61,15 @@ pub enum UdmfWriteError {
         /// The 0-based block index.
         index: usize,
     },
+    /// The map's source format cannot be expressed by this writer — a Doom 64
+    /// map's texture indices and colored lighting have no classic/UDMF
+    /// representation until the texture layer (v0.5.0) exists (both
+    /// strictness modes; ADR-0021 §5).
+    #[error("cannot write a {format:?}-sourced map")]
+    UnsupportedSourceFormat {
+        /// The assembled map's source format.
+        format: MapFormat,
+    },
 }
 
 /// A non-fatal issue recovered while writing a map to UDMF text in lenient mode.
@@ -388,6 +397,8 @@ impl Writer {
 /// `f64` coordinates narrow to integer form when whole. See the module docs.
 ///
 /// # Errors
+/// - [`UdmfWriteError::UnsupportedSourceFormat`] — `map.format()` is
+///   [`MapFormat::Doom64`] (returned in **both** strictness modes; ADR-0021 §5).
 /// - [`UdmfWriteError::EmptyNamespace`] — `map.namespace()` is `Some("")` (strict).
 /// - [`UdmfWriteError::NonFiniteCoordinate`] — a coordinate/height is NaN or ∞ (strict).
 /// - [`UdmfWriteError::NoFrontSide`] — a linedef has no front sidedef, which
@@ -398,6 +409,12 @@ pub fn write_udmf(
     map: &Map,
     opts: &WriteOptions,
 ) -> Result<(String, Vec<UdmfWriteWarning>), UdmfWriteError> {
+    if map.format() == MapFormat::Doom64 {
+        return Err(UdmfWriteError::UnsupportedSourceFormat {
+            format: map.format(),
+        });
+    }
+
     let mut w = Writer::new(opts.strictness);
 
     let namespace = match map.namespace() {
@@ -461,7 +478,8 @@ pub fn write_udmf(
 /// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`],
 /// [`UdmfWriteError::NonFiniteCoordinate`], and
 /// [`UdmfWriteError::NoFrontSide`] (strict mode); and
-/// [`UdmfWriteError::UnresolvedTextureIndex`] (both modes).
+/// [`UdmfWriteError::UnresolvedTextureIndex`] and
+/// [`UdmfWriteError::UnsupportedSourceFormat`] (both modes).
 pub fn add_udmf_map(
     builder: &mut WadBuilder,
     name: &str,
@@ -829,6 +847,25 @@ mod tests {
                     ..
                 }
             ));
+        }
+    }
+
+    /// A Doom 64-sourced map has no UDMF representation (texture indices,
+    /// colored lighting) until the texture layer (v0.5.0) exists, so it is
+    /// rejected in both strictness modes (ADR-0021 §5), before namespace
+    /// derivation or any per-field handling runs.
+    #[test]
+    fn doom64_sourced_map_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.format = MapFormat::Doom64;
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_udmf(&map, &opts).unwrap_err();
+            assert_eq!(
+                err,
+                UdmfWriteError::UnsupportedSourceFormat {
+                    format: MapFormat::Doom64
+                }
+            );
         }
     }
 
