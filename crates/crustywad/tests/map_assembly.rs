@@ -681,3 +681,38 @@ fn classic_assembly_produces_texture_names() {
     assert_eq!(map.sidedefs()[0].middle.as_name(), Some("WALL"));
     assert_ne!(TextureRef::Index(7), "FLOOR");
 }
+
+// A nested-WAD MAPxx lump is a Doom 64 map group (ADR-0021 §1): marker only,
+// empty data run, detected as MapFormat::Doom64. A classic empty MAP02
+// marker (no nested magic, no data run) is not a group at all, and a
+// nested-WAD lump with a non-MAPxx name is not a map.
+#[test]
+fn doom64_nested_map_lump_forms_a_group() {
+    let nested = common::build_wad(*b"IWAD", &[("THINGS", &[])]);
+    let bytes = common::build_named_lumps(&[
+        ("MAP01", nested.clone()),
+        ("MAP02", vec![]),
+        ("RESOURCE", nested),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let groups = wad.map_groups();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].name, "MAP01");
+    assert!(groups[0].data_indices.is_empty());
+    assert_eq!(
+        crustywad::map::detect_map_format(&wad, &groups[0]),
+        MapFormat::Doom64
+    );
+    assert!(wad.map_group("MAP01").is_some());
+    assert!(wad.map_group("RESOURCE").is_none());
+}
+
+#[test]
+fn doom64_group_assembles_or_errors_without_panicking() {
+    // Interim guard until the assemble arm lands: must not panic.
+    let nested = common::build_wad(*b"IWAD", &[("THINGS", &[])]);
+    let bytes = common::build_named_lumps(&[("MAP01", nested)]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let _ = Map::assemble(&wad, &group); // Ok or Err both fine; no panic
+}

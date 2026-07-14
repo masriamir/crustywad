@@ -39,6 +39,16 @@ pub fn is_doom64_map_lump(bytes: &[u8]) -> bool {
     bytes.len() >= 12 && (bytes[0..4] == *b"IWAD" || bytes[0..4] == *b"PWAD")
 }
 
+/// Whether `name` is a Doom 64 map marker lump name: `MAP` + two ASCII digits.
+///
+/// Grouping requires this **and** [`is_doom64_map_lump`] on the lump's bytes
+/// (ADR-0021 §1), so an arbitrary lump starting with WAD magic is not
+/// misread as a map, and an empty classic `MAPxx` marker does not match.
+#[must_use]
+pub fn is_doom64_map_name(name: &str) -> bool {
+    name.len() == 5 && name.starts_with("MAP") && name[3..].bytes().all(|b| b.is_ascii_digit())
+}
+
 /// A single `VERTEXES` record (8 bytes): a map vertex in **16.16 fixed-point**.
 ///
 /// Unlike classic Doom's `i16` integer coordinates, Doom 64 stores each axis as

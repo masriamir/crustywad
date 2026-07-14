@@ -716,6 +716,15 @@ impl Map {
                         (normalize_things_hexen(&raw_things), linedefs)
                     }
                     MapFormat::Udmf => unreachable!("Udmf is handled by the outer match arm"),
+                    // A Doom64 group's `data_indices` is always empty (ADR-0021
+                    // §1: its records live in the marker's nested WAD, not as
+                    // sibling data lumps), so `decode_required` above already
+                    // returned `MissingLump { lump: "VERTEXES" }` via `?` before
+                    // this match is ever reached. Task 5 replaces this interim
+                    // binary fallback with a real Doom64 assemble arm.
+                    MapFormat::Doom64 => {
+                        unreachable!("Doom64 groups have no data lumps to reach this arm")
+                    }
                 };
 
                 Ok(Map {

@@ -1,6 +1,7 @@
 //! Identifying one map's lumps within the flat WAD directory (ADR-0015 §1).
 
 use crate::Wad;
+use crate::map::doom64::{is_doom64_map_lump, is_doom64_map_name};
 use crate::map::graph::MapFormat;
 
 /// Recognized classic/extended map **data** lump names. A lump is a map marker
@@ -89,6 +90,18 @@ pub(crate) fn map_groups(wad: &Wad) -> Vec<MapGroup> {
     let mut groups = Vec::new();
     let mut i = 0;
     while i < len {
+        // A Doom 64 map is a nested WAD inside its MAPxx marker lump — no
+        // classic data-lump run follows it (ADR-0021 §1).
+        let lump = &wad.lumps()[i];
+        if is_doom64_map_name(lump.name()) && is_doom64_map_lump(wad.lump_data(lump)) {
+            groups.push(MapGroup {
+                marker_index: i,
+                name: lump.name().to_string(),
+                data_indices: Vec::new(),
+            });
+            i += 1;
+            continue;
+        }
         if let Some(end) = marker_run_end(wad, i) {
             groups.push(build_group(wad, i, end));
             i = end; // skip past the consumed run so data lumps aren't seen as markers
@@ -103,6 +116,20 @@ pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
     let len = wad.lumps().len();
     let mut i = 0;
     while i < len {
+        // A Doom 64 map is a nested WAD inside its MAPxx marker lump — no
+        // classic data-lump run follows it (ADR-0021 §1).
+        let lump = &wad.lumps()[i];
+        if is_doom64_map_name(lump.name()) && is_doom64_map_lump(wad.lump_data(lump)) {
+            if lump.name() == name {
+                return Some(MapGroup {
+                    marker_index: i,
+                    name: lump.name().to_string(),
+                    data_indices: Vec::new(),
+                });
+            }
+            i += 1;
+            continue;
+        }
         if let Some(end) = marker_run_end(wad, i) {
             // Build (and allocate) only the matching group, returning early.
             if wad.lumps()[i].name() == name {
@@ -118,10 +145,15 @@ pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
 
 /// Classifies the map format of `group` from its lump names (ADR-0014).
 ///
-/// A `TEXTMAP` lump marks a UDMF map; otherwise a `BEHAVIOR` lump marks a Hexen
-/// map; otherwise the group is treated as the classic Doom binary layout.
+/// The marker lump's bytes are checked first: nested `IWAD`/`PWAD` magic
+/// (ADR-0021 §1) marks a Doom 64 map. Otherwise, a `TEXTMAP` lump marks a
+/// UDMF map; otherwise a `BEHAVIOR` lump marks a Hexen map; otherwise the
+/// group is treated as the classic Doom binary layout.
 #[must_use]
 pub fn detect_map_format(wad: &Wad, group: &MapGroup) -> MapFormat {
+    if is_doom64_map_lump(wad.lump_data(&wad.lumps()[group.marker_index])) {
+        return MapFormat::Doom64;
+    }
     if group_has_lump(wad, group, "TEXTMAP") {
         return MapFormat::Udmf;
     }

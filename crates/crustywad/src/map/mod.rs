@@ -35,7 +35,10 @@ pub use assemble::MapAssembleError;
 pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
 #[cfg(feature = "write")]
 pub use doom::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, write_doom_map};
-pub use doom64::{Doom64Map, Doom64ReadError, Doom64Warning, is_doom64_map_lump, read_doom64_map};
+pub use doom64::{
+    Doom64Map, Doom64ReadError, Doom64Warning, is_doom64_map_lump, is_doom64_map_name,
+    read_doom64_map,
+};
 pub use graph::{
     LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapSector, MapSidedef, MapThing,
     MapVertex, MapWarning, SectorIdx, SidedefIdx, Special, TextureRef, VertexIdx,

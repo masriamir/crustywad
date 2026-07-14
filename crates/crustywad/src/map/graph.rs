@@ -2,7 +2,8 @@
 
 /// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom],
 /// [`Hexen`][MapFormat::Hexen], and [`Udmf`][MapFormat::Udmf] are assembled
-/// today; Doom64 (Epic #17) reuses this same model but isn't implemented yet.
+/// today; [`Doom64`][MapFormat::Doom64] is detected (Task 3, ADR-0021 §1) but
+/// not yet assembled into a [`Map`] (Epic #17 tracks the remaining work).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {
@@ -17,6 +18,10 @@ pub enum MapFormat {
     /// [`map::udmf`][crate::map::udmf]); detected by the presence of a
     /// `TEXTMAP` lump.
     Udmf,
+    /// The Doom 64 nested-WAD layout — the map's record lumps live inside the
+    /// `MAPxx` marker lump itself (see [`map::doom64`][crate::map::doom64]);
+    /// detected by the marker's nested `IWAD`/`PWAD` magic (ADR-0021 §1).
+    Doom64,
 }
 
 /// A zero-based index into [`Map::vertices`].
