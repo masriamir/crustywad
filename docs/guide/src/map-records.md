@@ -124,8 +124,9 @@ graph, resolving cross-references between vertices, sidedefs, and sectors so cal
 have to index arenas by hand.
 
 > **Multi-format assembly.** `Map::assemble` detects the map format from its lumps: the marker
-> lump's bytes are checked first for the nested `IWAD`/`PWAD` magic that marks a Doom 64 map
-> (see [Doom 64 maps](#doom-64-maps) below); otherwise a `TEXTMAP` lump marks a UDMF map, a
+> lump is checked first under the Doom 64 dual condition — a `MAPxx` name **and** nested
+> `IWAD`/`PWAD` magic in its bytes, the same rule grouping applies (see
+> [Doom 64 maps](#doom-64-maps) below); otherwise a `TEXTMAP` lump marks a UDMF map, a
 > `BEHAVIOR` lump marks a Hexen map, and anything else is treated as the classic Doom binary
 > layout. The assembled `Map` carries its format via `map.format()`, which returns
 > `MapFormat::Doom` for classic Doom/Doom II/Heretic maps (which share the same binary record
@@ -223,11 +224,12 @@ use crustywad::Wad;
 use crustywad::map::Map;
 
 # let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
-# let group = wad.map_group("E1M1").unwrap();
-let map = Map::assemble(&wad, &group)?;
-for sector in map.sectors() {
-    if sector.floor_flat == "LAVA1" {
-        println!("lava sector, ceiling flat: {:?}", sector.ceiling_flat.as_name());
+if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&wad, &group)?;
+    for sector in map.sectors() {
+        if sector.floor_flat == "LAVA1" {
+            println!("lava sector, ceiling flat: {:?}", sector.ceiling_flat.as_name());
+        }
     }
 }
 # Ok::<(), crustywad::map::MapAssembleError>(())
@@ -263,18 +265,22 @@ linedef's `special` still holds its classic action number and sector tag (the la
 use crustywad::map::{Map, MapFormat};
 
 # let wad = crustywad::Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec())?;
-# let group = wad.map_group("MAP01").unwrap();
-let map = Map::assemble(&wad, &group)?;
+if let Some(group) = wad.map_group("MAP01") {
+    let map = Map::assemble(&wad, &group)?;
 
-for thing in map.things() {
-    if map.format() == MapFormat::Hexen {
-        println!("Hexen thing ID: {}, height: {}", thing.id, thing.height);
+    for thing in map.things() {
+        if map.format() == MapFormat::Hexen {
+            println!("Hexen thing ID: {}, height: {}", thing.id, thing.height);
+        }
     }
-}
 
-for linedef in map.linedefs() {
-    if map.format() == MapFormat::Hexen {
-        println!("Hexen line special: {}, args: {:?}", linedef.special.special, linedef.special.args);
+    for linedef in map.linedefs() {
+        if map.format() == MapFormat::Hexen {
+            println!(
+                "Hexen line special: {}, args: {:?}",
+                linedef.special.special, linedef.special.args
+            );
+        }
     }
 }
 # Ok::<(), crustywad::map::MapAssembleError>(())
@@ -302,10 +308,11 @@ use crustywad::map::Map;
 use crustywad::{ParseOptions, Wad};
 
 # let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
-# let group = wad.map_group("E1M1").unwrap();
-let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())?;
-for warning in map.warnings() {
-    eprintln!("{warning}");
+if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())?;
+    for warning in map.warnings() {
+        eprintln!("{warning}");
+    }
 }
 # Ok::<(), crustywad::map::MapAssembleError>(())
 ```
