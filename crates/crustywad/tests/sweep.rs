@@ -35,7 +35,7 @@ fn sweep_assembles_every_map_of_every_wad() {
     for path in &paths {
         // Retail containers must parse strictly (strict mode collects no
         // warnings by construction; assert emptiness anyway as a tripwire).
-        let wad = Wad::from_path_with_options(path, ParseOptions::default())
+        let wad = Wad::from_path_with_options(path, ParseOptions::strict())
             .unwrap_or_else(|e| panic!("{}: container failed strict parse: {e}", path.display()));
         assert!(
             wad.warnings().is_empty(),
@@ -46,7 +46,7 @@ fn sweep_assembles_every_map_of_every_wad() {
 
         // Classic marker+run maps (Doom / Heretic / Hexen / UDMF).
         for group in wad.map_groups() {
-            for options in [ParseOptions::default(), ParseOptions::lenient()] {
+            for options in [ParseOptions::strict(), ParseOptions::lenient()] {
                 let map = Map::assemble_with_options(&wad, &group, options).unwrap_or_else(|e| {
                     panic!(
                         "{}: map {} failed {:?} assembly: {e}",
@@ -82,7 +82,7 @@ fn sweep_assembles_every_map_of_every_wad() {
             if !is_doom64_map_lump(bytes) {
                 continue;
             }
-            for options in [ParseOptions::default(), ParseOptions::lenient()] {
+            for options in [ParseOptions::strict(), ParseOptions::lenient()] {
                 let map = read_doom64_map(bytes, &options).unwrap_or_else(|e| {
                     panic!(
                         "{}: Doom 64 map {} failed {:?} read: {e}",
