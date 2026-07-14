@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-fb7ed83d.js";
+            window.path_to_searchindex_js = "searchindex-95208586.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -344,12 +344,13 @@ use crustywad::map::Map;
 
     for linedef in map.linedefs() {
         let (start, end) = map.linedef_vertices(linedef);
-        let right = map.linedef_right(linedef);
-        println!(
-            "line ({}, {}) -&gt; ({}, {}), front sector floor {}",
-            start.x, start.y, end.x, end.y,
-            map.sidedef_sector(right).floor_height
-        );
+        if let Some(right) = map.linedef_right(linedef) {
+            println!(
+                "line ({}, {}) -&gt; ({}, {}), front sector floor {}",
+                start.x, start.y, end.x, end.y,
+                map.sidedef_sector(right).floor_height
+            );
+        }
     }
 }
 <span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
@@ -363,7 +364,7 @@ use crustywad::map::Map;
 </thead>
 <tbody>
 <tr><td><code>map.linedef_vertices(linedef)</code></td><td><code>(start, end)</code> vertex pair</td></tr>
-<tr><td><code>map.linedef_right(linedef)</code></td><td>right (front) sidedef</td></tr>
+<tr><td><code>map.linedef_right(linedef)</code></td><td>right (front) sidedef, or <code>None</code></td></tr>
 <tr><td><code>map.linedef_left(linedef)</code></td><td>left (back) sidedef, or <code>None</code></td></tr>
 <tr><td><code>map.sidedef_sector(sidedef)</code></td><td>the sidedef’s sector</td></tr>
 </tbody>
@@ -374,12 +375,15 @@ use crustywad::map::Map;
 index, because assembly validated every cross-reference before <code>Map</code> was constructed.
 (Because <code>MapLinedef</code>/<code>MapSidedef</code> have public index fields, passing a hand-constructed
 value with an out-of-range index can still panic.)</p>
-<h3 id="one-sided-lines"><a class="header" href="#one-sided-lines">One-sided lines</a></h3>
-<p>On disk, a <code>Linedef</code>’s <code>left_sidedef</code> field uses the sentinel value <code>0xffff</code> to mean “no
-back sidedef” (a one-sided line, such as an outer wall). Assembly translates that sentinel
-into <code>MapLinedef.left: Option&lt;SidedefIdx&gt;</code> — <code>None</code> for one-sided lines, <code>Some(idx)</code> for
-two-sided lines. <code>map.linedef_left(linedef)</code> mirrors this: it returns <code>None</code> for a
-one-sided line rather than an error.</p>
+<h3 id="one-sided-and-sideless-lines"><a class="header" href="#one-sided-and-sideless-lines">One-sided (and sideless) lines</a></h3>
+<p>On disk, either of a <code>Linedef</code>’s sidedef fields may hold the sentinel value <code>0xffff</code>,
+meaning “no sidedef on this side”. A <code>left_sidedef</code> of <code>0xffff</code> is the everyday case — a
+one-sided line, such as an outer wall. A <code>right_sidedef</code> of <code>0xffff</code> is rare but
+engine-sanctioned (vanilla guards both fields identically): retail maps use it for
+invisible blocking lines with no render surfaces at all. Assembly translates the sentinel
+into <code>Option&lt;SidedefIdx&gt;</code> on both fields — <code>MapLinedef.left</code> and <code>MapLinedef.right</code> are
+each <code>None</code> when their side is absent — and <code>map.linedef_left(linedef)</code> /
+<code>map.linedef_right(linedef)</code> mirror this by returning <code>Option</code> rather than an error.</p>
 <h3 id="extended-thing-and-linedef-fields"><a class="header" href="#extended-thing-and-linedef-fields">Extended thing and linedef fields</a></h3>
 <p>Hexen maps extend the classic Doom binary record layout with additional fields on things and
 linedefs. When assembled, a <code>MapThing</code> includes <code>id</code> (thing ID for cross-references), <code>height</code>
