@@ -11,6 +11,7 @@ allowing callers to opt in to additional capabilities.
 | [`freedoom-tests`](#freedoom-tests) | no | Integration tests against local Freedoom WAD fixtures (auto-fetchable) |
 | [`hexen-tests`](#hexen-tests) | no | Integration tests against a local Hexen IWAD (not auto-fetchable) |
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
+| [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
 
 ---
@@ -163,6 +164,42 @@ The test skips gracefully when `CRUSTYWAD_DOOM64_DIR` is unset or the file is mi
 
 ---
 
+## `sweep-tests`
+
+**Enables:** the integration test in `crates/crustywad/tests/sweep.rs`
+
+### Purpose
+
+Gates the retail-WAD sweep: for every WAD file in a caller-supplied directory, it parses
+the container strictly, assembles **every** map group in **both** strictness modes
+(reading Doom 64 nested-WAD maps through `read_doom64_map`), and asserts zero errors and
+zero warnings throughout — no allowlist. It is the regression net for the map read path
+against real retail data. Retail WADs are **not freely redistributable** — no fetch
+script, no committed fixture; supply your own collection locally.
+
+### Running the tests
+
+Point `CRUSTYWAD_SWEEP_DIR` at a directory of WAD files. **The path must be absolute** —
+cargo runs the test binary with its CWD at the package root (`crates/crustywad`), so a
+workspace-relative path never resolves and the sweep skips silently:
+
+```bash
+CRUSTYWAD_SWEEP_DIR=/path/to/wads \
+  cargo test -p crustywad --features sweep-tests --test sweep
+```
+
+Or use the `just` recipe, which defaults to the repository's gitignored `PWADS/`
+directory and handles the absolute path for you:
+
+```bash
+just test-sweep              # sweeps ./PWADS
+just test-sweep dir=/path/to/wads
+```
+
+The test skips gracefully when `CRUSTYWAD_SWEEP_DIR` is unset or contains no WAD files.
+
+---
+
 ## `write`
 
 **Enables:** `WadBuilder`, `WriteError`, `WriteWarning`, `WriteOptions`, and `Wad::to_builder`
@@ -229,6 +266,7 @@ let rebuilt = wad.to_builder().build().unwrap();
 | Test with Freedoom fixtures | `CRUSTYWAD_FREEDOOM_DIR=… cargo test -p crustywad --features freedoom-tests` |
 | Test with Hexen fixture | `CRUSTYWAD_HEXEN_DIR=… cargo test -p crustywad --features hexen-tests` |
 | Test with Doom 64 fixture | `CRUSTYWAD_DOOM64_DIR=… cargo test -p crustywad --features doom64-tests` |
+| Sweep a local WAD collection | `CRUSTYWAD_SWEEP_DIR=… cargo test -p crustywad --features sweep-tests` |
 | Build with `write` | `cargo build -p crustywad --features write` |
 | Test with `write` | `cargo test -p crustywad --features write` |
 | Full CI check | `just ci` |

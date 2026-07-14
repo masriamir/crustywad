@@ -29,6 +29,7 @@ mmap = ["dep:memmap2"]
 freedoom-tests = []
 hexen-tests = []
 doom64-tests = []
+sweep-tests = []
 write = []
 
 [dependencies]

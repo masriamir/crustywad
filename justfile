@@ -50,6 +50,14 @@ test-mmap:
 test-freedoom dir=(justfile_directory() / "tests/fixtures/freedoom"):
     CRUSTYWAD_FREEDOOM_DIR="{{dir}}" cargo test -p crustywad --features freedoom-tests,write
 
+# Sweep a local retail-WAD collection: assemble every map of every WAD in both
+# strictness modes (#254). Nothing is fetched — supply your own WADs; the repo's
+# gitignored PWADS/ directory is the default. The path must be absolute (cargo
+# runs the test binary with its CWD at the package root, so a workspace-relative
+# path never resolves and the sweep skips silently).
+test-sweep dir=(justfile_directory() / "PWADS"):
+    CRUSTYWAD_SWEEP_DIR="{{dir}}" cargo test -p crustywad --features sweep-tests --test sweep -- --nocapture
+
 # Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
 fuzz target="fuzz_wad_strict":
     cd fuzz && cargo fuzz run {{target}}

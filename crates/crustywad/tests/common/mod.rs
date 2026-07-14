@@ -219,3 +219,41 @@ pub fn iwad_files(env_var: &str, candidates: &[&str]) -> Vec<PathBuf> {
     }
     found
 }
+
+/// Every `*.wad` file (case-insensitive extension) inside `iwad_dir(env_var)`,
+/// sorted by path.
+///
+/// Returns an empty `Vec` — the caller should skip its test — when `env_var`
+/// is unset, points to a non-directory, or contains no WAD files; prints a
+/// skip note to stderr in each case.
+#[allow(dead_code)]
+pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
+    let Some(dir) = iwad_dir(env_var) else {
+        eprintln!("skipping fixture test: {env_var} not set");
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        eprintln!(
+            "skipping fixture test: {env_var} ({}) is not a readable directory",
+            dir.display()
+        );
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("wad"))
+        })
+        .collect();
+    found.sort();
+    if found.is_empty() {
+        eprintln!(
+            "skipping fixture test: {env_var}: no WAD files found in {}",
+            dir.display()
+        );
+    }
+    found
+}
