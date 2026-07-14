@@ -172,27 +172,23 @@ impl Writer {
         // (`right: None`, whatever its source — see `MapLinedef::right`;
         // ADR-0020) is unrepresentable: strict errors, lenient writes the
         // port-tolerated `-1` and warns.
-        let sidefront = match l.right {
-            // Format the arena index directly — no numeric narrowing, so a
-            // hand-constructed `Map` (the fields are public) can never panic
-            // here.
-            Some(r) => r.0.to_string(),
+        self.out.push_str("linedef { ");
+        write!(self.out, "v1 = {}; v2 = {}; ", l.start.0, l.end.0).expect(INFALLIBLE);
+        match l.right {
+            // Write the arena index directly — no numeric narrowing (a
+            // hand-constructed `Map`'s public fields can never panic here)
+            // and no per-linedef allocation.
+            Some(r) => write!(self.out, "sidefront = {}; ", r.0).expect(INFALLIBLE),
             None => match self.strictness {
+                // The partially written buffer is discarded with the error.
                 Strictness::Strict => return Err(UdmfWriteError::NoFrontSide { index }),
                 Strictness::Lenient => {
                     self.warnings
                         .push(UdmfWriteWarning::NoFrontSideDefaulted { index });
-                    "-1".to_string()
+                    self.out.push_str("sidefront = -1; ");
                 }
             },
-        };
-        self.out.push_str("linedef { ");
-        write!(
-            self.out,
-            "v1 = {}; v2 = {}; sidefront = {sidefront}; ",
-            l.start.0, l.end.0
-        )
-        .expect(INFALLIBLE);
+        }
         if let Some(back) = l.left {
             write!(self.out, "sideback = {}; ", back.0).expect(INFALLIBLE);
         }
