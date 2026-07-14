@@ -44,6 +44,18 @@ pub struct LinedefIdx(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LightIdx(pub usize);
 
+/// A zero-based index into [`Map::segs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SegIdx(pub usize);
+
+/// A zero-based index into [`Map::subsectors`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SubsectorIdx(pub usize);
+
+/// A zero-based index into [`Map::nodes`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeIdx(pub usize);
+
 /// A normalized map vertex; coordinates are `f64` so binary `i16` widens
 /// losslessly and future UDMF floats fit natively.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -253,6 +265,70 @@ pub struct MapThing {
     pub special: Special,
 }
 
+/// A child reference in the BSP tree — either an internal [`MapNode`] or a
+/// leaf [`MapSubsector`]. Decoded once at assembly from the on-disk `u16`'s
+/// bit 15 (set for a subsector leaf, clear for a node), which the raw
+/// [`Node`][crate::map::common::Node] record does not distinguish (ADR-0015
+/// amendment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeChild {
+    /// An internal BSP node, indexed into [`Map::nodes`].
+    Node(NodeIdx),
+    /// A leaf subsector, indexed into [`Map::subsectors`].
+    Subsector(SubsectorIdx),
+}
+
+/// A normalized seg (a linedef fragment used to build a subsector's walls).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapSeg {
+    /// The index of the seg's start vertex.
+    pub start: VertexIdx,
+    /// The index of the seg's end vertex.
+    pub end: VertexIdx,
+    /// The seg's raw binary angle (BAM); render-domain interpretation is
+    /// deferred to the viewer work (#64).
+    pub angle: u16,
+    /// The index of the linedef this seg was cut from.
+    pub linedef: LinedefIdx,
+    /// The seg's direction relative to its linedef: `0` if the seg runs the
+    /// same way as the linedef, `1` if reversed.
+    pub direction: u16,
+    /// The seg's distance along its linedef from the linedef's start vertex,
+    /// in map units — the on-disk `i16` widened.
+    pub offset: i32,
+}
+
+/// A normalized subsector (a leaf of the BSP tree): a contiguous run of segs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapSubsector {
+    /// The validated `first_seg..first_seg + seg_count` run into [`Map::segs`].
+    pub segs: std::ops::Range<usize>,
+}
+
+/// A normalized BSP node: a partition line plus its two children and their
+/// bounding boxes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapNode {
+    /// The X coordinate of the partition line's start point, in map units.
+    pub x: i32,
+    /// The Y coordinate of the partition line's start point, in map units.
+    pub y: i32,
+    /// The partition line's X direction from `(x, y)`, in map units.
+    pub dx: i32,
+    /// The partition line's Y direction from `(x, y)`, in map units.
+    pub dy: i32,
+    /// Axis-aligned bounding box for the right child, as `[top, bottom, left,
+    /// right]` in map units.
+    pub right_bbox: [i32; 4],
+    /// Axis-aligned bounding box for the left child, as `[top, bottom, left,
+    /// right]` in map units.
+    pub left_bbox: [i32; 4],
+    /// The right (front) child: another node, or a subsector leaf.
+    pub right: NodeChild,
+    /// The left (back) child: another node, or a subsector leaf.
+    pub left: NodeChild,
+}
+
 /// A non-fatal issue recorded during lenient map assembly.
 ///
 /// Produced by [`Map::assemble_with_options`] in [`Strictness::Lenient`] mode
@@ -321,6 +397,9 @@ pub struct Map {
     pub(crate) sectors: Vec<MapSector>,
     pub(crate) things: Vec<MapThing>,
     pub(crate) lights: Vec<MapLight>,
+    pub(crate) segs: Vec<MapSeg>,
+    pub(crate) subsectors: Vec<MapSubsector>,
+    pub(crate) nodes: Vec<MapNode>,
     pub(crate) warnings: Vec<MapWarning>,
 }
 
@@ -387,6 +466,36 @@ impl Map {
     #[must_use]
     pub fn lights(&self) -> &[MapLight] {
         &self.lights
+    }
+
+    /// Returns the map's seg arena. Empty for a map assembled without BSP
+    /// data (no `SEGS` lump, or BSP traversal not yet performed).
+    #[must_use]
+    pub fn segs(&self) -> &[MapSeg] {
+        &self.segs
+    }
+
+    /// Returns the map's subsector arena. Empty for a map assembled without
+    /// BSP data (no `SSECTORS` lump, or BSP traversal not yet performed).
+    #[must_use]
+    pub fn subsectors(&self) -> &[MapSubsector] {
+        &self.subsectors
+    }
+
+    /// Returns the map's BSP node arena. Empty for a map assembled without
+    /// BSP data (no `NODES` lump, or BSP traversal not yet performed).
+    #[must_use]
+    pub fn nodes(&self) -> &[MapNode] {
+        &self.nodes
+    }
+
+    /// Returns the index of the BSP tree's root node, or `None` if the map
+    /// has no nodes. By convention the root is the *last* node in the arena
+    /// — Chocolate Doom's `R_RenderPlayerView` starts at
+    /// `R_RenderBSPNode(numnodes - 1)`.
+    #[must_use]
+    pub fn bsp_root(&self) -> Option<NodeIdx> {
+        (!self.nodes.is_empty()).then(|| NodeIdx(self.nodes.len() - 1))
     }
 
     /// Resolves a linedef's start/end vertices. Total for elements produced by
@@ -469,6 +578,9 @@ mod tests {
             }],
             things: vec![],
             lights: vec![],
+            segs: Vec::new(),
+            subsectors: Vec::new(),
+            nodes: Vec::new(),
             warnings: vec![],
         }
     }
@@ -491,5 +603,14 @@ mod tests {
         assert!(m.lights().is_empty());
         assert_eq!(m.sectors()[0].colors, None);
         assert_eq!(m.sectors()[0].flags, 0);
+    }
+
+    #[test]
+    fn maps_without_bsp_have_empty_arenas_and_no_root() {
+        let m = tiny_map();
+        assert!(m.segs().is_empty());
+        assert!(m.subsectors().is_empty());
+        assert!(m.nodes().is_empty());
+        assert_eq!(m.bsp_root(), None);
     }
 }

@@ -770,6 +770,9 @@ impl Map {
                     sectors,
                     things,
                     lights: vec![],
+                    segs: Vec::new(),
+                    subsectors: Vec::new(),
+                    nodes: Vec::new(),
                     warnings,
                 })
             }
@@ -1004,6 +1007,9 @@ fn assemble_doom64(
         sectors,
         things,
         lights,
+        segs: Vec::new(),
+        subsectors: Vec::new(),
+        nodes: Vec::new(),
         warnings,
     })
 }
@@ -1059,6 +1065,9 @@ fn assemble_udmf(
         sectors,
         things,
         lights: vec![],
+        segs: Vec::new(),
+        subsectors: Vec::new(),
+        nodes: Vec::new(),
         warnings,
     })
 }

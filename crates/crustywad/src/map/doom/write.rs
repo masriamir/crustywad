@@ -852,6 +852,9 @@ mod tests {
                 },
             }],
             lights: vec![],
+            segs: Vec::new(),
+            subsectors: Vec::new(),
+            nodes: Vec::new(),
             warnings: vec![],
         }
     }

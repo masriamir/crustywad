@@ -515,6 +515,9 @@ mod tests {
             sectors: Vec::new(),
             things,
             lights: Vec::new(),
+            segs: Vec::new(),
+            subsectors: Vec::new(),
+            nodes: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -549,6 +552,9 @@ mod tests {
             }],
             things: Vec::new(),
             lights: Vec::new(),
+            segs: Vec::new(),
+            subsectors: Vec::new(),
+            nodes: Vec::new(),
             warnings: Vec::new(),
         }
     }
