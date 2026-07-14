@@ -69,6 +69,36 @@ error: broken.wad: invalid WAD magic
 
 The error message goes to stderr in human format; the exit code is `2`.
 
+#### Deep validation
+
+`--deep` goes beyond the header and directory: after the container parses,
+every map in the WAD is assembled — all four formats, including Doom 64
+nested-WAD maps — with per-map errors and warnings reported. Validation
+continues past a failing map so one corrupt map cannot mask another.
+
+```text
+$ cwad validate --deep doom.wad
+ok: doom.wad (36 map(s) validated)
+```
+
+On a WAD whose `E1M1` has a corrupt lump:
+
+```text
+$ cwad validate --deep broken.wad
+error: map E1M1: failed to decode LINEDEFS records: record stream ended mid-record at byte offset 0
+error: broken.wad: 1 of 2 map(s) failed validation
+```
+
+Per-map diagnostics go to stderr; the exit code is `1` if any map fails —
+ADR-0008's "validation errors found" code, distinct from `2` (the container
+itself is unreadable or malformed). The
+strictness flag applies: under `--lenient`, recoverable per-map issues become
+warnings on stderr and the exit code stays `0`. In JSON format, `--deep` emits
+one newline-delimited record per map (`{"map":"E1M1","ok":true,"warnings":0}`
+or `{"map":"E1M1","ok":false,"error":"..."}`) followed by the usual summary
+object; in CSV it emits a `map,ok,error` table instead of the shallow
+`ok`/`true` pair.
+
 ### merge
 
 Combine multiple WAD files into one, writing lumps in the order the input
@@ -294,7 +324,7 @@ true
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Differences found (`diff` only) |
+| `1` | Negative result — the two WADs differ (`diff`), or `validate --deep` found map validation errors |
 | `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found |
 | `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`, `merge`, or `convert` — note a non-ASCII lump name decodes under a lenient *read* but is rejected on *write* in both strictness modes); for `convert`, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as `BEHAVIOR` that the target format cannot carry), or a `--map NAME` that matches no map in the WAD |
 
