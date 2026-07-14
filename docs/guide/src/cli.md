@@ -85,7 +85,7 @@ On a WAD whose `E1M1` has a corrupt lump:
 
 ```text
 $ cwad validate --deep broken.wad
-error: map E1M1: failed to decode LINEDEFS records
+error: map E1M1: failed to decode LINEDEFS records: record stream ended mid-record at byte offset 0
 error: broken.wad: 1 of 2 map(s) failed validation
 ```
 

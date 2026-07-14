@@ -22,7 +22,7 @@ use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 /// newline-delimited record per map followed by the same summary object the
 /// shallow mode prints; CSV emits a `map,ok,error` table. Exits `0` when every
 /// map assembles (lenient-mode warnings allowed, reported on stderr), `2` when
-/// any map fails — consistent with ADR-0008\'s malformed-WAD convention.
+/// any map fails — consistent with ADR-0008's malformed-WAD convention.
 fn deep_validate(wad: &Wad, path: &std::path::Path, format: Format, options: ParseOptions) -> i32 {
     use crustywad::map::Map;
 
