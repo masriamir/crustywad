@@ -67,11 +67,13 @@ pub struct MapLinedef {
     /// The index of the linedef's end vertex.
     pub end: VertexIdx,
     /// The index of the linedef's right (front) sidedef; `None` == no front
-    /// side (the `0xffff` sentinel — vanilla-sanctioned and rare, e.g. an
-    /// invisible blocking line; ADR-0020).
+    /// side. Sources: the binary `0xffff` sentinel (vanilla-sanctioned and
+    /// rare, e.g. an invisible blocking line; ADR-0020) or lenient-mode
+    /// recovery of a dangling reference.
     pub right: Option<SidedefIdx>,
-    /// The index of the linedef's left (back) sidedef. `None` == one-sided
-    /// (the `0xffff` sentinel).
+    /// The index of the linedef's left (back) sidedef; `None` == one-sided.
+    /// Sources: the binary `0xffff` sentinel, an omitted UDMF `sideback`, or
+    /// lenient-mode recovery of a dangling reference.
     pub left: Option<SidedefIdx>,
     /// The linedef's bit flags (blocking, two-sided, secret, etc.).
     pub flags: u32,
@@ -306,11 +308,11 @@ impl Map {
         (&self.vertices[l.start.0], &self.vertices[l.end.0])
     }
 
-    /// Resolves a linedef's right (front) sidedef, if present (`None` == the
-    /// `0xffff` "no front side" sentinel; ADR-0020). Total for elements
-    /// produced by this map's own assembly; a linedef carrying an out-of-range
-    /// index (e.g. hand-constructed, since `MapLinedef`'s fields are public)
-    /// may panic.
+    /// Resolves a linedef's right (front) sidedef, if present (`None` == no
+    /// front side; see [`MapLinedef::right`] for its sources). Total for
+    /// elements produced by this map's own assembly; a linedef carrying an
+    /// out-of-range index (e.g. hand-constructed, since `MapLinedef`'s fields
+    /// are public) may panic.
     #[must_use]
     pub fn linedef_right(&self, l: &MapLinedef) -> Option<&MapSidedef> {
         l.right.map(|i| &self.sidedefs[i.0])
