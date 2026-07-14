@@ -219,3 +219,69 @@ pub fn iwad_files(env_var: &str, candidates: &[&str]) -> Vec<PathBuf> {
     }
     found
 }
+
+/// Every `*.wad` file (case-insensitive extension) inside `iwad_dir(env_var)`,
+/// sorted by path.
+///
+/// Returns an empty `Vec` — the caller should skip its test — when `env_var`
+/// is unset, points to a non-directory, or contains no WAD files; prints a
+/// skip note to stderr in each case.
+#[allow(dead_code)]
+pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
+    let Some(dir) = iwad_dir(env_var) else {
+        eprintln!("skipping fixture test: {env_var} not set");
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        eprintln!(
+            "skipping fixture test: {env_var} ({}) is not a readable directory",
+            dir.display()
+        );
+        return Vec::new();
+    };
+    // Fail fast on an unreadable entry rather than silently dropping it — a
+    // sweep that skips part of the directory would pass without actually
+    // covering the collection.
+    let mut found: Vec<PathBuf> = entries
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{env_var}: failed to read an entry in {}: {e}",
+                        dir.display()
+                    )
+                })
+                .path()
+        })
+        .filter(|p| {
+            if !p
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("wad"))
+            {
+                return false;
+            }
+            // `Path::is_file` swallows metadata errors (permissions, broken
+            // symlinks) as `false`; stat explicitly so those fail loudly too.
+            let meta = std::fs::metadata(p)
+                .unwrap_or_else(|e| panic!("{env_var}: failed to stat {}: {e}", p.display()));
+            meta.is_file()
+        })
+        .collect();
+    found.sort();
+    if found.is_empty() {
+        eprintln!(
+            "skipping fixture test: {env_var}: no WAD files found in {}",
+            dir.display()
+        );
+    }
+    found
+}
+
+/// A Doom 64 map marker lump is named `MAPxx` (`MAP` + two ASCII digits).
+///
+/// Shared by the `doom64-tests` fixture test and the `sweep-tests` sweep so
+/// the naming rule cannot drift between them.
+#[allow(dead_code)]
+pub fn is_doom64_map_name(name: &str) -> bool {
+    name.len() == 5 && name.starts_with("MAP") && name[3..].bytes().all(|b| b.is_ascii_digit())
+}

@@ -229,6 +229,7 @@ See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full f
 | `freedoom-tests` | no | Enables optional integration tests against local Freedoom WADs (supplied via `CRUSTYWAD_FREEDOOM_DIR`; auto-fetchable via `just fetch-fixtures`) |
 | `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD (supplied via `CRUSTYWAD_HEXEN_DIR`; not auto-fetchable) |
 | `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD (supplied via `CRUSTYWAD_DOOM64_DIR`; not auto-fetchable) |
+| `sweep-tests` | no | Enables an optional sweep test that assembles every map of every WAD in a local collection (supplied via `CRUSTYWAD_SWEEP_DIR`; not auto-fetchable; `just test-sweep`) |
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
 
 ## Commit conventions

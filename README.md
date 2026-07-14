@@ -170,6 +170,7 @@ cargo run -p crustywad-cli -- list path/to/file.wad
 | `freedoom-tests` | no | Enables optional integration tests against local Freedoom WADs, supplied via `CRUSTYWAD_FREEDOOM_DIR` (auto-fetchable via `just fetch-fixtures`). |
 | `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD, supplied via `CRUSTYWAD_HEXEN_DIR` (not auto-fetchable). |
 | `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD, supplied via `CRUSTYWAD_DOOM64_DIR` (not auto-fetchable). |
+| `sweep-tests` | no | Enables an optional sweep test that assembles every map of every WAD in a local collection, supplied via `CRUSTYWAD_SWEEP_DIR` (not auto-fetchable). |
 
 ## Development
 
