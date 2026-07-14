@@ -818,6 +818,8 @@ mod tests {
                 light: 160,
                 special: 0,
                 tag: 0,
+                colors: None,
+                flags: 0,
             }],
             things: vec![MapThing {
                 x: 32.0,
@@ -832,6 +834,7 @@ mod tests {
                     args: [0; 5],
                 },
             }],
+            lights: vec![],
             warnings: vec![],
         }
     }

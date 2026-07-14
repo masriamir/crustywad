@@ -291,6 +291,8 @@ fn normalize_sectors(raw: &[common::Sector]) -> Vec<MapSector> {
             light: i32::from(s.light_level),
             special: i32::from(s.special_type),
             tag: i32::from(s.tag),
+            colors: None,
+            flags: 0,
         })
         .collect()
 }
@@ -520,6 +522,8 @@ fn normalize_udmf_sectors(raw: &[crate::map::udmf::UdmfSector]) -> Vec<MapSector
             light: s.lightlevel,
             special: s.special,
             tag: s.id,
+            colors: None,
+            flags: 0,
         })
         .collect()
 }
@@ -723,6 +727,7 @@ impl Map {
                     sidedefs,
                     sectors,
                     things,
+                    lights: vec![],
                     warnings,
                 })
             }
@@ -780,6 +785,7 @@ fn assemble_udmf(
         sidedefs,
         sectors,
         things,
+        lights: vec![],
         warnings,
     })
 }

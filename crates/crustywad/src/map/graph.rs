@@ -35,6 +35,10 @@ pub struct SectorIdx(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LinedefIdx(pub usize);
 
+/// A zero-based index into [`Map::lights`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LightIdx(pub usize);
+
 /// A normalized map vertex; coordinates are `f64` so binary `i16` widens
 /// losslessly and future UDMF floats fit natively.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -149,6 +153,22 @@ pub struct MapSidedef {
     pub middle: TextureRef,
 }
 
+/// A normalized Doom 64 colored-lighting palette entry (ADR-0021 §4).
+///
+/// The raw record's trailing `unknown` field (tentative semantics) is not
+/// normalized; a consumer needing it reads [`Doom64Map`][crate::map::Doom64Map].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapLight {
+    /// Red channel (`0`–`255`).
+    pub r: u8,
+    /// Green channel (`0`–`255`).
+    pub g: u8,
+    /// Blue channel (`0`–`255`).
+    pub b: u8,
+    /// Small identifier (observed `0`–`2` in retail data; tentative semantics).
+    pub tag: u8,
+}
+
 /// A normalized sector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapSector {
@@ -170,6 +190,13 @@ pub struct MapSector {
     pub special: i32,
     /// The sector tag.
     pub tag: i32,
+    /// Doom 64 colored lighting: five references into [`Map::lights`], carried
+    /// positionally — Doom64 EX's map-format headers do not name the slots
+    /// (ADR-0021 §4). `None` for every other format.
+    pub colors: Option<[LightIdx; 5]>,
+    /// The sector's raw Doom 64 flag bits (`Sector.flags`, stored opaquely);
+    /// `0` for every other format (mirrors `MapLinedef.flags`).
+    pub flags: u32,
 }
 
 /// A normalized map thing (monster, item, player start, etc.).
@@ -274,6 +301,7 @@ pub struct Map {
     pub(crate) sidedefs: Vec<MapSidedef>,
     pub(crate) sectors: Vec<MapSector>,
     pub(crate) things: Vec<MapThing>,
+    pub(crate) lights: Vec<MapLight>,
     pub(crate) warnings: Vec<MapWarning>,
 }
 
@@ -331,6 +359,12 @@ impl Map {
     #[must_use]
     pub fn warnings(&self) -> &[MapWarning] {
         &self.warnings
+    }
+
+    /// The map's colored-lighting palette; empty for non-Doom 64 maps.
+    #[must_use]
+    pub fn lights(&self) -> &[MapLight] {
+        &self.lights
     }
 
     /// Resolves a linedef's start/end vertices. Total for elements produced by
@@ -396,6 +430,8 @@ mod tests {
                 light: 160,
                 special: 0,
                 tag: 0,
+                colors: None,
+                flags: 0,
             }],
             linedefs: vec![MapLinedef {
                 start: VertexIdx(0),
@@ -410,6 +446,7 @@ mod tests {
                 id: 0,
             }],
             things: vec![],
+            lights: vec![],
             warnings: vec![],
         }
     }
@@ -424,5 +461,13 @@ mod tests {
         assert_eq!(right.middle, "WALL");
         assert!(m.linedef_left(l).is_none());
         assert_eq!(m.sidedef_sector(right).ceiling_height, 128);
+    }
+
+    #[test]
+    fn classic_map_has_no_lights_and_no_colors() {
+        let m = tiny_map();
+        assert!(m.lights().is_empty());
+        assert_eq!(m.sectors()[0].colors, None);
+        assert_eq!(m.sectors()[0].flags, 0);
     }
 }

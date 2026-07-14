@@ -496,6 +496,7 @@ mod tests {
             sidedefs: Vec::new(),
             sectors: Vec::new(),
             things,
+            lights: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -525,8 +526,11 @@ mod tests {
                 light: 160,
                 special: 0,
                 tag: 0,
+                colors: None,
+                flags: 0,
             }],
             things: Vec::new(),
+            lights: Vec::new(),
             warnings: Vec::new(),
         }
     }

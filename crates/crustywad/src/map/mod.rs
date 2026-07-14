@@ -37,8 +37,8 @@ pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Su
 pub use doom::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, write_doom_map};
 pub use doom64::{Doom64Map, Doom64ReadError, Doom64Warning, is_doom64_map_lump, read_doom64_map};
 pub use graph::{
-    LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning,
-    SectorIdx, SidedefIdx, Special, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapSector, MapSidedef, MapThing,
+    MapVertex, MapWarning, SectorIdx, SidedefIdx, Special, TextureRef, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
 pub use udmf::{UdmfParseError, parse_udmf};
