@@ -85,9 +85,19 @@ fn info_csv_format() {
 
 #[test]
 fn info_csv_format_with_maps() {
+    // Two real maps (each marker has a data run) pin the multi-map CSV
+    // rendering: space-separated, in directory order. The trailing bare E9M9
+    // marker has no data run, so structural detection (#253) excludes it —
+    // the exact newline-terminated row asserts that too.
     let wad = write_wad(
         *b"IWAD",
-        &[("E1M1", &[]), ("THINGS", &[0; 4]), ("E1M2", &[])],
+        &[
+            ("E1M1", &[]),
+            ("THINGS", &[0; 4]),
+            ("E1M2", &[]),
+            ("THINGS", &[0; 4]),
+            ("E9M9", &[]),
+        ],
     );
     Command::cargo_bin("cwad")
         .unwrap()
@@ -95,9 +105,7 @@ fn info_csv_format_with_maps() {
         .assert()
         .success()
         .stdout(predicate::str::contains("kind,lumps,data_size,maps"))
-        // The exact, newline-terminated CSV row pins the complete maps field —
-        // E1M2's absence included — without a whole-stdout negative assertion.
-        .stdout(predicate::str::contains("Iwad,3,4,E1M1\n"));
+        .stdout(predicate::str::contains("Iwad,5,8,E1M1 E1M2\n"));
 }
 
 #[test]
