@@ -25,7 +25,12 @@ use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 fn detect_maps(wad: &Wad) -> Vec<&str> {
     wad.map_groups()
         .into_iter()
-        .map(|group| wad.lumps()[group.marker_index].name())
+        .map(|group| {
+            wad.lumps()
+                .get(group.marker_index)
+                .expect("map_groups returns in-range marker indices for its own Wad")
+                .name()
+        })
         .collect()
 }
 
