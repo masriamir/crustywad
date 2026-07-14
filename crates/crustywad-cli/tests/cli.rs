@@ -552,7 +552,12 @@ fn validate_deep_prints_container_warnings_after_the_summary() {
     let wad = write_wad_owned(*b"WADX", &empty_map_lumps("E1M1"));
     Command::cargo_bin("cwad")
         .unwrap()
-        .args(["--lenient", "validate", "--deep", wad.path().to_str().unwrap()])
+        .args([
+            "--lenient",
+            "validate",
+            "--deep",
+            wad.path().to_str().unwrap(),
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("1 map(s) validated"))
