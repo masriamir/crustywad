@@ -189,7 +189,7 @@ fn assembles_valid_doom_map_strict() {
     assert_eq!(map.linedefs().len(), 1);
     let l = &map.linedefs()[0];
     assert!(l.left.is_none()); // 0xffff sentinel
-    assert_eq!(map.linedef_right(l).middle, "WALL");
+    assert_eq!(map.linedef_right(l).expect("fronted line").middle, "WALL");
     assert!(map.warnings().is_empty());
 }
 
@@ -263,7 +263,31 @@ fn lenient_out_of_range_left_becomes_none() {
 
 #[test]
 fn empty_required_arena_errors_even_in_lenient() {
-    // SIDEDEFS present but zero-length → sidedef arena empty; a linedef needs a right side.
+    // VERTEXES present but zero-length → vertex arena empty; a linedef's
+    // endpoints are required references, so this is fatal in both modes.
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0, 0xffff),
+        sidedef(0),
+        /*vertexes*/ vec![],
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference { count: 0, .. }
+    ));
+}
+
+// The sidedef arena is no longer a *required* target (ADR-0020): a linedef can
+// legitimately have no sides, so an empty SIDEDEFS arena plus a dangling
+// non-sentinel reference recovers in lenient mode (`right: None` + warning)
+// instead of aborting. Strict mode still rejects the dangling reference.
+#[test]
+fn empty_sidedef_arena_recovers_in_lenient() {
     let bytes = common::build_doom_map_wad(
         "E1M1",
         vec![],
@@ -274,11 +298,16 @@ fn empty_required_arena_errors_even_in_lenient() {
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("E1M1").unwrap();
-    let err = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap_err();
+
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
     assert!(matches!(
         err,
         MapAssembleError::DanglingReference { count: 0, .. }
     ));
+
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.linedefs()[0].right.is_none());
+    assert_eq!(map.warnings().len(), 1);
 }
 
 #[test]
@@ -294,6 +323,84 @@ fn assemble_is_strict_by_default() {
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("E1M1").unwrap();
     assert!(Map::assemble(&wad, &group).is_err());
+}
+
+// The MAP08 shape from the retail hexen_ex.wad: a linedef whose front AND back
+// sidedef fields are both the on-disk 0xffff "no side" sentinel (an invisible,
+// impassable line). Vanilla engines (Chocolate Doom/Hexen `P_LoadLineDefs`)
+// treat both fields symmetrically -- `!= -1` guards -- so this is valid data,
+// not a defect: it must assemble cleanly in BOTH modes with no warning
+// (ADR-0020).
+#[test]
+fn front_0xffff_sentinel_assembles_as_none_in_both_modes() {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0xffff, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    for options in [ParseOptions::default(), ParseOptions::lenient()] {
+        let map = Map::assemble_with_options(&wad, &group, options).unwrap();
+        let l = &map.linedefs()[0];
+        assert_eq!(l.right, None);
+        assert_eq!(l.left, None);
+        assert!(map.linedef_right(l).is_none());
+        assert!(map.linedef_left(l).is_none());
+        assert!(
+            map.warnings().is_empty(),
+            "sentinel is valid data, not a recovered defect: {:?}",
+            map.warnings()
+        );
+    }
+}
+
+// A non-sentinel out-of-range front sidedef is still a dangling reference:
+// lenient recovers to `None` + a warning (no more clamp-to-0, which fabricated
+// a reference not present in the file -- ADR-0020 S3).
+#[test]
+fn lenient_out_of_range_front_becomes_none() {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 5, 0xffff), // right=5 non-sentinel, only 1 sidedef
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.linedefs()[0].right.is_none());
+    assert_eq!(map.warnings().len(), 1);
+}
+
+// Strict mode still rejects a non-sentinel dangling front sidedef.
+#[test]
+fn strict_rejects_dangling_front_sidedef() {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 5, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "sidedef",
+            index: 5,
+            count: 1,
+            ..
+        }
+    ));
 }
 
 #[test]

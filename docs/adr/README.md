@@ -50,5 +50,6 @@ implementation begins.**
 | [0017](0017-udmf-representation.md) | UDMF representation and parsing strategy | Accepted |
 | [0018](0018-doom64-map-format.md) | Doom 64 map format — nested-WAD structure and raw-record reading | Accepted |
 | [0019](0019-map-format-conversion.md) | Map format conversion (UDMF ↔ Doom) | Accepted |
+| [0020](0020-optional-front-sidedef.md) | Optional front sidedef (the 0xffff sentinel applies to both sides) | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->

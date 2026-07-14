@@ -39,6 +39,16 @@ pub enum UdmfWriteError {
     /// (strict mode; lenient falls back to `"doom"` and warns).
     #[error("map namespace is empty")]
     EmptyNamespace,
+    /// A linedef has no front sidedef (`MapLinedef::right == None` — whether
+    /// from the binary `0xffff` sentinel (ADR-0020) or a lenient-mode recovery
+    /// of a dangling UDMF `sidefront`), which UDMF cannot represent — the spec
+    /// gives `sidefront` no valid default (strict mode; lenient writes
+    /// `sidefront = -1` and warns).
+    #[error("linedef #{index} has no front sidedef, which UDMF cannot represent")]
+    NoFrontSide {
+        /// The 0-based linedef index.
+        index: usize,
+    },
 }
 
 /// A non-fatal issue recovered while writing a map to UDMF text in lenient mode.
@@ -61,6 +71,14 @@ pub enum UdmfWriteWarning {
         /// The namespace written instead: `"hexen"` for a [`MapFormat::Hexen`]
         /// map, `"doom"` otherwise.
         used: &'static str,
+    },
+    /// A linedef with no front sidedef (unrepresentable in UDMF — the spec
+    /// gives `sidefront` no valid default) was written as `sidefront = -1`,
+    /// which ports tolerate at load time (ADR-0020).
+    #[error("linedef #{index} has no front sidedef; wrote sidefront = -1")]
+    NoFrontSideDefaulted {
+        /// The 0-based linedef index.
+        index: usize,
     },
 }
 
@@ -144,14 +162,33 @@ impl Writer {
         (8, "mapped"),
     ];
 
-    fn push_linedef(&mut self, l: &MapLinedef, format: MapFormat) {
+    fn push_linedef(
+        &mut self,
+        index: usize,
+        l: &MapLinedef,
+        format: MapFormat,
+    ) -> Result<(), UdmfWriteError> {
+        // UDMF gives `sidefront` no valid default, so a frontless line
+        // (`right: None`, whatever its source — see `MapLinedef::right`;
+        // ADR-0020) is unrepresentable: strict errors, lenient writes the
+        // port-tolerated `-1` and warns.
         self.out.push_str("linedef { ");
-        write!(
-            self.out,
-            "v1 = {}; v2 = {}; sidefront = {}; ",
-            l.start.0, l.end.0, l.right.0
-        )
-        .expect(INFALLIBLE);
+        write!(self.out, "v1 = {}; v2 = {}; ", l.start.0, l.end.0).expect(INFALLIBLE);
+        match l.right {
+            // Write the arena index directly — no numeric narrowing (a
+            // hand-constructed `Map`'s public fields can never panic here)
+            // and no per-linedef allocation.
+            Some(r) => write!(self.out, "sidefront = {}; ", r.0).expect(INFALLIBLE),
+            None => match self.strictness {
+                // The partially written buffer is discarded with the error.
+                Strictness::Strict => return Err(UdmfWriteError::NoFrontSide { index }),
+                Strictness::Lenient => {
+                    self.warnings
+                        .push(UdmfWriteWarning::NoFrontSideDefaulted { index });
+                    self.out.push_str("sidefront = -1; ");
+                }
+            },
+        }
         if let Some(back) = l.left {
             write!(self.out, "sideback = {}; ", back.0).expect(INFALLIBLE);
         }
@@ -176,6 +213,7 @@ impl Writer {
             }
         }
         self.out.push_str("}\n");
+        Ok(())
     }
 
     fn push_sidedef(&mut self, s: &MapSidedef) {
@@ -311,6 +349,8 @@ impl Writer {
 /// # Errors
 /// - [`UdmfWriteError::EmptyNamespace`] — `map.namespace()` is `Some("")` (strict).
 /// - [`UdmfWriteError::NonFiniteCoordinate`] — a coordinate/height is NaN or ∞ (strict).
+/// - [`UdmfWriteError::NoFrontSide`] — a linedef has no front sidedef, which
+///   UDMF cannot represent (strict).
 pub fn write_udmf(
     map: &Map,
     opts: &WriteOptions,
@@ -349,8 +389,8 @@ pub fn write_udmf(
         w.push_vertex(i, v)?;
     }
 
-    for l in map.linedefs() {
-        w.push_linedef(l, map.format());
+    for (i, l) in map.linedefs().iter().enumerate() {
+        w.push_linedef(i, l, map.format())?;
     }
 
     for s in map.sidedefs() {
@@ -375,8 +415,9 @@ pub fn write_udmf(
 /// [`WriteError`](crate::WriteError)).
 ///
 /// # Errors
-/// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`] and
-/// [`UdmfWriteError::NonFiniteCoordinate`] (strict mode).
+/// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`],
+/// [`UdmfWriteError::NonFiniteCoordinate`], and
+/// [`UdmfWriteError::NoFrontSide`] (strict mode).
 pub fn add_udmf_map(
     builder: &mut WadBuilder,
     name: &str,

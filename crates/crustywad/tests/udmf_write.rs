@@ -327,6 +327,44 @@ fn assemble_doom_map() -> Map {
     Map::assemble(&wad, &group).unwrap()
 }
 
+// --- ADR-0020: a frontless linedef (binary front-0xffff sentinel) has no ---
+// --- valid UDMF representation (`sidefront` has no valid default).       ---
+
+fn assemble_frontless_doom_map() -> Map {
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        /* things */ Vec::new(),
+        /* linedefs */ doom_linedef(0, 1, 0xffff, 0xffff),
+        /* sidedefs */ doom_sidedef(0, 0),
+        /* vertexes */ [doom_vertex(0, 0), doom_vertex(64, 0)].concat(),
+        /* sectors */ doom_sector(),
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    Map::assemble(&wad, &group).unwrap()
+}
+
+#[test]
+fn frontless_linedef_strict_write_errors() {
+    let map = assemble_frontless_doom_map();
+    assert!(map.linedefs()[0].right.is_none());
+    assert_eq!(
+        write_udmf(&map, &WriteOptions::strict()).unwrap_err(),
+        UdmfWriteError::NoFrontSide { index: 0 }
+    );
+}
+
+#[test]
+fn frontless_linedef_lenient_writes_minus_one_and_warns() {
+    let map = assemble_frontless_doom_map();
+    let (text, warnings) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+    let line = text.lines().find(|l| l.starts_with("linedef")).unwrap();
+    assert!(line.contains("sidefront = -1;"), "{line}");
+    // A binary-sourced map also gets the lenient namespace default; the
+    // frontless warning is the one under test here.
+    assert!(warnings.contains(&UdmfWriteWarning::NoFrontSideDefaulted { index: 0 }));
+}
+
 #[test]
 fn none_namespace_strict_defaults_without_warning() {
     let map = assemble_doom_map();

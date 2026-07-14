@@ -42,7 +42,7 @@ fn full_one_of_each_block_map_assembles() {
     let l = &map.linedefs()[0];
     assert_eq!(l.start, VertexIdx(0));
     assert_eq!(l.end, VertexIdx(1));
-    assert_eq!(l.right, SidedefIdx(0));
+    assert_eq!(l.right, Some(SidedefIdx(0)));
     assert_eq!(l.left, None); // one-sided: no `sideback` given
     assert!(map.warnings().is_empty());
 }

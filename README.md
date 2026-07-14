@@ -109,7 +109,10 @@ if let Some(group) = wad.map_group("E1M1") {
 
     for linedef in map.linedefs() {
         let (start, end) = map.linedef_vertices(linedef);
-        let right = map.linedef_right(linedef);
+        // `linedef_right` is `Option`: a rare line may have no front side.
+        let Some(right) = map.linedef_right(linedef) else {
+            continue;
+        };
         let front_sector = map.sidedef_sector(right);
 
         match map.linedef_left(linedef) {

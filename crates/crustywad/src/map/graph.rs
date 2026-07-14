@@ -66,10 +66,15 @@ pub struct MapLinedef {
     pub start: VertexIdx,
     /// The index of the linedef's end vertex.
     pub end: VertexIdx,
-    /// The index of the linedef's right (front) sidedef.
-    pub right: SidedefIdx,
-    /// The index of the linedef's left (back) sidedef. `None` == one-sided
-    /// (the `0xffff` sentinel).
+    /// The index of the linedef's right (front) sidedef; `None` == no front
+    /// side. Sources: the binary `0xffff` sentinel (vanilla-sanctioned and
+    /// rare, e.g. an invisible blocking line; ADR-0020) or lenient-mode
+    /// recovery of a dangling reference.
+    pub right: Option<SidedefIdx>,
+    /// The index of the linedef's left (back) sidedef; `None` == no back
+    /// side (a one-sided wall in the common case, though a line can also be
+    /// fully sideless). Sources: the binary `0xffff` sentinel, an omitted
+    /// UDMF `sideback`, or lenient-mode recovery of a dangling reference.
     pub left: Option<SidedefIdx>,
     /// The linedef's bit flags (blocking, two-sided, secret, etc.).
     pub flags: u32,
@@ -304,15 +309,18 @@ impl Map {
         (&self.vertices[l.start.0], &self.vertices[l.end.0])
     }
 
-    /// Resolves a linedef's right (front) sidedef. Total for elements produced
-    /// by this map's own assembly; a linedef carrying an out-of-range index
-    /// (e.g. hand-constructed, since `MapLinedef`'s fields are public) may panic.
+    /// Resolves a linedef's right (front) sidedef, if present (`None` == no
+    /// front side; see [`MapLinedef::right`] for its sources). Total for
+    /// elements produced by this map's own assembly; a linedef carrying an
+    /// out-of-range index (e.g. hand-constructed, since `MapLinedef`'s fields
+    /// are public) may panic.
     #[must_use]
-    pub fn linedef_right(&self, l: &MapLinedef) -> &MapSidedef {
-        &self.sidedefs[l.right.0]
+    pub fn linedef_right(&self, l: &MapLinedef) -> Option<&MapSidedef> {
+        l.right.map(|i| &self.sidedefs[i.0])
     }
 
-    /// Resolves a linedef's left (back) sidedef, if two-sided. Total for
+    /// Resolves a linedef's left (back) sidedef, if present (`None` == no
+    /// back side; see [`MapLinedef::left`] for its sources). Total for
     /// elements produced by this map's own assembly; a linedef carrying an
     /// out-of-range index (e.g. hand-constructed, since `MapLinedef`'s fields
     /// are public) may panic.
@@ -360,7 +368,7 @@ mod tests {
             linedefs: vec![MapLinedef {
                 start: VertexIdx(0),
                 end: VertexIdx(1),
-                right: SidedefIdx(0),
+                right: Some(SidedefIdx(0)),
                 left: None,
                 flags: 1,
                 special: Special {
@@ -380,8 +388,9 @@ mod tests {
         let l = &m.linedefs()[0];
         let (a, b) = m.linedef_vertices(l);
         assert_eq!((a.x, b.x), (0.0, 64.0));
-        assert_eq!(m.linedef_right(l).middle, "WALL");
+        let right = m.linedef_right(l).expect("fronted line");
+        assert_eq!(right.middle, "WALL");
         assert!(m.linedef_left(l).is_none());
-        assert_eq!(m.sidedef_sector(m.linedef_right(l)).ceiling_height, 128);
+        assert_eq!(m.sidedef_sector(right).ceiling_height, 128);
     }
 }
