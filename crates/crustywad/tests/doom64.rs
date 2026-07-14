@@ -10,11 +10,6 @@ mod common;
 use crustywad::map::{is_doom64_map_lump, read_doom64_map};
 use crustywad::{ParseOptions, Wad};
 
-/// A Doom 64 map marker lump is named `MAPxx` (`MAP` + two ASCII digits).
-fn is_doom64_map_name(name: &str) -> bool {
-    name.len() == 5 && name.starts_with("MAP") && name[3..].bytes().all(|b| b.is_ascii_digit())
-}
-
 #[test]
 fn parses_doom64_when_fixtures_are_available() {
     for path in common::iwad_files("CRUSTYWAD_DOOM64_DIR", &["doom64.wad"]) {
@@ -30,7 +25,7 @@ fn parses_doom64_when_fixtures_are_available() {
         // and a non-map lump can't be misclassified as one.
         let mut maps_read = 0usize;
         for lump in wad.lumps() {
-            if !is_doom64_map_name(lump.name()) {
+            if !common::is_doom64_map_name(lump.name()) {
                 continue;
             }
             let bytes = wad.lump_data(lump);

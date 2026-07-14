@@ -254,9 +254,17 @@ pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
                 .path()
         })
         .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("wad"))
+            if !p
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("wad"))
+            {
+                return false;
+            }
+            // `Path::is_file` swallows metadata errors (permissions, broken
+            // symlinks) as `false`; stat explicitly so those fail loudly too.
+            let meta = std::fs::metadata(p)
+                .unwrap_or_else(|e| panic!("{env_var}: failed to stat {}: {e}", p.display()));
+            meta.is_file()
         })
         .collect();
     found.sort();
@@ -267,4 +275,13 @@ pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
         );
     }
     found
+}
+
+/// A Doom 64 map marker lump is named `MAPxx` (`MAP` + two ASCII digits).
+///
+/// Shared by the `doom64-tests` fixture test and the `sweep-tests` sweep so
+/// the naming rule cannot drift between them.
+#[allow(dead_code)]
+pub fn is_doom64_map_name(name: &str) -> bool {
+    name.len() == 5 && name.starts_with("MAP") && name[3..].bytes().all(|b| b.is_ascii_digit())
 }

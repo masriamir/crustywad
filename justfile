@@ -52,9 +52,9 @@ test-freedoom dir=(justfile_directory() / "tests/fixtures/freedoom"):
 
 # Sweep a local retail-WAD collection: assemble every map of every WAD in both
 # strictness modes (#254). Nothing is fetched — supply your own WADs; the repo's
-# gitignored PWADS/ directory is the default. The path must be absolute (cargo
-# runs the test binary with its CWD at the package root, so a workspace-relative
-# path never resolves and the sweep skips silently).
+# gitignored PWADS/ directory is the default. Use an absolute dir (cargo runs
+# the test binary with its CWD at the package root, so a relative path resolves
+# against crates/crustywad and a missed directory only prints a stderr skip note).
 test-sweep dir=(justfile_directory() / "PWADS"):
     CRUSTYWAD_SWEEP_DIR="{{dir}}" cargo test -p crustywad --features sweep-tests --test sweep -- --nocapture
 

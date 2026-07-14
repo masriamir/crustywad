@@ -179,9 +179,10 @@ script, no committed fixture; supply your own collection locally.
 
 ### Running the tests
 
-Point `CRUSTYWAD_SWEEP_DIR` at a directory of WAD files. **The path must be absolute** —
+Point `CRUSTYWAD_SWEEP_DIR` at a directory of WAD files. **Use an absolute path** —
 cargo runs the test binary with its CWD at the package root (`crates/crustywad`), so a
-workspace-relative path never resolves and the sweep skips silently:
+relative path resolves against that directory rather than the workspace root and can miss
+(or accidentally hit the wrong) collection, leaving only a stderr skip note:
 
 ```bash
 CRUSTYWAD_SWEEP_DIR=/path/to/wads \
@@ -189,7 +190,7 @@ CRUSTYWAD_SWEEP_DIR=/path/to/wads \
 ```
 
 Or use the `just` recipe, which defaults to the repository's gitignored `PWADS/`
-directory and handles the absolute path for you:
+directory as an absolute path (an explicit `dir=` override should also be absolute):
 
 ```bash
 just test-sweep              # sweeps ./PWADS

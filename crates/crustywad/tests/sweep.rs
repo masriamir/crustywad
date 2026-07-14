@@ -2,10 +2,12 @@
 //! collection, in both strictness modes (#254).
 //!
 //! Retail WADs are not redistributable, so nothing is fetched or committed —
-//! point `CRUSTYWAD_SWEEP_DIR` at a directory of WAD files. **The path must be
-//! absolute**: cargo runs the test binary with its CWD at the package root
-//! (`crates/crustywad`), so a workspace-relative path never resolves and the
-//! sweep skips silently instead of failing.
+//! point `CRUSTYWAD_SWEEP_DIR` at a directory of WAD files. **Use an absolute
+//! path**: cargo runs the test binary with its CWD at the package root
+//! (`crates/crustywad`), so a relative path resolves against that directory —
+//! not the workspace root — and can miss (or accidentally hit the wrong)
+//! collection; a missed directory only produces a stderr skip note, not a
+//! failure.
 //!
 //! The sweep asserts the hard invariant established by the 2026-07-13 gap
 //! analysis and #252/ADR-0020: every map in the retail collection parses and
@@ -19,17 +21,6 @@ mod common;
 
 use crustywad::map::{Map, is_doom64_map_lump, read_doom64_map};
 use crustywad::{ParseOptions, Wad};
-
-/// A Doom 64 map marker lump is named `MAPxx` (`MAP` + two ASCII digits).
-///
-/// Doom 64 maps are nested WADs stored *inside* their marker lump, invisible
-/// to `Wad::map_groups` until #243 integrates them; the sweep reads them
-/// through the dedicated `read_doom64_map` entrypoint instead. Requiring the
-/// name pattern *and* the nested-WAD magic keeps an arbitrary data lump that
-/// happens to start with `IWAD`/`PWAD` from being misread as a map.
-fn is_doom64_map_name(name: &str) -> bool {
-    name.len() == 5 && name.starts_with("MAP") && name[3..].bytes().all(|b| b.is_ascii_digit())
-}
 
 #[test]
 fn sweep_assembles_every_map_of_every_wad() {
@@ -76,10 +67,19 @@ fn sweep_assembles_every_map_of_every_wad() {
             groups_swept += 1;
         }
 
-        // Doom 64 nested-WAD maps.
+        // Doom 64 nested-WAD maps: stored *inside* their `MAPxx` marker lump,
+        // invisible to `Wad::map_groups` until #243 integrates them, so the
+        // sweep reads them through the dedicated `read_doom64_map` entrypoint.
+        // Requiring the name pattern *and* the nested-WAD magic keeps an
+        // arbitrary data lump that happens to start with `IWAD`/`PWAD` from
+        // being misread as a map. The name check runs first so lump data is
+        // only touched for candidates.
         for lump in wad.lumps() {
+            if !common::is_doom64_map_name(lump.name()) {
+                continue;
+            }
             let bytes = wad.lump_data(lump);
-            if !is_doom64_map_name(lump.name()) || !is_doom64_map_lump(bytes) {
+            if !is_doom64_map_lump(bytes) {
                 continue;
             }
             for options in [ParseOptions::default(), ParseOptions::lenient()] {
