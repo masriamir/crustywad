@@ -22,15 +22,12 @@ use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 /// by a recognized data-lump run — whatever the marker is named — or a Doom 64
 /// nested-WAD `MAPxx` lump (ADR-0021 §1). Unlike the name-pattern heuristic
 /// this replaces, a stray map-named lump with no data run is not reported.
-fn detect_maps(wad: &Wad) -> Vec<&str> {
+/// The names come straight from [`MapGroup::name`][crustywad::map::MapGroup],
+/// the library's own record of each map's identity.
+fn detect_maps(wad: &Wad) -> Vec<String> {
     wad.map_groups()
         .into_iter()
-        .map(|group| {
-            wad.lumps()
-                .get(group.marker_index)
-                .expect("map_groups returns in-range marker indices for its own Wad")
-                .name()
-        })
+        .map(|group| group.name)
         .collect()
 }
 
