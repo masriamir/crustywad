@@ -427,6 +427,33 @@ fn normalize_hexen_thing_flags(flags: u16) -> u32 {
     out
 }
 
+/// Translates Doom 64 on-disk thing flags into the graph's normalized
+/// Doom/Boom layout (ADR-0019 §2, ADR-0021 §2).
+///
+/// Verified against Doom64 EX `doomdef.h`: `MTF_EASY`/`MTF_NORMAL`/`MTF_HARD`/
+/// `MTF_AMBUSH`/`MTF_MULTI` (1/2/4/8/16) already sit on the normalized bit
+/// positions 0–4 (Doom 64's difficulty bits are positive per-skill spawn
+/// flags, matching the normalized meaning); `MTF_NODEATHMATCH` (1024) maps to
+/// bit 5 and `MTF_NONETGAME` (2048) to bit 6 (co-op). The Doom 64-only bits —
+/// `MTF_SPAWN`/`MTF_ONTOUCH`/`MTF_ONDEATH`/`MTF_SECRET`/`MTF_NOINFIGHTING`/
+/// `MTF_NIGHTMARE` — have no normalized slot and drop, exactly as Hexen's
+/// dormant/class bits do. Bit 7 (friendly) is never set — Doom 64 has no such
+/// flag. The raw word remains available via `Doom64Map`.
+// Called by the Doom 64 assemble arm (next task).
+#[allow(dead_code)]
+fn normalize_doom64_thing_flags(raw: i16) -> u32 {
+    #[allow(clippy::cast_sign_loss)] // bit reinterpretation is intended
+    let raw = raw as u16;
+    let mut flags = u32::from(raw & 0b1_1111); // EASY|NORMAL|HARD|AMBUSH|MULTI
+    if raw & 1024 != 0 {
+        flags |= 0b10_0000; // not-in-deathmatch
+    }
+    if raw & 2048 != 0 {
+        flags |= 0b100_0000; // not-in-co-op (Doom 64 "standard netgame")
+    }
+    flags
+}
+
 /// Widens raw Hexen `THINGS` records into normalized [`MapThing`]s, translating
 /// the Hexen flag word into the graph's Doom/Boom-MBF layout (see
 /// [`normalize_hexen_thing_flags`]).
@@ -803,9 +830,9 @@ fn assemble_udmf(
 #[cfg(test)]
 mod tests {
     use super::{
-        Map, MapAssembleError, normalize_hexen_thing_flags, normalize_udmf_linedefs,
-        normalize_udmf_sidedefs, normalize_udmf_things, normalize_udmf_vertices,
-        resolve_binary_side, resolve_optional, resolve_required,
+        Map, MapAssembleError, normalize_doom64_thing_flags, normalize_hexen_thing_flags,
+        normalize_udmf_linedefs, normalize_udmf_sidedefs, normalize_udmf_things,
+        normalize_udmf_vertices, resolve_binary_side, resolve_optional, resolve_required,
     };
     use crate::map::graph::{MapFormat, SidedefIdx, VertexIdx};
     use crate::map::udmf::{UdmfLinedef, UdmfSidedef, UdmfThing};
@@ -1131,6 +1158,25 @@ mod tests {
         // Bit 7 (friend, MBF) has no Hexen source and is never set — not even by
         // Hexen's `mage` bit, which occupies that same on-disk position.
         assert_eq!(normalize_hexen_thing_flags(0x0080) & 0x0080, 0);
+    }
+
+    #[test]
+    fn doom64_thing_flags_translate_to_the_normalized_layout() {
+        // Verified against Doom64 EX doomdef.h (ADR-0021 §2): EASY/NORMAL/HARD/
+        // AMBUSH/MULTI (1/2/4/8/16) are value-identical to normalized bits 0-4;
+        // NODEATHMATCH (1024) -> bit 5; NONETGAME (2048) -> bit 6 (co-op);
+        // SPAWN/ONTOUCH/ONDEATH/SECRET/NOINFIGHTING/NIGHTMARE drop.
+        assert_eq!(normalize_doom64_thing_flags(0), 0);
+        assert_eq!(normalize_doom64_thing_flags(1 | 2 | 4), 0b111);
+        assert_eq!(normalize_doom64_thing_flags(8), 0b1000);
+        assert_eq!(normalize_doom64_thing_flags(16), 0b1_0000);
+        assert_eq!(normalize_doom64_thing_flags(1024), 0b10_0000);
+        assert_eq!(normalize_doom64_thing_flags(2048), 0b100_0000);
+        // Doom 64-only bits drop; friend (bit 7) is never set.
+        assert_eq!(
+            normalize_doom64_thing_flags(32 | 64 | 128 | 256 | 512 | 4096),
+            0
+        );
     }
 
     proptest! {
