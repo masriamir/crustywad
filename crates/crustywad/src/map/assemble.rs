@@ -1236,6 +1236,21 @@ fn assemble_doom64(
     )?;
     let things = normalize_doom64_things(&raw.things, s, &mut warnings)?;
 
+    // Doom 64 BSP records share the classic on-disk layout (ADR-0018), so
+    // they normalize through the same shared path. No extended-encoding gate
+    // is needed here: the nested sub-lumps were already record-decoded by
+    // `read_doom64_map` above, so a ZDBSP blob inside the nested WAD fails
+    // that decode with the existing `Records`/`TrailingBytes` behavior.
+    let (segs, subsectors, nodes) = normalize_bsp(
+        &raw.segs,
+        &raw.subsectors,
+        &raw.nodes,
+        vertices.len(),
+        linedefs.len(),
+        s,
+        &mut warnings,
+    )?;
+
     // Doom64Warning values surface as MapWarning::Doom64 so the caller sees
     // one warning stream regardless of source format.
     warnings.extend(raw.warnings().iter().cloned().map(MapWarning::Doom64));
@@ -1250,9 +1265,9 @@ fn assemble_doom64(
         sectors,
         things,
         lights,
-        segs: Vec::new(),
-        subsectors: Vec::new(),
-        nodes: Vec::new(),
+        segs,
+        subsectors,
+        nodes,
         warnings,
     })
 }

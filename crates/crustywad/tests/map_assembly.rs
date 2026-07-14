@@ -818,6 +818,9 @@ fn assembles_doom64_map_into_the_graph() {
             common::d64_light(0, 0, 255, 2),
         ]
         .concat(),
+        &[],
+        &[],
+        &[],
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("MAP01").unwrap();
@@ -879,6 +882,9 @@ fn doom64_dangling_color_ref_strict_errors_lenient_warns() {
         // always-valid grayscale indices and cannot dangle).
         &common::d64_sector(0, 0, [300, 0, 0, 0, 0], 0),
         &common::d64_light(255, 255, 255, 0),
+        &[],
+        &[],
+        &[],
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("MAP01").unwrap();
@@ -911,6 +917,9 @@ fn doom64_dangling_sidedef_sector_ref_strict_errors_lenient_warns() {
         &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
         &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
         &[],
+        &[],
+        &[],
+        &[],
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("MAP01").unwrap();
@@ -939,6 +948,9 @@ fn doom64_dangling_linedef_vertex_ref_strict_errors_lenient_warns() {
         &common::d64_sidedef(0, 0, 0, 0),
         &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
         &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
+        &[],
+        &[],
+        &[],
         &[],
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
@@ -969,6 +981,9 @@ fn doom64_thing_type_out_of_range_strict_errors_lenient_clamps_and_warns() {
         &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
         &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
         &[],
+        &[],
+        &[],
+        &[],
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("MAP01").unwrap();
@@ -984,6 +999,34 @@ fn doom64_thing_type_out_of_range_strict_errors_lenient_clamps_and_warns() {
     let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
     assert_eq!(map.things()[0].type_id, 0); // clamped
     assert_eq!(map.warnings().len(), 1);
+}
+
+// Doom 64 BSP flows through the same normalizer as classic (identical record
+// layouts, ADR-0018): one seg, one subsector, one root node with both
+// children pointing at the subsector.
+#[test]
+fn assembles_doom64_bsp_onto_the_graph() {
+    use crustywad::map::{NodeChild, NodeIdx, SubsectorIdx};
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0; 5], 0),
+        &common::d64_light(255, 255, 255, 0),
+        &seg(0, 1, 0, 0),
+        &subsector(1, 0),
+        &node(0x8000, 0x8000),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let map = Map::assemble(&wad, &group).unwrap();
+    assert_eq!(map.segs().len(), 1);
+    assert_eq!(map.subsectors()[0].segs, 0..1);
+    assert_eq!(map.bsp_root(), Some(NodeIdx(0)));
+    assert_eq!(map.nodes()[0].left, NodeChild::Subsector(SubsectorIdx(0)));
+    assert!(map.warnings().is_empty());
 }
 
 // Full classic map + BSP: two segs, one subsector run, two nodes whose root
