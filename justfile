@@ -64,8 +64,12 @@ bench-open:
     cargo bench --all-features --benches
     {{ if os() == "macos" { "open" } else if os_family() == "windows" { "explorer" } else { "xdg-open" } }} target/criterion/report/index.html
 
-# Check that living-doc anchor strings are present in all three doc files (ADR-0007).
+# Doc drift checks: living-doc anchor strings present in all three doc files
+# (ADR-0007), and every documented `crustywad = "X.Y.Z"` pin still resolving to
+# the crate's actual version (after a minor bump a stale 0.x pin does not resolve
+# for readers at all — see #235). Patch bumps still resolve and need no change.
 docs-sync:
     python3 scripts/check_doc_anchors.py
+    python3 scripts/check_doc_versions.py
 
 ci: build test lint doc deny docs-sync

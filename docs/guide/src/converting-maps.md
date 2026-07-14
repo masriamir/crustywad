@@ -5,7 +5,7 @@ UDMF text format and the classic Doom binary format, in both directions. Both
 directions are behind the `write` feature:
 
 ```toml
-crustywad = { version = "0.2", features = ["write"] }
+crustywad = { version = "0.3.0", features = ["write"] }
 ```
 
 Conversion is `read → Map → write`: there is no direct format-to-format path.
