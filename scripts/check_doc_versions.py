@@ -68,11 +68,12 @@ PIN_RE = re.compile(
     r'crustywad(?!-)\s*=\s*(?:"(?P<bare>[^"]+)"|\{[^}]*?version\s*=\s*"(?P<table>[^"]+)")'
 )
 
-# A template placeholder, and only that: `X.Y.Z` / `x.y.z` (CONTRIBUTING.md uses
-# one when showing the shape of the CLI's dependency entry). Deliberately narrow
-# — `0.x` and `0.3-beta.1` are malformed pins, not placeholders, and must be
-# reported rather than waved through.
-PLACEHOLDER_RE = re.compile(r"[XYZ](?:\.[XYZ])*", re.IGNORECASE)
+# The template placeholder, and *only* it: exactly `X.Y.Z` / `x.y.z`
+# (CONTRIBUTING.md uses one when showing the shape of the CLI's dependency
+# entry). Deliberately three components — a bare `X` or `X.Y` is not a form this
+# repo uses, and `0.x` / `0.3-beta.1` are malformed pins rather than templates.
+# All of those are reported instead of being waved through.
+PLACEHOLDER_RE = re.compile(r"[XYZ]\.[XYZ]\.[XYZ]", re.IGNORECASE)
 
 
 def crate_version() -> str:
@@ -135,9 +136,20 @@ def pin_resolves(pin: str, version: str) -> bool:
     that fetch 0.3.0 (the docs legitimately use both -- the short form in install
     snippets, the full form when illustrating the caret rules themselves).
 
+    An explicit caret (`"^0.3.0"`) is accepted too: Cargo treats it as identical
+    to the bare form, so rejecting it would make this check stricter than Cargo
+    and contradict what it claims to enforce. Any *other* operator (`~`, `=`,
+    `>=`, `*`, …) carries different semantics that this check does not model, so
+    it is reported rather than assumed good — the repo's docs use plain caret
+    requirements.
+
     `^REQ` matches a version when the leading non-zero component agrees and the
     version is not below the requirement.
     """
+    pin = pin.strip()
+    if pin.startswith("^"):  # `^0.3.0` and `0.3.0` mean the same thing to Cargo.
+        pin = pin[1:].strip()
+
     try:
         want = [int(part) for part in pin.split(".")]
         have = [int(part) for part in version.split(".")]
