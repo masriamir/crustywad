@@ -1340,7 +1340,7 @@ mod tests {
         }));
     }
 
-    /// A frontless linedef (`right: None`, the ADR-0020 sentinel) serializes as
+    /// A frontless linedef (`right: None`; ADR-0020) serializes as
     /// `NO_SIDEDEF` on the front field — symmetric with the back — with no
     /// error or clamp in either mode, so a frontless binary map round-trips
     /// losslessly.

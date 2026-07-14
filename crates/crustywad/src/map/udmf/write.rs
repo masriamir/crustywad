@@ -168,9 +168,10 @@ impl Writer {
         l: &MapLinedef,
         format: MapFormat,
     ) -> Result<(), UdmfWriteError> {
-        // UDMF gives `sidefront` no valid default, so a frontless line (the
-        // binary `0xffff` sentinel; ADR-0020) is unrepresentable: strict
-        // errors, lenient writes the port-tolerated `-1` and warns.
+        // UDMF gives `sidefront` no valid default, so a frontless line
+        // (`right: None`, whatever its source — see `MapLinedef::right`;
+        // ADR-0020) is unrepresentable: strict errors, lenient writes the
+        // port-tolerated `-1` and warns.
         let sidefront = match l.right {
             Some(r) => i64::try_from(r.0).expect("arena index fits i64"),
             None => match self.strictness {
