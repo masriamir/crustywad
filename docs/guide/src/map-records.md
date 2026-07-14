@@ -123,13 +123,16 @@ The record types above are flat and unresolved — a `Linedef`'s `start_vertex` 
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don't
 have to index arenas by hand.
 
-> **Multi-format assembly.** `Map::assemble` detects the map format from its lumps: a
-> `TEXTMAP` lump marks a UDMF map, a `BEHAVIOR` lump marks a Hexen map, otherwise it is treated
-> as the classic Doom binary layout. The assembled `Map` carries its format via `map.format()`,
-> which returns `MapFormat::Doom` for classic Doom/Doom II/Heretic maps (which share the same
-> binary record layout and differ only in map-marker naming, e.g. `MAP01` vs `E1M1`),
-> `MapFormat::Hexen` for Hexen maps, or `MapFormat::Udmf` for UDMF (`TEXTMAP`) maps. UDMF maps
-> can also be written back out with `write_udmf` / `add_udmf_map` (the `write` feature).
+> **Multi-format assembly.** `Map::assemble` detects the map format from its lumps: the marker
+> lump's bytes are checked first for the nested `IWAD`/`PWAD` magic that marks a Doom 64 map
+> (see [Doom 64 maps](#doom-64-maps) below); otherwise a `TEXTMAP` lump marks a UDMF map, a
+> `BEHAVIOR` lump marks a Hexen map, and anything else is treated as the classic Doom binary
+> layout. The assembled `Map` carries its format via `map.format()`, which returns
+> `MapFormat::Doom` for classic Doom/Doom II/Heretic maps (which share the same binary record
+> layout and differ only in map-marker naming, e.g. `MAP01` vs `E1M1`), `MapFormat::Hexen` for
+> Hexen maps, `MapFormat::Udmf` for UDMF (`TEXTMAP`) maps, or `MapFormat::Doom64` for Doom 64
+> maps. UDMF maps can also be written back out with `write_udmf` / `add_udmf_map` (the `write`
+> feature).
 
 ### Finding a map's lumps
 
@@ -203,6 +206,32 @@ The resolvers are total for elements obtained from this map's own accessors
 index, because assembly validated every cross-reference before `Map` was constructed.
 (Because `MapLinedef`/`MapSidedef` have public index fields, passing a hand-constructed
 value with an out-of-range index can still panic.)
+
+### Texture references
+
+`MapSidedef`'s `upper`/`lower`/`middle` fields and `MapSector`'s `floor_flat`/`ceiling_flat` field
+are a `TextureRef`, not a bare string: `TextureRef::Name(String)` for a name (Doom/Hexen's 8-byte
+lump name, or a UDMF string), or `TextureRef::Index(u16)` for a Doom 64 texture/flat table index
+(Doom 64 has no name until the texture layer, planned for v0.5.0, can resolve it). Classic Doom,
+Hexen, and UDMF maps always produce `Name`; Doom 64 maps always produce `Index`.
+`TextureRef::as_name()` returns `Some(&str)` for `Name` and `None` for `Index`, and `TextureRef`
+implements `PartialEq<&str>` against the name, so a Doom/Hexen/UDMF texture can be compared
+directly against a string literal:
+
+```rust
+use crustywad::Wad;
+use crustywad::map::Map;
+
+# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+# let group = wad.map_group("E1M1").unwrap();
+let map = Map::assemble(&wad, &group)?;
+for sector in map.sectors() {
+    if sector.floor_flat == "LAVA1" {
+        println!("lava sector, ceiling flat: {:?}", sector.ceiling_flat.as_name());
+    }
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
 
 ### One-sided (and sideless) lines
 
@@ -284,3 +313,33 @@ for warning in map.warnings() {
 `map.warnings()` returns the `MapWarning`s collected during a lenient assembly (empty for
 a clean map, and always empty after a strict `Map::assemble`, since strict mode returns an
 error instead of recording a warning).
+
+### Doom 64 maps
+
+Doom 64 stores each map as a **nested WAD**: the `MAPxx` marker lump's bytes are themselves a
+complete WAD (leading `IWAD`/`PWAD` magic), whose sub-lumps hold the map's records, rather than a
+marker followed by a run of sibling data lumps in the outer directory. `Wad::map_groups` /
+`Wad::map_group` recognize a Doom 64 map only when **both** signals hold: the marker's name
+matches `MAPxx` (`MAP` plus two ASCII digits) *and* its lump bytes carry the nested WAD magic — so
+an ordinary empty classic `MAPxx` marker is never misread as Doom 64. A Doom 64 `MapGroup`'s
+`data_indices` is always empty, since its data lives inside the marker lump rather than the flat
+directory. `map.format()` reports `MapFormat::Doom64` for these maps, and both `Map::assemble` and
+`Map::assemble_with_options` assemble them into the same `Map` graph as every other format, in
+both strictness modes.
+
+Doom 64 adds per-map colored lighting. `Map::lights()` returns the map's full light table built
+the way the engine builds it (mirroring Doom64 EX's `P_LoadLights`): 256 implicit grayscale
+entries (`r = g = b = index`, `tag = 0`), followed by the map's `LIGHTS` lump records starting at
+index 256. `MapSector.colors` is `Some([LightIdx; 5])` for a Doom 64 sector — five references into
+`Map::lights()` — and `None` for every other format. The five slots are carried **positionally**:
+Doom 64's own format headers don't name them, so `crustywad` doesn't invent slot meanings either.
+`MapSector.light` (the classic scalar light level) is always `0` for a Doom 64 sector, since the
+format has no such field; `MapSector.flags` carries the sector's raw Doom 64 flag bits (opaque,
+uninterpreted).
+
+Doom 64's sidedef/sector texture and flat fields assemble into `TextureRef::Index` rather than
+`TextureRef::Name` (see [Texture references](#texture-references) above). Until the texture layer
+(planned for v0.5.0) can resolve those indices back to a texture identity, a Doom 64-sourced `Map`
+cannot be serialized back out: both `write_doom_map` and `write_udmf` (the `write` feature) reject
+it with `UnsupportedSourceFormat`, in **both** strictness modes, before any per-field validation
+runs.
