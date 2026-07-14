@@ -151,7 +151,7 @@ pub struct MapGroup {
 ```rust
 use crustywad::Wad;
 
-# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
 // All maps in the WAD.
 for group in wad.map_groups() {
     println!("found map {}", group.name);
@@ -173,7 +173,7 @@ cross-reference between them:
 use crustywad::Wad;
 use crustywad::map::Map;
 
-# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
 if let Some(group) = wad.map_group("E1M1") {
     let map = Map::assemble(&wad, &group)?;
 
@@ -222,7 +222,7 @@ directly against a string literal:
 use crustywad::Wad;
 use crustywad::map::Map;
 
-# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
 # let group = wad.map_group("E1M1").unwrap();
 let map = Map::assemble(&wad, &group)?;
 for sector in map.sectors() {
@@ -262,7 +262,7 @@ linedef's `special` still holds its classic action number and sector tag (the la
 ```rust
 use crustywad::map::{Map, MapFormat};
 
-# let wad = crustywad::Wad::from_bytes(Vec::<u8>::new())?;
+# let wad = crustywad::Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec())?;
 # let group = wad.map_group("MAP01").unwrap();
 let map = Map::assemble(&wad, &group)?;
 
@@ -301,7 +301,7 @@ for linedef in map.linedefs() {
 use crustywad::map::Map;
 use crustywad::{ParseOptions, Wad};
 
-# let wad = Wad::from_bytes(Vec::<u8>::new()).unwrap();
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
 # let group = wad.map_group("E1M1").unwrap();
 let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())?;
 for warning in map.warnings() {
