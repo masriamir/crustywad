@@ -68,7 +68,8 @@ use crate::Strictness;
 use crate::map::common::{Name8, Sector, Sidedef, Vertex};
 use crate::map::doom::{Linedef, Thing};
 use crate::map::graph::{
-    Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, linedef_id_unset,
+    Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, TextureRef,
+    linedef_id_unset,
 };
 use crate::write::{WadBuilder, WriteOptions};
 
@@ -156,6 +157,18 @@ pub enum DoomWriteError {
         name: String,
         /// Its length in bytes.
         len: usize,
+    },
+    /// A [`TextureRef::Index`] reached the writer; a Doom 64 texture index
+    /// cannot be written as a name until the texture layer (v0.5.0) can
+    /// resolve it (both strictness modes; ADR-0021 §5).
+    #[error("unresolvable texture index for {field} in {block} #{index}")]
+    UnresolvedTextureIndex {
+        /// The block kind (`"sidedef"` or `"sector"`).
+        block: &'static str,
+        /// The field name (e.g. `"texturetop"`, `"texturefloor"`).
+        field: &'static str,
+        /// The 0-based block index.
+        index: usize,
     },
 }
 
@@ -603,6 +616,22 @@ fn narrow_linedefs(
     Ok(out)
 }
 
+/// Resolves a [`TextureRef`] to a name, or fails: a Doom 64 texture index has
+/// no name until the texture layer (v0.5.0) exists, so this is not a
+/// recoverable defect (ADR-0021 §5) — it errors in **both** strictness modes.
+fn texture_name<'a>(
+    block: &'static str,
+    field: &'static str,
+    index: usize,
+    tex: &'a TextureRef,
+) -> Result<&'a str, DoomWriteError> {
+    tex.as_name().ok_or(DoomWriteError::UnresolvedTextureIndex {
+        block,
+        field,
+        index,
+    })
+}
+
 /// Narrows the sidedef arena. Doom stores `i16` offsets and 8-byte texture names.
 fn narrow_sidedefs(n: &mut Narrower, raw: &[MapSidedef]) -> Result<Vec<Sidedef>, DoomWriteError> {
     let mut out = Vec::with_capacity(raw.len());
@@ -610,9 +639,9 @@ fn narrow_sidedefs(n: &mut Narrower, raw: &[MapSidedef]) -> Result<Vec<Sidedef>,
         out.push(Sidedef {
             x_offset: n.int16("sidedef", "offsetx", i, s.x_offset)?,
             y_offset: n.int16("sidedef", "offsety", i, s.y_offset)?,
-            upper_texture: n.name8(&s.upper)?,
-            lower_texture: n.name8(&s.lower)?,
-            middle_texture: n.name8(&s.middle)?,
+            upper_texture: n.name8(texture_name("sidedef", "texturetop", i, &s.upper)?)?,
+            lower_texture: n.name8(texture_name("sidedef", "texturebottom", i, &s.lower)?)?,
+            middle_texture: n.name8(texture_name("sidedef", "texturemiddle", i, &s.middle)?)?,
             sector: n.index("sidedef", "sector", i, s.sector.0, MAX_INDEX)?,
         });
     }
@@ -626,8 +655,13 @@ fn narrow_sectors(n: &mut Narrower, raw: &[MapSector]) -> Result<Vec<Sector>, Do
         out.push(Sector {
             floor_height: n.int16("sector", "heightfloor", i, s.floor_height)?,
             ceiling_height: n.int16("sector", "heightceiling", i, s.ceiling_height)?,
-            floor_texture: n.name8(&s.floor_flat)?,
-            ceiling_texture: n.name8(&s.ceiling_flat)?,
+            floor_texture: n.name8(texture_name("sector", "texturefloor", i, &s.floor_flat)?)?,
+            ceiling_texture: n.name8(texture_name(
+                "sector",
+                "textureceiling",
+                i,
+                &s.ceiling_flat,
+            )?)?,
             light_level: n.int16("sector", "lightlevel", i, s.light)?,
             special_type: n.int16("sector", "special", i, s.special)?,
             tag: n.int16("sector", "id", i, s.tag)?,
@@ -666,6 +700,8 @@ fn narrow_things(n: &mut Narrower, raw: &[MapThing]) -> Result<Vec<Thing>, DoomW
 /// # Errors
 /// - [`DoomWriteError::TooManyElements`] — an arena exceeds Doom's `u16` index
 ///   space (returned in **both** strictness modes).
+/// - [`DoomWriteError::UnresolvedTextureIndex`] — a sidedef/sector carries a
+///   [`TextureRef::Index`] (returned in **both** strictness modes; ADR-0021 §5).
 /// - In strict mode only: [`DoomWriteError::NonFiniteCoordinate`],
 ///   [`DoomWriteError::FractionalCoordinate`], [`DoomWriteError::ValueOutOfRange`],
 ///   [`DoomWriteError::UnrepresentableField`], [`DoomWriteError::NameTooLong`].
@@ -770,15 +806,15 @@ mod tests {
                 sector: SectorIdx(0),
                 x_offset: 4,
                 y_offset: -8,
-                upper: "-".into(),
-                lower: "-".into(),
-                middle: "STARTAN3".into(),
+                upper: TextureRef::Name("-".into()),
+                lower: TextureRef::Name("-".into()),
+                middle: TextureRef::Name("STARTAN3".into()),
             }],
             sectors: vec![MapSector {
                 floor_height: 0,
                 ceiling_height: 128,
-                floor_flat: "FLOOR4_8".into(),
-                ceiling_flat: "CEIL3_5".into(),
+                floor_flat: TextureRef::Name("FLOOR4_8".into()),
+                ceiling_flat: TextureRef::Name("CEIL3_5".into()),
                 light: 160,
                 special: 0,
                 tag: 0,
@@ -935,7 +971,7 @@ mod tests {
     #[test]
     fn long_texture_name_errors_in_strict_and_truncates_in_lenient() {
         let mut map = tiny_map();
-        map.sidedefs[0].middle = "TOOLONGNAME".into();
+        map.sidedefs[0].middle = TextureRef::Name("TOOLONGNAME".into());
 
         let err = write_doom_map(&map, &WriteOptions::strict()).unwrap_err();
         assert_eq!(
@@ -952,6 +988,26 @@ mod tests {
         assert!(warnings.contains(&DoomWriteWarning::NameTruncated {
             name: "TOOLONGNAME".into()
         }));
+    }
+
+    /// A Doom 64 texture index has no name until the texture layer (v0.5.0)
+    /// exists, so a `TextureRef::Index` is rejected in both strictness modes —
+    /// there is no honest recovery (ADR-0021 §5).
+    #[test]
+    fn texture_index_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.sidedefs[0].middle = TextureRef::Index(42);
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_doom_map(&map, &opts).unwrap_err();
+            assert!(matches!(
+                err,
+                DoomWriteError::UnresolvedTextureIndex {
+                    block: "sidedef",
+                    index: 0,
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]
@@ -1497,6 +1553,15 @@ mod tests {
             }
             .to_string(),
             "name \"TOOLONGNAME\" is 11 bytes; Doom names are at most 8 bytes"
+        );
+        assert_eq!(
+            DoomWriteError::UnresolvedTextureIndex {
+                block: "sidedef",
+                field: "texturetop",
+                index: 0
+            }
+            .to_string(),
+            "unresolvable texture index for texturetop in sidedef #0"
         );
     }
 

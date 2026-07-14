@@ -657,3 +657,27 @@ fn detects_hexen_format_with_behavior() {
     let group = wad.map_group("MAP01").expect("group");
     assert_eq!(detect_map_format(&wad, &group), MapFormat::Hexen);
 }
+
+// ADR-0021 §3: classic assembly produces TextureRef::Name; the PartialEq<&str>
+// impl keeps name comparisons ergonomic; Index never equals a name.
+#[test]
+fn classic_assembly_produces_texture_names() {
+    use crustywad::map::TextureRef;
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("E1M1").unwrap()).unwrap();
+    assert_eq!(
+        map.sectors()[0].floor_flat,
+        TextureRef::Name("FLOOR".into())
+    );
+    assert_eq!(map.sectors()[0].floor_flat, "FLOOR"); // PartialEq<&str>
+    assert_eq!(map.sidedefs()[0].middle.as_name(), Some("WALL"));
+    assert_ne!(TextureRef::Index(7), "FLOOR");
+}

@@ -38,7 +38,7 @@ pub use doom::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, wri
 pub use doom64::{Doom64Map, Doom64ReadError, Doom64Warning, is_doom64_map_lump, read_doom64_map};
 pub use graph::{
     LinedefIdx, Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning,
-    SectorIdx, SidedefIdx, Special, VertexIdx,
+    SectorIdx, SidedefIdx, Special, TextureRef, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
 pub use udmf::{UdmfParseError, parse_udmf};

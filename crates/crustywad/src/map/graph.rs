@@ -101,6 +101,33 @@ pub(crate) fn linedef_id_unset(format: MapFormat) -> i32 {
     if format == MapFormat::Udmf { -1 } else { 0 }
 }
 
+/// A texture or flat reference in the assembled graph (ADR-0021 §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextureRef {
+    /// A texture name (a Doom/Hexen 8-byte lump name, or a UDMF string).
+    Name(String),
+    /// A Doom 64 texture/flat table index — resolvable to a texture identity
+    /// once the texture layer (v0.5.0, #156/#157) exists.
+    Index(u16),
+}
+
+impl TextureRef {
+    /// The texture name, or `None` for a Doom 64 [`TextureRef::Index`].
+    #[must_use]
+    pub fn as_name(&self) -> Option<&str> {
+        match self {
+            TextureRef::Name(name) => Some(name),
+            TextureRef::Index(_) => None,
+        }
+    }
+}
+
+impl PartialEq<&str> for TextureRef {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_name() == Some(*other)
+    }
+}
+
 /// A normalized sidedef, referencing its sector by index into the owning
 /// [`Map`]'s sector arena.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,12 +138,15 @@ pub struct MapSidedef {
     pub x_offset: i32,
     /// The vertical texture offset, in map units.
     pub y_offset: i32,
-    /// The upper texture name, or empty if none.
-    pub upper: String,
-    /// The lower texture name, or empty if none.
-    pub lower: String,
-    /// The middle texture name, or empty if none.
-    pub middle: String,
+    /// The upper texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
+    /// has no name until the texture layer (v0.5.0) can resolve it.
+    pub upper: TextureRef,
+    /// The lower texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
+    /// has no name until the texture layer (v0.5.0) can resolve it.
+    pub lower: TextureRef,
+    /// The middle texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
+    /// has no name until the texture layer (v0.5.0) can resolve it.
+    pub middle: TextureRef,
 }
 
 /// A normalized sector.
@@ -126,10 +156,12 @@ pub struct MapSector {
     pub floor_height: i32,
     /// The ceiling height, in map units.
     pub ceiling_height: i32,
-    /// The floor flat (texture) name.
-    pub floor_flat: String,
-    /// The ceiling flat (texture) name.
-    pub ceiling_flat: String,
+    /// The floor flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
+    /// name until the texture layer (v0.5.0) can resolve it.
+    pub floor_flat: TextureRef,
+    /// The ceiling flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
+    /// name until the texture layer (v0.5.0) can resolve it.
+    pub ceiling_flat: TextureRef,
     // Doom stores sector special/tag as i16; widen losslessly to i32
     // (avoids an i16->u16 sign-loss cast that clippy::pedantic rejects).
     /// The light level, in the range `0..=255` on disk, widened to `i32`.
@@ -352,15 +384,15 @@ mod tests {
                 sector: SectorIdx(0),
                 x_offset: 0,
                 y_offset: 0,
-                upper: String::new(),
-                lower: String::new(),
-                middle: "WALL".into(),
+                upper: TextureRef::Name(String::new()),
+                lower: TextureRef::Name(String::new()),
+                middle: TextureRef::Name("WALL".into()),
             }],
             sectors: vec![MapSector {
                 floor_height: 0,
                 ceiling_height: 128,
-                floor_flat: "FLOOR".into(),
-                ceiling_flat: "CEIL".into(),
+                floor_flat: TextureRef::Name("FLOOR".into()),
+                ceiling_flat: TextureRef::Name("CEIL".into()),
                 light: 160,
                 special: 0,
                 tag: 0,

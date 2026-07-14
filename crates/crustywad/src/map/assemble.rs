@@ -2,7 +2,7 @@
 
 use crate::map::graph::{
     Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning, SectorIdx,
-    SidedefIdx, Special, VertexIdx,
+    SidedefIdx, Special, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -286,8 +286,8 @@ fn normalize_sectors(raw: &[common::Sector]) -> Vec<MapSector> {
         .map(|s| MapSector {
             floor_height: i32::from(s.floor_height),
             ceiling_height: i32::from(s.ceiling_height),
-            floor_flat: s.floor_texture.as_str_lossy(),
-            ceiling_flat: s.ceiling_texture.as_str_lossy(),
+            floor_flat: TextureRef::Name(s.floor_texture.as_str_lossy()),
+            ceiling_flat: TextureRef::Name(s.ceiling_texture.as_str_lossy()),
             light: i32::from(s.light_level),
             special: i32::from(s.special_type),
             tag: i32::from(s.tag),
@@ -336,9 +336,9 @@ fn normalize_sidedefs(
             sector,
             x_offset: i32::from(sd.x_offset),
             y_offset: i32::from(sd.y_offset),
-            upper: sd.upper_texture.as_str_lossy(),
-            lower: sd.lower_texture.as_str_lossy(),
-            middle: sd.middle_texture.as_str_lossy(),
+            upper: TextureRef::Name(sd.upper_texture.as_str_lossy()),
+            lower: TextureRef::Name(sd.lower_texture.as_str_lossy()),
+            middle: TextureRef::Name(sd.middle_texture.as_str_lossy()),
         });
     }
     Ok(sidedefs)
@@ -515,8 +515,8 @@ fn normalize_udmf_sectors(raw: &[crate::map::udmf::UdmfSector]) -> Vec<MapSector
         .map(|s| MapSector {
             floor_height: s.heightfloor,
             ceiling_height: s.heightceiling,
-            floor_flat: s.texturefloor.clone(),
-            ceiling_flat: s.textureceiling.clone(),
+            floor_flat: TextureRef::Name(s.texturefloor.clone()),
+            ceiling_flat: TextureRef::Name(s.textureceiling.clone()),
             light: s.lightlevel,
             special: s.special,
             tag: s.id,
@@ -546,9 +546,9 @@ fn normalize_udmf_sidedefs(
             sector,
             x_offset: sd.offsetx,
             y_offset: sd.offsety,
-            upper: sd.texturetop.clone(),
-            lower: sd.texturebottom.clone(),
-            middle: sd.texturemiddle.clone(),
+            upper: TextureRef::Name(sd.texturetop.clone()),
+            lower: TextureRef::Name(sd.texturebottom.clone()),
+            middle: TextureRef::Name(sd.texturemiddle.clone()),
         });
     }
     Ok(out)
