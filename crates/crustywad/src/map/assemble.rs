@@ -185,21 +185,25 @@ fn resolve_optional(
     }
 }
 
-/// Resolves a linedef's **left** sidedef against the binary `0xffff` sentinel.
+/// Resolves a binary linedef's sidedef reference (either side) against the
+/// `0xffff` sentinel.
 ///
-/// `0xffff` (65535) is the on-disk Doom/Hexen "no back side" marker: `sideback`
-/// is a `u16` there, so that value means one-sided and maps to `None`. Any other
-/// value outside `0..count` errors (strict) or becomes `None` + a warning
-/// (lenient); a negative index (reachable only via the widened signed parameter)
-/// is simply out of range.
+/// `0xffff` (65535) is the on-disk Doom/Hexen "no side" marker for **both**
+/// sidedef fields — vanilla engines guard `sidenum[0]` and `sidenum[1]`
+/// identically (`!= -1`; Chocolate Doom/Hexen `P_LoadLineDefs`), so a front of
+/// `0xffff` is a valid frontless line, not a defect (ADR-0020). The sentinel
+/// maps to `None` in both strictness modes with no warning. Any other value
+/// outside `0..count` errors (strict) or becomes `None` + a warning (lenient);
+/// a negative index (reachable only via the widened signed parameter) is
+/// simply out of range.
 ///
 /// `raw` is `i32` so binary and UDMF callers can share this validator, but the
 /// UDMF normalizer (#58b) must **not** route a raw sidedef index through this
 /// `0xffff` sentinel. Per ADR-0017 §2/§3 it receives `sideback` already
-/// normalized to `Option<i32>` (`-1` → `None` in the parser), maps `None`
-/// straight to `left: None`, and range-checks a real `Some(idx)` — so a valid
-/// UDMF sidedef index of 65535 is never mistaken for the one-sided sentinel.
-fn resolve_left(
+/// normalized to `Option<i32>` (`-1` → `None` in the parser) and `sidefront`
+/// as a required raw integer, and range-checks real indices directly — so a
+/// valid UDMF sidedef index of 65535 is never mistaken for the binary sentinel.
+fn resolve_binary_side(
     raw: i32,
     count: usize,
     from: &'static str,
@@ -214,7 +218,8 @@ fn resolve_left(
 
 /// Resolves a linedef's four cross-references (start/end vertex, right/left
 /// sidedef) — the resolution is identical for the Doom and Hexen layouts, so
-/// both normalizers share it. `left_sidedef == 0xffff` yields `None` (one-sided).
+/// both normalizers share it. `0xffff` in either sidedef field yields `None`
+/// for that side (no back side / no front side; ADR-0020).
 // The four raw fields plus the two arena counts, strictness, and the warnings
 // sink are each independently meaningful (not a natural struct); grouping them
 // would only relocate, not reduce, the parameter count.
@@ -228,7 +233,7 @@ fn resolve_linedef_refs(
     sidedef_count: usize,
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
-) -> Result<(VertexIdx, VertexIdx, SidedefIdx, Option<SidedefIdx>), MapAssembleError> {
+) -> Result<(VertexIdx, VertexIdx, Option<SidedefIdx>, Option<SidedefIdx>), MapAssembleError> {
     let start = VertexIdx(resolve_required(
         i32::from(start_vertex),
         vertex_count,
@@ -245,15 +250,15 @@ fn resolve_linedef_refs(
         strictness,
         warnings,
     )?);
-    let right = SidedefIdx(resolve_required(
+    let right = resolve_binary_side(
         i32::from(right_sidedef),
         sidedef_count,
-        "sidedef",
         "linedef",
         strictness,
         warnings,
-    )?);
-    let left = resolve_left(
+    )?
+    .map(SidedefIdx);
+    let left = resolve_binary_side(
         i32::from(left_sidedef),
         sidedef_count,
         "linedef",
@@ -577,14 +582,13 @@ fn normalize_udmf_linedefs(
             strictness,
             warnings,
         )?);
-        let right = SidedefIdx(resolve_required(
-            ld.sidefront,
-            sidedef_count,
-            "sidedef",
-            "linedef",
-            strictness,
-            warnings,
-        )?);
+        // `sidefront` is required by the UDMF parser (spec: no valid default);
+        // a dangling or negative value here resolves like any optional sidedef
+        // reference — strict error, lenient `None` + warning (ADR-0020 §3) —
+        // rather than clamping to index 0, which fabricated a reference not
+        // present in the source.
+        let right = resolve_optional(ld.sidefront, sidedef_count, "linedef", strictness, warnings)?
+            .map(SidedefIdx);
         let left = match ld.sideback {
             None => None,
             Some(idx) => resolve_optional(idx, sidedef_count, "linedef", strictness, warnings)?
@@ -783,8 +787,8 @@ fn assemble_udmf(
 mod tests {
     use super::{
         Map, MapAssembleError, normalize_hexen_thing_flags, normalize_udmf_linedefs,
-        normalize_udmf_sidedefs, normalize_udmf_things, normalize_udmf_vertices, resolve_left,
-        resolve_optional, resolve_required,
+        normalize_udmf_sidedefs, normalize_udmf_things, normalize_udmf_vertices,
+        resolve_binary_side, resolve_optional, resolve_required,
     };
     use crate::map::graph::{MapFormat, SidedefIdx, VertexIdx};
     use crate::map::udmf::{UdmfLinedef, UdmfSidedef, UdmfThing};
@@ -886,17 +890,17 @@ mod tests {
     }
 
     #[test]
-    fn resolve_left_sentinel_and_negative() {
+    fn resolve_binary_side_sentinel_and_negative() {
         let mut warnings = Vec::new();
         // The binary 0xffff one-sided sentinel resolves to `None`.
         assert_eq!(
-            resolve_left(0xffff, 4, "linedef", Strictness::Strict, &mut warnings).unwrap(),
+            resolve_binary_side(0xffff, 4, "linedef", Strictness::Strict, &mut warnings).unwrap(),
             None
         );
         assert!(warnings.is_empty());
         // A negative index (not the sentinel) is out of range → lenient `None` + warning.
         assert_eq!(
-            resolve_left(-2, 4, "linedef", Strictness::Lenient, &mut warnings).unwrap(),
+            resolve_binary_side(-2, 4, "linedef", Strictness::Lenient, &mut warnings).unwrap(),
             None
         );
         assert_eq!(warnings.len(), 1);
@@ -936,7 +940,7 @@ mod tests {
         let out = normalize_udmf_linedefs(&lines, 2, 2, Strictness::Strict, &mut w).unwrap();
         assert_eq!(out[0].start, VertexIdx(0));
         assert_eq!(out[0].end, VertexIdx(1));
-        assert_eq!(out[0].right, SidedefIdx(0));
+        assert_eq!(out[0].right, Some(SidedefIdx(0)));
         assert_eq!(out[0].left, Some(SidedefIdx(1)));
         assert_eq!(out[0].id, 7);
         assert_eq!(out[0].flags, 0b101);

@@ -176,12 +176,13 @@ if let Some(group) = wad.map_group("E1M1") {
 
     for linedef in map.linedefs() {
         let (start, end) = map.linedef_vertices(linedef);
-        let right = map.linedef_right(linedef);
-        println!(
-            "line ({}, {}) -> ({}, {}), front sector floor {}",
-            start.x, start.y, end.x, end.y,
-            map.sidedef_sector(right).floor_height
-        );
+        if let Some(right) = map.linedef_right(linedef) {
+            println!(
+                "line ({}, {}) -> ({}, {}), front sector floor {}",
+                start.x, start.y, end.x, end.y,
+                map.sidedef_sector(right).floor_height
+            );
+        }
     }
 }
 # Ok::<(), crustywad::map::MapAssembleError>(())
@@ -193,7 +194,7 @@ if let Some(group) = wad.map_group("E1M1") {
 | Resolver | Follows |
 |---|---|
 | `map.linedef_vertices(linedef)` | `(start, end)` vertex pair |
-| `map.linedef_right(linedef)` | right (front) sidedef |
+| `map.linedef_right(linedef)` | right (front) sidedef, or `None` |
 | `map.linedef_left(linedef)` | left (back) sidedef, or `None` |
 | `map.sidedef_sector(sidedef)` | the sidedef's sector |
 
@@ -203,13 +204,16 @@ index, because assembly validated every cross-reference before `Map` was constru
 (Because `MapLinedef`/`MapSidedef` have public index fields, passing a hand-constructed
 value with an out-of-range index can still panic.)
 
-### One-sided lines
+### One-sided (and sideless) lines
 
-On disk, a `Linedef`'s `left_sidedef` field uses the sentinel value `0xffff` to mean "no
-back sidedef" (a one-sided line, such as an outer wall). Assembly translates that sentinel
-into `MapLinedef.left: Option<SidedefIdx>` — `None` for one-sided lines, `Some(idx)` for
-two-sided lines. `map.linedef_left(linedef)` mirrors this: it returns `None` for a
-one-sided line rather than an error.
+On disk, either of a `Linedef`'s sidedef fields may hold the sentinel value `0xffff`,
+meaning "no sidedef on this side". A `left_sidedef` of `0xffff` is the everyday case — a
+one-sided line, such as an outer wall. A `right_sidedef` of `0xffff` is rare but
+engine-sanctioned (vanilla guards both fields identically): retail maps use it for
+invisible blocking lines with no render surfaces at all. Assembly translates the sentinel
+into `Option<SidedefIdx>` on both fields — `MapLinedef.left` and `MapLinedef.right` are
+each `None` when their side is absent — and `map.linedef_left(linedef)` /
+`map.linedef_right(linedef)` mirror this by returning `Option` rather than an error.
 
 ### Extended thing and linedef fields
 

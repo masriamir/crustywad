@@ -587,10 +587,13 @@ fn narrow_linedefs(
             flags: n.flags16("linedef", "flags", i, i64::from(l.flags))?,
             special_type: n.uint16("linedef", "special", i, i64::from(l.special.special))?,
             sector_tag: n.uint16("linedef", "arg0", i, i64::from(l.special.args[0]))?,
-            right_sidedef: n.index("linedef", "sidefront", i, l.right.0, MAX_SIDEDEF_INDEX)?,
-            // `NO_SIDEDEF` (0xFFFF) is Doom's "no sidedef" sentinel; a real
-            // sidedef index is capped at MAX_SIDEDEF_INDEX (0xFFFE), so the two
-            // can never collide.
+            // `NO_SIDEDEF` (0xFFFF) is Doom's "no sidedef" sentinel for either
+            // field (ADR-0020); a real sidedef index is capped at
+            // MAX_SIDEDEF_INDEX (0xFFFE), so the two can never collide.
+            right_sidedef: match l.right {
+                Some(s) => n.index("linedef", "sidefront", i, s.0, MAX_SIDEDEF_INDEX)?,
+                None => NO_SIDEDEF,
+            },
             left_sidedef: match l.left {
                 Some(s) => n.index("linedef", "sideback", i, s.0, MAX_SIDEDEF_INDEX)?,
                 None => NO_SIDEDEF,
@@ -751,7 +754,7 @@ mod tests {
             linedefs: vec![MapLinedef {
                 start: VertexIdx(0),
                 end: VertexIdx(1),
-                right: SidedefIdx(0),
+                right: Some(SidedefIdx(0)),
                 left: None,
                 flags: 0b1,
                 special: Special {
@@ -1300,7 +1303,7 @@ mod tests {
     fn sidedef_index_stops_one_below_the_no_sidedef_sentinel() {
         // 0xFFFE is legal and untouched, on both the front and back reference.
         let mut map = tiny_map();
-        map.linedefs[0].right = SidedefIdx(0xFFFE);
+        map.linedefs[0].right = Some(SidedefIdx(0xFFFE));
         map.linedefs[0].left = Some(SidedefIdx(0xFFFE));
         let (lumps, warnings) = write_doom_map(&map, &WriteOptions::strict()).unwrap();
         let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
@@ -1311,7 +1314,7 @@ mod tests {
 
         // 0xFFFF would collide with the sentinel: strict rejects it...
         let mut map = tiny_map();
-        map.linedefs[0].right = SidedefIdx(0xFFFF);
+        map.linedefs[0].right = Some(SidedefIdx(0xFFFF));
         assert_eq!(
             write_doom_map(&map, &WriteOptions::strict()).unwrap_err(),
             DoomWriteError::ValueOutOfRange {
@@ -1335,6 +1338,24 @@ mod tests {
             from: 0xFFFF,
             to: 0xFFFE
         }));
+    }
+
+    /// A frontless linedef (`right: None`, the ADR-0020 sentinel) serializes as
+    /// `NO_SIDEDEF` on the front field — symmetric with the back — with no
+    /// error or clamp in either mode, so a frontless binary map round-trips
+    /// losslessly.
+    #[test]
+    fn frontless_linedef_writes_the_sentinel() {
+        let mut map = tiny_map();
+        map.linedefs[0].right = None;
+        map.linedefs[0].left = None;
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let (lumps, warnings) = write_doom_map(&map, &opts).unwrap();
+            let linedefs: Vec<crate::map::doom::Linedef> = parse_records(&lumps.linedefs).unwrap();
+            assert_eq!(linedefs[0].right_sidedef, NO_SIDEDEF);
+            assert_eq!(linedefs[0].left_sidedef, NO_SIDEDEF);
+            assert_eq!(warnings, vec![DoomWriteWarning::NodesNotBuilt]);
+        }
     }
 
     /// A vertex/sector reference is capped at `0xFFFF`, one *above* the sidedef

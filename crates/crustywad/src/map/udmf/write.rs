@@ -39,6 +39,15 @@ pub enum UdmfWriteError {
     /// (strict mode; lenient falls back to `"doom"` and warns).
     #[error("map namespace is empty")]
     EmptyNamespace,
+    /// A linedef has no front sidedef (`MapLinedef::right == None`, the binary
+    /// `0xffff` sentinel; ADR-0020), which UDMF cannot represent — the spec
+    /// gives `sidefront` no valid default (strict mode; lenient writes
+    /// `sidefront = -1` and warns).
+    #[error("linedef #{index} has no front sidedef, which UDMF cannot represent")]
+    NoFrontSide {
+        /// The 0-based linedef index.
+        index: usize,
+    },
 }
 
 /// A non-fatal issue recovered while writing a map to UDMF text in lenient mode.
@@ -61,6 +70,14 @@ pub enum UdmfWriteWarning {
         /// The namespace written instead: `"hexen"` for a [`MapFormat::Hexen`]
         /// map, `"doom"` otherwise.
         used: &'static str,
+    },
+    /// A linedef with no front sidedef (unrepresentable in UDMF — the spec
+    /// gives `sidefront` no valid default) was written as `sidefront = -1`,
+    /// which ports tolerate at load time (ADR-0020).
+    #[error("linedef #{index} has no front sidedef; wrote sidefront = -1")]
+    NoFrontSideDefaulted {
+        /// The 0-based linedef index.
+        index: usize,
     },
 }
 
@@ -144,12 +161,31 @@ impl Writer {
         (8, "mapped"),
     ];
 
-    fn push_linedef(&mut self, l: &MapLinedef, format: MapFormat) {
+    fn push_linedef(
+        &mut self,
+        index: usize,
+        l: &MapLinedef,
+        format: MapFormat,
+    ) -> Result<(), UdmfWriteError> {
+        // UDMF gives `sidefront` no valid default, so a frontless line (the
+        // binary `0xffff` sentinel; ADR-0020) is unrepresentable: strict
+        // errors, lenient writes the port-tolerated `-1` and warns.
+        let sidefront = match l.right {
+            Some(r) => i64::try_from(r.0).expect("arena index fits i64"),
+            None => match self.strictness {
+                Strictness::Strict => return Err(UdmfWriteError::NoFrontSide { index }),
+                Strictness::Lenient => {
+                    self.warnings
+                        .push(UdmfWriteWarning::NoFrontSideDefaulted { index });
+                    -1
+                }
+            },
+        };
         self.out.push_str("linedef { ");
         write!(
             self.out,
-            "v1 = {}; v2 = {}; sidefront = {}; ",
-            l.start.0, l.end.0, l.right.0
+            "v1 = {}; v2 = {}; sidefront = {sidefront}; ",
+            l.start.0, l.end.0
         )
         .expect(INFALLIBLE);
         if let Some(back) = l.left {
@@ -176,6 +212,7 @@ impl Writer {
             }
         }
         self.out.push_str("}\n");
+        Ok(())
     }
 
     fn push_sidedef(&mut self, s: &MapSidedef) {
@@ -349,8 +386,8 @@ pub fn write_udmf(
         w.push_vertex(i, v)?;
     }
 
-    for l in map.linedefs() {
-        w.push_linedef(l, map.format());
+    for (i, l) in map.linedefs().iter().enumerate() {
+        w.push_linedef(i, l, map.format())?;
     }
 
     for s in map.sidedefs() {
