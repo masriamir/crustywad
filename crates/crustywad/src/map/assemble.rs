@@ -1,8 +1,9 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    LightIdx, Map, MapFormat, MapLight, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex,
-    MapWarning, SectorIdx, SidedefIdx, Special, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapNode, MapSector, MapSeg,
+    MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx,
+    SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -75,6 +76,21 @@ pub enum MapAssembleError {
         /// The offending value.
         value: i32,
     },
+    /// A `NODES`/`SSECTORS` lump opened with an extended/GL node-encoding
+    /// signature (ZDBSP family) instead of classic fixed-size records (strict
+    /// mode). Reading these encodings is out of scope for classic-path BSP
+    /// normalization (see issue #199); the classic record decoder must never
+    /// misread them as garbage classic records.
+    #[error(
+        "{lump} uses the unsupported extended node encoding {} (see issue #199)",
+        String::from_utf8_lossy(signature)
+    )]
+    UnsupportedNodeEncoding {
+        /// The name of the lump carrying the extended encoding (`"NODES"` or `"SSECTORS"`).
+        lump: &'static str,
+        /// The 4-byte signature found at the head of the lump (e.g. `*b"XNOD"`).
+        signature: [u8; 4],
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.
@@ -98,6 +114,39 @@ where
 {
     let bytes = lump_bytes(wad, group, lump).ok_or(MapAssembleError::MissingLump { lump })?;
     parse_records::<T>(bytes).map_err(|source| MapAssembleError::Records { lump, source })
+}
+
+/// Known extended/GL node-encoding signatures (ZDBSP family) that the classic
+/// record decoder must never touch — reading them is #199's scope (ADR-0015
+/// amendment; spec §"Extended-encoding gate").
+const EXTENDED_NODE_SIGNATURES: [&[u8; 4]; 8] = [
+    b"XNOD", b"ZNOD", b"XGLN", b"ZGLN", b"XGL2", b"XGL3", b"ZGL2", b"ZGL3",
+];
+
+/// Decodes an optional BSP lump: absent -> empty vec (ADR-0015 §5).
+fn decode_optional<T>(
+    wad: &Wad,
+    group: &MapGroup,
+    lump: &'static str,
+) -> Result<Vec<T>, MapAssembleError>
+where
+    T: for<'a> binrw::BinRead<Args<'a> = ()>,
+{
+    match lump_bytes(wad, group, lump) {
+        None => Ok(Vec::new()),
+        Some(bytes) => {
+            parse_records::<T>(bytes).map_err(|source| MapAssembleError::Records { lump, source })
+        }
+    }
+}
+
+/// Returns the extended-encoding signature at the head of `lump`'s bytes, if
+/// any. Checked before classic record decoding so a ZDBSP blob is never
+/// misread as classic records.
+fn extended_signature(wad: &Wad, group: &MapGroup, lump: &str) -> Option<[u8; 4]> {
+    let bytes = lump_bytes(wad, group, lump)?;
+    let head: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+    EXTENDED_NODE_SIGNATURES.contains(&&head).then_some(head)
 }
 
 /// Resolves a **required** reference. Empty target arena is always fatal.
@@ -381,6 +430,158 @@ fn normalize_linedefs(
         });
     }
     Ok(linedefs)
+}
+
+/// Resolves one BSP node child (`right_child`/`left_child`): bit 15 set
+/// selects a subsector leaf (remaining 15 bits into `subsector_count`), clear
+/// selects an internal node (into `node_count`). A small named helper rather
+/// than an inline closure — a closure capturing `warnings` mutably fights the
+/// borrow checker across the two sequential calls per node.
+fn resolve_node_child(
+    raw: u16,
+    node_count: usize,
+    subsector_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<NodeChild, MapAssembleError> {
+    if raw & 0x8000 == 0 {
+        Ok(NodeChild::Node(NodeIdx(resolve_required(
+            i32::from(raw),
+            node_count,
+            "node",
+            "node",
+            strictness,
+            warnings,
+        )?)))
+    } else {
+        Ok(NodeChild::Subsector(SubsectorIdx(resolve_required(
+            i32::from(raw & 0x7fff),
+            subsector_count,
+            "subsector",
+            "node",
+            strictness,
+            warnings,
+        )?)))
+    }
+}
+
+/// Normalizes the engine-built BSP lumps into the graph arenas (ADR-0015 §1).
+///
+/// Cross-references resolve with the standard pattern: strict errors on the
+/// first dangling reference; lenient clamps indices to `0` (or truncates a
+/// subsector's seg run to the arena) and warns. Iterative throughout — the
+/// tree is stored, not walked, so crafted cycles cannot recurse anything.
+///
+/// # Errors
+/// Returns [`MapAssembleError::DanglingReference`] in strict mode if any seg's
+/// vertex/linedef reference, subsector's seg run, or node's child reference is
+/// out of range.
+// The three-arena return tuple is the shared normalizer's whole point (Task 3
+// reuses it for Doom 64); a named struct would only relocate, not reduce, it.
+#[allow(clippy::type_complexity)]
+fn normalize_bsp(
+    raw_segs: &[common::Seg],
+    raw_subsectors: &[common::Subsector],
+    raw_nodes: &[common::Node],
+    vertex_count: usize,
+    linedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Vec<MapSeg>, Vec<MapSubsector>, Vec<MapNode>), MapAssembleError> {
+    let mut segs = Vec::with_capacity(raw_segs.len());
+    for sg in raw_segs {
+        segs.push(MapSeg {
+            start: VertexIdx(resolve_required(
+                i32::from(sg.start_vertex),
+                vertex_count,
+                "vertex",
+                "seg",
+                strictness,
+                warnings,
+            )?),
+            end: VertexIdx(resolve_required(
+                i32::from(sg.end_vertex),
+                vertex_count,
+                "vertex",
+                "seg",
+                strictness,
+                warnings,
+            )?),
+            angle: sg.angle,
+            linedef: LinedefIdx(resolve_required(
+                i32::from(sg.linedef),
+                linedef_count,
+                "linedef",
+                "seg",
+                strictness,
+                warnings,
+            )?),
+            direction: sg.direction,
+            offset: i32::from(sg.offset),
+        });
+    }
+
+    let mut subsectors = Vec::with_capacity(raw_subsectors.len());
+    for ss in raw_subsectors {
+        let first = usize::from(ss.first_seg);
+        let end = first + usize::from(ss.seg_count);
+        let range = if end <= segs.len() && first <= segs.len() {
+            first..end
+        } else {
+            match strictness {
+                Strictness::Strict => {
+                    return Err(MapAssembleError::DanglingReference {
+                        referent: "seg",
+                        index: i32::try_from(end).unwrap_or(i32::MAX),
+                        from: "subsector",
+                        count: segs.len(),
+                    });
+                }
+                Strictness::Lenient => {
+                    warnings.push(MapWarning::DanglingReference {
+                        referent: "seg",
+                        index: i32::try_from(end).unwrap_or(i32::MAX),
+                        from: "subsector",
+                        count: segs.len(),
+                    });
+                    first.min(segs.len())..segs.len()
+                }
+            }
+        };
+        subsectors.push(MapSubsector { segs: range });
+    }
+
+    let node_count = raw_nodes.len();
+    let subsector_count = subsectors.len();
+    let mut nodes = Vec::with_capacity(node_count);
+    for nd in raw_nodes {
+        let right = resolve_node_child(
+            nd.right_child,
+            node_count,
+            subsector_count,
+            strictness,
+            warnings,
+        )?;
+        let left = resolve_node_child(
+            nd.left_child,
+            node_count,
+            subsector_count,
+            strictness,
+            warnings,
+        )?;
+        nodes.push(MapNode {
+            x: i32::from(nd.x),
+            y: i32::from(nd.y),
+            dx: i32::from(nd.dx),
+            dy: i32::from(nd.dy),
+            right_bbox: nd.right_bbox.map(i32::from),
+            left_bbox: nd.left_bbox.map(i32::from),
+            right,
+            left,
+        });
+    }
+
+    Ok((segs, subsectors, nodes))
 }
 
 /// Translates a raw Hexen `THINGS` flag word into the graph's single
@@ -681,8 +882,9 @@ impl Map {
     ///
     /// # Errors
     /// Returns [`MapAssembleError`] if a required lump is missing, a record lump
-    /// fails to decode, any cross-reference is out of range, or — for a
-    /// Doom 64 group (ADR-0021 §2) — the marker's nested WAD fails to read.
+    /// fails to decode, any cross-reference is out of range, a `NODES`/`SSECTORS`
+    /// lump carries an unsupported extended node encoding (see issue #199), or —
+    /// for a Doom 64 group (ADR-0021 §2) — the marker's nested WAD fails to read.
     pub fn assemble(wad: &Wad, group: &MapGroup) -> Result<Map, MapAssembleError> {
         Map::assemble_with_options(wad, group, ParseOptions::default())
     }
@@ -697,7 +899,11 @@ impl Map {
     /// Returns [`MapAssembleError`] if a required lump is missing, a record lump
     /// fails to decode, or (in strict mode) a cross-reference is out of range.
     /// In lenient mode only structural failures (missing lump, undecodable
-    /// records, an empty *required* target arena) return an error. For a
+    /// records, an empty *required* target arena) return an error. A binary
+    /// map's `NODES`/`SSECTORS` lump carrying an unsupported extended node
+    /// encoding (ZDBSP family; see issue #199) is
+    /// [`MapAssembleError::UnsupportedNodeEncoding`] in strict mode, or skipped
+    /// with an empty BSP arena plus a warning in lenient mode. For a
     /// Doom 64 group, [`MapAssembleError::Doom64`] wraps a failure to read the
     /// marker's nested WAD (both modes) or a missing/undecodable sub-lump
     /// (strict mode; ADR-0021 §2).
@@ -760,6 +966,43 @@ impl Map {
                     MapFormat::Doom64 => return assemble_doom64(wad, group, options, warnings),
                 };
 
+                // Extended node encodings (ZDBSP/GL) are #199's scope: strict refuses,
+                // lenient skips the BSP arenas entirely and warns (never garbage-decode).
+                let mut bsp_gated = false;
+                for lump in ["NODES", "SSECTORS"] {
+                    if let Some(signature) = extended_signature(wad, group, lump) {
+                        match s {
+                            Strictness::Strict => {
+                                return Err(MapAssembleError::UnsupportedNodeEncoding {
+                                    lump,
+                                    signature,
+                                });
+                            }
+                            Strictness::Lenient => {
+                                warnings.push(MapWarning::UnsupportedNodeEncoding { lump });
+                                bsp_gated = true;
+                            }
+                        }
+                    }
+                }
+                let (segs, subsectors, nodes) = if bsp_gated {
+                    (Vec::new(), Vec::new(), Vec::new())
+                } else {
+                    let raw_segs = decode_optional::<common::Seg>(wad, group, "SEGS")?;
+                    let raw_subsectors =
+                        decode_optional::<common::Subsector>(wad, group, "SSECTORS")?;
+                    let raw_nodes = decode_optional::<common::Node>(wad, group, "NODES")?;
+                    normalize_bsp(
+                        &raw_segs,
+                        &raw_subsectors,
+                        &raw_nodes,
+                        vertices.len(),
+                        linedefs.len(),
+                        s,
+                        &mut warnings,
+                    )?
+                };
+
                 Ok(Map {
                     name: group.name.clone(),
                     format,
@@ -770,9 +1013,9 @@ impl Map {
                     sectors,
                     things,
                     lights: vec![],
-                    segs: Vec::new(),
-                    subsectors: Vec::new(),
-                    nodes: Vec::new(),
+                    segs,
+                    subsectors,
+                    nodes,
                     warnings,
                 })
             }
@@ -1065,6 +1308,8 @@ fn assemble_udmf(
         sectors,
         things,
         lights: vec![],
+        // UDMF (ZDoom) BSP data lives in embedded ZNODES/ZGL text or binary
+        // lumps with its own encoding, out of scope here; see issue #199.
         segs: Vec::new(),
         subsectors: Vec::new(),
         nodes: Vec::new(),

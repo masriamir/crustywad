@@ -102,6 +102,28 @@ fn linedef(sv: u16, ev: u16, right: u16, left: u16) -> Vec<u8> {
     ]
     .concat()
 }
+fn seg(sv: u16, ev: u16, linedef: u16, direction: u16) -> Vec<u8> {
+    [sv, ev, 0x4000, linedef, direction]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .chain(8i16.to_le_bytes())
+        .collect()
+}
+fn subsector(count: u16, first: u16) -> Vec<u8> {
+    [count.to_le_bytes(), first.to_le_bytes()].concat()
+}
+fn node(right_child: u16, left_child: u16) -> Vec<u8> {
+    let mut b: Vec<u8> = [0i16, 0, 64, 0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    for _ in 0..8 {
+        b.extend(0i16.to_le_bytes()); // two bboxes
+    }
+    b.extend(right_child.to_le_bytes());
+    b.extend(left_child.to_le_bytes());
+    b
+}
 fn thing(type_id: u16) -> Vec<u8> {
     // 10 bytes: x, y (i16), angle, type_id, flags (u16)
     let mut b = Vec::new();
@@ -962,4 +984,105 @@ fn doom64_thing_type_out_of_range_strict_errors_lenient_clamps_and_warns() {
     let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
     assert_eq!(map.things()[0].type_id, 0); // clamped
     assert_eq!(map.warnings().len(), 1);
+}
+
+// Full classic map + BSP: two segs, one subsector run, two nodes whose root
+// (the LAST node) points right at node 0 (bit 15 clear) and left at
+// subsector 0 (bit 15 set). Both modes assemble clean (ADR-0015 §1/§5).
+#[test]
+fn assembles_classic_bsp_onto_the_graph() {
+    use crustywad::map::{NodeChild, NodeIdx, SubsectorIdx};
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", vec![]),
+        ("THINGS", vec![]),
+        ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+        ("SIDEDEFS", sidedef(0)),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SEGS", [seg(0, 1, 0, 0), seg(1, 0, 0, 1)].concat()),
+        ("SSECTORS", subsector(2, 0)),
+        ("NODES", [node(0x8000, 0x8000), node(0, 0x8000)].concat()),
+        ("SECTORS", sector()),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    for options in [ParseOptions::strict(), ParseOptions::lenient()] {
+        let map = Map::assemble_with_options(&wad, &group, options).unwrap();
+        assert_eq!(map.segs().len(), 2);
+        assert_eq!(map.segs()[0].offset, 8);
+        assert_eq!(map.segs()[1].direction, 1);
+        assert_eq!(map.subsectors()[0].segs, 0..2);
+        assert_eq!(map.nodes().len(), 2);
+        assert_eq!(map.bsp_root(), Some(NodeIdx(1)));
+        let root = &map.nodes()[1];
+        assert_eq!(root.right, NodeChild::Node(NodeIdx(0)));
+        assert_eq!(root.left, NodeChild::Subsector(SubsectorIdx(0)));
+        assert_eq!(root.dx, 64);
+        assert!(map.warnings().is_empty());
+    }
+}
+
+// Dangling BSP refs: seg -> vertex 9 (2 exist), node child -> node 5 (1
+// exists), subsector run past the segs arena. Strict errors on the first;
+// lenient recovers all three shapes (clamp / clamp / truncate) with warnings.
+#[test]
+fn bsp_dangling_refs_strict_error_lenient_recover() {
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", vec![]),
+        ("THINGS", vec![]),
+        ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+        ("SIDEDEFS", sidedef(0)),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SEGS", seg(9, 1, 0, 0)),
+        ("SSECTORS", subsector(5, 0)),
+        ("NODES", node(5, 0x8000)),
+        ("SECTORS", sector()),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "vertex",
+            index: 9,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.segs()[0].start, crustywad::map::VertexIdx(0)); // clamped
+    assert_eq!(map.subsectors()[0].segs, 0..1); // truncated to the arena
+    assert_eq!(map.warnings().len(), 3);
+}
+
+// A NODES lump carrying a ZDBSP signature: strict -> structured error naming
+// the encoding; lenient -> empty BSP arenas + warning, geometry intact.
+#[test]
+fn extended_node_encoding_gates_instead_of_garbage_decoding() {
+    let mut xnod = b"XNOD".to_vec();
+    xnod.extend([0u8; 24]); // payload irrelevant; 28 bytes = one fake record
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", vec![]),
+        ("THINGS", vec![]),
+        ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+        ("SIDEDEFS", sidedef(0)),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SEGS", seg(0, 1, 0, 0)),
+        ("SSECTORS", subsector(1, 0)),
+        ("NODES", xnod),
+        ("SECTORS", sector()),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::UnsupportedNodeEncoding {
+            lump: "NODES",
+            signature: [b'X', b'N', b'O', b'D']
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.nodes().is_empty() && map.segs().is_empty() && map.subsectors().is_empty());
+    assert_eq!(map.warnings().len(), 1);
+    assert_eq!(map.linedefs().len(), 1); // geometry still assembled
 }
