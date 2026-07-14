@@ -69,3 +69,8 @@ Thumbs.db
 
 # AI agent artifacts (superpowers plans, memory files — never committed)
 docs/superpowers/
+
+# Python bytecode caches (the docs-sync scripts are imported by ad-hoc checks,
+# which makes CPython write these next to the sources)
+__pycache__/
+*.py[cod]
