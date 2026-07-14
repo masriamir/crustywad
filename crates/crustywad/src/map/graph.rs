@@ -71,9 +71,10 @@ pub struct MapLinedef {
     /// rare, e.g. an invisible blocking line; ADR-0020) or lenient-mode
     /// recovery of a dangling reference.
     pub right: Option<SidedefIdx>,
-    /// The index of the linedef's left (back) sidedef; `None` == one-sided.
-    /// Sources: the binary `0xffff` sentinel, an omitted UDMF `sideback`, or
-    /// lenient-mode recovery of a dangling reference.
+    /// The index of the linedef's left (back) sidedef; `None` == no back
+    /// side (a one-sided wall in the common case, though a line can also be
+    /// fully sideless). Sources: the binary `0xffff` sentinel, an omitted
+    /// UDMF `sideback`, or lenient-mode recovery of a dangling reference.
     pub left: Option<SidedefIdx>,
     /// The linedef's bit flags (blocking, two-sided, secret, etc.).
     pub flags: u32,
@@ -318,7 +319,8 @@ impl Map {
         l.right.map(|i| &self.sidedefs[i.0])
     }
 
-    /// Resolves a linedef's left (back) sidedef, if two-sided. Total for
+    /// Resolves a linedef's left (back) sidedef, if present (`None` == no
+    /// back side; see [`MapLinedef::left`] for its sources). Total for
     /// elements produced by this map's own assembly; a linedef carrying an
     /// out-of-range index (e.g. hand-constructed, since `MapLinedef`'s fields
     /// are public) may panic.
