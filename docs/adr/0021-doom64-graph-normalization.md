@@ -53,9 +53,11 @@ test already applies.
 
 Such a lump yields a `MapGroup` with `marker_index` pointing at the lump and
 `data_indices` empty — the existing struct shape is unchanged.
-`detect_map_format` inspects the marker lump's data magic **first** (the
-existing `TEXTMAP`/`BEHAVIOR` checks examine data lumps, of which a Doom 64
-group has none) and returns the new `MapFormat::Doom64` variant. `MapFormat`
+`detect_map_format` applies the **same dual condition** to the marker lump
+**first** (the existing `TEXTMAP`/`BEHAVIOR` checks examine data lumps, of
+which a Doom 64 group has none) and returns the new `MapFormat::Doom64`
+variant — so detection and grouping never disagree, and a classically named
+marker whose bytes happen to carry WAD magic remains a classic map. `MapFormat`
 is `#[non_exhaustive]`, so the variant is additive; ADR-0018's rejected
 "Option 2" objection — a `MapFormat` variant that cannot assemble — no longer
 applies because this ADR ships the assemble arm with it.

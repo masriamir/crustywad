@@ -290,8 +290,9 @@ pub fn is_doom64_map_name(name: &str) -> bool {
 }
 
 /// Builds a WAD holding one Doom 64 nested-WAD map lump named `name`.
-/// All 13 expected sub-lumps are present (empty unless supplied), so strict
-/// reads succeed.
+/// All 9 record sub-lumps `read_doom64_map` expects are present (empty unless
+/// supplied), plus the four raw-byte lumps (`REJECT`/`BLOCKMAP`/`LEAFS`/
+/// `MACROS`) it carries opaquely, so strict reads succeed.
 #[allow(dead_code, clippy::too_many_arguments)]
 pub fn build_doom64_map_wad(
     name: &str,

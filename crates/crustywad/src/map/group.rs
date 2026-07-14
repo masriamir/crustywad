@@ -145,13 +145,17 @@ pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
 
 /// Classifies the map format of `group` from its lump names (ADR-0014).
 ///
-/// The marker lump's bytes are checked first: nested `IWAD`/`PWAD` magic
-/// (ADR-0021 §1) marks a Doom 64 map. Otherwise, a `TEXTMAP` lump marks a
-/// UDMF map; otherwise a `BEHAVIOR` lump marks a Hexen map; otherwise the
-/// group is treated as the classic Doom binary layout.
+/// The marker lump is checked first, under the same dual condition grouping
+/// uses (ADR-0021 §1): a `MAPxx` name **and** nested `IWAD`/`PWAD` magic mark
+/// a Doom 64 map — so a classically named marker whose bytes happen to start
+/// with WAD magic stays a classic map, symmetric with `map_groups`. Otherwise,
+/// a `TEXTMAP` lump marks a UDMF map; otherwise a `BEHAVIOR` lump marks a
+/// Hexen map; otherwise the group is treated as the classic Doom binary
+/// layout.
 #[must_use]
 pub fn detect_map_format(wad: &Wad, group: &MapGroup) -> MapFormat {
-    if is_doom64_map_lump(wad.lump_data(&wad.lumps()[group.marker_index])) {
+    let marker = &wad.lumps()[group.marker_index];
+    if is_doom64_map_name(marker.name()) && is_doom64_map_lump(wad.lump_data(marker)) {
         return MapFormat::Doom64;
     }
     if group_has_lump(wad, group, "TEXTMAP") {

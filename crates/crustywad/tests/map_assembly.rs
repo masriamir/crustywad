@@ -717,28 +717,22 @@ fn doom64_group_assembles_or_errors_without_panicking() {
     let _ = Map::assemble(&wad, &group); // Ok or Err both fine; no panic
 }
 
-// Grouping requires the MAPxx name AND nested magic, but format detection keys
-// on the marker's magic alone — so a classic-named marker ("E1M1", which fails
-// is_doom64_map_name) whose bytes carry nested IWAD/PWAD magic groups
-// classically with a real data run, yet detects as Doom64. Assembly now routes
-// every Doom64-detected group (this asymmetric case included) through
-// `assemble_doom64`, which reads the MARKER lump's bytes as a nested WAD —
-// the classic data lumps alongside it (VERTEXES/SECTORS/SIDEDEFS) are never
-// consulted. The marker bytes here (`IWAD` + 8 zero bytes) are themselves a
-// structurally valid, empty nested WAD (numlumps = 0), so the container reads
-// fine but every expected sub-lump (THINGS first) is absent: strict mode
-// errors, lenient mode recovers an empty map with a warning per missing
-// sub-lump. Both modes must never panic (ADR-0016: no panic on untrusted
-// input).
+// A classically named marker whose data bytes happen to start with nested-WAD
+// magic must stay a CLASSIC map: grouping and detection apply the same dual
+// condition (MAPxx name AND magic; ADR-0021 §1), so the incidental magic is
+// inert data and the group assembles through the ordinary Doom path in both
+// modes — no Doom 64 routing, no panic.
 #[test]
-fn classic_named_marker_with_nested_magic_reads_as_an_empty_doom64_container() {
+fn classic_named_marker_with_nested_magic_assembles_as_classic() {
     let mut marker = b"IWAD".to_vec();
     marker.extend_from_slice(&[0u8; 8]); // >= 12 bytes: passes is_doom64_map_lump
     let bytes = common::build_named_lumps(&[
         ("E1M1", marker),
+        ("THINGS", thing(3001)),
+        ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+        ("SIDEDEFS", sidedef(0)),
         ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
         ("SECTORS", sector()),
-        ("SIDEDEFS", sidedef(0)),
     ]);
     let wad = Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("E1M1").unwrap();
@@ -748,38 +742,18 @@ fn classic_named_marker_with_nested_magic_reads_as_an_empty_doom64_container() {
     );
     assert_eq!(
         crustywad::map::detect_map_format(&wad, &group),
-        MapFormat::Doom64
+        MapFormat::Doom,
+        "a non-MAPxx marker is never Doom 64, whatever its bytes hold"
     );
-
-    // Strict: the nested container parses, but the first expected sub-lump
-    // (THINGS) is absent -> MapAssembleError::Doom64 wrapping MissingLump.
-    let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            MapAssembleError::Doom64 {
-                source: crustywad::map::Doom64ReadError::MissingLump { name: "THINGS" }
-            }
-        ),
-        "expected Doom64/MissingLump(THINGS), got {err:?}"
-    );
-
-    // Lenient: every expected sub-lump is missing and recovered as empty,
-    // yielding an empty (but valid) Doom 64 map plus one warning per missing
-    // sub-lump (THINGS, LINEDEFS, SIDEDEFS, VERTEXES, SEGS, SSECTORS, NODES,
-    // SECTORS, LIGHTS).
-    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
-        .expect("lenient recovers");
-    assert_eq!(map.format(), MapFormat::Doom64);
-    assert!(map.vertices().is_empty());
-    assert!(map.sectors().is_empty());
-    assert!(map.things().is_empty());
-    assert_eq!(map.warnings().len(), 9);
-    assert!(
-        map.warnings()
-            .iter()
-            .all(|w| matches!(w, crustywad::map::MapWarning::Doom64(_)))
-    );
+    for options in [ParseOptions::default(), ParseOptions::lenient()] {
+        let map = Map::assemble_with_options(&wad, &group, options)
+            .expect("classic assembly ignores the marker's bytes");
+        assert_eq!(map.format(), MapFormat::Doom);
+        assert_eq!(map.linedefs().len(), 1);
+        assert_eq!(map.things()[0].type_id, 3001);
+        assert!(map.lights().is_empty());
+        assert!(map.warnings().is_empty());
+    }
 }
 
 // `map.vertices()[0].x` (0.5, exact in 16.16 fixed-point) and `t.height`
