@@ -14,48 +14,22 @@ use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
 
 use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 
-/// Returns the names of map marker lumps found in `wad`, in directory order.
+/// Returns the marker-lump names of every map group in `wad`, in directory
+/// order.
 ///
-/// A lump is treated as a map marker when its name matches the Doom 1 episode
-/// format (`E[1-9]M[1-9]`) or the Doom 2 numbered-map format (`MAP[0-9][0-9]`).
-/// The function does not check lump size — zero-size marker lumps and non-zero
-/// lumps with map names are both included, matching conventional WAD tooling
-/// behavior.
-fn detect_maps(wad: &Wad) -> Vec<&str> {
-    wad.lumps()
-        .iter()
-        .map(crustywad::Lump::name)
-        .filter(|name| is_map_marker(name))
+/// Delegates to [`Wad::map_groups`] so the CLI and the library can never
+/// disagree about what counts as a map (#253): a map is a marker lump followed
+/// by a recognized data-lump run — whatever the marker is named — or a Doom 64
+/// nested-WAD `MAPxx` lump (ADR-0021 §1). Unlike the name-pattern heuristic
+/// this replaces, a stray map-named lump with no data run is not reported.
+/// The names come straight from the `name` field of each
+/// [`MapGroup`][crustywad::map::MapGroup] — the library's own record of the
+/// map's identity.
+fn detect_maps(wad: &Wad) -> Vec<String> {
+    wad.map_groups()
+        .into_iter()
+        .map(|group| group.name)
         .collect()
-}
-
-/// Returns `true` if `name` matches a Doom map-marker lump name.
-///
-/// Recognized patterns:
-/// - `E[1-9]M[1-9]` — Doom 1 episode/map (e.g. `E1M1`, `E3M9`).
-/// - `MAP[0-9][0-9]` — Doom 2 numbered map (e.g. `MAP01`, `MAP32`).
-fn is_map_marker(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    match bytes.len() {
-        4 => {
-            // E[1-9]M[1-9]
-            bytes[0] == b'E'
-                && bytes[1].is_ascii_digit()
-                && bytes[1] != b'0'
-                && bytes[2] == b'M'
-                && bytes[3].is_ascii_digit()
-                && bytes[3] != b'0'
-        }
-        5 => {
-            // MAP[0-9][0-9]
-            bytes[0] == b'M'
-                && bytes[1] == b'A'
-                && bytes[2] == b'P'
-                && bytes[3].is_ascii_digit()
-                && bytes[4].is_ascii_digit()
-        }
-        _ => false,
-    }
 }
 
 /// Windows device names that are reserved regardless of file extension.

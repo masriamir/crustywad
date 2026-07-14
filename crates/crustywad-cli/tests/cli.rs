@@ -85,9 +85,19 @@ fn info_csv_format() {
 
 #[test]
 fn info_csv_format_with_maps() {
+    // Two real maps (each marker has a data run) pin the multi-map CSV
+    // rendering: space-separated, in directory order. The trailing bare E9M9
+    // marker has no data run, so structural detection (#253) excludes it —
+    // the exact newline-terminated row asserts that too.
     let wad = write_wad(
         *b"IWAD",
-        &[("E1M1", &[]), ("THINGS", &[0; 4]), ("E1M2", &[])],
+        &[
+            ("E1M1", &[]),
+            ("THINGS", &[0; 4]),
+            ("E1M2", &[]),
+            ("THINGS", &[0; 4]),
+            ("E9M9", &[]),
+        ],
     );
     Command::cargo_bin("cwad")
         .unwrap()
@@ -95,7 +105,7 @@ fn info_csv_format_with_maps() {
         .assert()
         .success()
         .stdout(predicate::str::contains("kind,lumps,data_size,maps"))
-        .stdout(predicate::str::contains("Iwad,3,4,E1M1 E1M2"));
+        .stdout(predicate::str::contains("Iwad,5,8,E1M1 E1M2\n"));
 }
 
 #[test]
@@ -126,8 +136,8 @@ fn info_pwad() {
 
 #[test]
 fn info_maps_doom1_style() {
-    // E1M1 is a zero-size marker lump followed by THINGS etc. in real WADs, but
-    // the map-detection logic only checks the lump name, not the size.
+    // E1M1 groups with its THINGS data run; the trailing bare E1M2 marker has
+    // no data run, so structural detection (#253) excludes it.
     let wad = write_wad(
         *b"IWAD",
         &[("E1M1", &[]), ("THINGS", &[0; 10]), ("E1M2", &[])],
@@ -137,12 +147,48 @@ fn info_maps_doom1_style() {
         .args(["info", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("maps:"))
-        .stdout(predicate::str::contains("E1M1, E1M2"));
+        // The exact, newline-terminated maps line pins the complete list —
+        // E1M2's absence included.
+        .stdout(predicate::str::contains("maps:      E1M1\n"));
+}
+
+// Structural detection (#253): `cwad info` delegates to `Wad::map_groups`, so
+// a map is a marker lump followed by a recognized data run — whatever its
+// name — plus Doom 64 nested-WAD `MAPxx` lumps. A stray map-named lump with
+// no data run is NOT a map (divergence from the old name-pattern heuristic,
+// decided in #253).
+#[test]
+fn info_maps_match_map_groups_across_formats() {
+    // Minimal Doom 64 nested-WAD map: a complete WAD (one empty THINGS
+    // sub-lump) stored as the MAP04 lump's data.
+    let nested = build_wad(*b"IWAD", &[("THINGS", &[])]);
+    let wad = write_wad(
+        *b"IWAD",
+        &[
+            ("E1M1", &[]),
+            ("THINGS", &[0; 10]),
+            ("WEIRDMAP", &[]),
+            ("VERTEXES", &[0; 4]),
+            ("MAP04", &nested),
+            ("MAP99", &[]), // stray marker, no data run: not a map
+        ],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        // The exact, newline-terminated maps line pins the complete list —
+        // MAP99's absence included.
+        .stdout(predicate::str::contains(
+            "maps:      E1M1, WEIRDMAP, MAP04\n",
+        ));
 }
 
 #[test]
 fn info_maps_doom2_style() {
+    // MAP01 groups with its data run; the bare trailing MAP02 marker (no data
+    // run, no nested magic) is excluded by structural detection (#253).
     let wad = write_wad(
         *b"IWAD",
         &[("MAP01", &[]), ("THINGS", &[0; 10]), ("MAP02", &[])],
@@ -152,8 +198,9 @@ fn info_maps_doom2_style() {
         .args(["info", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("maps:"))
-        .stdout(predicate::str::contains("MAP01, MAP02"));
+        // The exact, newline-terminated maps line pins the complete list —
+        // MAP02's absence included.
+        .stdout(predicate::str::contains("maps:      MAP01\n"));
 }
 
 #[test]
