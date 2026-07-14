@@ -95,8 +95,9 @@ fn info_csv_format_with_maps() {
         .assert()
         .success()
         .stdout(predicate::str::contains("kind,lumps,data_size,maps"))
-        .stdout(predicate::str::contains("Iwad,3,4,E1M1"))
-        .stdout(predicate::str::contains("E1M2").not());
+        // The exact, newline-terminated CSV row pins the complete maps field —
+        // E1M2's absence included — without a whole-stdout negative assertion.
+        .stdout(predicate::str::contains("Iwad,3,4,E1M1\n"));
 }
 
 #[test]
@@ -138,8 +139,9 @@ fn info_maps_doom1_style() {
         .args(["info", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("maps:      E1M1"))
-        .stdout(predicate::str::contains("E1M2").not());
+        // The exact, newline-terminated maps line pins the complete list —
+        // E1M2's absence included.
+        .stdout(predicate::str::contains("maps:      E1M1\n"));
 }
 
 // Structural detection (#253): `cwad info` delegates to `Wad::map_groups`, so
@@ -168,8 +170,11 @@ fn info_maps_match_map_groups_across_formats() {
         .args(["info", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("maps:      E1M1, WEIRDMAP, MAP04"))
-        .stdout(predicate::str::contains("MAP99").not());
+        // The exact, newline-terminated maps line pins the complete list —
+        // MAP99's absence included.
+        .stdout(predicate::str::contains(
+            "maps:      E1M1, WEIRDMAP, MAP04\n",
+        ));
 }
 
 #[test]
@@ -185,8 +190,9 @@ fn info_maps_doom2_style() {
         .args(["info", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("maps:      MAP01"))
-        .stdout(predicate::str::contains("MAP02").not());
+        // The exact, newline-terminated maps line pins the complete list —
+        // MAP02's absence included.
+        .stdout(predicate::str::contains("maps:      MAP01\n"));
 }
 
 #[test]
