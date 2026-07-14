@@ -1,10 +1,10 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    Map, MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, MapWarning, SectorIdx,
-    SidedefIdx, Special, TextureRef, VertexIdx,
+    LightIdx, Map, MapFormat, MapLight, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex,
+    MapWarning, SectorIdx, SidedefIdx, Special, TextureRef, VertexIdx,
 };
-use crate::map::{MapGroup, MapParseError, common, doom, hexen, parse_records};
+use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
 
 /// Fatal errors from [`Map::assemble_with_options`].
@@ -41,16 +41,16 @@ pub enum MapAssembleError {
         /// The number of elements actually available in the referenced arena.
         count: usize,
     },
-    /// The map group is in a format assembly does not yet decode into a
-    /// [`Map`] — currently a Doom 64 group (a `MAPxx` marker carrying nested
-    /// `IWAD`/`PWAD` magic, ADR-0021 §1; assembly tracked in Epic #17). Doom,
-    /// Hexen, and UDMF maps assemble normally today.
-    #[error(
-        "unsupported map format: found a {lump} lump; assembly does not support this format yet"
-    )]
-    UnsupportedFormat {
-        /// The format-specific marker lump detected.
-        lump: &'static str,
+    /// A Doom 64 map's nested-WAD lump (its `MAPxx` marker, ADR-0021 §1)
+    /// failed to read as a [`Doom64Map`](crate::map::doom64::Doom64Map) —
+    /// either the nested container itself was structurally invalid, or a
+    /// required sub-lump was missing/undecodable in strict mode
+    /// (ADR-0021 §2).
+    #[error("failed to read Doom 64 map: {source}")]
+    Doom64 {
+        /// The underlying nested-WAD read error.
+        #[source]
+        source: crate::map::doom64::Doom64ReadError,
     },
     /// The `TEXTMAP` text failed to decode or parse as UDMF.
     #[error("failed to parse UDMF text map: {source}")]
@@ -439,8 +439,6 @@ fn normalize_hexen_thing_flags(flags: u16) -> u32 {
 /// `MTF_NIGHTMARE` — have no normalized slot and drop, exactly as Hexen's
 /// dormant/class bits do. Bit 7 (friendly) is never set — Doom 64 has no such
 /// flag. The raw word remains available via `Doom64Map`.
-// Called by the Doom 64 assemble arm (next task).
-#[allow(dead_code)]
 fn normalize_doom64_thing_flags(raw: i16) -> u32 {
     #[allow(clippy::cast_sign_loss)] // bit reinterpretation is intended
     let raw = raw as u16;
@@ -683,18 +681,26 @@ impl Map {
     ///
     /// # Errors
     /// Returns [`MapAssembleError`] if a required lump is missing, a record lump
-    /// fails to decode, or any cross-reference is out of range.
+    /// fails to decode, any cross-reference is out of range, or — for a
+    /// Doom 64 group (ADR-0021 §2) — the marker's nested WAD fails to read.
     pub fn assemble(wad: &Wad, group: &MapGroup) -> Result<Map, MapAssembleError> {
         Map::assemble_with_options(wad, group, ParseOptions::default())
     }
 
     /// Assembles a map under explicit options (ADR-0015 §3).
     ///
+    /// A Doom 64 group (detected via the marker's nested `IWAD`/`PWAD` magic,
+    /// ADR-0021 §1) is read via [`doom64::read_doom64_map`] and normalized
+    /// separately from the classic binary/UDMF paths below (ADR-0021 §2).
+    ///
     /// # Errors
     /// Returns [`MapAssembleError`] if a required lump is missing, a record lump
     /// fails to decode, or (in strict mode) a cross-reference is out of range.
     /// In lenient mode only structural failures (missing lump, undecodable
-    /// records, an empty *required* target arena) return an error.
+    /// records, an empty *required* target arena) return an error. For a
+    /// Doom 64 group, [`MapAssembleError::Doom64`] wraps a failure to read the
+    /// marker's nested WAD (both modes) or a missing/undecodable sub-lump
+    /// (strict mode; ADR-0021 §2).
     pub fn assemble_with_options(
         wad: &Wad,
         group: &MapGroup,
@@ -704,6 +710,7 @@ impl Map {
 
         match crate::map::detect_map_format(wad, group) {
             MapFormat::Udmf => assemble_udmf(wad, group, options, warnings),
+            MapFormat::Doom64 => assemble_doom64(wad, group, options, warnings),
             format => {
                 let s = options.strictness;
 
@@ -743,16 +750,14 @@ impl Map {
                         (normalize_things_hexen(&raw_things), linedefs)
                     }
                     MapFormat::Udmf => unreachable!("Udmf is handled by the outer match arm"),
-                    // Doom64 assembly is not implemented yet (Task 5 adds the
-                    // real arm). This IS reachable: detection keys on the
-                    // marker's nested IWAD/PWAD magic alone, while Doom64
-                    // grouping also requires the MAPxx name — so a
-                    // classic-named marker whose bytes carry nested magic
-                    // groups classically (with data lumps that can decode
-                    // above), yet detects as Doom64 and lands here.
-                    MapFormat::Doom64 => {
-                        return Err(MapAssembleError::UnsupportedFormat { lump: "MAP" });
-                    }
+                    // Genuinely unreachable: the outer match already routes every
+                    // Doom64-detected group (including a classic-named marker
+                    // whose bytes carry nested IWAD/PWAD magic, ADR-0021 §1) to
+                    // `assemble_doom64` before this binary-format fallback is
+                    // ever entered. Delegating (rather than panicking) keeps
+                    // this arm's behavior coherent with the outer arm's on the
+                    // off chance the routing invariant above is ever violated.
+                    MapFormat::Doom64 => return assemble_doom64(wad, group, options, warnings),
                 };
 
                 Ok(Map {
@@ -770,6 +775,222 @@ impl Map {
             }
         }
     }
+}
+
+/// Widens raw Doom 64 `VERTEXES` (16.16 fixed-point) into normalized
+/// [`MapVertex`]es.
+fn normalize_doom64_vertices(raw: &[doom64::Vertex]) -> Vec<MapVertex> {
+    raw.iter()
+        .map(|v| MapVertex {
+            x: f64::from(v.x) / 65536.0,
+            y: f64::from(v.y) / 65536.0,
+        })
+        .collect()
+}
+
+/// Widens raw Doom 64 `LIGHTS` records into normalized [`MapLight`]s.
+fn normalize_doom64_lights(raw: &[doom64::Light]) -> Vec<MapLight> {
+    raw.iter()
+        .map(|l| MapLight {
+            r: l.r,
+            g: l.g,
+            b: l.b,
+            tag: l.tag,
+        })
+        .collect()
+}
+
+/// Widens raw Doom 64 `SECTORS` records into normalized [`MapSector`]s,
+/// validating each of the five colored-lighting references against `light_count`.
+fn normalize_doom64_sectors(
+    raw: &[doom64::Sector],
+    light_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapSector>, MapAssembleError> {
+    let mut sectors = Vec::with_capacity(raw.len());
+    for sec in raw {
+        let mut colors = [LightIdx(0); 5];
+        for (slot, &c) in colors.iter_mut().zip(&sec.colors) {
+            *slot = LightIdx(resolve_required(
+                i32::from(c),
+                light_count,
+                "light",
+                "sector",
+                strictness,
+                warnings,
+            )?);
+        }
+        sectors.push(MapSector {
+            floor_height: i32::from(sec.floor_height),
+            ceiling_height: i32::from(sec.ceiling_height),
+            floor_flat: TextureRef::Index(sec.floor_tex),
+            ceiling_flat: TextureRef::Index(sec.ceiling_tex),
+            light: 0, // Doom 64 has no scalar light level (ADR-0021 §2)
+            special: i32::from(sec.special),
+            tag: i32::from(sec.tag),
+            colors: Some(colors),
+            flags: u32::from(sec.flags),
+        });
+    }
+    Ok(sectors)
+}
+
+/// Widens raw Doom 64 `SIDEDEFS` records into normalized [`MapSidedef`]s,
+/// validating each sidedef's sector cross-reference.
+fn normalize_doom64_sidedefs(
+    raw: &[doom64::Sidedef],
+    sector_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapSidedef>, MapAssembleError> {
+    let mut sidedefs = Vec::with_capacity(raw.len());
+    for sd in raw {
+        sidedefs.push(MapSidedef {
+            sector: SectorIdx(resolve_required(
+                i32::from(sd.sector),
+                sector_count,
+                "sector",
+                "sidedef",
+                strictness,
+                warnings,
+            )?),
+            x_offset: i32::from(sd.x_offset),
+            y_offset: i32::from(sd.y_offset),
+            upper: TextureRef::Index(sd.upper),
+            lower: TextureRef::Index(sd.lower),
+            middle: TextureRef::Index(sd.middle),
+        });
+    }
+    Ok(sidedefs)
+}
+
+/// Widens raw Doom 64 `LINEDEFS` records into normalized [`MapLinedef`]s,
+/// validating each linedef's vertex and sidedef cross-references. The `tag`
+/// field carries into `special.args[0]`, mirroring classic Doom's sector tag
+/// (see [`normalize_linedefs`]).
+fn normalize_doom64_linedefs(
+    raw: &[doom64::Linedef],
+    vertex_count: usize,
+    sidedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapLinedef>, MapAssembleError> {
+    let mut linedefs = Vec::with_capacity(raw.len());
+    for ld in raw {
+        let (start, end, right, left) = resolve_linedef_refs(
+            ld.v1,
+            ld.v2,
+            ld.sidefront,
+            ld.sideback,
+            vertex_count,
+            sidedef_count,
+            strictness,
+            warnings,
+        )?;
+        linedefs.push(MapLinedef {
+            start,
+            end,
+            right,
+            left,
+            flags: ld.flags,
+            special: Special {
+                special: i32::from(ld.special),
+                args: [i32::from(ld.tag), 0, 0, 0, 0],
+            },
+            id: 0,
+        });
+    }
+    Ok(linedefs)
+}
+
+/// Widens raw Doom 64 `THINGS` records into normalized [`MapThing`]s,
+/// translating the on-disk flag word via [`normalize_doom64_thing_flags`] and
+/// carrying `z`/`id` into [`MapThing::height`]/[`MapThing::id`].
+fn normalize_doom64_things(
+    raw: &[doom64::Thing],
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapThing>, MapAssembleError> {
+    let mut things = Vec::with_capacity(raw.len());
+    for t in raw {
+        let type_id = coerce_u16(
+            i32::from(t.type_id),
+            "thing.type",
+            "thing",
+            strictness,
+            warnings,
+        )?;
+        // `rem_euclid(360)` yields 0..=359 for any i32, which always fits u16;
+        // the conversion is infallible by construction.
+        let angle = u16::try_from(i32::from(t.angle).rem_euclid(360))
+            .expect("rem_euclid(360) is in 0..=359, which always fits u16");
+        things.push(MapThing {
+            x: f64::from(t.x),
+            y: f64::from(t.y),
+            angle,
+            type_id,
+            flags: normalize_doom64_thing_flags(t.flags),
+            id: i32::from(t.id),
+            height: f64::from(t.z),
+            special: Special {
+                special: 0,
+                args: [0; 5],
+            },
+        });
+    }
+    Ok(things)
+}
+
+/// Assembles a Doom 64 nested-WAD map into the graph (ADR-0021 §2).
+///
+/// Reads the group's marker lump bytes as a nested WAD (see
+/// [`doom64::read_doom64_map`]) and widens every raw record into the graph's
+/// normalized shapes: fixed-point vertices to `f64`, texture/flat `u16`
+/// indices to [`TextureRef::Index`], each sector's five raw color IDs to
+/// validated [`LightIdx`]es into [`Map::lights`], and the on-disk thing flag
+/// word via [`normalize_doom64_thing_flags`]. Doom 64 has no scalar sector
+/// light level, so [`MapSector::light`] is always `0`.
+fn assemble_doom64(
+    wad: &Wad,
+    group: &MapGroup,
+    options: ParseOptions,
+    mut warnings: Vec<MapWarning>,
+) -> Result<Map, MapAssembleError> {
+    let bytes = wad.lump_data(&wad.lumps()[group.marker_index]);
+    let raw = doom64::read_doom64_map(bytes, &options)
+        .map_err(|source| MapAssembleError::Doom64 { source })?;
+    let s = options.strictness;
+
+    let vertices = normalize_doom64_vertices(&raw.vertexes);
+    let lights = normalize_doom64_lights(&raw.lights);
+    let sectors = normalize_doom64_sectors(&raw.sectors, lights.len(), s, &mut warnings)?;
+    let sidedefs = normalize_doom64_sidedefs(&raw.sidedefs, sectors.len(), s, &mut warnings)?;
+    let linedefs = normalize_doom64_linedefs(
+        &raw.linedefs,
+        vertices.len(),
+        sidedefs.len(),
+        s,
+        &mut warnings,
+    )?;
+    let things = normalize_doom64_things(&raw.things, s, &mut warnings)?;
+
+    // Doom64Warning values surface as MapWarning::Doom64 so the caller sees
+    // one warning stream regardless of source format.
+    warnings.extend(raw.warnings().iter().cloned().map(MapWarning::Doom64));
+
+    Ok(Map {
+        name: group.name.clone(),
+        format: MapFormat::Doom64,
+        namespace: None,
+        vertices,
+        linedefs,
+        sidedefs,
+        sectors,
+        things,
+        lights,
+        warnings,
+    })
 }
 
 /// Assembles a UDMF (`TEXTMAP`) map group into a [`Map`] (ADR-0017 §3).

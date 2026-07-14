@@ -1,9 +1,9 @@
 //! The assembled, index-addressed map graph (ADR-0015 §2).
 
 /// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom],
-/// [`Hexen`][MapFormat::Hexen], and [`Udmf`][MapFormat::Udmf] are assembled
-/// today; [`Doom64`][MapFormat::Doom64] is detected (Task 3, ADR-0021 §1) but
-/// not yet assembled into a [`Map`] (Epic #17 tracks the remaining work).
+/// [`Hexen`][MapFormat::Hexen], [`Udmf`][MapFormat::Udmf], and
+/// [`Doom64`][MapFormat::Doom64] (ADR-0021 §2) all assemble into a [`Map`]
+/// today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {
@@ -288,6 +288,11 @@ pub enum MapWarning {
         /// The map's marker name.
         name: String,
     },
+    /// A non-fatal issue recovered while reading a Doom 64 map's nested WAD
+    /// during lenient assembly (ADR-0021 §2); see
+    /// [`Doom64Warning`](crate::map::doom64::Doom64Warning).
+    #[error("{0}")]
+    Doom64(crate::map::doom64::Doom64Warning),
 }
 
 /// An assembled Doom map graph: normalized elements addressed by index,
