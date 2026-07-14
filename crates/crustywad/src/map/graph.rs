@@ -158,7 +158,12 @@ pub struct MapSidedef {
     pub middle: TextureRef,
 }
 
-/// A normalized Doom 64 colored-lighting palette entry (ADR-0021 §4).
+/// A normalized Doom 64 light-table entry (ADR-0021 §4).
+///
+/// [`Map::lights`] is built the way the engine builds its table (Doom64 EX
+/// `P_LoadLights`): entries `0`–`255` are synthesized identity-grayscale
+/// values (`r = g = b = index`, `tag = 0`), and the map's `LIGHTS` lump
+/// records follow starting at index `256`.
 ///
 /// The raw record's trailing `unknown` field (tentative semantics) is not
 /// normalized; a consumer needing it reads [`Doom64Map`][crate::map::Doom64Map].
@@ -197,7 +202,9 @@ pub struct MapSector {
     pub tag: i32,
     /// Doom 64 colored lighting: five references into [`Map::lights`], carried
     /// positionally — Doom64 EX's map-format headers do not name the slots
-    /// (ADR-0021 §4). `None` for every other format.
+    /// (ADR-0021 §4). The values index the combined light table: `0`–`255`
+    /// select the implicit grayscale entries, `256` and above select the
+    /// map's `LIGHTS` lump records. `None` for every other format.
     pub colors: Option<[LightIdx; 5]>,
     /// The sector's raw Doom 64 flag bits (`Sector.flags`, stored opaquely);
     /// `0` for every other format (mirrors `MapLinedef.flags`).
@@ -371,7 +378,10 @@ impl Map {
         &self.warnings
     }
 
-    /// The map's colored-lighting palette; empty for non-Doom 64 maps.
+    /// The map's light table, mirroring the engine's (Doom64 EX
+    /// `P_LoadLights`): indices `0`–`255` are implicit grayscale entries
+    /// (`r = g = b = index`, `tag = 0`), followed by the map's `LIGHTS` lump
+    /// records starting at index `256`. Empty for non-Doom 64 maps.
     #[must_use]
     pub fn lights(&self) -> &[MapLight] {
         &self.lights

@@ -76,7 +76,7 @@ applies because this ADR ships the assemble arm with it.
 | `Sidedef.sector: u16` | `MapSidedef.sector: SectorIdx` | `resolve_required` |
 | `Sector.floor_height/ceiling_height: i16` | `i32` | widen |
 | `Sector.floor_tex/ceiling_tex: u16` | `TextureRef::Index` (§3) | raw index |
-| `Sector.colors: [u16; 5]` | `MapSector.colors: Option<[LightIdx; 5]>` (§4) | each resolved against the lights arena |
+| `Sector.colors: [u16; 5]` | `MapSector.colors: Option<[LightIdx; 5]>` (§4) | each resolved against the engine-style light table (256 implicit grayscale entries + `LIGHTS` records, §4) |
 | `Sector.special/tag: u16` | `i32` | widen |
 | `Sector.flags: u16` | **new** `MapSector.flags: u32` | raw carry; `0` for every other format (mirrors `MapLinedef.flags`) |
 | `Thing.x/y: i16` | `f64` | widen |
@@ -85,7 +85,7 @@ applies because this ADR ships the assemble arm with it.
 | `Thing.type_id: i16` | `MapThing.type_id: u16` | negative → strict error / lenient warn (no valid doomednum is negative; rule confirmed against Doom64 EX during implementation) |
 | `Thing.flags: i16` | `MapThing.flags: u32` | **translated** into the graph's normalized Doom/Boom layout (ADR-0019 §2) via a bit table **verified against Doom64 EX / KEX source**; Doom 64-only bits with no slot drop, exactly as Hexen's dormant/class bits do |
 | `Thing.id: i16` | `MapThing.id: i32` | widen |
-| `lights: Vec<Light>` | **new** `Map::lights()` arena of `MapLight` (§4) | `r`/`g`/`b`/`tag` carried; `Light.unknown` (tentative semantics) stays raw-only in `Doom64Map` |
+| `lights: Vec<Light>` | **new** `Map::lights()` table of `MapLight` (§4) | 256 synthesized grayscale entries precede the lump records (engine table, §4); `r`/`g`/`b`/`tag` carried; `Light.unknown` (tentative semantics) stays raw-only in `Doom64Map` |
 | `segs`/`subsectors`/`nodes`/`reject`/`blockmap` | not normalized | the same deferral the classic path makes — BSP traversal is #204 |
 | `leafs`/`macros` | not normalized | #244 / #245 |
 
@@ -141,19 +141,35 @@ pub struct MapLight {
 }
 
 impl Map {
-    /// The map's colored-lighting palette; empty for non-Doom 64 maps.
+    /// The map's light table, mirroring the engine's; empty for non-Doom 64 maps.
     pub fn lights(&self) -> &[MapLight];
 }
 ```
 
+`Map::lights()` mirrors the engine's light table, not the bare lump. Doom64
+EX's `P_LoadLights` (`p_setup.cc`) constructs it as
+
+```c
+numlights = (lump_len / sizeof(maplights_t)) + 256;
+```
+
+with entries `0`–`255` initialized as identity grayscale (`l->r = l->g =
+l->b = i`) and the map's `LIGHTS` records loaded after them. `Map::lights()`
+reproduces that: 256 synthesized grayscale `MapLight` entries (`r = g = b =
+index` as `u8`, `tag = 0`) followed by the lump's records at index `256`
+onward. A sector color value below 256 is therefore an implicit grayscale
+entry — a plain light level — and a value `>= 256` selects `LIGHTS` record
+`value - 256`.
+
 `MapSector` gains `colors: Option<[LightIdx; 5]>` — `Some` for Doom 64 maps,
 `None` for every other format. Each of the five IDs is cross-validated against
-the lights arena with the standard resolver pattern: out of range is a strict
-`MapAssembleError::DanglingReference` / lenient clamp-to-0 plus warning
-(`resolve_required` semantics — a Doom 64 sector's color slots are not
-optional references). The **per-slot meaning** of the five entries is
-documented from Doom64 EX source during implementation, not asserted here;
-`doom64::Sector::colors` itself records the semantics as "per Doom64 EX".
+the combined table's length (256 + lump records) with the standard resolver
+pattern: out of range is a strict `MapAssembleError::DanglingReference` /
+lenient clamp-to-0 plus warning (`resolve_required` semantics — a Doom 64
+sector's color slots are not optional references). The **per-slot meaning** of
+the five entries is documented from Doom64 EX source during implementation,
+not asserted here; `doom64::Sector::colors` itself records the semantics as
+"per Doom64 EX".
 `Light.unknown` (a `u16` whose high byte is always zero in retail data,
 meaning unconfirmed) is deliberately **not** normalized — a consumer needing
 it reads `Doom64Map`.
@@ -243,6 +259,13 @@ inventory when it lands.
   Doom64 EX / KEX source, per the project's format-constants rule: the
   `0xffff` side-sentinel convention and the thing-flags bit table (plus the
   per-slot meaning of `Sector.colors`).
+- The original draft of §4 read `Sector.colors` as direct 0-based indices
+  into the bare `LIGHTS` lump. The retail sweep (#254) falsified that reading:
+  all 40 maps in the retail `DOOM64.WAD` failed strict assembly with dangling
+  light references, with `max(colors) == light_count + 255` on every map. The
+  model was corrected against Doom64 EX engine source (`P_LoadLights`,
+  `p_setup.cc`) to the two-tier table quoted above, after which all 40 retail
+  maps resolve with zero out-of-range references.
 - Relates to: ADR-0018 (superseded in part, as noted), ADR-0015 (graph model,
   extended), ADR-0017 (`UdmfMap` full-fidelity precedent), ADR-0019
   (normalized thing-flag contract; conversion inventory), ADR-0020

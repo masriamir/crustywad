@@ -788,20 +788,35 @@ fn normalize_doom64_vertices(raw: &[doom64::Vertex]) -> Vec<MapVertex> {
         .collect()
 }
 
-/// Widens raw Doom 64 `LIGHTS` records into normalized [`MapLight`]s.
+/// Builds the map's light table the way the engine does (Doom64 EX
+/// `P_LoadLights`): 256 implicit identity-grayscale entries (`r = g = b =
+/// index`, `tag = 0`) followed by the map's `LIGHTS` lump records. A sector
+/// color value below 256 therefore selects a grayscale light level, and a
+/// value `>= 256` selects `LIGHTS` record `value - 256` (ADR-0021 §4).
 fn normalize_doom64_lights(raw: &[doom64::Light]) -> Vec<MapLight> {
-    raw.iter()
-        .map(|l| MapLight {
-            r: l.r,
-            g: l.g,
-            b: l.b,
-            tag: l.tag,
-        })
-        .collect()
+    let mut lights = Vec::with_capacity(256 + raw.len());
+    for i in 0u8..=255u8 {
+        lights.push(MapLight {
+            r: i,
+            g: i,
+            b: i,
+            tag: 0,
+        });
+    }
+    lights.extend(raw.iter().map(|l| MapLight {
+        r: l.r,
+        g: l.g,
+        b: l.b,
+        tag: l.tag,
+    }));
+    lights
 }
 
 /// Widens raw Doom 64 `SECTORS` records into normalized [`MapSector`]s,
-/// validating each of the five colored-lighting references against `light_count`.
+/// validating each of the five colored-lighting references against
+/// `light_count` — the length of the engine-style combined light table (256
+/// implicit grayscale entries plus the `LIGHTS` lump records; see
+/// [`normalize_doom64_lights`]).
 fn normalize_doom64_sectors(
     raw: &[doom64::Sector],
     light_count: usize,

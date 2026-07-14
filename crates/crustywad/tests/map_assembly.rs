@@ -817,6 +817,8 @@ fn assembles_doom64_map_into_the_graph() {
     assert_eq!(s.floor_flat, TextureRef::Index(10));
     assert_eq!(s.light, 0);
     assert_eq!(s.flags, 9);
+    // Color values 0/1 index the combined light table's implicit grayscale
+    // tier (indices 0-255); the LIGHTS lump records follow at 256.
     assert_eq!(
         s.colors,
         Some([
@@ -827,8 +829,18 @@ fn assembles_doom64_map_into_the_graph() {
             LightIdx(1)
         ])
     );
-    assert_eq!(map.lights().len(), 2);
-    assert_eq!((map.lights()[1].b, map.lights()[1].tag), (255, 2));
+    assert_eq!(map.lights().len(), 258); // 256 grayscale + 2 lump records
+    assert_eq!(
+        map.lights()[5],
+        crustywad::map::MapLight {
+            r: 5,
+            g: 5,
+            b: 5,
+            tag: 0
+        }
+    );
+    assert_eq!((map.lights()[256].r, map.lights()[256].tag), (255, 0));
+    assert_eq!((map.lights()[257].b, map.lights()[257].tag), (255, 2));
     let t = &map.things()[0];
     assert_eq!(t.height, 16.0); // z -> height
     assert_eq!(t.angle, 270); // -90 wrapped mod 360
@@ -845,7 +857,10 @@ fn doom64_dangling_color_ref_strict_errors_lenient_warns() {
         &common::d64_linedef(0, 1, 0, 0, 0xffff),
         &common::d64_sidedef(0, 0, 0, 0),
         &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
-        &common::d64_sector(0, 0, [9, 0, 0, 0, 0], 0), // color 9, only 1 light
+        // Color 300 with 1 lump light: the combined table holds 256 grayscale
+        // entries + 1 lump record = 257, so 300 dangles (values < 256 are
+        // always-valid grayscale indices and cannot dangle).
+        &common::d64_sector(0, 0, [300, 0, 0, 0, 0], 0),
         &common::d64_light(255, 255, 255, 0),
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
@@ -855,8 +870,8 @@ fn doom64_dangling_color_ref_strict_errors_lenient_warns() {
         err,
         MapAssembleError::DanglingReference {
             referent: "light",
-            index: 9,
-            count: 1,
+            index: 300,
+            count: 257,
             ..
         }
     ));

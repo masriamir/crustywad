@@ -44,8 +44,8 @@ fuzz_target!(|data: &[u8]| {
                 // Hexen thing 20; Doom64 sidedef 12 < Doom/Hexen sidedef 30;
                 // Doom64 sector 24 < Doom/Hexen sector 26), so the bound holds
                 // across all formats reachable via `map_groups`. `lights` is
-                // Doom64-only (record size 6); other formats always report an
-                // empty lights arena, which trivially satisfies the bound.
+                // Doom64-only and checked separately below; other formats
+                // always report an empty lights table.
                 // Bounded per-arena (not summed) so it holds even if a
                 // malicious WAD overlaps lumps.
                 for (count, record_size, arena) in [
@@ -54,7 +54,6 @@ fuzz_target!(|data: &[u8]| {
                     (map.sidedefs().len(), 12, "sidedefs"),
                     (map.sectors().len(), 24, "sectors"),
                     (map.things().len(), 10, "things"),
-                    (map.lights().len(), 6, "lights"),
                 ] {
                     assert!(
                         count <= data.len() / record_size,
@@ -62,6 +61,16 @@ fuzz_target!(|data: &[u8]| {
                         data.len() / record_size
                     );
                 }
+                // `Map::lights()` mirrors the engine's table (Doom64 EX
+                // P_LoadLights): 256 implicit grayscale entries always precede
+                // the LIGHTS lump records (record size 6), so the O(input)
+                // bound carries a constant 256-entry offset.
+                let lights_len = map.lights().len();
+                assert!(
+                    lights_len <= 256 + data.len() / 6,
+                    "lights count {lights_len} exceeds O(input) bound {}",
+                    256 + data.len() / 6
+                );
                 std::hint::black_box(&map);
             }
         }
