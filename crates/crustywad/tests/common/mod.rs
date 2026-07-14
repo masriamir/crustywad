@@ -239,9 +239,20 @@ pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
         );
         return Vec::new();
     };
+    // Fail fast on an unreadable entry rather than silently dropping it — a
+    // sweep that skips part of the directory would pass without actually
+    // covering the collection.
     let mut found: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|e| e.path())
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{env_var}: failed to read an entry in {}: {e}",
+                        dir.display()
+                    )
+                })
+                .path()
+        })
         .filter(|p| {
             p.is_file()
                 && p.extension()
