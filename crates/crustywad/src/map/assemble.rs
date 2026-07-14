@@ -42,9 +42,9 @@ pub enum MapAssembleError {
         count: usize,
     },
     /// The map group is in a format assembly does not yet decode into a
-    /// [`Map`] — reserved for a future format-specific marker lump (e.g.
-    /// Doom64, tracked in Epic #17). Doom, Hexen, and UDMF maps assemble
-    /// normally today.
+    /// [`Map`] — currently a Doom 64 group (a `MAPxx` marker carrying nested
+    /// `IWAD`/`PWAD` magic, ADR-0021 §1; assembly tracked in Epic #17). Doom,
+    /// Hexen, and UDMF maps assemble normally today.
     #[error(
         "unsupported map format: found a {lump} lump; assembly does not support this format yet"
     )]
@@ -716,14 +716,15 @@ impl Map {
                         (normalize_things_hexen(&raw_things), linedefs)
                     }
                     MapFormat::Udmf => unreachable!("Udmf is handled by the outer match arm"),
-                    // A Doom64 group's `data_indices` is always empty (ADR-0021
-                    // §1: its records live in the marker's nested WAD, not as
-                    // sibling data lumps), so `decode_required` above already
-                    // returned `MissingLump { lump: "VERTEXES" }` via `?` before
-                    // this match is ever reached. Task 5 replaces this interim
-                    // binary fallback with a real Doom64 assemble arm.
+                    // Doom64 assembly is not implemented yet (Task 5 adds the
+                    // real arm). This IS reachable: detection keys on the
+                    // marker's nested IWAD/PWAD magic alone, while Doom64
+                    // grouping also requires the MAPxx name — so a
+                    // classic-named marker whose bytes carry nested magic
+                    // groups classically (with data lumps that can decode
+                    // above), yet detects as Doom64 and lands here.
                     MapFormat::Doom64 => {
-                        unreachable!("Doom64 groups have no data lumps to reach this arm")
+                        return Err(MapAssembleError::UnsupportedFormat { lump: "MAP" });
                     }
                 };
 

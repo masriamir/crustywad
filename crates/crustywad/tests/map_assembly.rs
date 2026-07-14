@@ -716,3 +716,38 @@ fn doom64_group_assembles_or_errors_without_panicking() {
     let group = wad.map_group("MAP01").unwrap();
     let _ = Map::assemble(&wad, &group); // Ok or Err both fine; no panic
 }
+
+// Grouping requires the MAPxx name AND nested magic, but format detection keys
+// on the marker's magic alone — so a classic-named marker ("E1M1", which fails
+// is_doom64_map_name) whose bytes carry nested IWAD/PWAD magic groups
+// classically with a real data run, yet detects as Doom64. Assembling such a
+// group must error (UnsupportedFormat), never panic, in both strictness modes
+// (ADR-0016: no panic on untrusted input).
+#[test]
+fn classic_named_marker_with_nested_magic_errors_instead_of_panicking() {
+    let mut marker = b"IWAD".to_vec();
+    marker.extend_from_slice(&[0u8; 8]); // >= 12 bytes: passes is_doom64_map_lump
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", marker),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SECTORS", sector()),
+        ("SIDEDEFS", sidedef(0)),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    assert!(
+        !group.data_indices.is_empty(),
+        "the classic-named marker must group with its data run"
+    );
+    assert_eq!(
+        crustywad::map::detect_map_format(&wad, &group),
+        MapFormat::Doom64
+    );
+    for options in [ParseOptions::default(), ParseOptions::lenient()] {
+        let err = Map::assemble_with_options(&wad, &group, options).unwrap_err();
+        assert!(
+            matches!(err, MapAssembleError::UnsupportedFormat { .. }),
+            "expected UnsupportedFormat, got {err:?}"
+        );
+    }
+}
