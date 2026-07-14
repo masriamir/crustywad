@@ -41,6 +41,10 @@ docs/guide/mermaid-init.js
 /*.wad
 /*.WAD
 
+# Local retail WAD collection (fixture source for the optional sweep/fixture
+# tests — retail blobs are never committed)
+/PWADS/
+
 # Benchmark output
 /criterion/
 
