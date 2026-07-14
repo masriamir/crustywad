@@ -1,8 +1,9 @@
 //! The assembled, index-addressed map graph (ADR-0015 §2).
 
 /// The source format a [`Map`] was assembled from. [`Doom`][MapFormat::Doom],
-/// [`Hexen`][MapFormat::Hexen], and [`Udmf`][MapFormat::Udmf] are assembled
-/// today; Doom64 (Epic #17) reuses this same model but isn't implemented yet.
+/// [`Hexen`][MapFormat::Hexen], [`Udmf`][MapFormat::Udmf], and
+/// [`Doom64`][MapFormat::Doom64] (ADR-0021 §2) all assemble into a [`Map`]
+/// today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MapFormat {
@@ -17,6 +18,10 @@ pub enum MapFormat {
     /// [`map::udmf`][crate::map::udmf]); detected by the presence of a
     /// `TEXTMAP` lump.
     Udmf,
+    /// The Doom 64 nested-WAD layout — the map's record lumps live inside the
+    /// `MAPxx` marker lump itself (see [`map::doom64`][crate::map::doom64]);
+    /// detected by the marker's nested `IWAD`/`PWAD` magic (ADR-0021 §1).
+    Doom64,
 }
 
 /// A zero-based index into [`Map::vertices`].
@@ -34,6 +39,10 @@ pub struct SectorIdx(pub usize);
 /// A zero-based index into [`Map::linedefs`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LinedefIdx(pub usize);
+
+/// A zero-based index into [`Map::lights`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LightIdx(pub usize);
 
 /// A normalized map vertex; coordinates are `f64` so binary `i16` widens
 /// losslessly and future UDMF floats fit natively.
@@ -101,6 +110,33 @@ pub(crate) fn linedef_id_unset(format: MapFormat) -> i32 {
     if format == MapFormat::Udmf { -1 } else { 0 }
 }
 
+/// A texture or flat reference in the assembled graph (ADR-0021 §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextureRef {
+    /// A texture name (a Doom/Hexen 8-byte lump name, or a UDMF string).
+    Name(String),
+    /// A Doom 64 texture/flat table index — resolvable to a texture identity
+    /// once the texture layer (v0.5.0, #156/#157) exists.
+    Index(u16),
+}
+
+impl TextureRef {
+    /// The texture name, or `None` for a Doom 64 [`TextureRef::Index`].
+    #[must_use]
+    pub fn as_name(&self) -> Option<&str> {
+        match self {
+            TextureRef::Name(name) => Some(name),
+            TextureRef::Index(_) => None,
+        }
+    }
+}
+
+impl PartialEq<&str> for TextureRef {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_name() == Some(*other)
+    }
+}
+
 /// A normalized sidedef, referencing its sector by index into the owning
 /// [`Map`]'s sector arena.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,12 +147,36 @@ pub struct MapSidedef {
     pub x_offset: i32,
     /// The vertical texture offset, in map units.
     pub y_offset: i32,
-    /// The upper texture name, or empty if none.
-    pub upper: String,
-    /// The lower texture name, or empty if none.
-    pub lower: String,
-    /// The middle texture name, or empty if none.
-    pub middle: String,
+    /// The upper texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
+    /// has no name until the texture layer (v0.5.0) can resolve it.
+    pub upper: TextureRef,
+    /// The lower texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
+    /// has no name until the texture layer (v0.5.0) can resolve it.
+    pub lower: TextureRef,
+    /// The middle texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
+    /// has no name until the texture layer (v0.5.0) can resolve it.
+    pub middle: TextureRef,
+}
+
+/// A normalized Doom 64 light-table entry (ADR-0021 §4).
+///
+/// [`Map::lights`] is built the way the engine builds its table (Doom64 EX
+/// `P_LoadLights`): entries `0`–`255` are synthesized identity-grayscale
+/// values (`r = g = b = index`, `tag = 0`), and the map's `LIGHTS` lump
+/// records follow starting at index `256`.
+///
+/// The raw record's trailing `unknown` field (tentative semantics) is not
+/// normalized; a consumer needing it reads [`Doom64Map`][crate::map::Doom64Map].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapLight {
+    /// Red channel (`0`–`255`).
+    pub r: u8,
+    /// Green channel (`0`–`255`).
+    pub g: u8,
+    /// Blue channel (`0`–`255`).
+    pub b: u8,
+    /// Small identifier (observed `0`–`2` in retail data; tentative semantics).
+    pub tag: u8,
 }
 
 /// A normalized sector.
@@ -126,18 +186,31 @@ pub struct MapSector {
     pub floor_height: i32,
     /// The ceiling height, in map units.
     pub ceiling_height: i32,
-    /// The floor flat (texture) name.
-    pub floor_flat: String,
-    /// The ceiling flat (texture) name.
-    pub ceiling_flat: String,
+    /// The floor flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
+    /// name until the texture layer (v0.5.0) can resolve it.
+    pub floor_flat: TextureRef,
+    /// The ceiling flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
+    /// name until the texture layer (v0.5.0) can resolve it.
+    pub ceiling_flat: TextureRef,
     // Doom stores sector special/tag as i16; widen losslessly to i32
     // (avoids an i16->u16 sign-loss cast that clippy::pedantic rejects).
     /// The light level, in the range `0..=255` on disk, widened to `i32`.
+    /// Always `0` for a Doom 64 map — the format has no scalar light level;
+    /// its lighting lives in [`MapSector::colors`] (ADR-0021 §4).
     pub light: i32,
     /// The sector special number.
     pub special: i32,
     /// The sector tag.
     pub tag: i32,
+    /// Doom 64 colored lighting: five references into [`Map::lights`], carried
+    /// positionally — Doom64 EX's map-format headers do not name the slots
+    /// (ADR-0021 §4). The values index the combined light table: `0`–`255`
+    /// select the implicit grayscale entries, `256` and above select the
+    /// map's `LIGHTS` lump records. `None` for every other format.
+    pub colors: Option<[LightIdx; 5]>,
+    /// The sector's raw Doom 64 flag bits (`Sector.flags`, stored opaquely);
+    /// `0` for every other format (mirrors `MapLinedef.flags`).
+    pub flags: u32,
 }
 
 /// A normalized map thing (monster, item, player start, etc.).
@@ -224,6 +297,11 @@ pub enum MapWarning {
         /// The map's marker name.
         name: String,
     },
+    /// A non-fatal issue recovered while reading a Doom 64 map's nested WAD
+    /// during lenient assembly (ADR-0021 §2); see
+    /// [`Doom64Warning`](crate::map::doom64::Doom64Warning).
+    #[error("{0}")]
+    Doom64(crate::map::doom64::Doom64Warning),
 }
 
 /// An assembled Doom map graph: normalized elements addressed by index,
@@ -242,6 +320,7 @@ pub struct Map {
     pub(crate) sidedefs: Vec<MapSidedef>,
     pub(crate) sectors: Vec<MapSector>,
     pub(crate) things: Vec<MapThing>,
+    pub(crate) lights: Vec<MapLight>,
     pub(crate) warnings: Vec<MapWarning>,
 }
 
@@ -301,6 +380,15 @@ impl Map {
         &self.warnings
     }
 
+    /// The map's light table, mirroring the engine's (Doom64 EX
+    /// `P_LoadLights`): indices `0`–`255` are implicit grayscale entries
+    /// (`r = g = b = index`, `tag = 0`), followed by the map's `LIGHTS` lump
+    /// records starting at index `256`. Empty for non-Doom 64 maps.
+    #[must_use]
+    pub fn lights(&self) -> &[MapLight] {
+        &self.lights
+    }
+
     /// Resolves a linedef's start/end vertices. Total for elements produced by
     /// this map's own assembly; a linedef carrying an out-of-range index (e.g.
     /// hand-constructed, since `MapLinedef`'s fields are public) may panic.
@@ -352,18 +440,20 @@ mod tests {
                 sector: SectorIdx(0),
                 x_offset: 0,
                 y_offset: 0,
-                upper: String::new(),
-                lower: String::new(),
-                middle: "WALL".into(),
+                upper: TextureRef::Name(String::new()),
+                lower: TextureRef::Name(String::new()),
+                middle: TextureRef::Name("WALL".into()),
             }],
             sectors: vec![MapSector {
                 floor_height: 0,
                 ceiling_height: 128,
-                floor_flat: "FLOOR".into(),
-                ceiling_flat: "CEIL".into(),
+                floor_flat: TextureRef::Name("FLOOR".into()),
+                ceiling_flat: TextureRef::Name("CEIL".into()),
                 light: 160,
                 special: 0,
                 tag: 0,
+                colors: None,
+                flags: 0,
             }],
             linedefs: vec![MapLinedef {
                 start: VertexIdx(0),
@@ -378,6 +468,7 @@ mod tests {
                 id: 0,
             }],
             things: vec![],
+            lights: vec![],
             warnings: vec![],
         }
     }
@@ -392,5 +483,13 @@ mod tests {
         assert_eq!(right.middle, "WALL");
         assert!(m.linedef_left(l).is_none());
         assert_eq!(m.sidedef_sector(right).ceiling_height, 128);
+    }
+
+    #[test]
+    fn classic_map_has_no_lights_and_no_colors() {
+        let m = tiny_map();
+        assert!(m.lights().is_empty());
+        assert_eq!(m.sectors()[0].colors, None);
+        assert_eq!(m.sectors()[0].flags, 0);
     }
 }

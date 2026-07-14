@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 use crate::Strictness;
 use crate::map::Map;
 use crate::map::graph::{
-    MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, linedef_id_unset,
+    MapFormat, MapLinedef, MapSector, MapSidedef, MapThing, MapVertex, TextureRef, linedef_id_unset,
 };
 use crate::write::{WadBuilder, WriteOptions};
 
@@ -48,6 +48,27 @@ pub enum UdmfWriteError {
     NoFrontSide {
         /// The 0-based linedef index.
         index: usize,
+    },
+    /// A [`TextureRef::Index`] reached the writer; a Doom 64 texture index
+    /// cannot be written as a name until the texture layer (v0.5.0) can
+    /// resolve it (both strictness modes; ADR-0021 §5).
+    #[error("unresolvable texture index for {field} in {block} #{index}")]
+    UnresolvedTextureIndex {
+        /// The block kind (`"sidedef"` or `"sector"`).
+        block: &'static str,
+        /// The field name (e.g. `"texturetop"`, `"texturefloor"`).
+        field: &'static str,
+        /// The 0-based block index.
+        index: usize,
+    },
+    /// The map's source format cannot be expressed by this writer — a Doom 64
+    /// map's texture indices and colored lighting have no classic/UDMF
+    /// representation until the texture layer (v0.5.0) exists (both
+    /// strictness modes; ADR-0021 §5).
+    #[error("cannot write a {format:?}-sourced map")]
+    UnsupportedSourceFormat {
+        /// The assembled map's source format.
+        format: MapFormat,
     },
 }
 
@@ -94,6 +115,22 @@ fn escape_udmf_string(s: &str) -> String {
             .replace('\n', "\\n")
             .replace('\t', "\\t")
     )
+}
+
+/// Resolves a [`TextureRef`] to a name, or fails: a Doom 64 texture index has
+/// no name until the texture layer (v0.5.0) exists, so this is not a
+/// recoverable defect (ADR-0021 §5) — it errors in **both** strictness modes.
+fn texture_name<'a>(
+    block: &'static str,
+    field: &'static str,
+    index: usize,
+    tex: &'a TextureRef,
+) -> Result<&'a str, UdmfWriteError> {
+    tex.as_name().ok_or(UdmfWriteError::UnresolvedTextureIndex {
+        block,
+        field,
+        index,
+    })
 }
 
 /// Accumulates UDMF text and lenient-mode warnings.
@@ -216,7 +253,7 @@ impl Writer {
         Ok(())
     }
 
-    fn push_sidedef(&mut self, s: &MapSidedef) {
+    fn push_sidedef(&mut self, index: usize, s: &MapSidedef) -> Result<(), UdmfWriteError> {
         self.out.push_str("sidedef { ");
         write!(self.out, "sector = {}; ", s.sector.0).expect(INFALLIBLE);
         if s.x_offset != 0 {
@@ -225,28 +262,40 @@ impl Writer {
         if s.y_offset != 0 {
             write!(self.out, "offsety = {}; ", s.y_offset).expect(INFALLIBLE);
         }
-        for (key, tex) in [
-            ("texturetop", &s.upper),
-            ("texturebottom", &s.lower),
-            ("texturemiddle", &s.middle),
+        for (key, field, tex) in [
+            ("texturetop", "texturetop", &s.upper),
+            ("texturebottom", "texturebottom", &s.lower),
+            ("texturemiddle", "texturemiddle", &s.middle),
         ] {
+            let name = texture_name("sidedef", field, index, tex)?;
             // Emit whenever the texture differs from the UDMF default `"-"`.
             // An explicitly-empty texture (`""`) is preserved distinct from the
             // default by the read side, so it must be emitted to round-trip.
-            if tex != "-" {
-                write!(self.out, "{key} = {}; ", escape_udmf_string(tex)).expect(INFALLIBLE);
+            if name != "-" {
+                write!(self.out, "{key} = {}; ", escape_udmf_string(name)).expect(INFALLIBLE);
             }
         }
         self.out.push_str("}\n");
+        Ok(())
     }
 
-    fn push_sector(&mut self, s: &MapSector) {
+    fn push_sector(&mut self, index: usize, s: &MapSector) -> Result<(), UdmfWriteError> {
         self.out.push_str("sector { ");
         write!(
             self.out,
             "texturefloor = {}; textureceiling = {}; ",
-            escape_udmf_string(&s.floor_flat),
-            escape_udmf_string(&s.ceiling_flat)
+            escape_udmf_string(texture_name(
+                "sector",
+                "texturefloor",
+                index,
+                &s.floor_flat
+            )?),
+            escape_udmf_string(texture_name(
+                "sector",
+                "textureceiling",
+                index,
+                &s.ceiling_flat
+            )?)
         )
         .expect(INFALLIBLE);
         if s.floor_height != 0 {
@@ -265,6 +314,7 @@ impl Writer {
             write!(self.out, "id = {}; ", s.tag).expect(INFALLIBLE);
         }
         self.out.push_str("}\n");
+        Ok(())
     }
 
     fn push_thing(&mut self, index: usize, t: &MapThing) -> Result<(), UdmfWriteError> {
@@ -347,14 +397,24 @@ impl Writer {
 /// `f64` coordinates narrow to integer form when whole. See the module docs.
 ///
 /// # Errors
+/// - [`UdmfWriteError::UnsupportedSourceFormat`] — `map.format()` is
+///   [`MapFormat::Doom64`] (returned in **both** strictness modes; ADR-0021 §5).
 /// - [`UdmfWriteError::EmptyNamespace`] — `map.namespace()` is `Some("")` (strict).
 /// - [`UdmfWriteError::NonFiniteCoordinate`] — a coordinate/height is NaN or ∞ (strict).
 /// - [`UdmfWriteError::NoFrontSide`] — a linedef has no front sidedef, which
 ///   UDMF cannot represent (strict).
+/// - [`UdmfWriteError::UnresolvedTextureIndex`] — a sidedef/sector carries a
+///   [`TextureRef::Index`] (returned in **both** strictness modes; ADR-0021 §5).
 pub fn write_udmf(
     map: &Map,
     opts: &WriteOptions,
 ) -> Result<(String, Vec<UdmfWriteWarning>), UdmfWriteError> {
+    if map.format() == MapFormat::Doom64 {
+        return Err(UdmfWriteError::UnsupportedSourceFormat {
+            format: map.format(),
+        });
+    }
+
     let mut w = Writer::new(opts.strictness);
 
     let namespace = match map.namespace() {
@@ -393,12 +453,12 @@ pub fn write_udmf(
         w.push_linedef(i, l, map.format())?;
     }
 
-    for s in map.sidedefs() {
-        w.push_sidedef(s);
+    for (i, s) in map.sidedefs().iter().enumerate() {
+        w.push_sidedef(i, s)?;
     }
 
-    for s in map.sectors() {
-        w.push_sector(s);
+    for (i, s) in map.sectors().iter().enumerate() {
+        w.push_sector(i, s)?;
     }
 
     for (i, t) in map.things().iter().enumerate() {
@@ -417,7 +477,9 @@ pub fn write_udmf(
 /// # Errors
 /// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`],
 /// [`UdmfWriteError::NonFiniteCoordinate`], and
-/// [`UdmfWriteError::NoFrontSide`] (strict mode).
+/// [`UdmfWriteError::NoFrontSide`] (strict mode); and
+/// [`UdmfWriteError::UnresolvedTextureIndex`] and
+/// [`UdmfWriteError::UnsupportedSourceFormat`] (both modes).
 pub fn add_udmf_map(
     builder: &mut WadBuilder,
     name: &str,
@@ -436,7 +498,9 @@ mod tests {
     use super::*;
     use crate::WadKind;
     use crate::map::MapFormat;
-    use crate::map::graph::{MapThing, MapVertex, Special};
+    use crate::map::graph::{
+        MapSector, MapSidedef, MapThing, MapVertex, SectorIdx, Special, TextureRef,
+    };
 
     /// Builds a minimal `Map` with the given vertices/things (other arenas empty)
     /// for exercising `write_udmf`'s error-propagation paths directly.
@@ -450,6 +514,41 @@ mod tests {
             sidedefs: Vec::new(),
             sectors: Vec::new(),
             things,
+            lights: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Builds a minimal `Map` with a single sidedef/sector pair (other arenas
+    /// empty), for exercising the texture-resolving write paths.
+    fn tiny_map() -> Map {
+        Map {
+            name: "MAP01".to_string(),
+            format: MapFormat::Udmf,
+            namespace: Some("doom".to_string()),
+            vertices: Vec::new(),
+            linedefs: Vec::new(),
+            sidedefs: vec![MapSidedef {
+                sector: SectorIdx(0),
+                x_offset: 0,
+                y_offset: 0,
+                upper: TextureRef::Name("-".into()),
+                lower: TextureRef::Name("-".into()),
+                middle: TextureRef::Name("WALL".into()),
+            }],
+            sectors: vec![MapSector {
+                floor_height: 0,
+                ceiling_height: 128,
+                floor_flat: TextureRef::Name("FLOOR".into()),
+                ceiling_flat: TextureRef::Name("CEIL".into()),
+                light: 160,
+                special: 0,
+                tag: 0,
+                colors: None,
+                flags: 0,
+            }],
+            things: Vec::new(),
+            lights: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -709,6 +808,85 @@ mod tests {
             let text = format!("namespace = \"doom\";\n{}", w.out);
             let parsed = parse_udmf(&text, Limits::default()).unwrap();
             assert_eq!(parsed.things[0].flags, f, "flags {f:#04x} did not survive");
+        }
+    }
+
+    /// A Doom 64 texture index has no name until the texture layer (v0.5.0)
+    /// exists, so a `TextureRef::Index` is rejected in both strictness modes —
+    /// there is no honest recovery (ADR-0021 §5).
+    #[test]
+    fn texture_index_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.sidedefs[0].middle = TextureRef::Index(42);
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_udmf(&map, &opts).unwrap_err();
+            assert!(matches!(
+                err,
+                UdmfWriteError::UnresolvedTextureIndex {
+                    block: "sidedef",
+                    index: 0,
+                    ..
+                }
+            ));
+        }
+    }
+
+    /// The mirror case on the sector arena: a Doom 64 floor/ceiling texture
+    /// index is likewise rejected in both modes.
+    #[test]
+    fn sector_texture_index_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.sectors[0].floor_flat = TextureRef::Index(7);
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_udmf(&map, &opts).unwrap_err();
+            assert!(matches!(
+                err,
+                UdmfWriteError::UnresolvedTextureIndex {
+                    block: "sector",
+                    index: 0,
+                    ..
+                }
+            ));
+        }
+    }
+
+    /// The mirror case on the sector arena's *ceiling* field specifically:
+    /// `floor_flat` resolves fine, so the failure surfaces from the
+    /// `textureceiling` call site rather than being short-circuited by the
+    /// preceding `texturefloor` argument.
+    #[test]
+    fn sector_ceiling_texture_index_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.sectors[0].ceiling_flat = TextureRef::Index(9);
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_udmf(&map, &opts).unwrap_err();
+            assert!(matches!(
+                err,
+                UdmfWriteError::UnresolvedTextureIndex {
+                    block: "sector",
+                    field: "textureceiling",
+                    index: 0,
+                }
+            ));
+        }
+    }
+
+    /// A Doom 64-sourced map has no UDMF representation (texture indices,
+    /// colored lighting) until the texture layer (v0.5.0) exists, so it is
+    /// rejected in both strictness modes (ADR-0021 §5), before namespace
+    /// derivation or any per-field handling runs.
+    #[test]
+    fn doom64_sourced_map_is_rejected_in_both_modes() {
+        let mut map = tiny_map();
+        map.format = MapFormat::Doom64;
+        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
+            let err = write_udmf(&map, &opts).unwrap_err();
+            assert_eq!(
+                err,
+                UdmfWriteError::UnsupportedSourceFormat {
+                    format: MapFormat::Doom64
+                }
+            );
         }
     }
 

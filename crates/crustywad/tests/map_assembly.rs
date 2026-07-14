@@ -657,3 +657,309 @@ fn detects_hexen_format_with_behavior() {
     let group = wad.map_group("MAP01").expect("group");
     assert_eq!(detect_map_format(&wad, &group), MapFormat::Hexen);
 }
+
+// ADR-0021 §3: classic assembly produces TextureRef::Name; the PartialEq<&str>
+// impl keeps name comparisons ergonomic; Index never equals a name.
+#[test]
+fn classic_assembly_produces_texture_names() {
+    use crustywad::map::TextureRef;
+    let bytes = common::build_doom_map_wad(
+        "E1M1",
+        vec![],
+        linedef(0, 1, 0, 0xffff),
+        sidedef(0),
+        [vertex(0, 0), vertex(64, 0)].concat(),
+        sector(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("E1M1").unwrap()).unwrap();
+    assert_eq!(
+        map.sectors()[0].floor_flat,
+        TextureRef::Name("FLOOR".into())
+    );
+    assert_eq!(map.sectors()[0].floor_flat, "FLOOR"); // PartialEq<&str>
+    assert_eq!(map.sidedefs()[0].middle.as_name(), Some("WALL"));
+    assert_ne!(TextureRef::Index(7), "FLOOR");
+}
+
+// A nested-WAD MAPxx lump is a Doom 64 map group (ADR-0021 §1): marker only,
+// empty data run, detected as MapFormat::Doom64. A classic empty MAP02
+// marker (no nested magic, no data run) is not a group at all, and a
+// nested-WAD lump with a non-MAPxx name is not a map.
+#[test]
+fn doom64_nested_map_lump_forms_a_group() {
+    let nested = common::build_wad(*b"IWAD", &[("THINGS", &[])]);
+    let bytes = common::build_named_lumps(&[
+        ("MAP01", nested.clone()),
+        ("MAP02", vec![]),
+        ("RESOURCE", nested),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let groups = wad.map_groups();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].name, "MAP01");
+    assert!(groups[0].data_indices.is_empty());
+    assert_eq!(
+        crustywad::map::detect_map_format(&wad, &groups[0]),
+        MapFormat::Doom64
+    );
+    assert!(wad.map_group("MAP01").is_some());
+    assert!(wad.map_group("RESOURCE").is_none());
+}
+
+// A genuine (MAPxx-named, nested-magic) Doom 64 group whose container holds
+// only an empty THINGS sub-lump: strict assembly fails structurally on the
+// first absent record sub-lump; lenient recovers every absence into an empty
+// map, one warning per missing sub-lump (8 = the 9 expected record sub-lumps
+// minus the THINGS that is present). Neither mode may panic.
+#[test]
+fn minimal_doom64_group_errors_strict_and_recovers_lenient() {
+    let nested = common::build_wad(*b"IWAD", &[("THINGS", &[])]);
+    let bytes = common::build_named_lumps(&[("MAP01", nested)]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            MapAssembleError::Doom64 {
+                source: crustywad::map::Doom64ReadError::MissingLump { name: "LINEDEFS" }
+            }
+        ),
+        "expected Doom64/MissingLump(LINEDEFS), got {err:?}"
+    );
+
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
+        .expect("lenient recovers missing sub-lumps");
+    assert_eq!(map.format(), MapFormat::Doom64);
+    assert!(map.linedefs().is_empty());
+    assert_eq!(map.lights().len(), 256); // grayscale tier only
+    assert_eq!(map.warnings().len(), 8);
+}
+
+// A classically named marker whose data bytes happen to start with nested-WAD
+// magic must stay a CLASSIC map: grouping and detection apply the same dual
+// condition (MAPxx name AND magic; ADR-0021 §1), so the incidental magic is
+// inert data and the group assembles through the ordinary Doom path in both
+// modes — no Doom 64 routing, no panic.
+#[test]
+fn classic_named_marker_with_nested_magic_assembles_as_classic() {
+    let mut marker = b"IWAD".to_vec();
+    marker.extend_from_slice(&[0u8; 8]); // >= 12 bytes: passes is_doom64_map_lump
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", marker),
+        ("THINGS", thing(3001)),
+        ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+        ("SIDEDEFS", sidedef(0)),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SECTORS", sector()),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    assert!(
+        !group.data_indices.is_empty(),
+        "the classic-named marker must group with its data run"
+    );
+    assert_eq!(
+        crustywad::map::detect_map_format(&wad, &group),
+        MapFormat::Doom,
+        "a non-MAPxx marker is never Doom 64, whatever its bytes hold"
+    );
+    for options in [ParseOptions::default(), ParseOptions::lenient()] {
+        let map = Map::assemble_with_options(&wad, &group, options)
+            .expect("classic assembly ignores the marker's bytes");
+        assert_eq!(map.format(), MapFormat::Doom);
+        assert_eq!(map.linedefs().len(), 1);
+        assert_eq!(map.things()[0].type_id, 3001);
+        assert!(map.lights().is_empty());
+        assert!(map.warnings().is_empty());
+    }
+}
+
+// `map.vertices()[0].x` (0.5, exact in 16.16 fixed-point) and `t.height`
+// (widened from an `i16`) are both exactly f64-representable, so strict float
+// equality is safe here — not a precision-sensitive comparison.
+#[allow(clippy::float_cmp)]
+#[test]
+fn assembles_doom64_map_into_the_graph() {
+    use crustywad::map::{LightIdx, TextureRef};
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &common::d64_thing(32, 48, 16, -90, 3001, 1 | 2 | 4 | 1024, 5),
+        &common::d64_linedef(0, 1, 0xdead_beef, 0, 0xffff),
+        &common::d64_sidedef(2, 3, 4, 0),
+        &[common::d64_vertex(0.5, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(10, 11, [0, 1, 1, 0, 1], 9),
+        &[
+            common::d64_light(255, 0, 0, 0),
+            common::d64_light(0, 0, 255, 2),
+        ]
+        .concat(),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let map = Map::assemble(&wad, &group).unwrap();
+
+    assert_eq!(map.format(), MapFormat::Doom64);
+    assert_eq!(map.vertices()[0].x, 0.5); // 16.16 fixed -> f64
+    let l = &map.linedefs()[0];
+    assert_eq!(l.flags, 0xdead_beef);
+    assert_eq!(l.special.args[0], 7); // tag -> args[0]
+    assert!(l.left.is_none()); // 0xffff sentinel (both sides, ADR-0020)
+    assert_eq!(map.sidedefs()[0].middle, TextureRef::Index(4));
+    let s = &map.sectors()[0];
+    assert_eq!(s.floor_flat, TextureRef::Index(10));
+    assert_eq!(s.light, 0);
+    assert_eq!(s.flags, 9);
+    // Color values 0/1 index the combined light table's implicit grayscale
+    // tier (indices 0-255); the LIGHTS lump records follow at 256.
+    assert_eq!(
+        s.colors,
+        Some([
+            LightIdx(0),
+            LightIdx(1),
+            LightIdx(1),
+            LightIdx(0),
+            LightIdx(1)
+        ])
+    );
+    assert_eq!(map.lights().len(), 258); // 256 grayscale + 2 lump records
+    assert_eq!(
+        map.lights()[5],
+        crustywad::map::MapLight {
+            r: 5,
+            g: 5,
+            b: 5,
+            tag: 0
+        }
+    );
+    assert_eq!((map.lights()[256].r, map.lights()[256].tag), (255, 0));
+    assert_eq!((map.lights()[257].b, map.lights()[257].tag), (255, 2));
+    let t = &map.things()[0];
+    assert_eq!(t.height, 16.0); // z -> height
+    assert_eq!(t.angle, 270); // -90 wrapped mod 360
+    assert_eq!(t.flags, 0b111 | 0b10_0000); // EASY|NORMAL|HARD + NODEATHMATCH
+    assert_eq!(t.id, 5);
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn doom64_dangling_color_ref_strict_errors_lenient_warns() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        // Color 300 with 1 lump light: the combined table holds 256 grayscale
+        // entries + 1 lump record = 257, so 300 dangles (values < 256 are
+        // always-valid grayscale indices and cannot dangle).
+        &common::d64_sector(0, 0, [300, 0, 0, 0, 0], 0),
+        &common::d64_light(255, 255, 255, 0),
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "light",
+            index: 300,
+            count: 257,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(
+        map.sectors()[0].colors.unwrap()[0],
+        crustywad::map::LightIdx(0)
+    ); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}
+
+#[test]
+fn doom64_dangling_sidedef_sector_ref_strict_errors_lenient_warns() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        // Only one sector (index 0) exists; this sidedef points at index 5.
+        &common::d64_sidedef(0, 0, 0, 5),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
+        &[],
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "sector",
+            index: 5,
+            count: 1,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.sidedefs()[0].sector, crustywad::map::SectorIdx(0)); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}
+
+#[test]
+fn doom64_dangling_linedef_vertex_ref_strict_errors_lenient_warns() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        // Only two vertices (0, 1) exist; this linedef's start vertex is 5.
+        &common::d64_linedef(5, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
+        &[],
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "vertex",
+            index: 5,
+            count: 2,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.linedefs()[0].start, crustywad::map::VertexIdx(0)); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}
+
+#[test]
+fn doom64_thing_type_out_of_range_strict_errors_lenient_clamps_and_warns() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        // A negative type_id is out of range for the widened `u16` field.
+        &common::d64_thing(0, 0, 0, 0, -1, 0, 0),
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0, 0, 0, 0, 0], 0),
+        &[],
+    );
+    let wad = crustywad::Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble(&wad, &group).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::FieldOutOfRange {
+            field: "thing.type",
+            value: -1,
+            ..
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.things()[0].type_id, 0); // clamped
+    assert_eq!(map.warnings().len(), 1);
+}

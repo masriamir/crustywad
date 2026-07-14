@@ -140,12 +140,15 @@ lumps within the flat directory; `Map::assemble` (strict) and `Map::assemble_wit
 [Map Record Parsing](https://crustywad.dev/map-records.html) in the guide for the full API,
 including lenient-mode dangling-reference handling and the one-sided-line sentinel.
 
-Doom, **Doom II**, **Heretic**, and **Hexen** maps all assemble into the `Map` graph. Doom/Doom II/Heretic
-share the classic binary record layout (differing only in map-marker naming, e.g. `MAP01` vs `E1M1`);
-Hexen is detected via the `BEHAVIOR` lump and assembles with format-tagged extended fields.
-**Doom 64** maps use a different nested-WAD container and are **read into raw typed records** via
-`map::doom64` / `read_doom64_map` (textures, flats, and colors are kept as raw indices) — they do **not**
-assemble into the `Map` graph yet; graph normalization is planned as a future milestone.
+Doom, **Doom II**, **Heretic**, **Hexen**, and **Doom 64** maps all assemble into the `Map` graph.
+Doom/Doom II/Heretic share the classic binary record layout (differing only in map-marker naming,
+e.g. `MAP01` vs `E1M1`); Hexen is detected via the `BEHAVIOR` lump and assembles with format-tagged
+extended fields. **Doom 64** stores each map as a nested WAD inside its `MAPxx` marker lump
+(detected by name **and** magic) and assembles into the same graph — its sidedef/sector
+texture and flat fields become a `TextureRef::Index` rather than a name, and its per-sector
+colored lighting becomes `MapSector.colors` indexing `Map::lights()`, the map's combined light
+table. Until the texture layer (planned for v0.5.0) can resolve those indices, a Doom 64-sourced
+`Map` cannot be written back out: `write_doom_map` and `write_udmf` both reject it.
 UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with
 `write_udmf` / `add_udmf_map` (the `write` feature). The same `Map` graph converts a UDMF
 map to the classic Doom binary lumps with `write_doom_map` / `add_doom_map` — see

@@ -288,3 +288,107 @@ pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
 pub fn is_doom64_map_name(name: &str) -> bool {
     name.len() == 5 && name.starts_with("MAP") && name[3..].bytes().all(|b| b.is_ascii_digit())
 }
+
+/// Builds a WAD holding one Doom 64 nested-WAD map lump named `name`.
+/// All 9 record sub-lumps `read_doom64_map` expects are present (empty unless
+/// supplied), plus the four raw-byte lumps (`REJECT`/`BLOCKMAP`/`LEAFS`/
+/// `MACROS`) it carries opaquely, so strict reads succeed.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn build_doom64_map_wad(
+    name: &str,
+    things: &[u8],
+    linedefs: &[u8],
+    sidedefs: &[u8],
+    vertexes: &[u8],
+    sectors: &[u8],
+    lights: &[u8],
+) -> Vec<u8> {
+    let nested = build_wad(
+        *b"IWAD",
+        &[
+            ("THINGS", things),
+            ("LINEDEFS", linedefs),
+            ("SIDEDEFS", sidedefs),
+            ("VERTEXES", vertexes),
+            ("SECTORS", sectors),
+            ("LIGHTS", lights),
+            ("SEGS", &[]),
+            ("SSECTORS", &[]),
+            ("NODES", &[]),
+            ("REJECT", &[]),
+            ("BLOCKMAP", &[]),
+            ("LEAFS", &[]),
+            ("MACROS", &[]),
+        ],
+    );
+    build_named_lumps(&[(name, nested)])
+}
+
+/// One Doom 64 vertex: 16.16 fixed-point coordinates.
+#[allow(dead_code)]
+pub fn d64_vertex(x: f64, y: f64) -> Vec<u8> {
+    #[allow(clippy::cast_possible_truncation)]
+    let (xf, yf) = ((x * 65536.0) as i32, (y * 65536.0) as i32);
+    [xf.to_le_bytes(), yf.to_le_bytes()].concat()
+}
+
+/// One Doom 64 linedef (16 bytes).
+#[allow(dead_code)]
+pub fn d64_linedef(v1: u16, v2: u16, flags: u32, right: u16, left: u16) -> Vec<u8> {
+    [
+        &v1.to_le_bytes()[..],
+        &v2.to_le_bytes(),
+        &flags.to_le_bytes(),
+        &0u16.to_le_bytes(), // special
+        &7u16.to_le_bytes(), // tag
+        &right.to_le_bytes(),
+        &left.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// One Doom 64 sidedef (12 bytes) with texture indices.
+#[allow(dead_code)]
+pub fn d64_sidedef(upper: u16, lower: u16, middle: u16, sector: u16) -> Vec<u8> {
+    [
+        &0i16.to_le_bytes()[..],
+        &0i16.to_le_bytes(),
+        &upper.to_le_bytes(),
+        &lower.to_le_bytes(),
+        &middle.to_le_bytes(),
+        &sector.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// One Doom 64 sector (24 bytes) with flat indices and five color refs.
+#[allow(dead_code)]
+pub fn d64_sector(floor_tex: u16, ceiling_tex: u16, colors: [u16; 5], flags: u16) -> Vec<u8> {
+    let mut b: Vec<u8> = Vec::new();
+    b.extend(0i16.to_le_bytes());
+    b.extend(128i16.to_le_bytes());
+    b.extend(floor_tex.to_le_bytes());
+    b.extend(ceiling_tex.to_le_bytes());
+    for c in colors {
+        b.extend(c.to_le_bytes());
+    }
+    b.extend(0u16.to_le_bytes()); // special
+    b.extend(0u16.to_le_bytes()); // tag
+    b.extend(flags.to_le_bytes());
+    b
+}
+
+/// One Doom 64 thing (14 bytes).
+#[allow(dead_code)]
+pub fn d64_thing(x: i16, y: i16, z: i16, angle: i16, type_id: i16, flags: i16, id: i16) -> Vec<u8> {
+    [x, y, z, angle, type_id, flags, id]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect()
+}
+
+/// One LIGHTS record (6 bytes).
+#[allow(dead_code)]
+pub fn d64_light(r: u8, g: u8, b: u8, tag: u8) -> Vec<u8> {
+    vec![r, g, b, tag, 0, 0]
+}
