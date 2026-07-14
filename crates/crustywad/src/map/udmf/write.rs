@@ -350,6 +350,8 @@ impl Writer {
 /// # Errors
 /// - [`UdmfWriteError::EmptyNamespace`] — `map.namespace()` is `Some("")` (strict).
 /// - [`UdmfWriteError::NonFiniteCoordinate`] — a coordinate/height is NaN or ∞ (strict).
+/// - [`UdmfWriteError::NoFrontSide`] — a linedef has no front sidedef, which
+///   UDMF cannot represent (strict).
 pub fn write_udmf(
     map: &Map,
     opts: &WriteOptions,
@@ -414,8 +416,9 @@ pub fn write_udmf(
 /// [`WriteError`](crate::WriteError)).
 ///
 /// # Errors
-/// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`] and
-/// [`UdmfWriteError::NonFiniteCoordinate`] (strict mode).
+/// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`],
+/// [`UdmfWriteError::NonFiniteCoordinate`], and
+/// [`UdmfWriteError::NoFrontSide`] (strict mode).
 pub fn add_udmf_map(
     builder: &mut WadBuilder,
     name: &str,
