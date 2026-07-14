@@ -69,6 +69,34 @@ error: broken.wad: invalid WAD magic
 
 The error message goes to stderr in human format; the exit code is `2`.
 
+#### Deep validation
+
+`--deep` goes beyond the header and directory: after the container parses,
+every map in the WAD is assembled — all four formats, including Doom 64
+nested-WAD maps — with per-map errors and warnings reported. Validation
+continues past a failing map so one corrupt map cannot mask another.
+
+```text
+$ cwad validate --deep doom.wad
+ok: doom.wad (36 map(s) validated)
+```
+
+On a WAD whose `E1M1` has a corrupt lump:
+
+```text
+$ cwad validate --deep broken.wad
+error: map E1M1: failed to decode LINEDEFS records
+error: broken.wad: 1 of 2 map(s) failed validation
+```
+
+Per-map diagnostics go to stderr; the exit code is `2` if any map fails. The
+strictness flag applies: under `--lenient`, recoverable per-map issues become
+warnings on stderr and the exit code stays `0`. In JSON format, `--deep` emits
+one newline-delimited record per map (`{"map":"E1M1","ok":true,"warnings":0}`
+or `{"map":"E1M1","ok":false,"error":"..."}`) followed by the usual summary
+object; in CSV it emits a `map,ok,error` table instead of the shallow
+`ok`/`true` pair.
+
 ### merge
 
 Combine multiple WAD files into one, writing lumps in the order the input

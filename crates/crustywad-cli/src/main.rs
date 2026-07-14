@@ -14,6 +14,86 @@ use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
 
 use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
 
+/// Assembles every map group in `wad` under `options`, reporting per-map
+/// results (#251).
+///
+/// Validation continues past failing maps so one corrupt map cannot mask
+/// another. Per-map diagnostics go to stderr in human format; JSON emits one
+/// newline-delimited record per map followed by the same summary object the
+/// shallow mode prints; CSV emits a `map,ok,error` table. Exits `0` when every
+/// map assembles (lenient-mode warnings allowed, reported on stderr), `2` when
+/// any map fails — consistent with ADR-0008\'s malformed-WAD convention.
+fn deep_validate(wad: &Wad, path: &std::path::Path, format: Format, options: ParseOptions) -> i32 {
+    use crustywad::map::Map;
+
+    let groups = wad.map_groups();
+    let mut failed = 0usize;
+
+    if matches!(format, Format::Csv) {
+        println!("map,ok,error");
+    }
+    for group in &groups {
+        match Map::assemble_with_options(wad, group, options) {
+            Ok(map) => {
+                for w in map.warnings() {
+                    eprintln!("warning: map {}: {w}", group.name);
+                }
+                match format {
+                    Format::Human => {}
+                    Format::Json => println!(
+                        r#"{{"map":{},"ok":true,"warnings":{}}}"#,
+                        json_string(&group.name),
+                        map.warnings().len()
+                    ),
+                    Format::Csv => {
+                        println!("{},true,", csv_field(&group.name));
+                    }
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("error: map {}: {e:#}", group.name);
+                match format {
+                    Format::Human => {}
+                    Format::Json => println!(
+                        r#"{{"map":{},"ok":false,"error":{}}}"#,
+                        json_string(&group.name),
+                        json_string(&e.to_string())
+                    ),
+                    Format::Csv => {
+                        println!(
+                            "{},false,{}",
+                            csv_field(&group.name),
+                            csv_field(&e.to_string())
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if failed == 0 {
+        match format {
+            Format::Human => {
+                println!("ok: {} ({} map(s) validated)", path.display(), groups.len());
+            }
+            Format::Json => println!(r#"{{"ok":true}}"#),
+            Format::Csv => {}
+        }
+        0
+    } else {
+        let summary = format!("{failed} of {} map(s) failed validation", groups.len());
+        match format {
+            Format::Human => eprintln!("error: {}: {summary}", path.display()),
+            Format::Json => {
+                println!(r#"{{"ok":false,"error":{}}}"#, json_string(&summary));
+            }
+            Format::Csv => {}
+        }
+        2
+    }
+}
+
 /// Returns the marker-lump names of every map group in `wad`, in directory
 /// order.
 ///
@@ -379,9 +459,15 @@ fn run(cli: Cli) -> Result<i32> {
             Ok(1)
         }
 
-        SubCommand::Validate { path } => {
+        SubCommand::Validate { path, deep } => {
             match Wad::from_path_with_options(&path, options) {
                 Ok(wad) => {
+                    for w in wad.warnings() {
+                        eprintln!("warning: {w}");
+                    }
+                    if deep {
+                        return Ok(deep_validate(&wad, &path, cli.format, options));
+                    }
                     match cli.format {
                         Format::Human => println!("ok: {}", path.display()),
                         Format::Json => println!(r#"{{"ok":true}}"#),
@@ -389,9 +475,6 @@ fn run(cli: Cli) -> Result<i32> {
                             println!("ok");
                             println!("true");
                         }
-                    }
-                    for w in wad.warnings() {
-                        eprintln!("warning: {w}");
                     }
                     Ok(0)
                 }

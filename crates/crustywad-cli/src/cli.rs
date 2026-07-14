@@ -74,10 +74,15 @@ pub(crate) enum SubCommand {
         /// Path to the WAD file.
         path: PathBuf,
     },
-    /// Validate WAD correctness. Exits 0 if clean, 2 on I/O or parse error.
+    /// Validate WAD correctness. Exits 0 if clean, 2 on I/O or parse error
+    /// (with `--deep`, also on any map that fails to assemble).
     Validate {
         /// Path to the WAD file.
         path: PathBuf,
+        /// Also assemble every map in the WAD — all formats, including Doom 64
+        /// nested-WAD maps — reporting per-map errors and warnings.
+        #[arg(long)]
+        deep: bool,
     },
     /// Merge multiple WAD files into one.
     Merge {

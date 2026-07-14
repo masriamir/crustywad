@@ -381,6 +381,162 @@ fn list_lenient_emits_warning_for_bad_magic() {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// `cwad validate --deep` (#251)
+// ---------------------------------------------------------------------------
+
+/// The five classic map data lumps, all zero-length — a structurally valid,
+/// empty map (no records means no cross-references to dangle).
+fn empty_map_lumps(marker: &str) -> Vec<(String, Vec<u8>)> {
+    [
+        marker, "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SECTORS",
+    ]
+    .iter()
+    .map(|name| ((*name).to_string(), Vec::new()))
+    .collect()
+}
+
+fn write_wad_owned(kind: [u8; 4], lumps: &[(String, Vec<u8>)]) -> NamedTempFile {
+    let borrowed: Vec<(&str, &[u8])> = lumps
+        .iter()
+        .map(|(n, d)| (n.as_str(), d.as_slice()))
+        .collect();
+    write_wad(kind, &borrowed)
+}
+
+#[test]
+fn validate_deep_ok_on_clean_maps() {
+    let wad = write_wad_owned(*b"IWAD", &empty_map_lumps("E1M1"));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 map(s) validated"));
+}
+
+#[test]
+fn validate_deep_names_the_failing_map_and_continues() {
+    // E1M1's LINEDEFS is 13 bytes (mid-record: not a multiple of 14) — fails
+    // in both modes. E1M2 is clean; deep validation must report it too rather
+    // than stopping at the first failure.
+    let mut lumps = empty_map_lumps("E1M1");
+    lumps[2].1 = vec![0; 13];
+    lumps.extend(empty_map_lumps("E1M2"));
+    let wad = write_wad_owned(*b"IWAD", &lumps);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", wad.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("error: map E1M1"));
+}
+
+#[test]
+fn validate_deep_json_emits_per_map_rows_and_summary() {
+    let mut lumps = empty_map_lumps("E1M1");
+    lumps[2].1 = vec![0; 13];
+    lumps.extend(empty_map_lumps("E1M2"));
+    let wad = write_wad_owned(*b"IWAD", &lumps);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "json",
+            "validate",
+            "--deep",
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"map\":\"E1M1\",\"ok\":false"))
+        .stdout(predicate::str::contains("\"map\":\"E1M2\",\"ok\":true"))
+        .stdout(predicate::str::contains(
+            "\"ok\":false,\"error\":\"1 of 2 map(s) failed validation\"",
+        ));
+}
+
+#[test]
+fn validate_deep_csv_emits_per_map_rows() {
+    let mut lumps = empty_map_lumps("E1M1");
+    lumps[2].1 = vec![0; 13];
+    lumps.extend(empty_map_lumps("E1M2"));
+    let wad = write_wad_owned(*b"IWAD", &lumps);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "-F",
+            "csv",
+            "validate",
+            "--deep",
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("map,ok,error\n"))
+        .stdout(predicate::str::contains("E1M2,true,\n"));
+}
+
+#[test]
+fn validate_deep_lenient_recovers_with_warnings_and_exits_zero() {
+    // One linedef referencing vertex 9 with only 2 vertices: strict-fatal,
+    // lenient-recoverable (clamp + warning).
+    let mut lumps = empty_map_lumps("E1M1");
+    let mut linedef = Vec::new();
+    for v in [0u16, 9, 0, 0, 0, 0xffff, 0xffff] {
+        linedef.extend(v.to_le_bytes());
+    }
+    lumps[2].1 = linedef;
+    lumps[4].1 = vec![0; 8]; // two 4-byte vertices at (0,0)
+    let wad = write_wad_owned(*b"IWAD", &lumps);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "validate",
+            "--deep",
+            wad.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning: map E1M1"));
+    // The same WAD fails deep validation in strict mode.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", wad.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("error: map E1M1"));
+}
+
+#[test]
+fn validate_deep_covers_doom64_nested_maps() {
+    // A Doom 64 nested-WAD map whose container is missing every record
+    // sub-lump but THINGS: strict deep validation fails naming the map.
+    let nested = build_wad(*b"IWAD", &[("THINGS", &[])]);
+    let wad = write_wad(*b"IWAD", &[("MAP01", &nested)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", wad.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("error: map MAP01"));
+}
+
+#[test]
+fn validate_without_deep_ignores_map_contents() {
+    // The same corrupt LINEDEFS that fails --deep passes a shallow validate:
+    // the directory is well-formed, and shallow validation stops there.
+    let mut lumps = empty_map_lumps("E1M1");
+    lumps[2].1 = vec![0; 13];
+    let wad = write_wad_owned(*b"IWAD", &lumps);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", wad.path().to_str().unwrap()])
+        .assert()
+        .success();
+}
+
 // `cwad validate`
 // ---------------------------------------------------------------------------
 
