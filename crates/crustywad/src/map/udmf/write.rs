@@ -173,13 +173,16 @@ impl Writer {
         // ADR-0020) is unrepresentable: strict errors, lenient writes the
         // port-tolerated `-1` and warns.
         let sidefront = match l.right {
-            Some(r) => i64::try_from(r.0).expect("arena index fits i64"),
+            // Format the arena index directly — no numeric narrowing, so a
+            // hand-constructed `Map` (the fields are public) can never panic
+            // here.
+            Some(r) => r.0.to_string(),
             None => match self.strictness {
                 Strictness::Strict => return Err(UdmfWriteError::NoFrontSide { index }),
                 Strictness::Lenient => {
                     self.warnings
                         .push(UdmfWriteWarning::NoFrontSideDefaulted { index });
-                    -1
+                    "-1".to_string()
                 }
             },
         };
