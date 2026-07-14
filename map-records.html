@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6ac29428.js";
+            window.path_to_searchindex_js = "searchindex-77f023fa.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -294,13 +294,17 @@ size (e.g. a <code>THINGS</code> lump whose byte count is not divisible by 10).<
 graph, resolving cross-references between vertices, sidedefs, and sectors so callers don’t
 have to index arenas by hand.</p>
 <blockquote>
-<p><strong>Multi-format assembly.</strong> <code>Map::assemble</code> detects the map format from its lumps: a
-<code>TEXTMAP</code> lump marks a UDMF map, a <code>BEHAVIOR</code> lump marks a Hexen map, otherwise it is treated
-as the classic Doom binary layout. The assembled <code>Map</code> carries its format via <code>map.format()</code>,
-which returns <code>MapFormat::Doom</code> for classic Doom/Doom II/Heretic maps (which share the same
-binary record layout and differ only in map-marker naming, e.g. <code>MAP01</code> vs <code>E1M1</code>),
-<code>MapFormat::Hexen</code> for Hexen maps, or <code>MapFormat::Udmf</code> for UDMF (<code>TEXTMAP</code>) maps. UDMF maps
-can also be written back out with <code>write_udmf</code> / <code>add_udmf_map</code> (the <code>write</code> feature).</p>
+<p><strong>Multi-format assembly.</strong> <code>Map::assemble</code> detects the map format from its lumps: the marker
+lump is checked first under the Doom 64 dual condition — a <code>MAPxx</code> name <strong>and</strong> nested
+<code>IWAD</code>/<code>PWAD</code> magic in its bytes, the same rule grouping applies (see
+<a href="#doom-64-maps">Doom 64 maps</a> below); otherwise a <code>TEXTMAP</code> lump marks a UDMF map, a
+<code>BEHAVIOR</code> lump marks a Hexen map, and anything else is treated as the classic Doom binary
+layout. The assembled <code>Map</code> carries its format via <code>map.format()</code>, which returns
+<code>MapFormat::Doom</code> for classic Doom/Doom II/Heretic maps (which share the same binary record
+layout and differ only in map-marker naming, e.g. <code>MAP01</code> vs <code>E1M1</code>), <code>MapFormat::Hexen</code> for
+Hexen maps, <code>MapFormat::Udmf</code> for UDMF (<code>TEXTMAP</code>) maps, or <code>MapFormat::Doom64</code> for Doom 64
+maps. UDMF maps can also be written back out with <code>write_udmf</code> / <code>add_udmf_map</code> (the <code>write</code>
+feature).</p>
 </blockquote>
 <h3 id="finding-a-maps-lumps"><a class="header" href="#finding-a-maps-lumps">Finding a map’s lumps</a></h3>
 <p>A WAD stores maps as a marker lump (e.g. <code>E1M1</code>, <code>MAP01</code>) followed by a run of data lumps
@@ -318,7 +322,7 @@ and <code>Wad::map_group</code> locate these runs and return one <code>MapGroup<
 </span><span class="boring">fn main() {
 </span>use crustywad::Wad;
 
-<span class="boring">let wad = Wad::from_bytes(Vec::&lt;u8&gt;::new()).unwrap();
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
 </span>// All maps in the WAD.
 for group in wad.map_groups() {
     println!("found map {}", group.name);
@@ -338,7 +342,7 @@ cross-reference between them:</p>
 </span>use crustywad::Wad;
 use crustywad::map::Map;
 
-<span class="boring">let wad = Wad::from_bytes(Vec::&lt;u8&gt;::new()).unwrap();
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
 </span>if let Some(group) = wad.map_group("E1M1") {
     let map = Map::assemble(&amp;wad, &amp;group)?;
 
@@ -375,6 +379,31 @@ use crustywad::map::Map;
 index, because assembly validated every cross-reference before <code>Map</code> was constructed.
 (Because <code>MapLinedef</code>/<code>MapSidedef</code> have public index fields, passing a hand-constructed
 value with an out-of-range index can still panic.)</p>
+<h3 id="texture-references"><a class="header" href="#texture-references">Texture references</a></h3>
+<p><code>MapSidedef</code>’s <code>upper</code>/<code>lower</code>/<code>middle</code> fields and <code>MapSector</code>’s <code>floor_flat</code>/<code>ceiling_flat</code> field
+are a <code>TextureRef</code>, not a bare string: <code>TextureRef::Name(String)</code> for a name (Doom/Hexen’s 8-byte
+lump name, or a UDMF string), or <code>TextureRef::Index(u16)</code> for a Doom 64 texture/flat table index
+(Doom 64 has no name until the texture layer, planned for v0.5.0, can resolve it). Classic Doom,
+Hexen, and UDMF maps always produce <code>Name</code>; Doom 64 maps always produce <code>Index</code>.
+<code>TextureRef::as_name()</code> returns <code>Some(&amp;str)</code> for <code>Name</code> and <code>None</code> for <code>Index</code>, and <code>TextureRef</code>
+implements <code>PartialEq&lt;&amp;str&gt;</code> against the name, so a Doom/Hexen/UDMF texture can be compared
+directly against a string literal:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+use crustywad::map::Map;
+
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&amp;wad, &amp;group)?;
+    for sector in map.sectors() {
+        if sector.floor_flat == "LAVA1" {
+            println!("lava sector, ceiling flat: {:?}", sector.ceiling_flat.as_name());
+        }
+    }
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
 <h3 id="one-sided-and-sideless-lines"><a class="header" href="#one-sided-and-sideless-lines">One-sided (and sideless) lines</a></h3>
 <p>On disk, either of a <code>Linedef</code>’s sidedef fields may hold the sentinel value <code>0xffff</code>,
 meaning “no sidedef on this side”. A <code>left_sidedef</code> of <code>0xffff</code> is the everyday case — a
@@ -400,19 +429,23 @@ linedef’s <code>special</code> still holds its classic action number and secto
 </span><span class="boring">fn main() {
 </span>use crustywad::map::{Map, MapFormat};
 
-<span class="boring">let wad = crustywad::Wad::from_bytes(Vec::&lt;u8&gt;::new())?;
-</span><span class="boring">let group = wad.map_group("MAP01").unwrap();
-</span>let map = Map::assemble(&amp;wad, &amp;group)?;
+<span class="boring">let wad = crustywad::Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec())?;
+</span>if let Some(group) = wad.map_group("MAP01") {
+    let map = Map::assemble(&amp;wad, &amp;group)?;
 
-for thing in map.things() {
-    if map.format() == MapFormat::Hexen {
-        println!("Hexen thing ID: {}, height: {}", thing.id, thing.height);
+    for thing in map.things() {
+        if map.format() == MapFormat::Hexen {
+            println!("Hexen thing ID: {}, height: {}", thing.id, thing.height);
+        }
     }
-}
 
-for linedef in map.linedefs() {
-    if map.format() == MapFormat::Hexen {
-        println!("Hexen line special: {}, args: {:?}", linedef.special.special, linedef.special.args);
+    for linedef in map.linedefs() {
+        if map.format() == MapFormat::Hexen {
+            println!(
+                "Hexen line special: {}, args: {:?}",
+                linedef.special.special, linedef.special.args
+            );
+        }
     }
 }
 <span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
@@ -438,17 +471,44 @@ undecodable records, or a required target arena that is empty) still return
 </span>use crustywad::map::Map;
 use crustywad::{ParseOptions, Wad};
 
-<span class="boring">let wad = Wad::from_bytes(Vec::&lt;u8&gt;::new()).unwrap();
-</span><span class="boring">let group = wad.map_group("E1M1").unwrap();
-</span>let map = Map::assemble_with_options(&amp;wad, &amp;group, ParseOptions::lenient())?;
-for warning in map.warnings() {
-    eprintln!("{warning}");
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble_with_options(&amp;wad, &amp;group, ParseOptions::lenient())?;
+    for warning in map.warnings() {
+        eprintln!("{warning}");
+    }
 }
 <span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
 </span><span class="boring">}</span></code></pre>
 <p><code>map.warnings()</code> returns the <code>MapWarning</code>s collected during a lenient assembly (empty for
 a clean map, and always empty after a strict <code>Map::assemble</code>, since strict mode returns an
 error instead of recording a warning).</p>
+<h3 id="doom-64-maps"><a class="header" href="#doom-64-maps">Doom 64 maps</a></h3>
+<p>Doom 64 stores each map as a <strong>nested WAD</strong>: the <code>MAPxx</code> marker lump’s bytes are themselves a
+complete WAD (leading <code>IWAD</code>/<code>PWAD</code> magic), whose sub-lumps hold the map’s records, rather than a
+marker followed by a run of sibling data lumps in the outer directory. <code>Wad::map_groups</code> /
+<code>Wad::map_group</code> recognize a Doom 64 map only when <strong>both</strong> signals hold: the marker’s name
+matches <code>MAPxx</code> (<code>MAP</code> plus two ASCII digits) <em>and</em> its lump bytes carry the nested WAD magic — so
+an ordinary empty classic <code>MAPxx</code> marker is never misread as Doom 64. A Doom 64 <code>MapGroup</code>’s
+<code>data_indices</code> is always empty, since its data lives inside the marker lump rather than the flat
+directory. <code>map.format()</code> reports <code>MapFormat::Doom64</code> for these maps, and both <code>Map::assemble</code> and
+<code>Map::assemble_with_options</code> assemble them into the same <code>Map</code> graph as every other format, in
+both strictness modes.</p>
+<p>Doom 64 adds per-map colored lighting. <code>Map::lights()</code> returns the map’s full light table built
+the way the engine builds it (mirroring Doom64 EX’s <code>P_LoadLights</code>): 256 implicit grayscale
+entries (<code>r = g = b = index</code>, <code>tag = 0</code>), followed by the map’s <code>LIGHTS</code> lump records starting at
+index 256. <code>MapSector.colors</code> is <code>Some([LightIdx; 5])</code> for a Doom 64 sector — five references into
+<code>Map::lights()</code> — and <code>None</code> for every other format. The five slots are carried <strong>positionally</strong>:
+Doom 64’s own format headers don’t name them, so <code>crustywad</code> doesn’t invent slot meanings either.
+<code>MapSector.light</code> (the classic scalar light level) is always <code>0</code> for a Doom 64 sector, since the
+format has no such field; <code>MapSector.flags</code> carries the sector’s raw Doom 64 flag bits (opaque,
+uninterpreted).</p>
+<p>Doom 64’s sidedef/sector texture and flat fields assemble into <code>TextureRef::Index</code> rather than
+<code>TextureRef::Name</code> (see <a href="#texture-references">Texture references</a> above). Until the texture layer
+(planned for v0.5.0) can resolve those indices back to a texture identity, a Doom 64-sourced <code>Map</code>
+cannot be serialized back out: both <code>write_doom_map</code> and <code>write_udmf</code> (the <code>write</code> feature) reject
+it with <code>UnsupportedSourceFormat</code>, in <strong>both</strong> strictness modes, before any per-field validation
+runs.</p>
 
                     </main>
 
