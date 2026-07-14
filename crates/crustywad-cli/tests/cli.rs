@@ -429,7 +429,11 @@ fn validate_deep_names_the_failing_map_and_continues() {
         .args(["validate", "--deep", wad.path().to_str().unwrap()])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("error: map E1M1"));
+        .stderr(predicate::str::contains("error: map E1M1"))
+        // "1 of 2" proves continuation: the denominator counts every group,
+        // and E1M2 can only reach the summary if validation proceeded past
+        // the E1M1 failure (its per-map success row is JSON/CSV-only).
+        .stderr(predicate::str::contains("1 of 2 map(s) failed validation"));
 }
 
 #[test]
