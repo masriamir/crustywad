@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.1.4...crustywad-cli-v0.2.0) - 2026-07-15
+
+### Added
+
+- *(cli)* validate --deep assembles every map with per-map reporting ([#267](https://github.com/masriamir/crustywad/pull/267))
+- *(cli)* cwad info delegates map detection to Wad::map_groups ([#266](https://github.com/masriamir/crustywad/pull/266))
+- *(map)* [**breaking**] Doom 64 graph normalization — MapFormat::Doom64, TextureRef, engine light table (ADR-0021) ([#265](https://github.com/masriamir/crustywad/pull/265))
+
+### Fixed
+
+- *(map)* [**breaking**] honor the 0xffff front-sidedef sentinel on both sides (ADR-0020) ([#260](https://github.com/masriamir/crustywad/pull/260))
+
+### Other
+
+- *(sweep)* add the env-gated retail-WAD sweep behind sweep-tests ([#262](https://github.com/masriamir/crustywad/pull/262))
+
 ## [0.1.4](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.1.3...crustywad-cli-v0.1.4) - 2026-07-14
 
 ### Other

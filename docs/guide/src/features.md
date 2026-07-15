@@ -34,7 +34,7 @@ of whether this feature is enabled.
 
 ```toml
 # Cargo.toml
-crustywad = { version = "0.3.0", features = ["mmap"] }
+crustywad = { version = "0.4.0", features = ["mmap"] }
 ```
 
 ```rust
@@ -215,7 +215,7 @@ Adds WAD serialization support. `WadBuilder` accumulates lumps and serializes th
 
 ```toml
 # Cargo.toml
-crustywad = { version = "0.3.0", features = ["write"] }
+crustywad = { version = "0.4.0", features = ["write"] }
 ```
 
 ```rust
