@@ -358,8 +358,11 @@ impl MapReject {
 
     /// Whether the table pre-rejects line-of-sight from `a` to `b` (bit set
     /// = "hidden"). Bits beyond the stored bytes — possible after a lenient
-    /// undersized recovery — read as `false` ("not rejected"), the
-    /// conservative direction vanilla pads (`P_LoadReject`).
+    /// undersized recovery — read as `false` ("not rejected"), a
+    /// deterministic choice made by this reader: vanilla instead pads
+    /// undersized tables with level-dependent garbage that emulates its own
+    /// overflow bug (`PadRejectArray`, called from `P_LoadReject`), which is
+    /// renderer-quirk fidelity a parsing library should not reproduce.
     ///
     /// Returns `None` if either index is `>= sector_count`.
     #[must_use]

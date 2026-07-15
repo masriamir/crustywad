@@ -62,7 +62,8 @@ fn reject_undersized_strict_errors() {
 #[test]
 fn reject_undersized_lenient_pads_virtually_and_warns() {
     // The stored table is the 1 supplied byte; bits past it read "not
-    // rejected" (the conservative direction vanilla pads, P_LoadReject).
+    // rejected" (a deterministic choice — vanilla instead pads with garbage
+    // bytes emulating its overflow bug, PadRejectArray).
     let mut warnings = Vec::new();
     let reject = MapReject::parse(&[0xFF], 4, Strictness::Lenient, &mut warnings)
         .unwrap()
