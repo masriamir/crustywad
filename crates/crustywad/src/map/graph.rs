@@ -128,7 +128,7 @@ pub enum TextureRef {
     /// A texture name (a Doom/Hexen 8-byte lump name, or a UDMF string).
     Name(String),
     /// A Doom 64 texture/flat table index — resolvable to a texture identity
-    /// once the texture layer (v0.5.0, #156/#157) exists.
+    /// once the texture layer (#156/#157) exists.
     Index(u16),
 }
 
@@ -160,13 +160,13 @@ pub struct MapSidedef {
     /// The vertical texture offset, in map units.
     pub y_offset: i32,
     /// The upper texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
-    /// has no name until the texture layer (v0.5.0) can resolve it.
+    /// has no name until the texture layer (#156/#157) can resolve it.
     pub upper: TextureRef,
     /// The lower texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
-    /// has no name until the texture layer (v0.5.0) can resolve it.
+    /// has no name until the texture layer (#156/#157) can resolve it.
     pub lower: TextureRef,
     /// The middle texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
-    /// has no name until the texture layer (v0.5.0) can resolve it.
+    /// has no name until the texture layer (#156/#157) can resolve it.
     pub middle: TextureRef,
 }
 
@@ -199,10 +199,10 @@ pub struct MapSector {
     /// The ceiling height, in map units.
     pub ceiling_height: i32,
     /// The floor flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
-    /// name until the texture layer (v0.5.0) can resolve it.
+    /// name until the texture layer (#156/#157) can resolve it.
     pub floor_flat: TextureRef,
     /// The ceiling flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
-    /// name until the texture layer (v0.5.0) can resolve it.
+    /// name until the texture layer (#156/#157) can resolve it.
     pub ceiling_flat: TextureRef,
     // Doom stores sector special/tag as i16; widen losslessly to i32
     // (avoids an i16->u16 sign-loss cast that clippy::pedantic rejects).

@@ -451,7 +451,7 @@ fn writes_sidedef_offsety_and_sector_special() {
 }
 
 // --- ADR-0021 §5: a Doom 64-sourced map has no classic/UDMF representation ---
-// --- (texture indices, colored lighting) until the texture layer (v0.5.0). ---
+// --- (texture indices, colored lighting) until the texture layer (#156/#157). ---
 
 #[test]
 fn doom64_sourced_map_is_rejected_by_both_writers_in_both_modes() {
