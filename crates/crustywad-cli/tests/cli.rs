@@ -2847,7 +2847,10 @@ fn write_doom64_map_wad() -> NamedTempFile {
     // One sidedef: x/y offsets (i16), upper/lower/middle texture index,
     // sector (u16).
     let mut sidedefs = Vec::new();
-    for v in [0_u16; 6] {
+    for v in [0_i16; 2] {
+        sidedefs.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in [0_u16; 4] {
         sidedefs.extend_from_slice(&v.to_le_bytes());
     }
 
