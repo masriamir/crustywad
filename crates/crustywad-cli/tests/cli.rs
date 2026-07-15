@@ -2823,6 +2823,166 @@ fn convert_strict_accepts_a_group_with_no_extra_lumps() {
         .stderr(predicate::str::contains("cannot convert").not());
 }
 
+/// A PWAD holding one Doom 64 nested-WAD map (`MAP01`): a single marker lump
+/// whose bytes are themselves a WAD carrying the 13 sub-lumps `read_doom64_map`
+/// expects. Record bytes mirror the library test suite's `common::d64_*`
+/// helpers; the map assembles strict-clean as `MapFormat::Doom64`.
+fn write_doom64_map_wad() -> NamedTempFile {
+    // Two vertices in 16.16 fixed point: (0, 0) and (64, 0).
+    let mut vertexes = Vec::new();
+    for v in [0_i32, 0, 64 << 16, 0] {
+        vertexes.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // One linedef: v1, v2 (u16), flags (u32), special, tag, right, left (u16).
+    let mut linedefs = Vec::new();
+    for v in [0_u16, 1] {
+        linedefs.extend_from_slice(&v.to_le_bytes());
+    }
+    linedefs.extend_from_slice(&0_u32.to_le_bytes());
+    for v in [0_u16, 7, 0, 0xffff] {
+        linedefs.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // One sidedef: x/y offsets (i16), upper/lower/middle texture index,
+    // sector (u16).
+    let mut sidedefs = Vec::new();
+    for v in [0_u16; 6] {
+        sidedefs.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // One sector: floor/ceiling height (i16), floor/ceiling flat index, five
+    // color refs, special, tag, flags (u16).
+    let mut sectors = Vec::new();
+    sectors.extend_from_slice(&0_i16.to_le_bytes());
+    sectors.extend_from_slice(&128_i16.to_le_bytes());
+    for v in [0_u16; 10] {
+        sectors.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // One LIGHTS record: r, g, b, tag, two pad bytes.
+    let lights = [0_u8; 6];
+
+    let nested = build_wad(
+        *b"IWAD",
+        &[
+            ("THINGS", &[]),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SECTORS", &sectors),
+            ("LIGHTS", &lights),
+            ("SEGS", &[]),
+            ("SSECTORS", &[]),
+            ("NODES", &[]),
+            ("REJECT", &[]),
+            ("BLOCKMAP", &[]),
+            ("LEAFS", &[]),
+            ("MACROS", &[]),
+        ],
+    );
+    write_wad(*b"PWAD", &[("MAP01", &nested)])
+}
+
+#[test]
+fn convert_doom64_source_notes_texture_gap_without_lenient_hint() {
+    // A Doom 64-sourced map is refused by the UDMF writer in BOTH strictness
+    // modes (`UnsupportedSourceFormat`, ADR-0021 §5), so the strict-mode
+    // "re-run with --lenient" hint would be a lie (#264): the error must carry
+    // the texture-layer note instead.
+    let wad = write_doom64_map_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
+        .stderr(predicate::str::contains("Doom64"))
+        .stderr(predicate::str::contains(
+            "note: this map's source format cannot be converted until crustywad has texture support",
+        ))
+        .stderr(predicate::str::contains("--lenient").not());
+}
+
+#[test]
+fn convert_doom64_source_notes_texture_gap_in_lenient_mode_too() {
+    // The texture-layer note is about a capability gap, not strictness, so it
+    // prints in lenient mode as well.
+    let wad = write_doom64_map_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
+        .stderr(predicate::str::contains(
+            "note: this map's source format cannot be converted until crustywad has texture support",
+        ));
+}
+
+#[test]
+fn convert_strict_refuses_frontless_linedef_to_udmf_with_lenient_hint() {
+    // The counter-case to the two tests above: a front-sidedef 0xFFFF linedef
+    // (ADR-0020) assembles strict-clean but has no valid UDMF `sidefront`, a
+    // refusal lenient mode CAN recover (it writes `sidefront = -1`) — so the
+    // `--lenient` hint must still appear for it after #264.
+    let m = doom_map_lumps();
+    let mut linedefs = Vec::new();
+    for v in [0_u16, 1, 1, 0, 0, 0xffff, 0] {
+        linedefs.extend_from_slice(&v.to_le_bytes());
+    }
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &m.things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &m.sidedefs),
+            ("VERTEXES", &m.vertexes),
+            ("SECTORS", &m.sectors),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
+        .stderr(predicate::str::contains("no front sidedef"))
+        .stderr(predicate::str::contains(
+            "note: re-run with --lenient to accept the data loss",
+        ))
+        .stderr(predicate::str::contains("texture support").not());
+}
+
 #[test]
 fn convert_unknown_map_name_exits_3() {
     // A typo'd `--map` name must not look like success (it previously wrote a

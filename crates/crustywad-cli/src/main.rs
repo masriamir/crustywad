@@ -224,6 +224,21 @@ fn dropped_group_lumps(wad: &Wad, group: &crustywad::map::MapGroup) -> Vec<Strin
         .collect()
 }
 
+/// A map writer's refusal, normalized across the Doom and UDMF writers for
+/// `cwad convert` error reporting: the rendered message plus the strictness
+/// classification the follow-up note dispatches on (#264) — the `--lenient`
+/// hint is only honest when lenient mode actually recovers the error, and a
+/// texture-gated refusal (ADR-0021 §5) names the real blocker instead.
+struct Refusal {
+    /// The writer error's `Display` rendering.
+    message: String,
+    /// Whether re-running with `--lenient` turns this error into warnings.
+    lenient_recoverable: bool,
+    /// Whether this is `UnsupportedSourceFormat` — unconvertible until the
+    /// texture layer (#156/#157) exists.
+    texture_gated: bool,
+}
+
 /// Groups each lump's data slice by name; duplicate names accumulate in directory order.
 fn lump_data_map(wad: &Wad) -> HashMap<String, Vec<&[u8]>> {
     let mut map: HashMap<String, Vec<&[u8]>> = HashMap::new();
@@ -700,7 +715,10 @@ fn run(cli: Cli) -> Result<i32> {
             kind,
         } => {
             use crustywad::map::detect_map_format;
-            use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
+            use crustywad::map::{
+                DoomWriteError, Map, MapFormat, MapGroup, UdmfWriteError, add_doom_map,
+                add_udmf_map,
+            };
 
             let wad = Wad::from_path_with_options(&input, options)
                 .with_context(|| format!("failed to load {}", input.display()))?;
@@ -822,29 +840,57 @@ fn run(cli: Cli) -> Result<i32> {
                     // it is given a writer.
                     //
                     // Both writers report the same shape (warnings on success, a
-                    // refusal on loss), so normalize to strings and handle the
-                    // refusal once rather than per target format.
-                    let written: Result<Vec<String>, String> = match to {
+                    // refusal on loss), so normalize the refusal — keeping the
+                    // typed error's strictness classification, which the message
+                    // below dispatches on — and handle it once rather than per
+                    // target format.
+                    let written: Result<Vec<String>, Refusal> = match to {
                         MapFormatArg::Doom => {
                             add_doom_map(&mut builder, &group.name, &assembled, &write_opts)
                                 .map(|ws| ws.iter().map(ToString::to_string).collect())
-                                .map_err(|e| e.to_string())
+                                .map_err(|e| Refusal {
+                                    lenient_recoverable: e.is_lenient_recoverable(),
+                                    texture_gated: matches!(
+                                        e,
+                                        DoomWriteError::UnsupportedSourceFormat { .. }
+                                    ),
+                                    message: e.to_string(),
+                                })
                         }
                         MapFormatArg::Udmf => {
                             add_udmf_map(&mut builder, &group.name, &assembled, &write_opts)
                                 .map(|ws| ws.iter().map(ToString::to_string).collect())
-                                .map_err(|e| e.to_string())
+                                .map_err(|e| Refusal {
+                                    lenient_recoverable: e.is_lenient_recoverable(),
+                                    texture_gated: matches!(
+                                        e,
+                                        UdmfWriteError::UnsupportedSourceFormat { .. }
+                                    ),
+                                    message: e.to_string(),
+                                })
                         }
                     };
                     let warnings: Vec<String> = match written {
                         Ok(ws) => ws,
-                        Err(e) => {
+                        Err(refusal) => {
                             eprintln!(
-                                "error: cannot convert map {} to {target_name}: {e}",
-                                group.name
+                                "error: cannot convert map {} to {target_name}: {}",
+                                group.name, refusal.message
                             );
-                            if !cli.lenient {
-                                eprintln!("note: re-run with --lenient to accept the data loss");
+                            // The hint is only honest for errors lenient mode
+                            // actually recovers (#264); a both-modes refusal
+                            // gets the capability note instead, if one applies.
+                            if refusal.lenient_recoverable {
+                                if !cli.lenient {
+                                    eprintln!(
+                                        "note: re-run with --lenient to accept the data loss"
+                                    );
+                                }
+                            } else if refusal.texture_gated {
+                                eprintln!(
+                                    "note: this map's source format cannot be converted until \
+                                     crustywad has texture support"
+                                );
                             }
                             return Ok(3);
                         }
