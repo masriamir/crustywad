@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.3.1...crustywad-v0.4.0) - 2026-07-15
+
+### Added
+
+- *(map)* BSP traversal — SEGS/SSECTORS/NODES onto the Map graph ([#268](https://github.com/masriamir/crustywad/pull/268))
+- *(map)* [**breaking**] Doom 64 graph normalization — MapFormat::Doom64, TextureRef, engine light table (ADR-0021) ([#265](https://github.com/masriamir/crustywad/pull/265))
+
+### Fixed
+
+- *(map)* [**breaking**] honor the 0xffff front-sidedef sentinel on both sides (ADR-0020) ([#260](https://github.com/masriamir/crustywad/pull/260))
+
+### Other
+
+- *(sweep)* gate-expecting extended-node collection via CRUSTYWAD_SWEEP_EXTENDED_DIR ([#270](https://github.com/masriamir/crustywad/pull/270))
+- *(sweep)* use ParseOptions::strict() explicitly; surface the read_dir error in skip notes ([#263](https://github.com/masriamir/crustywad/pull/263))
+- *(sweep)* add the env-gated retail-WAD sweep behind sweep-tests ([#262](https://github.com/masriamir/crustywad/pull/262))
+
 ## [0.3.1](https://github.com/masriamir/crustywad/compare/crustywad-v0.3.0...crustywad-v0.3.1) - 2026-07-14
 
 ### Other
