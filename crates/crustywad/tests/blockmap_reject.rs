@@ -357,3 +357,225 @@ fn blockmap_block_at_maps_coordinates_through_128_unit_grid() {
     assert_eq!(bm.block_at(128.0, 0.0), None);
     assert_eq!(bm.block_at(f64::NAN, 0.0), None);
 }
+
+// --- Assembly integration: the group's lumps land on the Map ---
+
+use crustywad::Wad;
+use crustywad::map::Map;
+
+/// Encodes a Doom 8-byte name field, NUL-padded on the right.
+fn name8(name: &str) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for (slot, byte) in out.iter_mut().zip(name.as_bytes()) {
+        *slot = *byte;
+    }
+    out
+}
+
+/// One `THINGS` record (10 bytes): x, y (`i16`), angle/type/flags (`u16`).
+fn thing_bytes(x: i16, y: i16, angle: u16, type_id: u16, flags: u16) -> Vec<u8> {
+    [
+        &x.to_le_bytes()[..],
+        &y.to_le_bytes(),
+        &angle.to_le_bytes(),
+        &type_id.to_le_bytes(),
+        &flags.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// One classic `LINEDEFS` record (14 bytes, all `u16` fields).
+fn linedef_bytes(
+    start_vertex: u16,
+    end_vertex: u16,
+    flags: u16,
+    special_type: u16,
+    sector_tag: u16,
+    right_sidedef: u16,
+    left_sidedef: u16,
+) -> Vec<u8> {
+    [
+        start_vertex,
+        end_vertex,
+        flags,
+        special_type,
+        sector_tag,
+        right_sidedef,
+        left_sidedef,
+    ]
+    .iter()
+    .flat_map(|v| v.to_le_bytes())
+    .collect()
+}
+
+/// One `SIDEDEFS` record (30 bytes): offsets, three 8-byte texture names,
+/// then the sector index.
+fn sidedef_bytes(upper: &str, lower: &str, middle: &str, sector: u16) -> Vec<u8> {
+    [
+        &0i16.to_le_bytes()[..],
+        &0i16.to_le_bytes(),
+        &name8(upper),
+        &name8(lower),
+        &name8(middle),
+        &sector.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// `VERTEXES` records (4 bytes each) from `(x, y)` pairs.
+fn vertexes_bytes(points: &[(i16, i16)]) -> Vec<u8> {
+    points
+        .iter()
+        .flat_map(|(x, y)| [x.to_le_bytes(), y.to_le_bytes()].concat())
+        .collect()
+}
+
+/// One `SECTORS` record (26 bytes): heights, two 8-byte flat names, light,
+/// special, and tag.
+fn sector_bytes(
+    floor_height: i16,
+    ceiling_height: i16,
+    floor_texture: &str,
+    ceiling_texture: &str,
+    light_level: i16,
+    special_type: i16,
+    tag: i16,
+) -> Vec<u8> {
+    [
+        &floor_height.to_le_bytes()[..],
+        &ceiling_height.to_le_bytes(),
+        &name8(floor_texture),
+        &name8(ceiling_texture),
+        &light_level.to_le_bytes(),
+        &special_type.to_le_bytes(),
+        &tag.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// A one-sector classic Doom map whose group carries the given REJECT and
+/// BLOCKMAP lump bytes.
+fn classic_map_with(reject: &[u8], blockmap: &[u8]) -> Wad {
+    let bytes = common::build_doom_map_wad_with_lumps(
+        "MAP01",
+        thing_bytes(32, 32, 0, 1, 7),
+        linedef_bytes(0, 1, 1, 0, 0, 0, 0xffff),
+        sidedef_bytes("-", "-", "STARTAN3", 0),
+        vertexes_bytes(&[(0, 0), (64, 0)]),
+        sector_bytes(0, 128, "FLOOR4_8", "CEIL3_5", 160, 0, 0),
+        &[("REJECT", reject), ("BLOCKMAP", blockmap)],
+    );
+    Wad::from_bytes(bytes).expect("fixture WAD parses")
+}
+
+#[test]
+fn assembly_decodes_reject_and_blockmap_from_the_group() {
+    // 1 sector => 1-byte REJECT; minimal 1×1 blockmap listing linedef 0.
+    let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
+    let wad = classic_map_with(&[0b0000_0001], &blockmap);
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+
+    let reject = map.reject().expect("REJECT decoded");
+    assert_eq!(reject.is_rejected(SectorIdx(0), SectorIdx(0)), Some(true));
+    let bm = map.blockmap().expect("BLOCKMAP decoded");
+    assert_eq!(bm.block(0, 0), Some(&[LinedefIdx(0)][..]));
+}
+
+#[test]
+fn assembly_treats_empty_lumps_as_absent() {
+    // Our own writer emits zero-length REJECT/BLOCKMAP (ADR-0019 §4);
+    // assembly must read that back as "not built", warning-free.
+    let wad = classic_map_with(&[], &[]);
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert!(map.reject().is_none());
+    assert!(map.blockmap().is_none());
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn assembly_strict_surfaces_reject_error_lenient_recovers() {
+    use crustywad::ParseOptions;
+    // 1 sector needs 1 byte — an undersized table can't exist; instead use
+    // a malformed BLOCKMAP (3-word header) to exercise the error plumbing.
+    let wad = classic_map_with(&[], &words_to_bytes(&[0, 0, 1]));
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::MalformedBlockmap { .. }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.blockmap().is_none());
+    assert!(
+        map.warnings()
+            .iter()
+            .any(|w| matches!(w, MapWarning::MalformedBlockmap { .. }))
+    );
+}
+
+#[test]
+fn doom64_nested_reject_and_blockmap_are_decoded() {
+    let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
+    let bytes = common::build_doom64_map_wad_full(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0; 5], 0),
+        &common::d64_light(0, 0, 0, 0),
+        &[],
+        &[],
+        &[],
+        &[0b0000_0001], // REJECT: 1 sector => 1 byte
+        &blockmap,
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert_eq!(
+        map.reject()
+            .unwrap()
+            .is_rejected(SectorIdx(0), SectorIdx(0)),
+        Some(true)
+    );
+    assert_eq!(
+        map.blockmap().unwrap().block(0, 0),
+        Some(&[LinedefIdx(0)][..])
+    );
+}
+
+#[test]
+fn udmf_group_carrying_blockmap_is_decoded() {
+    // A nodebuilder-compiled UDMF map may carry binary REJECT/BLOCKMAP
+    // between TEXTMAP and ENDMAP; they decode like any other group's.
+    let textmap = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 64; y = 0; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+        "sidedef { sector = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+    );
+    let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
+    let bytes = common::build_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", &[]),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("REJECT", &[0b0000_0001]),
+            ("BLOCKMAP", &blockmap),
+            ("ENDMAP", &[]),
+        ],
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert_eq!(
+        map.reject()
+            .unwrap()
+            .is_rejected(SectorIdx(0), SectorIdx(0)),
+        Some(true)
+    );
+    assert_eq!(
+        map.blockmap().unwrap().block(0, 0),
+        Some(&[LinedefIdx(0)][..])
+    );
+}

@@ -187,6 +187,29 @@ fn extended_signature(wad: &Wad, group: &MapGroup, lump: &str) -> Option<[u8; 4]
     EXTENDED_NODE_SIGNATURES.contains(&&head).then_some(head)
 }
 
+/// Decodes a group's `REJECT`/`BLOCKMAP` lumps (either may be absent) once
+/// the owning map's sector and linedef counts are known. Shared by all
+/// three assembly paths so the strict/lenient policy cannot drift between
+/// formats.
+fn decode_reject_blockmap(
+    reject_bytes: Option<&[u8]>,
+    blockmap_bytes: Option<&[u8]>,
+    sector_count: usize,
+    linedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Option<MapReject>, Option<MapBlockmap>), MapAssembleError> {
+    let reject = match reject_bytes {
+        None => None,
+        Some(bytes) => MapReject::parse(bytes, sector_count, strictness, warnings)?,
+    };
+    let blockmap = match blockmap_bytes {
+        None => None,
+        Some(bytes) => MapBlockmap::parse(bytes, linedef_count, strictness, warnings)?,
+    };
+    Ok((reject, blockmap))
+}
+
 impl MapReject {
     /// Parses a `REJECT` lump against its owning map's sector count.
     ///
@@ -1234,6 +1257,7 @@ impl Map {
     /// Doom 64 group, [`MapAssembleError::Doom64`] wraps a failure to read the
     /// marker's nested WAD (both modes) or a missing/undecodable sub-lump
     /// (strict mode; ADR-0021 §2).
+    #[allow(clippy::too_many_lines)]
     pub fn assemble_with_options(
         wad: &Wad,
         group: &MapGroup,
@@ -1330,6 +1354,15 @@ impl Map {
                     )?
                 };
 
+                let (reject, blockmap) = decode_reject_blockmap(
+                    lump_bytes(wad, group, "REJECT"),
+                    lump_bytes(wad, group, "BLOCKMAP"),
+                    sectors.len(),
+                    linedefs.len(),
+                    s,
+                    &mut warnings,
+                )?;
+
                 Ok(Map {
                     name: group.name.clone(),
                     format,
@@ -1343,6 +1376,8 @@ impl Map {
                     segs,
                     subsectors,
                     nodes,
+                    reject,
+                    blockmap,
                     warnings,
                 })
             }
@@ -1588,6 +1623,18 @@ fn assemble_doom64(
     // one warning stream regardless of source format.
     warnings.extend(raw.warnings().iter().cloned().map(MapWarning::Doom64));
 
+    // The nested-WAD reader hands back empty `Vec`s when the REJECT/BLOCKMAP
+    // sub-lumps are missing, and empty means "not built" here just as it
+    // does for the classic/UDMF paths (ADR-0019 §4).
+    let (reject, blockmap) = decode_reject_blockmap(
+        Some(&raw.reject),
+        Some(&raw.blockmap),
+        sectors.len(),
+        linedefs.len(),
+        s,
+        &mut warnings,
+    )?;
+
     Ok(Map {
         name: group.name.clone(),
         format: MapFormat::Doom64,
@@ -1601,6 +1648,8 @@ fn assemble_doom64(
         segs,
         subsectors,
         nodes,
+        reject,
+        blockmap,
         warnings,
     })
 }
@@ -1646,6 +1695,15 @@ fn assemble_udmf(
     )?;
     let things = normalize_udmf_things(&udmf.things, s, &mut warnings)?;
 
+    let (reject, blockmap) = decode_reject_blockmap(
+        lump_bytes(wad, group, "REJECT"),
+        lump_bytes(wad, group, "BLOCKMAP"),
+        sectors.len(),
+        linedefs.len(),
+        s,
+        &mut warnings,
+    )?;
+
     Ok(Map {
         name: group.name.clone(),
         format: MapFormat::Udmf,
@@ -1661,6 +1719,8 @@ fn assemble_udmf(
         segs: Vec::new(),
         subsectors: Vec::new(),
         nodes: Vec::new(),
+        reject,
+        blockmap,
         warnings,
     })
 }

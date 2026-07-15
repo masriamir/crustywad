@@ -63,14 +63,31 @@ pub fn build_doom_map_wad(
     vertexes: Vec<u8>,
     sectors: Vec<u8>,
 ) -> Vec<u8> {
-    build_named_lumps(&[
+    build_doom_map_wad_with_lumps(name, things, linedefs, sidedefs, vertexes, sectors, &[])
+}
+
+/// [`build_doom_map_wad`] with additional `(name, bytes)` lumps appended
+/// after `SECTORS` — e.g. `REJECT`/`BLOCKMAP` for assembly-integration tests.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn build_doom_map_wad_with_lumps(
+    name: &str,
+    things: Vec<u8>,
+    linedefs: Vec<u8>,
+    sidedefs: Vec<u8>,
+    vertexes: Vec<u8>,
+    sectors: Vec<u8>,
+    extra: &[(&str, &[u8])],
+) -> Vec<u8> {
+    let mut lumps: Vec<(&str, Vec<u8>)> = vec![
         (name, Vec::new()),
         ("THINGS", things),
         ("LINEDEFS", linedefs),
         ("SIDEDEFS", sidedefs),
         ("VERTEXES", vertexes),
         ("SECTORS", sectors),
-    ])
+    ];
+    lumps.extend(extra.iter().map(|&(n, b)| (n, b.to_vec())));
+    build_named_lumps(&lumps)
 }
 
 /// Builds a single Hexen map: marker `name` followed by THINGS, LINEDEFS,
@@ -292,7 +309,9 @@ pub fn is_doom64_map_name(name: &str) -> bool {
 /// Builds a WAD holding one Doom 64 nested-WAD map lump named `name`.
 /// All 9 record sub-lumps `read_doom64_map` expects are present (empty unless
 /// supplied), plus the four raw-byte lumps (`REJECT`/`BLOCKMAP`/`LEAFS`/
-/// `MACROS`) it carries opaquely, so strict reads succeed.
+/// `MACROS`) it carries opaquely, so strict reads succeed. `REJECT`/
+/// `BLOCKMAP` are empty (absent, per ADR-0019 §4); use
+/// [`build_doom64_map_wad_full`] to supply them.
 #[allow(dead_code, clippy::too_many_arguments)]
 pub fn build_doom64_map_wad(
     name: &str,
@@ -306,6 +325,38 @@ pub fn build_doom64_map_wad(
     subsectors: &[u8],
     nodes: &[u8],
 ) -> Vec<u8> {
+    build_doom64_map_wad_full(
+        name,
+        things,
+        linedefs,
+        sidedefs,
+        vertexes,
+        sectors,
+        lights,
+        segs,
+        subsectors,
+        nodes,
+        &[],
+        &[],
+    )
+}
+
+/// [`build_doom64_map_wad`] with caller-supplied `REJECT`/`BLOCKMAP` bytes.
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn build_doom64_map_wad_full(
+    name: &str,
+    things: &[u8],
+    linedefs: &[u8],
+    sidedefs: &[u8],
+    vertexes: &[u8],
+    sectors: &[u8],
+    lights: &[u8],
+    segs: &[u8],
+    subsectors: &[u8],
+    nodes: &[u8],
+    reject: &[u8],
+    blockmap: &[u8],
+) -> Vec<u8> {
     let nested = build_wad(
         *b"IWAD",
         &[
@@ -318,8 +369,8 @@ pub fn build_doom64_map_wad(
             ("SEGS", segs),
             ("SSECTORS", subsectors),
             ("NODES", nodes),
-            ("REJECT", &[]),
-            ("BLOCKMAP", &[]),
+            ("REJECT", reject),
+            ("BLOCKMAP", blockmap),
             ("LEAFS", &[]),
             ("MACROS", &[]),
         ],

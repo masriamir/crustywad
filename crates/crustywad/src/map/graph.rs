@@ -602,6 +602,8 @@ pub struct Map {
     pub(crate) segs: Vec<MapSeg>,
     pub(crate) subsectors: Vec<MapSubsector>,
     pub(crate) nodes: Vec<MapNode>,
+    pub(crate) reject: Option<MapReject>,
+    pub(crate) blockmap: Option<MapBlockmap>,
     pub(crate) warnings: Vec<MapWarning>,
 }
 
@@ -700,6 +702,22 @@ impl Map {
         (!self.nodes.is_empty()).then(|| NodeIdx(self.nodes.len() - 1))
     }
 
+    /// The decoded `REJECT` sector-visibility table, or `None` when the
+    /// group carried no `REJECT` lump or an empty one ("not built",
+    /// ADR-0019 §4).
+    #[must_use]
+    pub fn reject(&self) -> Option<&MapReject> {
+        self.reject.as_ref()
+    }
+
+    /// The decoded `BLOCKMAP` spatial index, or `None` when the group
+    /// carried no `BLOCKMAP` lump or an empty one ("not built",
+    /// ADR-0019 §4).
+    #[must_use]
+    pub fn blockmap(&self) -> Option<&MapBlockmap> {
+        self.blockmap.as_ref()
+    }
+
     /// Resolves a linedef's start/end vertices. Total for elements produced by
     /// this map's own assembly; a linedef carrying an out-of-range index (e.g.
     /// hand-constructed, since `MapLinedef`'s fields are public) may panic.
@@ -783,6 +801,8 @@ mod tests {
             segs: Vec::new(),
             subsectors: Vec::new(),
             nodes: Vec::new(),
+            reject: None,
+            blockmap: None,
             warnings: vec![],
         }
     }

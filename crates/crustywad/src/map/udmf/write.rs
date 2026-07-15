@@ -538,6 +538,8 @@ mod tests {
             segs: Vec::new(),
             subsectors: Vec::new(),
             nodes: Vec::new(),
+            reject: None,
+            blockmap: None,
             warnings: Vec::new(),
         }
     }
@@ -575,6 +577,8 @@ mod tests {
             segs: Vec::new(),
             subsectors: Vec::new(),
             nodes: Vec::new(),
+            reject: None,
+            blockmap: None,
             warnings: Vec::new(),
         }
     }

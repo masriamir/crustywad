@@ -32,7 +32,7 @@ pub mod hexen;
 pub mod udmf;
 
 pub use assemble::MapAssembleError;
-pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
+pub use common::{Name8, Node, Sector, Seg, Sidedef, Subsector, Vertex};
 #[cfg(feature = "write")]
 pub use doom::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, write_doom_map};
 pub use doom64::{
