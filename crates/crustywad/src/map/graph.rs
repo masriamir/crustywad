@@ -329,6 +329,50 @@ pub struct MapNode {
     pub left: NodeChild,
 }
 
+/// The `REJECT` lump decoded into a typed sector-visibility table.
+///
+/// The table is a row-major bit matrix, `sector_count` × `sector_count`
+/// bits, LSB-first within each byte; a set bit means the engine may skip
+/// the line-of-sight check from the row sector to the column sector
+/// ("rejected" = potentially hidden). Layout verified against Chocolate
+/// Doom `P_LoadReject` (`p_setup.c`) and `P_CheckSight` (`p_sight.c`).
+///
+/// Built by [`MapReject::parse`] (directly, or during map assembly — see
+/// [`Map::reject`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapReject {
+    /// Table dimension: the owning map's sector count at parse time.
+    pub(crate) sector_count: usize,
+    /// The stored table bytes: `min(lump length, (n² + 7) / 8)` — an
+    /// undersized lenient-mode table is padded *virtually* by
+    /// [`is_rejected`](Self::is_rejected), never materialized (ADR-0016 §1).
+    pub(crate) bits: Box<[u8]>,
+}
+
+impl MapReject {
+    /// Table dimension (the owning map's sector count at parse time).
+    #[must_use]
+    pub fn sector_count(&self) -> usize {
+        self.sector_count
+    }
+
+    /// Whether the table pre-rejects line-of-sight from `a` to `b` (bit set
+    /// = "hidden"). Bits beyond the stored bytes — possible after a lenient
+    /// undersized recovery — read as `false` ("not rejected"), the
+    /// conservative direction vanilla pads (`P_LoadReject`).
+    ///
+    /// Returns `None` if either index is `>= sector_count`.
+    #[must_use]
+    pub fn is_rejected(&self, a: SectorIdx, b: SectorIdx) -> Option<bool> {
+        if a.0 >= self.sector_count || b.0 >= self.sector_count {
+            return None;
+        }
+        let bit = a.0 * self.sector_count + b.0;
+        let mask = 1u8 << (bit % 8);
+        Some(self.bits.get(bit / 8).is_some_and(|byte| byte & mask != 0))
+    }
+}
+
 /// A non-fatal issue recorded during lenient map assembly.
 ///
 /// Produced by [`Map::assemble_with_options`] in [`Strictness::Lenient`] mode
@@ -386,6 +430,19 @@ pub enum MapWarning {
     UnsupportedNodeEncoding {
         /// The name of the lump carrying the extended encoding (`"NODES"` or `"SSECTORS"`).
         lump: &'static str,
+    },
+    /// The `REJECT` lump was smaller than its map's sector count requires;
+    /// the missing bits read as "not rejected" during lenient assembly.
+    #[error(
+        "REJECT lump is {actual} bytes ({expected} required for {sectors} sectors); missing bits read as not-rejected during lenient assembly"
+    )]
+    UndersizedReject {
+        /// The lump's actual byte length.
+        actual: usize,
+        /// The required table size, `(sectors² + 7) / 8` bytes.
+        expected: usize,
+        /// The owning map's sector count.
+        sectors: usize,
     },
 }
 

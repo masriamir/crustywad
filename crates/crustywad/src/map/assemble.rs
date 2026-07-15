@@ -1,9 +1,9 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapNode, MapSector, MapSeg,
-    MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx,
-    SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapNode, MapReject, MapSector,
+    MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx,
+    SectorIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -91,6 +91,17 @@ pub enum MapAssembleError {
         /// The 4-byte signature found at the head of the lump (e.g. `*b"XNOD"`).
         signature: [u8; 4],
     },
+    /// The `REJECT` lump was smaller than the table its map's sector count
+    /// requires (strict mode; lenient reads missing bits as "not rejected").
+    #[error("REJECT lump is {actual} bytes; {expected} bytes required for {sectors} sectors")]
+    UndersizedReject {
+        /// The lump's actual byte length.
+        actual: usize,
+        /// The required table size, `(sectors² + 7) / 8` bytes.
+        expected: usize,
+        /// The owning map's sector count.
+        sectors: usize,
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.
@@ -147,6 +158,58 @@ fn extended_signature(wad: &Wad, group: &MapGroup, lump: &str) -> Option<[u8; 4]
     let bytes = lump_bytes(wad, group, lump)?;
     let head: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
     EXTENDED_NODE_SIGNATURES.contains(&&head).then_some(head)
+}
+
+impl MapReject {
+    /// Parses a `REJECT` lump against its owning map's sector count.
+    ///
+    /// An empty lump means "not built" (our own writer emits zero-length
+    /// `REJECT` by design, ADR-0019 §4) and yields `Ok(None)` with no
+    /// warning in both modes. An oversized lump is accepted in both modes
+    /// and its tail ignored, as vanilla does (`P_LoadReject` reads
+    /// `minlength`). The stored table is `min(actual, expected)` bytes —
+    /// bounded by the input (ADR-0016 §1).
+    ///
+    /// # Errors
+    ///
+    /// [`MapAssembleError::UndersizedReject`] in strict mode when the lump
+    /// is shorter than `(sector_count² + 7) / 8` bytes; lenient mode records
+    /// [`MapWarning::UndersizedReject`] instead and the missing bits read as
+    /// "not rejected".
+    pub fn parse(
+        bytes: &[u8],
+        sector_count: usize,
+        strictness: Strictness,
+        warnings: &mut Vec<MapWarning>,
+    ) -> Result<Option<Self>, MapAssembleError> {
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        // Saturating: a pathological standalone-caller count still yields a
+        // deterministic "undersized" comparison rather than an overflow.
+        let expected = sector_count.saturating_mul(sector_count).div_ceil(8);
+        if bytes.len() < expected {
+            match strictness {
+                Strictness::Strict => {
+                    return Err(MapAssembleError::UndersizedReject {
+                        actual: bytes.len(),
+                        expected,
+                        sectors: sector_count,
+                    });
+                }
+                Strictness::Lenient => warnings.push(MapWarning::UndersizedReject {
+                    actual: bytes.len(),
+                    expected,
+                    sectors: sector_count,
+                }),
+            }
+        }
+        let stored = &bytes[..bytes.len().min(expected)];
+        Ok(Some(Self {
+            sector_count,
+            bits: stored.into(),
+        }))
+    }
 }
 
 /// Resolves a **required** reference. Empty target arena is always fatal.
