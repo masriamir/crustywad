@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8b317f0a.js";
+            window.path_to_searchindex_js = "searchindex-0667682e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -1132,6 +1132,60 @@ uninterpreted).</p>
 cannot be serialized back out: both <code>write_doom_map</code> and <code>write_udmf</code> (the <code>write</code> feature) reject
 it with <code>UnsupportedSourceFormat</code>, in <strong>both</strong> strictness modes, before any per-field validation
 runs.</p>
+<h3 id="bsp-data"><a class="header" href="#bsp-data">BSP data</a></h3>
+<p>Beyond the geometry arenas, <code>Map</code> also exposes the engine-built BSP (Binary Space Partitioning)
+tree: <code>map.segs()</code>, <code>map.subsectors()</code>, and <code>map.nodes()</code>, normalized from the <code>SEGS</code>, <code>SSECTORS</code>,
+and <code>NODES</code> lumps. These are populated for classic Doom/Heretic, Hexen, and Doom 64 maps alike —
+Doom 64’s BSP records share the classic on-disk layout, so they normalize through the same code
+path. UDMF maps always leave the three arenas empty; ZDoom-style BSP data lives in its own
+<code>ZNODES</code>/<code>ZGL</code>-family encoding, out of scope here (see <a href="#extended-node-encodings">Extended node encodings</a>
+below).</p>
+<p><code>map.bsp_root()</code> returns the index of the tree’s root node — <code>Some(NodeIdx)</code> if <code>map.nodes()</code> is
+non-empty, <code>None</code> otherwise. By convention the root is the <strong>last</strong> node in the arena, matching
+Chocolate Doom’s <code>R_RenderPlayerView</code>, which starts traversal at <code>R_RenderBSPNode(numnodes - 1)</code>.</p>
+<p>Like <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code> themselves, these three arenas are optional: many editable PWADs
+ship without built nodes, so their absence is not an assembly error — <code>map.segs()</code>,
+<code>map.subsectors()</code>, and <code>map.nodes()</code> are simply empty, and <code>map.bsp_root()</code> returns <code>None</code>. A map
+produced by converting another format to Doom (<code>add_doom_map</code>) ships zero-length
+<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code> placeholder lumps — real BSP data requires an external nodebuilder pass
+— so re-assembling that output also yields empty arenas.</p>
+<p>A <code>MapNode</code>’s <code>right</code>/<code>left</code> fields are <code>NodeChild</code>, not a bare index: <code>NodeChild::Node(NodeIdx)</code>
+for an internal child, or <code>NodeChild::Subsector(SubsectorIdx)</code> for a leaf. Assembly decodes the
+on-disk child word’s bit 15 once — set selects a subsector, clear selects a node — so callers
+match on <code>NodeChild</code> instead of re-checking the bit themselves:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+use crustywad::map::{Map, NodeChild};
+
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>if let Some(group) = wad.map_group("MAP01") {
+    let map = Map::assemble(&amp;wad, &amp;group)?;
+    if let Some(root) = map.bsp_root() {
+        match map.nodes()[root.0].right {
+            NodeChild::Node(i) =&gt; println!("right child is node {}", i.0),
+            NodeChild::Subsector(i) =&gt; println!("right child is subsector {}", i.0),
+        }
+    }
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h4 id="extended-node-encodings"><a class="header" href="#extended-node-encodings">Extended node encodings</a></h4>
+<p>A <code>NODES</code> or <code>SSECTORS</code> lump can instead carry an extended/GL node encoding (the ZDBSP family:
+<code>XNOD</code>, <code>ZNOD</code>, <code>XGLN</code>, <code>ZGLN</code>, <code>XGL2</code>, <code>XGL3</code>, <code>ZGL2</code>, <code>ZGL3</code>), identified by a 4-byte signature
+at the head of the lump. <code>crustywad</code>‘s classic-path BSP normalizer never attempts to decode these
+as fixed-size classic records — doing so would misread the signature bytes as garbage geometry.
+Instead, detecting one of these signatures gates the whole BSP normalization step: in strict mode
+assembly fails with <code>MapAssembleError::UnsupportedNodeEncoding</code>; in lenient mode assembly leaves
+<code>map.segs()</code>, <code>map.subsectors()</code>, and <code>map.nodes()</code> empty and records one
+<code>MapWarning::UnsupportedNodeEncoding</code> per gated lump — up to two, when both <code>NODES</code> and
+<code>SSECTORS</code> carry a signature. Reading these encodings’ actual contents is out of scope
+for now (tracked as <a href="https://github.com/masriamir/crustywad/issues/199">#199</a>).</p>
+<p>The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
+a reference that cannot be clamped (for example, a node child pointing into an absent
+<code>SSECTORS</code> arena) drops all three arenas, records the dangling reference as a warning, and the
+rest of the map still assembles. BSP data is optional (ADR-0015 §5), so it never fails a
+lenient assembly.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cli-usage"><a class="header" href="#cli-usage">CLI Usage</a></h1>
 <p>The <code>cwad</code> binary ships with the <code>crustywad-cli</code> crate and provides quick WAD
