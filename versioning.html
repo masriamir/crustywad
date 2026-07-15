@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0667682e.js";
+            window.path_to_searchindex_js = "searchindex-70a8ad10.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -265,9 +265,9 @@ each crate carries its own explicit <code>version</code> field in its <code>[pac
 inheriting from <code>[workspace.package]</code>. <code>release-plz</code> manages each package independently,
 proposing version bumps only for crates whose content has changed since the last release.</p>
 <p><strong>Dependency constraint:</strong> <code>crates/crustywad-cli/Cargo.toml</code> pins the library with an explicit
-caret requirement (currently <code>crustywad = { version = "0.3.0", ... }</code>), required by
+caret requirement (currently <code>crustywad = { version = "0.4.0", ... }</code>), required by
 <code>cargo-deny</code>’s <code>wildcards = "deny"</code> setting (which disallows <code>*</code> version requirements).
-<code>version = "0.3.0"</code> resolves as <code>^0.3.0</code> (<code>&gt;=0.3.0, &lt;0.4.0</code>), so patch bumps to <code>crustywad</code>
+<code>version = "0.4.0"</code> resolves as <code>^0.3.0</code> (<code>&gt;=0.3.0, &lt;0.4.0</code>), so patch bumps to <code>crustywad</code>
 within the same minor series are satisfied automatically. When <code>crustywad</code>’s version moves
 outside that range (e.g., to <code>0.4.0</code>), this field must be updated manually before merging —
 otherwise <code>cargo build</code> and crates.io publishing will fail.</p>
