@@ -478,21 +478,21 @@ impl Map {
     }
 
     /// Returns the map's seg arena. Empty for a map assembled without BSP
-    /// data (no `SEGS` lump, or BSP traversal not yet performed).
+    /// data (an absent `SEGS` lump, a gated extended node encoding, or a lenient-mode whole-BSP degrade).
     #[must_use]
     pub fn segs(&self) -> &[MapSeg] {
         &self.segs
     }
 
     /// Returns the map's subsector arena. Empty for a map assembled without
-    /// BSP data (no `SSECTORS` lump, or BSP traversal not yet performed).
+    /// BSP data (an absent `SSECTORS` lump, a gated extended node encoding, or a lenient-mode whole-BSP degrade).
     #[must_use]
     pub fn subsectors(&self) -> &[MapSubsector] {
         &self.subsectors
     }
 
     /// Returns the map's BSP node arena. Empty for a map assembled without
-    /// BSP data (no `NODES` lump, or BSP traversal not yet performed).
+    /// BSP data (an absent `NODES` lump, a gated extended node encoding, or a lenient-mode whole-BSP degrade).
     #[must_use]
     pub fn nodes(&self) -> &[MapNode] {
         &self.nodes

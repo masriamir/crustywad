@@ -1270,7 +1270,9 @@ fn bsp_child_into_empty_arena_strict_errors_lenient_degrades() {
     assert!(map.subsectors().is_empty());
     assert!(map.nodes().is_empty());
     assert_eq!(map.bsp_root(), None);
-    assert!(!map.warnings().is_empty());
+    // Exactly one warning for the whole degrade — per-element diagnostics
+    // about the dropped arenas are discarded with them.
+    assert_eq!(map.warnings().len(), 1);
     assert_eq!(map.linedefs().len(), 1); // geometry intact
 }
 

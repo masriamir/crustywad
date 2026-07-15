@@ -469,8 +469,9 @@ fn resolve_node_child(
 /// reference cannot be recovered by clamping — a child pointing into an
 /// **empty** arena has nothing to clamp to, and BSP data is optional
 /// (ADR-0015 §5), so lenient assembly must not fail on it. The error's
-/// details are preserved as a [`MapWarning::DanglingReference`] and all three
-/// arenas come back empty (the same whole-BSP posture as the
+/// details are preserved as a single [`MapWarning::DanglingReference`] — any
+/// per-element warnings pushed for the now-dropped arenas are discarded — and
+/// all three arenas come back empty (the same whole-BSP posture as the
 /// extended-encoding gate). Strict mode propagates the error unchanged.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn normalize_bsp_or_degrade(
@@ -482,6 +483,10 @@ fn normalize_bsp_or_degrade(
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<(Vec<MapSeg>, Vec<MapSubsector>, Vec<MapNode>), MapAssembleError> {
+    // Snapshot so a degrade discards the per-element warnings that described
+    // the dropped arenas — the caller sees exactly one warning for the whole
+    // degrade, not a trail of diagnostics about data that no longer exists.
+    let warning_watermark = warnings.len();
     match normalize_bsp(
         raw_segs,
         raw_subsectors,
@@ -497,6 +502,7 @@ fn normalize_bsp_or_degrade(
             from,
             count,
         }) if strictness == Strictness::Lenient => {
+            warnings.truncate(warning_watermark);
             warnings.push(MapWarning::DanglingReference {
                 referent,
                 index,
@@ -926,9 +932,10 @@ impl Map {
     ///
     /// # Errors
     /// Returns [`MapAssembleError`] if a required lump is missing, a record lump
-    /// fails to decode, any cross-reference is out of range, a `NODES`/`SSECTORS`
-    /// lump carries an unsupported extended node encoding (see issue #199), or —
-    /// for a Doom 64 group (ADR-0021 §2) — the marker's nested WAD fails to read.
+    /// fails to decode, any cross-reference is out of range, a classic binary
+    /// map's `NODES`/`SSECTORS` lump carries an unsupported extended node
+    /// encoding (see issue #199), or — for a Doom 64 group (ADR-0021 §2) — the
+    /// marker's nested WAD fails to read.
     pub fn assemble(wad: &Wad, group: &MapGroup) -> Result<Map, MapAssembleError> {
         Map::assemble_with_options(wad, group, ParseOptions::default())
     }
@@ -943,11 +950,17 @@ impl Map {
     /// Returns [`MapAssembleError`] if a required lump is missing, a record lump
     /// fails to decode, or (in strict mode) a cross-reference is out of range.
     /// In lenient mode only structural failures (missing lump, undecodable
-    /// records, an empty *required* target arena) return an error. A binary
-    /// map's `NODES`/`SSECTORS` lump carrying an unsupported extended node
-    /// encoding (ZDBSP family; see issue #199) is
+    /// records, an empty *required* target arena) return an error. A **classic
+    /// binary** map's `NODES`/`SSECTORS` lump carrying an unsupported extended
+    /// node encoding (ZDBSP family; see issue #199) is
     /// [`MapAssembleError::UnsupportedNodeEncoding`] in strict mode, or skipped
-    /// with an empty BSP arena plus a warning in lenient mode. For a
+    /// in lenient mode with **all three** BSP arenas left empty plus one
+    /// warning per gated lump; the gate does not apply to Doom 64 nested
+    /// sub-lumps, whose records were already decoded by
+    /// [`doom64::read_doom64_map`]. Lenient mode likewise degrades the whole
+    /// BSP (empty arenas, one warning) when a BSP reference cannot be clamped,
+    /// e.g. a node child pointing into an empty arena — optional BSP data
+    /// never fails a lenient assembly. For a
     /// Doom 64 group, [`MapAssembleError::Doom64`] wraps a failure to read the
     /// marker's nested WAD (both modes) or a missing/undecodable sub-lump
     /// (strict mode; ADR-0021 §2).
