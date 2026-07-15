@@ -1130,6 +1130,84 @@ fn bsp_subsector_seg_range_dangling_strict_errors() {
     ));
 }
 
+// Strict-mode coverage for each BSP resolver's error propagation
+// individually — every reference kind must be able to be the FIRST failure
+// (dangling seg end vertex, seg linedef, right node child, left node child,
+// and the Doom 64 arm's propagation).
+#[test]
+fn bsp_each_reference_kind_strict_errors_first() {
+    let base = |segs: Vec<u8>, nodes_lump: Vec<u8>| {
+        common::build_named_lumps(&[
+            ("E1M1", vec![]),
+            ("THINGS", vec![]),
+            ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+            ("SIDEDEFS", sidedef(0)),
+            ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+            ("SEGS", segs),
+            ("SSECTORS", subsector(1, 0)),
+            ("NODES", nodes_lump),
+            ("SECTORS", sector()),
+        ])
+    };
+    let strict_err = |bytes: Vec<u8>| {
+        let wad = Wad::from_bytes(bytes).unwrap();
+        let group = wad.map_group("E1M1").unwrap();
+        Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err()
+    };
+
+    // Dangling END vertex (start is valid, so the end resolve fails first).
+    assert!(matches!(
+        strict_err(base(seg(0, 9, 0, 0), node(0x8000, 0x8000))),
+        MapAssembleError::DanglingReference { referent: "vertex", index: 9, from: "seg", .. }
+    ));
+    // Dangling seg LINEDEF (vertices valid).
+    assert!(matches!(
+        strict_err(base(seg(0, 1, 7, 0), node(0x8000, 0x8000))),
+        MapAssembleError::DanglingReference { referent: "linedef", index: 7, from: "seg", .. }
+    ));
+    // Dangling RIGHT node child (bit 15 clear, one node exists).
+    assert!(matches!(
+        strict_err(base(seg(0, 1, 0, 0), node(5, 0x8000))),
+        MapAssembleError::DanglingReference { referent: "node", index: 5, from: "node", .. }
+    ));
+    // Dangling LEFT node child (right resolves first: subsector 0 exists).
+    assert!(matches!(
+        strict_err(base(seg(0, 1, 0, 0), node(0x8000, 5))),
+        MapAssembleError::DanglingReference { referent: "node", index: 5, from: "node", .. }
+    ));
+}
+
+// The Doom 64 arm propagates a strict BSP failure through the shared
+// degrade wrapper (and recovers it leniently, like the classic path).
+#[test]
+fn doom64_bsp_dangling_strict_errors_lenient_degrades() {
+    let bytes = common::build_doom64_map_wad(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0; 5], 0),
+        &common::d64_light(255, 255, 255, 0),
+        &seg(9, 1, 0, 0), // dangling start vertex
+        &subsector(1, 0),
+        &node(0x8000, 0x8000),
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference { referent: "vertex", index: 9, from: "seg", .. }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
+        .expect("lenient recovers");
+    // In-range clamping applies (vertex arena is non-empty), so the BSP
+    // arenas survive with the clamped seg rather than degrading.
+    assert_eq!(map.segs().len(), 1);
+    assert_eq!(map.segs()[0].start, crustywad::map::VertexIdx(0));
+}
+
 // BSP data referencing an EMPTY optional arena (SSECTORS absent, NODES
 // present with a subsector child) cannot clamp — there is nothing to clamp
 // to. Strict rejects the inconsistent BSP; lenient degrades the whole BSP
