@@ -445,3 +445,114 @@ proptest! {
         prop_assert_eq!(lumps.sidedefs, sidedefs);
     }
 }
+
+// --- #264: which writer refusals can `--lenient` actually recover? ---
+// The CLI's "re-run with --lenient" hint keys off these predicates, so each
+// variant's classification is pinned against its documented strictness
+// behavior: `true` iff lenient mode turns the error into a warning-carrying
+// success, `false` for errors returned identically in both modes.
+
+#[test]
+fn doom_write_error_classifies_lenient_recoverability_per_variant() {
+    use crustywad::map::DoomWriteError as E;
+
+    // Lenient recovers these (writes 0 / rounds / clamps / drops / truncates).
+    assert!(
+        E::NonFiniteCoordinate {
+            block: "vertex",
+            field: "x",
+            index: 0
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(
+        E::FractionalCoordinate {
+            block: "vertex",
+            field: "x",
+            index: 0,
+            value: 0.5
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(
+        E::ValueOutOfRange {
+            block: "thing",
+            field: "angle",
+            index: 0,
+            value: 400
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(
+        E::UnrepresentableField {
+            block: "thing",
+            field: "height",
+            index: 0
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(
+        E::NameTooLong {
+            name: "TOOLONGNAME".to_owned(),
+            len: 11
+        }
+        .is_lenient_recoverable()
+    );
+
+    // Returned in both modes — no honest recovery, the hint would mislead.
+    assert!(
+        !E::TooManyElements {
+            kind: "vertices",
+            count: 70_000,
+            max: 65_535
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(
+        !E::UnresolvedTextureIndex {
+            block: "sidedef",
+            field: "texturetop",
+            index: 0
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(
+        !E::UnsupportedSourceFormat {
+            format: MapFormat::Doom64
+        }
+        .is_lenient_recoverable()
+    );
+}
+
+#[test]
+fn udmf_write_error_classifies_lenient_recoverability_per_variant() {
+    use crustywad::map::UdmfWriteError as E;
+
+    // Lenient recovers these (writes 0 / falls back / writes -1).
+    assert!(
+        E::NonFiniteCoordinate {
+            block: "vertex",
+            field: "x",
+            index: 0
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(E::EmptyNamespace.is_lenient_recoverable());
+    assert!(E::NoFrontSide { index: 0 }.is_lenient_recoverable());
+
+    // Returned in both modes — no honest recovery, the hint would mislead.
+    assert!(
+        !E::UnresolvedTextureIndex {
+            block: "sidedef",
+            field: "texturetop",
+            index: 0
+        }
+        .is_lenient_recoverable()
+    );
+    assert!(
+        !E::UnsupportedSourceFormat {
+            format: MapFormat::Doom64
+        }
+        .is_lenient_recoverable()
+    );
+}

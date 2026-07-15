@@ -159,7 +159,7 @@ pub enum DoomWriteError {
         len: usize,
     },
     /// A [`TextureRef::Index`] reached the writer; a Doom 64 texture index
-    /// cannot be written as a name until the texture layer (v0.5.0) can
+    /// cannot be written as a name until the texture layer (#156/#157) can
     /// resolve it (both strictness modes; ADR-0021 §5).
     #[error("unresolvable texture index for {field} in {block} #{index}")]
     UnresolvedTextureIndex {
@@ -172,13 +172,38 @@ pub enum DoomWriteError {
     },
     /// The map's source format cannot be expressed by this writer — a Doom 64
     /// map's texture indices and colored lighting have no classic/UDMF
-    /// representation until the texture layer (v0.5.0) exists (both
+    /// representation until the texture layer (#156/#157) exists (both
     /// strictness modes; ADR-0021 §5).
     #[error("cannot write a {format:?}-sourced map")]
     UnsupportedSourceFormat {
         /// The assembled map's source format.
         format: MapFormat,
     },
+}
+
+impl DoomWriteError {
+    /// Whether re-running the write with [`WriteOptions::lenient`] recovers
+    /// from this error, turning it into a [`DoomWriteWarning`]-carrying
+    /// success.
+    ///
+    /// Returns `false` for the errors produced identically in both strictness
+    /// modes — [`TooManyElements`][Self::TooManyElements],
+    /// [`UnresolvedTextureIndex`][Self::UnresolvedTextureIndex], and
+    /// [`UnsupportedSourceFormat`][Self::UnsupportedSourceFormat] — where
+    /// suggesting lenient mode would mislead.
+    #[must_use]
+    pub fn is_lenient_recoverable(&self) -> bool {
+        match self {
+            Self::NonFiniteCoordinate { .. }
+            | Self::FractionalCoordinate { .. }
+            | Self::ValueOutOfRange { .. }
+            | Self::UnrepresentableField { .. }
+            | Self::NameTooLong { .. } => true,
+            Self::TooManyElements { .. }
+            | Self::UnresolvedTextureIndex { .. }
+            | Self::UnsupportedSourceFormat { .. } => false,
+        }
+    }
 }
 
 /// A non-fatal issue recovered while writing a map to the Doom binary format in
@@ -626,7 +651,7 @@ fn narrow_linedefs(
 }
 
 /// Resolves a [`TextureRef`] to a name, or fails: a Doom 64 texture index has
-/// no name until the texture layer (v0.5.0) exists, so this is not a
+/// no name until the texture layer (#156/#157) exists, so this is not a
 /// recoverable defect (ADR-0021 §5) — it errors in **both** strictness modes.
 fn texture_name<'a>(
     block: &'static str,
@@ -1013,7 +1038,7 @@ mod tests {
         }));
     }
 
-    /// A Doom 64 texture index has no name until the texture layer (v0.5.0)
+    /// A Doom 64 texture index has no name until the texture layer (#156/#157)
     /// exists, so a `TextureRef::Index` is rejected in both strictness modes —
     /// there is no honest recovery (ADR-0021 §5).
     #[test]
@@ -1055,7 +1080,7 @@ mod tests {
     }
 
     /// A Doom 64-sourced map has no classic representation (texture indices,
-    /// colored lighting) until the texture layer (v0.5.0) exists, so it is
+    /// colored lighting) until the texture layer (#156/#157) exists, so it is
     /// rejected in both strictness modes (ADR-0021 §5) — before any per-field
     /// handling runs, so a Doom64 map's `TextureRef::Index` values never reach
     /// the texture-resolving logic.
