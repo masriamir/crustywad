@@ -1281,10 +1281,16 @@ fn assemble_doom64(
     let things = normalize_doom64_things(&raw.things, s, &mut warnings)?;
 
     // Doom 64 BSP records share the classic on-disk layout (ADR-0018), so
-    // they normalize through the same shared path. No extended-encoding gate
-    // is needed here: the nested sub-lumps were already record-decoded by
-    // `read_doom64_map` above, so a ZDBSP blob inside the nested WAD fails
-    // that decode with the existing `Records`/`TrailingBytes` behavior.
+    // they normalize through the same shared path. The classic path's
+    // extended-encoding gate is deliberately not replicated here: no Doom 64
+    // toolchain emits ZDBSP/GL encodings into nested-WAD sub-lumps (the gate
+    // exists for classic PWADs, where they are common), and a hypothetical
+    // blob is still handled safely — `read_doom64_map` either rejects it
+    // (`Records`/`TrailingBytes` when its length is not a whole multiple of
+    // the record size) or decodes it into garbage records whose dangling
+    // references the resolvers below then bound (strict error / lenient
+    // clamp-or-degrade). Either way: no panic, no unbounded work. Real
+    // support for extended encodings, anywhere, is #199.
     let (segs, subsectors, nodes) = normalize_bsp_or_degrade(
         &raw.segs,
         &raw.subsectors,
