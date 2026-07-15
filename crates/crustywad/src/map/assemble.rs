@@ -308,22 +308,25 @@ impl MapBlockmap {
             return malformed("offset table extends past the lump", warnings);
         }
 
-        // Single reverse pass: for each word position, the index of the
-        // next terminator at or after it (usize::MAX = none). This is what
-        // makes parse time O(input) under arbitrarily aliased offsets.
+        // Single reverse pass — O(1) per-block validity AND diagnostic under
+        // arbitrary offset aliasing: for each word position, the index of
+        // the next terminator at or after it (usize::MAX = none), and the
+        // index of the next out-of-range entry at or after it (usize::MAX =
+        // none). This is what makes parse time O(input) regardless of how
+        // many blocks alias the same offset.
         let mut next_term = vec![usize::MAX; words.len()];
-        let mut last = usize::MAX;
+        let mut next_invalid = vec![usize::MAX; words.len()];
+        let mut last_term = usize::MAX;
+        let mut last_invalid = usize::MAX;
         for i in (0..words.len()).rev() {
-            if words[i] == TERMINATOR {
-                last = i;
+            let word = words[i];
+            if word == TERMINATOR {
+                last_term = i;
+            } else if usize::from(word) >= linedef_count {
+                last_invalid = i;
             }
-            next_term[i] = last;
-        }
-        // Prefix sums of out-of-range entries, for O(1) per-block validity.
-        let mut invalid_before = vec![0usize; words.len() + 1];
-        for (i, &word) in words.iter().enumerate() {
-            let invalid = word != TERMINATOR && usize::from(word) >= linedef_count;
-            invalid_before[i + 1] = invalid_before[i] + usize::from(invalid);
+            next_term[i] = last_term;
+            next_invalid[i] = last_invalid;
         }
 
         let entries: Vec<LinedefIdx> = words.iter().map(|&w| LinedefIdx(usize::from(w))).collect();
@@ -376,15 +379,13 @@ impl MapBlockmap {
             } else {
                 end
             };
-            if invalid_before[end] - invalid_before[start] > 0 {
-                // O(list) scan on the failure path only, for the diagnostic.
-                let (index, word) = words[start..end]
-                    .iter()
-                    .enumerate()
-                    .find(|&(_, &w)| usize::from(w) >= linedef_count)
-                    .map(|(i, &w)| (i, w))
-                    .expect("prefix sums found an invalid entry in this span");
-                let _ = index;
+            let first_invalid = if start < words.len() {
+                next_invalid[start]
+            } else {
+                usize::MAX
+            };
+            if first_invalid < end {
+                let word = words[first_invalid];
                 match strictness {
                     Strictness::Strict => {
                         return Err(MapAssembleError::DanglingReference {

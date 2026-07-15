@@ -315,6 +315,29 @@ fn blockmap_dangling_linedef_strict_errors_lenient_empties_block() {
 }
 
 #[test]
+fn blockmap_aliased_invalid_lists_warn_per_block_and_empty_each() {
+    // Two blocks alias the same invalid list ({7} with only 2 linedefs):
+    // lenient mode must warn once per block, empty both, and stay O(input)
+    // while doing it (the diagnostic is precomputed, not re-scanned).
+    let bytes = words_to_bytes(&[0, 0, 1, 2, 6, 6, 7, 0xFFFF]);
+    let mut warnings = Vec::new();
+    let bm = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings)
+        .unwrap()
+        .unwrap();
+    assert_eq!(bm.block(0, 0), Some(&[][..]));
+    assert_eq!(bm.block(0, 1), Some(&[][..]));
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings.iter().all(|w| matches!(
+        w,
+        crustywad::map::MapWarning::BlockmapListDangling {
+            index: 7,
+            count: 2,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn blockmap_block_at_maps_coordinates_through_128_unit_grid() {
     let mut warnings = Vec::new();
     let bm = MapBlockmap::parse(
