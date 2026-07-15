@@ -465,6 +465,9 @@ fn doom64_sourced_map_is_rejected_by_both_writers_in_both_modes() {
         &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
         &common::d64_sector(0, 0, [0; 5], 0),
         &common::d64_light(0, 0, 0, 0),
+        &[],
+        &[],
+        &[],
     );
     let wad = Wad::from_bytes(bytes).unwrap();
     let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();

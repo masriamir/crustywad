@@ -302,6 +302,9 @@ pub fn build_doom64_map_wad(
     vertexes: &[u8],
     sectors: &[u8],
     lights: &[u8],
+    segs: &[u8],
+    subsectors: &[u8],
+    nodes: &[u8],
 ) -> Vec<u8> {
     let nested = build_wad(
         *b"IWAD",
@@ -312,9 +315,9 @@ pub fn build_doom64_map_wad(
             ("VERTEXES", vertexes),
             ("SECTORS", sectors),
             ("LIGHTS", lights),
-            ("SEGS", &[]),
-            ("SSECTORS", &[]),
-            ("NODES", &[]),
+            ("SEGS", segs),
+            ("SSECTORS", subsectors),
+            ("NODES", nodes),
             ("REJECT", &[]),
             ("BLOCKMAP", &[]),
             ("LEAFS", &[]),

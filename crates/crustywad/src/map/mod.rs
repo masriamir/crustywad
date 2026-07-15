@@ -40,8 +40,9 @@ pub use doom64::{
     read_doom64_map,
 };
 pub use graph::{
-    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapSector, MapSidedef, MapThing,
-    MapVertex, MapWarning, SectorIdx, SidedefIdx, Special, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapNode, MapSector, MapSeg,
+    MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx,
+    SegIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
 pub use udmf::{UdmfParseError, parse_udmf};

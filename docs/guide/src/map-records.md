@@ -350,3 +350,65 @@ Doom 64's sidedef/sector texture and flat fields assemble into `TextureRef::Inde
 cannot be serialized back out: both `write_doom_map` and `write_udmf` (the `write` feature) reject
 it with `UnsupportedSourceFormat`, in **both** strictness modes, before any per-field validation
 runs.
+
+### BSP data
+
+Beyond the geometry arenas, `Map` also exposes the engine-built BSP (Binary Space Partitioning)
+tree: `map.segs()`, `map.subsectors()`, and `map.nodes()`, normalized from the `SEGS`, `SSECTORS`,
+and `NODES` lumps. These are populated for classic Doom/Heretic, Hexen, and Doom 64 maps alike —
+Doom 64's BSP records share the classic on-disk layout, so they normalize through the same code
+path. UDMF maps always leave the three arenas empty; ZDoom-style BSP data lives in its own
+`ZNODES`/`ZGL`-family encoding, out of scope here (see [Extended node encodings](#extended-node-encodings)
+below).
+
+`map.bsp_root()` returns the index of the tree's root node — `Some(NodeIdx)` if `map.nodes()` is
+non-empty, `None` otherwise. By convention the root is the **last** node in the arena, matching
+Chocolate Doom's `R_RenderPlayerView`, which starts traversal at `R_RenderBSPNode(numnodes - 1)`.
+
+Like `SEGS`/`SSECTORS`/`NODES` themselves, these three arenas are optional: many editable PWADs
+ship without built nodes, so their absence is not an assembly error — `map.segs()`,
+`map.subsectors()`, and `map.nodes()` are simply empty, and `map.bsp_root()` returns `None`. A map
+produced by converting another format to Doom (`add_doom_map`) ships zero-length
+`SEGS`/`SSECTORS`/`NODES` placeholder lumps — real BSP data requires an external nodebuilder pass
+— so re-assembling that output also yields empty arenas.
+
+A `MapNode`'s `right`/`left` fields are `NodeChild`, not a bare index: `NodeChild::Node(NodeIdx)`
+for an internal child, or `NodeChild::Subsector(SubsectorIdx)` for a leaf. Assembly decodes the
+on-disk child word's bit 15 once — set selects a subsector, clear selects a node — so callers
+match on `NodeChild` instead of re-checking the bit themselves:
+
+```rust
+use crustywad::Wad;
+use crustywad::map::{Map, NodeChild};
+
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+if let Some(group) = wad.map_group("MAP01") {
+    let map = Map::assemble(&wad, &group)?;
+    if let Some(root) = map.bsp_root() {
+        match map.nodes()[root.0].right {
+            NodeChild::Node(i) => println!("right child is node {}", i.0),
+            NodeChild::Subsector(i) => println!("right child is subsector {}", i.0),
+        }
+    }
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
+
+#### Extended node encodings
+
+A `NODES` or `SSECTORS` lump can instead carry an extended/GL node encoding (the ZDBSP family:
+`XNOD`, `ZNOD`, `XGLN`, `ZGLN`, `XGL2`, `XGL3`, `ZGL2`, `ZGL3`), identified by a 4-byte signature
+at the head of the lump. `crustywad`'s classic-path BSP normalizer never attempts to decode these
+as fixed-size classic records — doing so would misread the signature bytes as garbage geometry.
+Instead, detecting one of these signatures gates the whole BSP normalization step: in strict mode
+assembly fails with `MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves
+`map.segs()`, `map.subsectors()`, and `map.nodes()` empty and records one
+`MapWarning::UnsupportedNodeEncoding` per gated lump — up to two, when both `NODES` and
+`SSECTORS` carry a signature. Reading these encodings' actual contents is out of scope
+for now (tracked as [#199](https://github.com/masriamir/crustywad/issues/199)).
+
+The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
+a reference that cannot be clamped (for example, a node child pointing into an absent
+`SSECTORS` arena) drops all three arenas, records the dangling reference as a warning, and the
+rest of the map still assembles. BSP data is optional (ADR-0015 §5), so it never fails a
+lenient assembly.

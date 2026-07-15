@@ -385,3 +385,15 @@ slices (or a dedicated `Option`) rather than failing assembly.
 - Revisit condition: reopen when #18 introduces map mutation (a mutable arena
   layer), or when a new node format (GL nodes / extended ZDBSP nodes, tracked in
   #199) needs representation beyond the classic `NODES` encoding.
+
+## Amendments
+
+- **2026-07-14 (#204):** the deferred `SEGS`/`SSECTORS`/`NODES` resolution
+  (§1) is implemented. Two additive decisions: node children are modeled as
+  `NodeChild { Node(NodeIdx) | Subsector(SubsectorIdx) }` (the on-disk bit-15
+  flag decodes once at assembly), and lumps carrying a known extended/ZDBSP
+  signature (`XNOD`/`ZNOD`/`XGLN`/`ZGLN`/`XGL2`/`XGL3`/`ZGL2`/`ZGL3`) are
+  gated — strict `UnsupportedNodeEncoding` error, lenient empty-arena recovery
+  plus a warning — rather than classic-decoded; reading those encodings is
+  #199. `Map::bsp_root()` returns the last node, matching Chocolate Doom's
+  `R_RenderBSPNode(numnodes-1)` entry point.
