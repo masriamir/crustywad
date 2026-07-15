@@ -1,9 +1,9 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapNode, MapReject, MapSector,
-    MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx,
-    SectorIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLight, MapLinedef, MapNode, MapReject,
+    MapSector, MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild,
+    NodeIdx, SectorIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -101,6 +101,33 @@ pub enum MapAssembleError {
         expected: usize,
         /// The owning map's sector count.
         sectors: usize,
+    },
+    /// The `BLOCKMAP` lump was structurally unusable — shorter than its
+    /// 4-word header, non-positive dimensions, or an offset table extending
+    /// past the lump (strict mode; lenient discards the blockmap and warns).
+    #[error("BLOCKMAP lump is malformed: {detail}")]
+    MalformedBlockmap {
+        /// What made the lump unusable.
+        detail: &'static str,
+    },
+    /// A `BLOCKMAP` block's offset pointed outside the lump (strict mode;
+    /// lenient empties that block's list and warns).
+    #[error("BLOCKMAP block {block} offset {offset} is outside the lump ({words} words)")]
+    BlockmapBlockOffset {
+        /// The 0-based block (offset-table) index.
+        block: usize,
+        /// The out-of-range word offset.
+        offset: usize,
+        /// The lump's total word count.
+        words: usize,
+    },
+    /// A `BLOCKMAP` block's linedef list ran past the end of the lump
+    /// without its `0xFFFF` terminator (strict mode; lenient truncates the
+    /// list at the lump end and warns).
+    #[error("BLOCKMAP block {block} linedef list is unterminated")]
+    UnterminatedBlockmapList {
+        /// The 0-based block index.
+        block: usize,
     },
 }
 
@@ -208,6 +235,185 @@ impl MapReject {
         Ok(Some(Self {
             sector_count,
             bits: stored.into(),
+        }))
+    }
+}
+
+impl MapBlockmap {
+    /// Parses a `BLOCKMAP` lump against its owning map's linedef count.
+    ///
+    /// An empty lump means "not built" (ADR-0019 §4) and yields `Ok(None)`
+    /// with no warning in both modes. A trailing odd byte is ignored, as
+    /// vanilla's word-count division does (`P_LoadBlockMap`). Offsets may
+    /// alias or overlap freely — block lists are ranges into a single
+    /// shared word arena, so parse work and memory stay `O(input)`
+    /// (ADR-0016 §1).
+    ///
+    /// # Errors
+    ///
+    /// In strict mode: [`MapAssembleError::MalformedBlockmap`] for a
+    /// structurally unusable lump,
+    /// [`MapAssembleError::BlockmapBlockOffset`] for a block offset outside
+    /// the lump, [`MapAssembleError::UnterminatedBlockmapList`] for a list
+    /// with no terminator, and [`MapAssembleError::DanglingReference`] for
+    /// a list entry past the linedef arena. Lenient mode recovers each with
+    /// the corresponding [`MapWarning`] (discard / empty block / truncate /
+    /// empty block, respectively).
+    ///
+    /// # Panics
+    ///
+    /// Does not panic. The internal `expect` calls on `usize::try_from` are
+    /// preceded by an explicit `columns <= 0 || rows <= 0` check that returns
+    /// (or, in lenient mode, discards the lump) before either conversion runs.
+    #[allow(clippy::too_many_lines)]
+    pub fn parse(
+        bytes: &[u8],
+        linedef_count: usize,
+        strictness: Strictness,
+        warnings: &mut Vec<MapWarning>,
+    ) -> Result<Option<Self>, MapAssembleError> {
+        /// The list terminator word (`-1` in `P_BlockLinesIterator`).
+        const TERMINATOR: u16 = 0xFFFF;
+
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        let malformed = |detail: &'static str, warnings: &mut Vec<MapWarning>| match strictness {
+            Strictness::Strict => Err(MapAssembleError::MalformedBlockmap { detail }),
+            Strictness::Lenient => {
+                warnings.push(MapWarning::MalformedBlockmap { detail });
+                Ok(None)
+            }
+        };
+        if bytes.len() < 8 {
+            return malformed("shorter than the 4-word header", warnings);
+        }
+        let origin_x = f64::from(i16::from_le_bytes([bytes[0], bytes[1]]));
+        let origin_y = f64::from(i16::from_le_bytes([bytes[2], bytes[3]]));
+        let columns = i16::from_le_bytes([bytes[4], bytes[5]]);
+        let rows = i16::from_le_bytes([bytes[6], bytes[7]]);
+        if columns <= 0 || rows <= 0 {
+            return malformed("non-positive grid dimensions", warnings);
+        }
+        let columns = usize::try_from(columns).expect("checked positive above");
+        let rows = usize::try_from(rows).expect("checked positive above");
+        // Fits usize: both factors are <= i16::MAX.
+        let block_count = columns * rows;
+
+        let words: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        if 4 + block_count > words.len() {
+            return malformed("offset table extends past the lump", warnings);
+        }
+
+        // Single reverse pass: for each word position, the index of the
+        // next terminator at or after it (usize::MAX = none). This is what
+        // makes parse time O(input) under arbitrarily aliased offsets.
+        let mut next_term = vec![usize::MAX; words.len()];
+        let mut last = usize::MAX;
+        for i in (0..words.len()).rev() {
+            if words[i] == TERMINATOR {
+                last = i;
+            }
+            next_term[i] = last;
+        }
+        // Prefix sums of out-of-range entries, for O(1) per-block validity.
+        let mut invalid_before = vec![0usize; words.len() + 1];
+        for (i, &word) in words.iter().enumerate() {
+            let invalid = word != TERMINATOR && usize::from(word) >= linedef_count;
+            invalid_before[i + 1] = invalid_before[i] + usize::from(invalid);
+        }
+
+        let entries: Vec<LinedefIdx> = words.iter().map(|&w| LinedefIdx(usize::from(w))).collect();
+        let mut blocks = Vec::with_capacity(block_count);
+        for block in 0..block_count {
+            let offset = usize::from(words[4 + block]);
+            if offset >= words.len() {
+                match strictness {
+                    Strictness::Strict => {
+                        return Err(MapAssembleError::BlockmapBlockOffset {
+                            block,
+                            offset,
+                            words: words.len(),
+                        });
+                    }
+                    Strictness::Lenient => {
+                        warnings.push(MapWarning::BlockmapBlockOffset {
+                            block,
+                            offset,
+                            words: words.len(),
+                        });
+                        blocks.push(0..0);
+                        continue;
+                    }
+                }
+            }
+            // A literal leading 0 is the conventional delimiter (see
+            // `MapBlockmap::block`); skipping it may land exactly on the
+            // lump end, which the unterminated branch below then handles.
+            let start = if words[offset] == 0 {
+                offset + 1
+            } else {
+                offset
+            };
+            let end = if start < words.len() {
+                next_term[start]
+            } else {
+                usize::MAX
+            };
+            let end = if end == usize::MAX {
+                match strictness {
+                    Strictness::Strict => {
+                        return Err(MapAssembleError::UnterminatedBlockmapList { block });
+                    }
+                    Strictness::Lenient => {
+                        warnings.push(MapWarning::UnterminatedBlockmapList { block });
+                        words.len()
+                    }
+                }
+            } else {
+                end
+            };
+            if invalid_before[end] - invalid_before[start] > 0 {
+                // O(list) scan on the failure path only, for the diagnostic.
+                let (index, word) = words[start..end]
+                    .iter()
+                    .enumerate()
+                    .find(|&(_, &w)| usize::from(w) >= linedef_count)
+                    .map(|(i, &w)| (i, w))
+                    .expect("prefix sums found an invalid entry in this span");
+                let _ = index;
+                match strictness {
+                    Strictness::Strict => {
+                        return Err(MapAssembleError::DanglingReference {
+                            referent: "linedef",
+                            index: i32::from(word),
+                            from: "blockmap block",
+                            count: linedef_count,
+                        });
+                    }
+                    Strictness::Lenient => {
+                        warnings.push(MapWarning::BlockmapListDangling {
+                            block,
+                            index: word,
+                            count: linedef_count,
+                        });
+                        blocks.push(0..0);
+                        continue;
+                    }
+                }
+            }
+            blocks.push(start..end);
+        }
+        Ok(Some(Self {
+            origin_x,
+            origin_y,
+            columns,
+            rows,
+            entries,
+            blocks,
         }))
     }
 }

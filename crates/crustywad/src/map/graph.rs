@@ -376,6 +376,94 @@ impl MapReject {
     }
 }
 
+/// The `BLOCKMAP` lump decoded into a typed spatial index: a grid of
+/// 128×128-map-unit blocks, each listing the linedefs that cross it.
+///
+/// Layout verified against Chocolate Doom `P_LoadBlockMap` (`p_setup.c`) and
+/// `P_BlockLinesIterator` (`p_maputl.c`); grid cell size is `MAPBLOCKUNITS`
+/// (`p_local.h`). Built by [`MapBlockmap::parse`] (directly, or during map
+/// assembly — see [`Map::blockmap`]).
+///
+/// Internally the lump's words are stored once and each block holds a
+/// validated range into them, so offset aliasing (ZDBSP-style whole-list
+/// sharing) and tail sharing (ZokumBSP-style) cost no extra memory
+/// (ADR-0016 §1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapBlockmap {
+    /// Grid origin (map units), from the header's two `i16` fields.
+    pub(crate) origin_x: f64,
+    /// See `origin_x`.
+    pub(crate) origin_y: f64,
+    /// Grid width in blocks.
+    pub(crate) columns: usize,
+    /// Grid height in blocks.
+    pub(crate) rows: usize,
+    /// Every lump word, converted once; block ranges index into this.
+    pub(crate) entries: Vec<LinedefIdx>,
+    /// One validated `entries` span per block, row-major, `columns * rows`
+    /// long.
+    pub(crate) blocks: Vec<std::ops::Range<usize>>,
+}
+
+impl MapBlockmap {
+    /// Grid cell size in map units (Chocolate Doom `MAPBLOCKUNITS`,
+    /// `p_local.h` — verified Task 2 Step 0).
+    const BLOCK_UNITS: f64 = 128.0;
+
+    /// The grid origin in map units.
+    #[must_use]
+    pub fn origin(&self) -> (f64, f64) {
+        (self.origin_x, self.origin_y)
+    }
+
+    /// Grid width in blocks.
+    #[must_use]
+    pub fn columns(&self) -> usize {
+        self.columns
+    }
+
+    /// Grid height in blocks.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// The linedefs crossing block (`col`, `row`), or `None` outside the
+    /// grid.
+    ///
+    /// A literal leading `0` word in the on-disk list is treated as the
+    /// conventional delimiter and excluded (the convention every
+    /// nodebuilder writes and later ports skip — `PrBoom+`'s
+    /// `P_BlockLinesIterator`; vanilla instead reads it as "linedef 0 in
+    /// every block", a known engine quirk). A genuine first entry of
+    /// linedef 0 written *without* a delimiter is indistinguishable and is
+    /// also stripped.
+    #[must_use]
+    pub fn block(&self, col: usize, row: usize) -> Option<&[LinedefIdx]> {
+        if col >= self.columns || row >= self.rows {
+            return None;
+        }
+        Some(&self.entries[self.blocks[row * self.columns + col].clone()])
+    }
+
+    /// Grid lookup by map-space coordinates, or `None` outside the grid
+    /// (including non-finite coordinates).
+    #[must_use]
+    pub fn block_at(&self, x: f64, y: f64) -> Option<&[LinedefIdx]> {
+        let col = ((x - self.origin_x) / Self::BLOCK_UNITS).floor();
+        let row = ((y - self.origin_y) / Self::BLOCK_UNITS).floor();
+        // NaN and negative values are rejected explicitly (rather than via a
+        // negated `>= 0.0`, which clippy flags as unclear for partially
+        // ordered types); a huge finite value instead saturates the cast
+        // below and fails the grid bound inside `block`.
+        if col.is_nan() || row.is_nan() || col < 0.0 || row < 0.0 {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        self.block(col as usize, row as usize)
+    }
+}
+
 /// A non-fatal issue recorded during lenient map assembly.
 ///
 /// Produced by [`Map::assemble_with_options`] in [`Strictness::Lenient`] mode
@@ -446,6 +534,51 @@ pub enum MapWarning {
         expected: usize,
         /// The owning map's sector count.
         sectors: usize,
+    },
+    /// A structurally unusable `BLOCKMAP` lump (short header, non-positive
+    /// dimensions, or truncated offset table) was discarded during lenient
+    /// assembly.
+    #[error("BLOCKMAP lump is malformed ({detail}); discarded during lenient assembly")]
+    MalformedBlockmap {
+        /// What made the lump unusable.
+        detail: &'static str,
+    },
+    /// A `BLOCKMAP` block's offset pointed outside the lump; that block's
+    /// list was emptied during lenient assembly.
+    #[error(
+        "BLOCKMAP block {block} offset {offset} is outside the lump ({words} words); block list emptied during lenient assembly"
+    )]
+    BlockmapBlockOffset {
+        /// The 0-based block (offset-table) index.
+        block: usize,
+        /// The out-of-range word offset.
+        offset: usize,
+        /// The lump's total word count.
+        words: usize,
+    },
+    /// A `BLOCKMAP` block's linedef list had no `0xFFFF` terminator and was
+    /// truncated at the lump end during lenient assembly.
+    #[error(
+        "BLOCKMAP block {block} linedef list is unterminated; truncated during lenient assembly"
+    )]
+    UnterminatedBlockmapList {
+        /// The 0-based block index.
+        block: usize,
+    },
+    /// A `BLOCKMAP` block's list referenced a linedef past the end of the
+    /// linedef arena; the whole block list was emptied during lenient
+    /// assembly (entry-level dropping would require materializing patched
+    /// list copies — see the spec's hardening notes).
+    #[error(
+        "BLOCKMAP block {block} references linedef {index} ({count} available); block list emptied during lenient assembly"
+    )]
+    BlockmapListDangling {
+        /// The 0-based block index.
+        block: usize,
+        /// The first out-of-range linedef index in the list.
+        index: u16,
+        /// The linedef arena length.
+        count: usize,
     },
 }
 
