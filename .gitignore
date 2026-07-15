@@ -45,6 +45,10 @@ docs/guide/mermaid-init.js
 # tests — retail blobs are never committed)
 /PWADS/
 
+# Local extended-node WAD collection (ZDBSP-derived Freedoom variants for the
+# gate-expecting sweep, #269 — regenerable, never committed)
+/PWADS-EXT/
+
 # Benchmark output
 /criterion/
 
