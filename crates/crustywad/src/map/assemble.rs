@@ -465,6 +465,50 @@ fn resolve_node_child(
     }
 }
 
+/// Runs [`normalize_bsp`], degrading the whole BSP in lenient mode when a
+/// reference cannot be recovered by clamping — a child pointing into an
+/// **empty** arena has nothing to clamp to, and BSP data is optional
+/// (ADR-0015 §5), so lenient assembly must not fail on it. The error's
+/// details are preserved as a [`MapWarning::DanglingReference`] and all three
+/// arenas come back empty (the same whole-BSP posture as the
+/// extended-encoding gate). Strict mode propagates the error unchanged.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn normalize_bsp_or_degrade(
+    raw_segs: &[common::Seg],
+    raw_subsectors: &[common::Subsector],
+    raw_nodes: &[common::Node],
+    vertex_count: usize,
+    linedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Vec<MapSeg>, Vec<MapSubsector>, Vec<MapNode>), MapAssembleError> {
+    match normalize_bsp(
+        raw_segs,
+        raw_subsectors,
+        raw_nodes,
+        vertex_count,
+        linedef_count,
+        strictness,
+        warnings,
+    ) {
+        Err(MapAssembleError::DanglingReference {
+            referent,
+            index,
+            from,
+            count,
+        }) if strictness == Strictness::Lenient => {
+            warnings.push(MapWarning::DanglingReference {
+                referent,
+                index,
+                from,
+                count,
+            });
+            Ok((Vec::new(), Vec::new(), Vec::new()))
+        }
+        other => other,
+    }
+}
+
 /// Normalizes the engine-built BSP lumps into the graph arenas (ADR-0015 §1).
 ///
 /// Cross-references resolve with the standard pattern: strict errors on the
@@ -992,7 +1036,7 @@ impl Map {
                     let raw_subsectors =
                         decode_optional::<common::Subsector>(wad, group, "SSECTORS")?;
                     let raw_nodes = decode_optional::<common::Node>(wad, group, "NODES")?;
-                    normalize_bsp(
+                    normalize_bsp_or_degrade(
                         &raw_segs,
                         &raw_subsectors,
                         &raw_nodes,
@@ -1241,7 +1285,7 @@ fn assemble_doom64(
     // is needed here: the nested sub-lumps were already record-decoded by
     // `read_doom64_map` above, so a ZDBSP blob inside the nested WAD fails
     // that decode with the existing `Records`/`TrailingBytes` behavior.
-    let (segs, subsectors, nodes) = normalize_bsp(
+    let (segs, subsectors, nodes) = normalize_bsp_or_degrade(
         &raw.segs,
         &raw.subsectors,
         &raw.nodes,

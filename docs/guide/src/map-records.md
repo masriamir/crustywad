@@ -402,6 +402,13 @@ at the head of the lump. `crustywad`'s classic-path BSP normalizer never attempt
 as fixed-size classic records — doing so would misread the signature bytes as garbage geometry.
 Instead, detecting one of these signatures gates the whole BSP normalization step: in strict mode
 assembly fails with `MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves
-`map.segs()`, `map.subsectors()`, and `map.nodes()` empty and records a
-`MapWarning::UnsupportedNodeEncoding`. Reading these encodings' actual contents is out of scope
+`map.segs()`, `map.subsectors()`, and `map.nodes()` empty and records one
+`MapWarning::UnsupportedNodeEncoding` per gated lump — up to two, when both `NODES` and
+`SSECTORS` carry a signature. Reading these encodings' actual contents is out of scope
 for now (tracked as [#199](https://github.com/masriamir/crustywad/issues/199)).
+
+The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
+a reference that cannot be clamped (for example, a node child pointing into an absent
+`SSECTORS` arena) drops all three arenas, records the dangling reference as a warning, and the
+rest of the map still assembles. BSP data is optional (ADR-0015 §5), so it never fails a
+lenient assembly.

@@ -1130,6 +1130,47 @@ fn bsp_subsector_seg_range_dangling_strict_errors() {
     ));
 }
 
+// BSP data referencing an EMPTY optional arena (SSECTORS absent, NODES
+// present with a subsector child) cannot clamp — there is nothing to clamp
+// to. Strict rejects the inconsistent BSP; lenient degrades the whole BSP
+// (all three arenas empty, like the extended-encoding gate) plus a warning,
+// because BSP is optional data (ADR-0015 §5) and must never make lenient
+// assembly fail.
+#[test]
+fn bsp_child_into_empty_arena_strict_errors_lenient_degrades() {
+    let bytes = common::build_named_lumps(&[
+        ("E1M1", vec![]),
+        ("THINGS", vec![]),
+        ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
+        ("SIDEDEFS", sidedef(0)),
+        ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
+        ("SEGS", seg(0, 1, 0, 0)),
+        ("NODES", node(0x8000, 0x8000)), // subsector children; no SSECTORS lump
+        ("SECTORS", sector()),
+    ]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::DanglingReference {
+            referent: "subsector",
+            count: 0,
+            ..
+        }
+    ));
+
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
+        .expect("optional BSP data must never fail lenient assembly");
+    assert!(map.segs().is_empty());
+    assert!(map.subsectors().is_empty());
+    assert!(map.nodes().is_empty());
+    assert_eq!(map.bsp_root(), None);
+    assert!(!map.warnings().is_empty());
+    assert_eq!(map.linedefs().len(), 1); // geometry intact
+}
+
 // A NODES lump carrying a ZDBSP signature: strict -> structured error naming
 // the encoding; lenient -> empty BSP arenas + warning, geometry intact.
 #[test]
