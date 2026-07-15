@@ -1158,22 +1158,42 @@ fn bsp_each_reference_kind_strict_errors_first() {
     // Dangling END vertex (start is valid, so the end resolve fails first).
     assert!(matches!(
         strict_err(base(seg(0, 9, 0, 0), node(0x8000, 0x8000))),
-        MapAssembleError::DanglingReference { referent: "vertex", index: 9, from: "seg", .. }
+        MapAssembleError::DanglingReference {
+            referent: "vertex",
+            index: 9,
+            from: "seg",
+            ..
+        }
     ));
     // Dangling seg LINEDEF (vertices valid).
     assert!(matches!(
         strict_err(base(seg(0, 1, 7, 0), node(0x8000, 0x8000))),
-        MapAssembleError::DanglingReference { referent: "linedef", index: 7, from: "seg", .. }
+        MapAssembleError::DanglingReference {
+            referent: "linedef",
+            index: 7,
+            from: "seg",
+            ..
+        }
     ));
     // Dangling RIGHT node child (bit 15 clear, one node exists).
     assert!(matches!(
         strict_err(base(seg(0, 1, 0, 0), node(5, 0x8000))),
-        MapAssembleError::DanglingReference { referent: "node", index: 5, from: "node", .. }
+        MapAssembleError::DanglingReference {
+            referent: "node",
+            index: 5,
+            from: "node",
+            ..
+        }
     ));
     // Dangling LEFT node child (right resolves first: subsector 0 exists).
     assert!(matches!(
         strict_err(base(seg(0, 1, 0, 0), node(0x8000, 5))),
-        MapAssembleError::DanglingReference { referent: "node", index: 5, from: "node", .. }
+        MapAssembleError::DanglingReference {
+            referent: "node",
+            index: 5,
+            from: "node",
+            ..
+        }
     ));
 }
 
@@ -1198,7 +1218,12 @@ fn doom64_bsp_dangling_strict_errors_lenient_degrades() {
     let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
     assert!(matches!(
         err,
-        MapAssembleError::DanglingReference { referent: "vertex", index: 9, from: "seg", .. }
+        MapAssembleError::DanglingReference {
+            referent: "vertex",
+            index: 9,
+            from: "seg",
+            ..
+        }
     ));
     let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
         .expect("lenient recovers");
