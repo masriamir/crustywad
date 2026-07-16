@@ -149,6 +149,7 @@ texture and flat fields become a `TextureRef::Index` rather than a name, and its
 colored lighting becomes `MapSector.colors` indexing `Map::lights()`, the map's combined light
 table. Until the texture layer (planned for v0.5.0) can resolve those indices, a Doom 64-sourced
 `Map` cannot be written back out: `write_doom_map` and `write_udmf` both reject it.
+`REJECT` and `BLOCKMAP` decode into typed, queryable structures (`MapReject` sector-visibility lookups, `MapBlockmap` per-block linedef lists) during map assembly.
 UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with
 `write_udmf` / `add_udmf_map` (the `write` feature). The same `Map` graph converts a UDMF
 map to the classic Doom binary lumps with `write_doom_map` / `add_doom_map` — see
