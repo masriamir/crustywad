@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-70a8ad10.js";
+            window.path_to_searchindex_js = "searchindex-ec6f03b6.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -181,7 +181,10 @@
 <p>Doom maps are stored as a group of sequentially named lumps. After the marker lump
 (e.g. <code>E1M1</code>) come the parsed map data lumps. The table below covers the record lumps
 that <code>crustywad</code> decodes; classic Doom maps also include additional lumps such as
-<code>REJECT</code> and <code>BLOCKMAP</code> after <code>SECTORS</code>:</p>
+<code>REJECT</code> and <code>BLOCKMAP</code> after <code>SECTORS</code>. Unlike the flat record lumps below, <code>REJECT</code>
+and <code>BLOCKMAP</code> decode into typed, queryable structures (<code>MapReject</code> sector-visibility
+lookups, <code>MapBlockmap</code> per-block linedef lists) during map assembly — see
+<a href="#reject-and-blockmap">REJECT and BLOCKMAP</a> below.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -563,6 +566,68 @@ a reference that cannot be clamped (for example, a node child pointing into an a
 <code>SSECTORS</code> arena) drops all three arenas, records the dangling reference as a warning, and the
 rest of the map still assembles. BSP data is optional (ADR-0015 §5), so it never fails a
 lenient assembly.</p>
+<h3 id="reject-and-blockmap"><a class="header" href="#reject-and-blockmap">REJECT and BLOCKMAP</a></h3>
+<p>Like the BSP lumps above, <code>REJECT</code> and <code>BLOCKMAP</code> decode into typed, queryable structures during
+map assembly rather than staying raw bytes: <code>map.reject()</code> returns <code>Option&lt;&amp;MapReject&gt;</code> and
+<code>map.blockmap()</code> returns <code>Option&lt;&amp;MapBlockmap&gt;</code>, <code>None</code> when the map carries no (or an empty)
+lump of that kind — an editable PWAD with no built REJECT/BLOCKMAP table is as normal as one with
+no built nodes.</p>
+<p><code>MapReject</code> is a row-major sector-visibility bit matrix, <code>sector_count × sector_count</code> bits,
+LSB-first within each byte (layout verified against Chocolate Doom’s <code>P_LoadReject</code> /
+<code>P_CheckSight</code>):</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+use crustywad::map::{Map, SectorIdx};
+
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&amp;wad, &amp;group)?;
+    if let Some(reject) = map.reject() {
+        for i in 0..reject.sector_count() {
+            let sector = SectorIdx(i);
+            if reject.is_rejected(sector, sector) == Some(true) {
+                println!("sector {i} pre-rejects sight to itself");
+            }
+        }
+    }
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p><code>MapBlockmap</code> is a grid of 128-map-unit blocks, each holding the linedefs that cross it (layout
+verified against Chocolate Doom’s <code>P_LoadBlockMap</code> / <code>P_BlockLinesIterator</code>). <code>map.blockmap()</code>
+exposes <code>origin()</code>, <code>columns()</code>/<code>rows()</code>, <code>block(col, row)</code> (grid-indexed lookup), and
+<code>block_at(x, y)</code> (map-space coordinate lookup, <code>None</code> outside the grid or for non-finite
+coordinates):</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+use crustywad::map::Map;
+
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&amp;wad, &amp;group)?;
+    if let Some(blockmap) = map.blockmap() {
+        if let Some(linedefs) = blockmap.block_at(0.0, 0.0) {
+            println!("{} linedefs cross the block at the origin", linedefs.len());
+        }
+    }
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p>Internally <code>MapBlockmap</code> stores the lump’s words once and each block holds a validated range
+into them, so offset aliasing (ZDBSP-style whole-list sharing) and tail sharing (ZokumBSP-style
+partial-list sharing) cost no extra memory (ADR-0016 §1).</p>
+<p>Both types honor the same strict/lenient policy as the rest of assembly: an undersized <code>REJECT</code>
+table is a strict error (<code>MapAssembleError::UndersizedReject</code>) or a lenient warning with the
+missing bits treated as “not rejected” (<code>MapWarning::UndersizedReject</code>); a malformed <code>BLOCKMAP</code>
+header, an out-of-lump block offset, an unterminated block list, or a block list referencing a
+nonexistent linedef are each a strict error
+(<code>MapAssembleError::MalformedBlockmap</code> / <code>BlockmapBlockOffset</code> / <code>UnterminatedBlockmapList</code> /
+<code>DanglingReference</code>) or a lenient recovery with a matching <code>MapWarning</code> — discarding the whole
+table, truncating the list, or emptying the one affected block, respectively. An empty <code>REJECT</code>
+or <code>BLOCKMAP</code> lump (as <code>crustywad</code>’s own writer emits, ADR-0019 §4) is read back as simply
+absent, in both modes, with no warning.</p>
 
                     </main>
 

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-70a8ad10.js";
+            window.path_to_searchindex_js = "searchindex-ec6f03b6.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -199,8 +199,8 @@
     Map --&gt; SSECTORS["SSECTORS → Subsector\n4 bytes per record"]
     Map --&gt; NODES["NODES → Node\n28 bytes per record"]
     Map --&gt; SECTORS["SECTORS → Sector\n26 bytes per record"]
-    Map --&gt; REJECT["REJECT → RejectLump\n(stub — not yet parsed)"]
-    Map --&gt; BLOCKMAP["BLOCKMAP → BlockmapLump\n(stub — not yet parsed)"]
+    Map --&gt; REJECT["REJECT → MapReject\nsector-visibility bit matrix"]
+    Map --&gt; BLOCKMAP["BLOCKMAP → MapBlockmap\nspatial linedef index"]
 
     NS --&gt; SS["S_START / S_END\n(sprite namespace)"]
     NS --&gt; PP["P_START / P_END\n(patch namespace)"]
@@ -212,7 +212,7 @@
     Special --&gt; PNAMES["PNAMES\n(patch name list — planned)"]
 </pre>
 
-<p>Record-based map lump types are defined in <code>crates/crustywad/src/map/</code> — format-specific records (<code>Thing</code>, <code>Linedef</code>) in <code>doom.rs</code>, and records whose byte layout is shared across formats (<code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>, <code>Subsector</code>, <code>Node</code>, <code>Sector</code>) in <code>common.rs</code> — and decoded via <code>parse_records::&lt;T&gt;</code>. Items marked <strong>stub</strong> (<code>RejectLump</code>, <code>BlockmapLump</code>) have zero-sized placeholder types and are not parsed via <code>parse_records</code>. Items marked <strong>planned</strong> are future milestones with no current typed struct.</p>
+<p>Record-based map lump types are defined in <code>crates/crustywad/src/map/</code> — format-specific records (<code>Thing</code>, <code>Linedef</code>) in <code>doom.rs</code>, and records whose byte layout is shared across formats (<code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>, <code>Subsector</code>, <code>Node</code>, <code>Sector</code>) in <code>common.rs</code> — and decoded via <code>parse_records::&lt;T&gt;</code>. <code>REJECT</code>/<code>BLOCKMAP</code> are variable-length, not fixed-size records, so they decode via <code>MapReject::parse</code>/<code>MapBlockmap::parse</code> (<code>crates/crustywad/src/map/assemble.rs</code>) into <code>MapReject</code>/<code>MapBlockmap</code> (<code>crates/crustywad/src/map/graph.rs</code>), exposed on an assembled map via <code>Map::reject</code>/<code>Map::blockmap</code>. Items marked <strong>planned</strong> are future milestones with no current typed struct.</p>
 
                     </main>
 
