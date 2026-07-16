@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b8e2f6b7.js";
+            window.path_to_searchindex_js = "searchindex-7b450df4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -2457,7 +2457,11 @@ accumulate.</p>
 <a href="https://www.conventionalcommits.org/">Conventional Commits</a> format (<code>feat:</code>, <code>fix:</code>,
 <code>docs:</code>, etc.).</li>
 <li><code>release-plz</code> inspects the commit history and proposes a release PR with a version bump
-and an updated <code>CHANGELOG.md</code>.</li>
+and an updated <code>CHANGELOG.md</code>. Breaking changes must be marked (<code>feat!:</code> or a
+<code>BREAKING CHANGE:</code> footer) for the commit-derived bump to be correct; as a safety net,
+<code>release-plz</code> also runs <a href="https://github.com/obi1kenobi/cargo-semver-checks"><code>cargo-semver-checks</code></a>
+against the previously published version (<code>semver_check</code> in <code>release-plz.toml</code>) so
+unmarked API breakage still produces the required minor bump rather than a patch.</li>
 <li>The maintainer reviews and merges the release PR.</li>
 <li>Once publishing is enabled, <code>release-plz</code> runs <code>cargo publish</code> automatically after the
 release PR merges, in dependency order (<code>crustywad</code> before <code>crustywad-cli</code>).</li>
