@@ -147,7 +147,7 @@ extended fields. **Doom 64** stores each map as a nested WAD inside its `MAPxx` 
 (detected by name **and** magic) and assembles into the same graph — its sidedef/sector
 texture and flat fields become a `TextureRef::Index` rather than a name, and its per-sector
 colored lighting becomes `MapSector.colors` indexing `Map::lights()`, the map's combined light
-table. Until the texture layer (planned for v0.5.0) can resolve those indices, a Doom 64-sourced
+table. Until the texture layer (#156/#157) can resolve those indices, a Doom 64-sourced
 `Map` cannot be written back out: `write_doom_map` and `write_udmf` both reject it.
 `REJECT` and `BLOCKMAP` decode into typed, queryable structures (`MapReject` sector-visibility lookups, `MapBlockmap` per-block linedef lists) during map assembly, and Doom 64's `LEAFS` render leaves decode into a per-subsector `MapLeaf` arena.
 UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with

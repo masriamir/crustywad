@@ -349,7 +349,7 @@ uninterpreted).
 
 Doom 64's sidedef/sector texture and flat fields assemble into `TextureRef::Index` rather than
 `TextureRef::Name` (see [Texture references](#texture-references) above). Until the texture layer
-(planned for v0.5.0) can resolve those indices back to a texture identity, a Doom 64-sourced `Map`
+(#156/#157) can resolve those indices back to a texture identity, a Doom 64-sourced `Map`
 cannot be serialized back out: both `write_doom_map` and `write_udmf` (the `write` feature) reject
 it with `UnsupportedSourceFormat`, in **both** strictness modes, before any per-field validation
 runs.
