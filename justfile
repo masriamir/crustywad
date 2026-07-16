@@ -52,10 +52,10 @@ test-freedoom dir=(justfile_directory() / "tests/fixtures/freedoom"):
 
 # Sweep a local retail-WAD collection: assemble every map of every WAD in both
 # strictness modes (#254). Nothing is fetched — supply your own WADs; the repo's
-# gitignored PWADS/ directory is the default. Use an absolute dir (cargo runs
+# gitignored RETAIL/ directory is the default. Use an absolute dir (cargo runs
 # the test binary with its CWD at the package root, so a relative path resolves
 # against crates/crustywad and a missed directory only prints a stderr skip note).
-test-sweep dir=(justfile_directory() / "PWADS") extdir=(justfile_directory() / "PWADS-EXT"):
+test-sweep dir=(justfile_directory() / "RETAIL") extdir=(justfile_directory() / "RETAIL-EXT"):
     CRUSTYWAD_SWEEP_DIR="{{dir}}" CRUSTYWAD_SWEEP_EXTENDED_DIR="{{extdir}}" cargo test -p crustywad --features sweep-tests --test sweep -- --nocapture
 
 # Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
