@@ -1,10 +1,10 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapNode,
-    MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning,
-    NodeChild, NodeIdx, SectorIdx, SegIdx, SidedefIdx, Special, SubsectorIdx, TextureRef,
-    VertexIdx,
+    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
+    MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,
+    MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx, SegIdx, SidedefIdx, Special,
+    SubsectorIdx, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -147,6 +147,18 @@ pub enum MapAssembleError {
         leaves: usize,
         /// The owning map's subsector count.
         subsectors: usize,
+    },
+    /// The `MACROS` lump was structurally unusable — a non-empty lump
+    /// shorter than its 4-byte header, a negative count, a record running
+    /// past the lump end, or trailing bytes (strict mode; lenient discards
+    /// all macros and warns). The engine itself validates none of this
+    /// (`P_LoadMacros` trusts the header and silently treats sub-8-byte
+    /// lumps as empty under its own `TODO - fixme`); the stricter checks
+    /// are this reader's deliberate divergence.
+    #[error("MACROS lump is malformed: {detail}")]
+    MalformedMacros {
+        /// What made the lump unusable.
+        detail: &'static str,
     },
 }
 
@@ -353,6 +365,103 @@ fn leafs_dangling(
                 count,
             });
             Ok((Vec::new(), Vec::new()))
+        }
+    }
+}
+
+/// Decodes a Doom 64 `MACROS` lump (Doom64 EX `P_LoadMacros`,
+/// `p_setup.cc`): an `i16 macrocount` + `i16 specialcount` header, then per
+/// macro an `i16 count` followed by `count + 1` actions of (`i16 id`,
+/// `i16 tag`, `i16 special`) — the engine reads one more action than the
+/// count field states. Validation is purely structural (macros carry no
+/// arena indices). The engine validates nothing here — its loader
+/// allocates from the untrusted header, can read past the lump end, and
+/// silently treats any sub-8-byte lump as empty (under a `TODO - fixme`)
+/// — so the short-lump and exact-consumption failures are this reader's
+/// deliberate divergences. A negative `macrocount` or per-macro `count` is
+/// likewise rejected (strict) / degraded (lenient): the engine's own
+/// `for (i = 0; i < macrocount; ...)` loops would silently no-op a negative
+/// count rather than reject it, but this reader treats it as malformed
+/// input instead of quietly reading zero macros. `specialcount` (header
+/// bytes 2..4) has unestablished semantics and stays raw-layer-only.
+///
+/// Single forward pass; total actions bounded by `bytes.len() / 6` and
+/// macros by `bytes.len() / 8` (the minimum per-macro record is a 2-byte
+/// count plus at least one 6-byte action, since the engine always reads
+/// `count + 1` actions), with no allocation from untrusted header counts
+/// (ADR-0016 §1).
+fn normalize_macros(
+    bytes: &[u8],
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapMacro>, MapAssembleError> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    if bytes.len() < 4 {
+        return macros_malformed("shorter than the 4-byte header", strictness, warnings);
+    }
+    let macrocount = i16::from_le_bytes([bytes[0], bytes[1]]);
+    if macrocount < 0 {
+        return macros_malformed("negative macro count", strictness, warnings);
+    }
+    let macrocount = usize::try_from(macrocount).expect("checked non-negative above");
+    let mut macros = Vec::new();
+    let mut offset = 4_usize;
+    for _ in 0..macrocount {
+        if bytes.len() - offset < 2 {
+            return macros_malformed(
+                "a macro record runs past the lump end",
+                strictness,
+                warnings,
+            );
+        }
+        let count = i16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        offset += 2;
+        if count < 0 {
+            return macros_malformed("negative action count", strictness, warnings);
+        }
+        // The engine reads count + 1 actions (`P_LoadMacros`).
+        let action_count = usize::try_from(count).expect("checked non-negative above") + 1;
+        if (bytes.len() - offset) / 6 < action_count {
+            return macros_malformed(
+                "a macro's actions run past the lump end",
+                strictness,
+                warnings,
+            );
+        }
+        // Bounded capacity hint: action_count <= remaining / 6, just checked.
+        let mut actions = Vec::with_capacity(action_count);
+        for _ in 0..action_count {
+            let id = i16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+            let tag = i16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+            let special = i16::from_le_bytes([bytes[offset + 4], bytes[offset + 5]]);
+            offset += 6;
+            actions.push(MapMacroAction { id, tag, special });
+        }
+        macros.push(MapMacro { actions });
+    }
+    if offset != bytes.len() {
+        return macros_malformed(
+            "trailing bytes after the last macro record",
+            strictness,
+            warnings,
+        );
+    }
+    Ok(macros)
+}
+
+/// The `MalformedMacros` strict-error / lenient-degrade fork.
+fn macros_malformed(
+    detail: &'static str,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<MapMacro>, MapAssembleError> {
+    match strictness {
+        Strictness::Strict => Err(MapAssembleError::MalformedMacros { detail }),
+        Strictness::Lenient => {
+            warnings.push(MapWarning::MalformedMacros { detail });
+            Ok(Vec::new())
         }
     }
 }
@@ -1531,6 +1640,7 @@ impl Map {
                     subsectors,
                     nodes,
                     leafs: Vec::new(),
+                    macros: Vec::new(),
                     reject,
                     blockmap,
                     warnings,
@@ -1789,6 +1899,8 @@ fn assemble_doom64(
         }
     }
 
+    let macros = normalize_macros(&raw.macros, s, &mut warnings)?;
+
     // Doom64Warning values surface as MapWarning::Doom64 so the caller sees
     // one warning stream regardless of source format.
     warnings.extend(raw.warnings().iter().cloned().map(MapWarning::Doom64));
@@ -1819,6 +1931,7 @@ fn assemble_doom64(
         subsectors,
         nodes,
         leafs: leaf_arena,
+        macros,
         reject,
         blockmap,
         warnings,
@@ -1891,6 +2004,7 @@ fn assemble_udmf(
         subsectors: Vec::new(),
         nodes: Vec::new(),
         leafs: Vec::new(),
+        macros: Vec::new(),
         reject,
         blockmap,
         warnings,

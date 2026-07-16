@@ -881,6 +881,7 @@ mod tests {
             subsectors: Vec::new(),
             nodes: Vec::new(),
             leafs: Vec::new(),
+            macros: Vec::new(),
             reject: None,
             blockmap: None,
             warnings: vec![],

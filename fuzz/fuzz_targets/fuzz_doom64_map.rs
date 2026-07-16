@@ -99,6 +99,27 @@ fuzz_target!(|data: &[u8]| {
                                 "LEAFS walk must consume its lump exactly"
                             );
                         }
+
+                        // #245: MACROS exact-consumption identity — header
+                        // (4) + one count word (2) per macro + 6 bytes per
+                        // action (P_LoadMacros reads count + 1 actions per
+                        // record). A strict success on a NON-EMPTY raw lump
+                        // implies exact consumption (empty is absent, and
+                        // every structural surplus/shortfall is a strict
+                        // error); a lenient success only guarantees it when
+                        // macros survived (a whole-degrade empties them
+                        // while the raw lump keeps its bytes).
+                        if (is_strict && !map.macros.is_empty())
+                            || !assembled.macros().is_empty()
+                        {
+                            let total_actions: usize =
+                                assembled.macros().iter().map(|m| m.actions.len()).sum();
+                            assert_eq!(
+                                4 + assembled.macros().len() * 2 + total_actions * 6,
+                                map.macros.len(),
+                                "MACROS walk must consume its lump exactly"
+                            );
+                        }
                         std::hint::black_box(&assembled);
                     }
                 }

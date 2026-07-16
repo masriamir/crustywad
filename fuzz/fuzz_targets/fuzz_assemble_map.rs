@@ -42,6 +42,10 @@ fuzz_target!(|data: &[u8]| {
                 // whole-map assembly can never contribute more than one
                 // LEAFS-related warning, verified directly against
                 // `normalize_leafs`, not derived from this comment alone.
+                // `normalize_macros` likewise emits at most one warning per
+                // map (whole-degrade on first structural failure; success
+                // emits zero) — verified directly against `normalize_macros`
+                // in assemble.rs.
                 let warning_count = map.warnings().len();
                 // Saturating arithmetic keeps the bound meaningful even for a
                 // pathologically large synthesized map (no overflow).
@@ -57,6 +61,7 @@ fuzz_target!(|data: &[u8]| {
                     .saturating_add(map.subsectors().len())
                     .saturating_add(map.nodes().len().saturating_mul(2))
                     .saturating_add(2)
+                    .saturating_add(1)
                     .saturating_add(1);
                 assert!(
                     warning_count <= bound,

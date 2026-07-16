@@ -431,7 +431,7 @@ proptest! {
 // --- #244: LEAFS decode onto the Map graph ---
 
 use crustywad::Wad;
-use crustywad::map::{Map, MapLeaf, MapWarning, SegIdx, VertexIdx};
+use crustywad::map::{Map, MapLeaf, MapMacroAction, MapWarning, SegIdx, VertexIdx};
 
 /// Encodes per-subsector leaf lists into LEAFS lump bytes: for each list a
 /// u16 count then count × (u16 vertex, i16 seg — supplied here as its u16
@@ -751,4 +751,220 @@ fn leafs_surplus_records_report_full_count_without_decoding_extras() {
             subsectors: 2
         }
     )));
+}
+
+// --- #245: MACROS decode onto the Map graph ---
+
+/// Encodes macro defs into `MACROS` lump bytes. Each def is the FULL entry
+/// list the engine reads (count + 1 entries, `P_LoadMacros`); the on-disk
+/// count field is written as one less than the list length. Header
+/// specialcount is written as 0 (semantics unestablished; raw-layer only).
+fn macros_bytes(defs: &[&[(i16, i16, i16)]]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend(i16::try_from(defs.len()).unwrap().to_le_bytes());
+    bytes.extend(0_i16.to_le_bytes());
+    for actions in defs {
+        assert!(!actions.is_empty(), "engine reads count + 1 >= 1 entries");
+        bytes.extend(i16::try_from(actions.len() - 1).unwrap().to_le_bytes());
+        for &(id, tag, special) in *actions {
+            bytes.extend(id.to_le_bytes());
+            bytes.extend(tag.to_le_bytes());
+            bytes.extend(special.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+/// A minimal Doom 64 map (no BSP, no leaves) carrying the given MACROS
+/// bytes.
+fn d64_map_with_macros(macros: &[u8]) -> Vec<u8> {
+    common::build_doom64_map_wad_from(
+        "MAP01",
+        &common::Doom64Lumps {
+            linedefs: &common::d64_linedef(0, 1, 0, 0, 0xffff),
+            sidedefs: &common::d64_sidedef(0, 0, 0, 0),
+            vertexes: &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+            sectors: &common::d64_sector(0, 0, [0; 5], 0),
+            lights: &common::d64_light(0, 0, 0, 0),
+            macros,
+            ..common::Doom64Lumps::default()
+        },
+    )
+}
+
+#[test]
+fn macros_decode_pins_count_plus_one_and_fields() {
+    // Two macros. The engine reads count + 1 actions per macro
+    // (P_LoadMacros: `count = macros.def[i].count + 1`), so the on-disk
+    // counts here are 1 and 2 while the decoded action lists hold 2 and 3.
+    let lump = macros_bytes(&[
+        &[(202, 1, 5), (0, 0, 0)],
+        &[(100, 2, 8), (101, 2, 9), (0, 0, 0)],
+    ]);
+    let map = assemble_d64(d64_map_with_macros(&lump)).unwrap();
+
+    assert_eq!(map.macros().len(), 2);
+    assert_eq!(map.macros()[0].actions.len(), 2);
+    assert_eq!(
+        map.macros()[0].actions[0],
+        MapMacroAction {
+            id: 202,
+            tag: 1,
+            special: 5
+        }
+    );
+    assert_eq!(
+        map.macros()[0].actions[1],
+        MapMacroAction {
+            id: 0,
+            tag: 0,
+            special: 0
+        }
+    );
+    assert_eq!(map.macros()[1].actions.len(), 3);
+    assert_eq!(
+        map.macros()[1].actions[1],
+        MapMacroAction {
+            id: 101,
+            tag: 2,
+            special: 9
+        }
+    );
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn macros_empty_lump_is_absent_and_silent() {
+    // The default fixture carries an empty MACROS lump ("not built").
+    let lump: &[u8] = &[];
+    let map = assemble_d64(d64_map_with_macros(lump)).unwrap();
+    assert!(map.macros().is_empty());
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn macros_zero_count_header_only_is_valid_and_silent() {
+    // macrocount == 0 with exactly the 4-byte header: legal, empty.
+    let map = assemble_d64(d64_map_with_macros(&macros_bytes(&[]))).unwrap();
+    assert!(map.macros().is_empty());
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn macros_short_lump_strict_errors_lenient_degrades() {
+    // 2 bytes: non-empty but shorter than the header. The engine silently
+    // swallows this (its own `TODO - fixme`); we deliberately do not.
+    let lump: &[u8] = &[0x01, 0x00];
+    assert!(matches!(
+        assemble_d64(d64_map_with_macros(lump)).unwrap_err(),
+        crustywad::map::MapAssembleError::MalformedMacros { .. }
+    ));
+    let map = assemble_d64_lenient(d64_map_with_macros(lump));
+    assert!(map.macros().is_empty());
+    assert!(
+        map.warnings()
+            .iter()
+            .any(|w| matches!(w, MapWarning::MalformedMacros { .. }))
+    );
+}
+
+#[test]
+fn macros_negative_counts_strict_error_lenient_degrade() {
+    // Negative macrocount (-1) in the header.
+    let mut neg_macrocount = Vec::new();
+    neg_macrocount.extend((-1_i16).to_le_bytes());
+    neg_macrocount.extend(0_i16.to_le_bytes());
+    // Negative per-macro action count (-2): valid header claiming 1 macro.
+    let mut neg_action_count = Vec::new();
+    neg_action_count.extend(1_i16.to_le_bytes());
+    neg_action_count.extend(0_i16.to_le_bytes());
+    neg_action_count.extend((-2_i16).to_le_bytes());
+    for lump in [neg_macrocount, neg_action_count] {
+        assert!(matches!(
+            assemble_d64(d64_map_with_macros(&lump)).unwrap_err(),
+            crustywad::map::MapAssembleError::MalformedMacros { .. }
+        ));
+        let map = assemble_d64_lenient(d64_map_with_macros(&lump));
+        assert!(map.macros().is_empty());
+        assert_eq!(
+            map.warnings()
+                .iter()
+                .filter(|w| matches!(w, MapWarning::MalformedMacros { .. }))
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn macros_truncated_strict_error_lenient_degrade() {
+    // Header promises 2 macros; only one complete record present.
+    let mut lump = macros_bytes(&[&[(202, 1, 5), (0, 0, 0)]]);
+    lump[0] = 2; // inflate macrocount past the available records
+    assert!(matches!(
+        assemble_d64(d64_map_with_macros(&lump)).unwrap_err(),
+        crustywad::map::MapAssembleError::MalformedMacros { .. }
+    ));
+    // A macro whose promised actions run past the lump end.
+    let mut short_actions = macros_bytes(&[&[(202, 1, 5), (0, 0, 0)]]);
+    short_actions[4] = 5; // count word: promises 6 actions, only 2 present
+    assert!(matches!(
+        assemble_d64(d64_map_with_macros(&short_actions)).unwrap_err(),
+        crustywad::map::MapAssembleError::MalformedMacros { .. }
+    ));
+    let map = assemble_d64_lenient(d64_map_with_macros(&short_actions));
+    assert!(map.macros().is_empty());
+}
+
+#[test]
+fn macros_trailing_bytes_strict_error_lenient_degrade() {
+    // A complete, valid lump plus one stray byte: exact consumption fails.
+    let mut lump = macros_bytes(&[&[(202, 1, 5), (0, 0, 0)]]);
+    lump.push(0xAA);
+    assert!(matches!(
+        assemble_d64(d64_map_with_macros(&lump)).unwrap_err(),
+        crustywad::map::MapAssembleError::MalformedMacros { .. }
+    ));
+    let map = assemble_d64_lenient(d64_map_with_macros(&lump));
+    assert!(map.macros().is_empty());
+    assert_eq!(
+        map.warnings()
+            .iter()
+            .filter(|w| matches!(w, MapWarning::MalformedMacros { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn non_doom64_maps_expose_empty_macros() {
+    let bytes = common::build_doom_map_wad("MAP01", vec![], vec![], vec![], vec![], vec![]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert!(map.macros().is_empty());
+}
+
+proptest! {
+    #[test]
+    fn macros_roundtrip_arbitrary_valid_defs(
+        defs in proptest::collection::vec(
+            proptest::collection::vec(
+                (proptest::num::i16::ANY, proptest::num::i16::ANY, proptest::num::i16::ANY),
+                1..4,
+            ),
+            0..4,
+        )
+    ) {
+        let borrowed: Vec<&[(i16, i16, i16)]> = defs.iter().map(Vec::as_slice).collect();
+        let lump = macros_bytes(&borrowed);
+        let map = assemble_d64(d64_map_with_macros(&lump)).unwrap();
+
+        prop_assert_eq!(map.macros().len(), defs.len());
+        for (decoded, expected) in map.macros().iter().zip(&defs) {
+            prop_assert_eq!(decoded.actions.len(), expected.len());
+            for (action, &(id, tag, special)) in decoded.actions.iter().zip(expected) {
+                prop_assert_eq!(*action, MapMacroAction { id, tag, special });
+            }
+        }
+    }
 }
