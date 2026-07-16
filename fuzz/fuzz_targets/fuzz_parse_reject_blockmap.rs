@@ -34,8 +34,21 @@ fuzz_target!(|data: &[u8]| {
         {
             let blocks = blockmap.columns() * blockmap.rows();
             assert!(4 + blocks <= words);
-            assert!(warnings.len() <= blocks);
+            // At most 2 per block: an unterminated list is truncated
+            // (warning 1) and the truncated span may still carry a
+            // dangling linedef that empties the block (warning 2); every
+            // other lenient recovery `continue`s after its single warning.
+            assert!(warnings.len() <= 2 * blocks);
         } else {
+            // Not `Ok(Some(_))` is reachable only via a pre-block-loop
+            // `malformed` check (empty/too-short/non-positive
+            // dimensions/offset-table-overflow) or a strict-mode `Err` from
+            // inside the loop. The block loop itself never returns
+            // `Ok(None)`, so per-block warnings can never combine with this
+            // branch: lenient `malformed` pushes exactly 1 warning before
+            // returning `Ok(None)`, and every strict `Err` (pre-loop or
+            // in-loop) returns before pushing any warning. So 1 is the true
+            // bound, not just a loose cap.
             assert!(warnings.len() <= 1);
         }
     }
