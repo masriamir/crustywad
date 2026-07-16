@@ -310,6 +310,30 @@ pub struct MapLeaf {
     pub seg: Option<SegIdx>,
 }
 
+/// One action of a Doom 64 macro script (Doom64 EX `P_LoadMacros`,
+/// `p_setup.cc`). Macros exist only on [`MapFormat::Doom64`] maps; see
+/// [`Map::macros`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapMacroAction {
+    /// The action's line-special/macro-op identifier.
+    pub id: i16,
+    /// The tag the action targets — a symbolic sector/line tag, not an
+    /// arena index (macros carry no cross-references).
+    pub tag: i16,
+    /// The action's special value.
+    pub special: i16,
+}
+
+/// One Doom 64 macro: the engine-visible action sequence, decoded
+/// read-only (execution semantics are out of scope; see the ACS epic).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapMacro {
+    /// The macro's actions — the on-disk `count + 1` entries, verbatim:
+    /// the engine reads one more action than the record's count field
+    /// states (`P_LoadMacros`).
+    pub actions: Vec<MapMacroAction>,
+}
+
 /// A normalized subsector (a leaf of the BSP tree): a contiguous run of segs,
 /// plus — on Doom 64 maps — a run of render leaves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -640,6 +664,14 @@ pub enum MapWarning {
         /// The referenced arena's length.
         count: usize,
     },
+    /// The `MACROS` lump was structurally unusable (short header, negative
+    /// count, truncated record, or trailing bytes); all macros were
+    /// discarded during lenient assembly.
+    #[error("MACROS lump is malformed ({detail}); all macros discarded during lenient assembly")]
+    MalformedMacros {
+        /// What made the lump unusable.
+        detail: &'static str,
+    },
 }
 
 /// An assembled Doom map graph: normalized elements addressed by index,
@@ -663,6 +695,7 @@ pub struct Map {
     pub(crate) subsectors: Vec<MapSubsector>,
     pub(crate) nodes: Vec<MapNode>,
     pub(crate) leafs: Vec<MapLeaf>,
+    pub(crate) macros: Vec<MapMacro>,
     pub(crate) reject: Option<MapReject>,
     pub(crate) blockmap: Option<MapBlockmap>,
     pub(crate) warnings: Vec<MapWarning>,
@@ -772,6 +805,19 @@ impl Map {
         &self.leafs
     }
 
+    /// All decoded Doom 64 macros, in lump order. Empty for every source
+    /// format except [`MapFormat::Doom64`], for a Doom 64 map that has
+    /// none, and after a lenient whole-`MACROS` degrade.
+    ///
+    /// The `MACROS` header's second field (`specialcount`) has
+    /// unestablished semantics and is deliberately not carried into the
+    /// graph — the raw [`Doom64Map`](crate::map::Doom64Map) bytes retain
+    /// it (interpreting it is the ACS spike's decision).
+    #[must_use]
+    pub fn macros(&self) -> &[MapMacro] {
+        &self.macros
+    }
+
     /// The decoded `REJECT` sector-visibility table, or `None` when the
     /// group carried no `REJECT` lump or an empty one ("not built",
     /// ADR-0019 §4).
@@ -872,6 +918,7 @@ mod tests {
             subsectors: Vec::new(),
             nodes: Vec::new(),
             leafs: Vec::new(),
+            macros: Vec::new(),
             reject: None,
             blockmap: None,
             warnings: vec![],
