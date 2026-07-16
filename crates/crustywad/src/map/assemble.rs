@@ -378,12 +378,18 @@ fn leafs_dangling(
 /// allocates from the untrusted header, can read past the lump end, and
 /// silently treats any sub-8-byte lump as empty (under a `TODO - fixme`)
 /// — so the short-lump and exact-consumption failures are this reader's
-/// deliberate divergences. `specialcount` (header bytes 2..4) has
-/// unestablished semantics and stays raw-layer-only.
+/// deliberate divergences. A negative `macrocount` or per-macro `count` is
+/// likewise rejected (strict) / degraded (lenient): the engine's own
+/// `for (i = 0; i < macrocount; ...)` loops would silently no-op a negative
+/// count rather than reject it, but this reader treats it as malformed
+/// input instead of quietly reading zero macros. `specialcount` (header
+/// bytes 2..4) has unestablished semantics and stays raw-layer-only.
 ///
 /// Single forward pass; total actions bounded by `bytes.len() / 6` and
-/// macros by `bytes.len() / 2`, with no allocation from untrusted header
-/// counts (ADR-0016 §1).
+/// macros by `bytes.len() / 8` (the minimum per-macro record is a 2-byte
+/// count plus at least one 6-byte action, since the engine always reads
+/// `count + 1` actions), with no allocation from untrusted header counts
+/// (ADR-0016 §1).
 fn normalize_macros(
     bytes: &[u8],
     strictness: Strictness,

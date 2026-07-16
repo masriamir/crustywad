@@ -299,3 +299,41 @@ decodes it during `assemble_doom64`:
   interlocked render data and partial salvage would mislead.
 - `Doom64Map.leafs` (the raw layer) is unchanged; decoding is an assembly
   concern, consistent with #256's REJECT/BLOCKMAP.
+
+## Amendment (2026-07-16, #245): MACROS decoded onto the graph
+
+ADR-0018 deferred `MACROS` as raw bytes; this amendment (implemented by
+#245, closing Epic #240) decodes it during `assemble_doom64`:
+
+- **On-disk layout** (Doom64 EX `P_LoadMacros`,
+  `src/engine/playloop/p_setup.cc`): an `i16 macrocount` + `i16
+  specialcount` header, then per macro an `i16 count` followed by
+  `count + 1` actions of (`i16 id`, `i16 tag`, `i16 special`) — the engine
+  reads one more action than the count field states. Observed: the retail
+  `DOOM64.WAD` (40 maps, 673 macros total) does **not** treat the trailing
+  entry as a fixed terminator — 406 of 673 macros carry real, non-zero
+  `id`/`tag`/`special` data in that final action, while the remaining 267
+  hold an all-zero action. The `count + 1` read is load-bearing on live
+  retail data, not a defensive-only allowance.
+- **Graph shape:** `MapMacro { actions: Vec<MapMacroAction> }` on
+  `Map::macros()`, lump order; empty for every other source format (the
+  `lights`/`leafs` precedent). Macros carry no arena indices (`tag` is a
+  symbolic sector/line tag), so validation is purely structural.
+- **Deliberate divergences from the engine:** `P_LoadMacros` validates
+  nothing — it allocates from the untrusted header, can read past the lump
+  end, and silently treats any sub-8-byte lump as empty under its own
+  `TODO - fixme`. This reader errors (strict) or degrades-with-warning
+  (lenient) on a short non-empty lump, negative counts, truncated records,
+  and trailing bytes (exact consumption). Empty lump = absent, silently.
+  Negative `macrocount`/per-macro `count` values are a further divergence:
+  the engine's own `for (i = 0; i < macrocount; ...)` loops would silently
+  no-op a negative count (the loop body never executes) rather than reject
+  it, but this reader treats a negative count as malformed input in both
+  modes instead of quietly reading zero macros.
+- **Lenient policy is whole-MACROS degrade** (one warning, first failure),
+  matching the LEAFS amendment above.
+- **`specialcount` is raw-layer-only:** its semantics are unestablished;
+  `Doom64Map.macros` retains the bytes, and interpreting it belongs to the
+  ACS spike (#248). This decode deliberately creates no execution
+  machinery, leaving #248 unconstrained (the #245/#242 cross-link).
+- The retail sweep (40 Doom 64 maps, real MACROS) passed strict-clean.
