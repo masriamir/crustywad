@@ -124,7 +124,11 @@ The workflow:
    [Conventional Commits](https://www.conventionalcommits.org/) format (`feat:`, `fix:`,
    `docs:`, etc.).
 2. `release-plz` inspects the commit history and proposes a release PR with a version bump
-   and an updated `CHANGELOG.md`.
+   and an updated `CHANGELOG.md`. Breaking changes must be marked (`feat!:` or a
+   `BREAKING CHANGE:` footer) for the commit-derived bump to be correct; as a safety net,
+   `release-plz` also runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks)
+   against the previously published version (`semver_check` in `release-plz.toml`) so
+   unmarked API breakage still produces the required minor bump rather than a patch.
 3. The maintainer reviews and merges the release PR.
 4. Once publishing is enabled, `release-plz` runs `cargo publish` automatically after the
    release PR merges, in dependency order (`crustywad` before `crustywad-cli`).
