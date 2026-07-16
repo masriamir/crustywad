@@ -4,6 +4,24 @@ use libfuzzer_sys::fuzz_target;
 use crustywad::ParseOptions;
 use crustywad::map::read_doom64_map;
 
+/// Wraps nested-WAD map bytes as a single `MAP01` lump in an outer PWAD.
+fn wrap_as_map_lump(nested: &[u8]) -> Vec<u8> {
+    let mut wad = Vec::with_capacity(12 + nested.len() + 16);
+    wad.extend_from_slice(b"PWAD");
+    wad.extend_from_slice(&1_i32.to_le_bytes());
+    let dir_offset = i32::try_from(12 + nested.len()).unwrap_or(i32::MAX);
+    wad.extend_from_slice(&dir_offset.to_le_bytes());
+    wad.extend_from_slice(nested);
+    wad.extend_from_slice(&12_i32.to_le_bytes());
+    wad.extend_from_slice(
+        &i32::try_from(nested.len())
+            .unwrap_or(i32::MAX)
+            .to_le_bytes(),
+    );
+    wad.extend_from_slice(b"MAP01\0\0\0");
+    wad
+}
+
 fuzz_target!(|data: &[u8]| {
     // Path 1: arbitrary bytes must never panic. Most inputs are rejected up
     // front by the IWAD/PWAD magic guard (`Doom64ReadError::NotADoom64Map`);
@@ -54,6 +72,33 @@ fuzz_target!(|data: &[u8]| {
             "warning count {} exceeds one-per-expected-lump bound",
             map.warnings().len()
         );
+
+        // Path 3 (#244): the same nested-WAD bytes assembled through the
+        // graph, in both strictness modes. Oracle: no panic; on a
+        // successful strict-or-lenient decode with a non-empty leaf arena,
+        // the LEAFS walk consumed its lump exactly — every leaf entry is 4
+        // bytes plus a 2-byte count per subsector record (P_LoadLeafs
+        // stride), so the sizes must reconcile with the raw lump.
+        let outer = wrap_as_map_lump(&input);
+        if let Ok(wad) = crustywad::Wad::from_bytes(outer) {
+            if let Some(group) = wad.map_group("MAP01") {
+                for options in [ParseOptions::strict(), ParseOptions::lenient()] {
+                    if let Ok(assembled) =
+                        crustywad::map::Map::assemble_with_options(&wad, &group, options)
+                    {
+                        if !assembled.leafs().is_empty() {
+                            assert_eq!(
+                                assembled.leafs().len() * 4 + assembled.subsectors().len() * 2,
+                                map.leafs.len(),
+                                "LEAFS walk must consume its lump exactly"
+                            );
+                        }
+                        std::hint::black_box(&assembled);
+                    }
+                }
+            }
+        }
+
         std::hint::black_box(&map);
     }
 });

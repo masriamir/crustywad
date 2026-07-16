@@ -31,7 +31,17 @@ fuzz_target!(|data: &[u8]| {
                 // this comment alone. Plus at most 2 more from the classic-
                 // only extended-node-encoding gate, which can warn once each
                 // for NODES and SSECTORS in lenient mode (Doom 64 has no such
-                // gate, so this constant is a safe over-count there).
+                // gate, so this constant is a safe over-count there). Plus a
+                // flat +1 for the Doom 64 LEAFS decode (#244):
+                // `normalize_leafs` in assemble.rs returns immediately after
+                // pushing at most one warning on its first failure
+                // (`LeafCountMismatch`, `MalformedLeafs`, or
+                // `LeafsDangling`, each via a `leafs_malformed`/
+                // `leafs_dangling` helper that returns in the same match
+                // arm), and pushes zero on a successful decode — so one
+                // whole-map assembly can never contribute more than one
+                // LEAFS-related warning, verified directly against
+                // `normalize_leafs`, not derived from this comment alone.
                 let warning_count = map.warnings().len();
                 // Saturating arithmetic keeps the bound meaningful even for a
                 // pathologically large synthesized map (no overflow).
@@ -46,7 +56,8 @@ fuzz_target!(|data: &[u8]| {
                     .saturating_add(map.segs().len().saturating_mul(3))
                     .saturating_add(map.subsectors().len())
                     .saturating_add(map.nodes().len().saturating_mul(2))
-                    .saturating_add(2);
+                    .saturating_add(2)
+                    .saturating_add(1);
                 assert!(
                     warning_count <= bound,
                     "warning count {warning_count} exceeded upper bound {bound}"

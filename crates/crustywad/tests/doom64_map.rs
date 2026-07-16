@@ -606,6 +606,15 @@ fn leafs_trailing_partial_bytes_strict_errors_lenient_degrades() {
         assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err(),
         crustywad::map::MapAssembleError::MalformedLeafs { .. }
     ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+    assert!(
+        map.warnings()
+            .iter()
+            .any(|w| matches!(w, MapWarning::MalformedLeafs { .. }))
+    );
 }
 
 #[test]
@@ -625,6 +634,7 @@ fn leafs_dangling_vertex_strict_errors_lenient_degrades() {
 
     let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
     assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
     assert!(map.warnings().iter().any(|w| matches!(
         w,
         MapWarning::LeafsDangling {
@@ -652,6 +662,7 @@ fn leafs_dangling_seg_strict_errors_lenient_degrades() {
 
     let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
     assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
     assert!(map.warnings().iter().any(|w| matches!(
         w,
         MapWarning::LeafsDangling {
@@ -671,4 +682,37 @@ fn non_doom64_maps_expose_empty_leafs() {
     let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
     assert!(map.leafs().is_empty());
     assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+}
+
+proptest! {
+    #[test]
+    fn leafs_roundtrip_arbitrary_valid_lists(
+        lists in proptest::collection::vec(
+            proptest::collection::vec((0_u16..2, proptest::bool::ANY), 0..4),
+            2..=2,
+        )
+    ) {
+        // Exactly 2 subsectors (matching the fixture); vertex < 2 (the
+        // fixture's vertex count); seg is either the sentinel or seg 0.
+        let encoded: Vec<Vec<(u16, u16)>> = lists
+            .iter()
+            .map(|l| l.iter().map(|&(v, s)| (v, if s { 0 } else { 0xFFFF })).collect())
+            .collect();
+        let borrowed: Vec<&[(u16, u16)]> = encoded.iter().map(Vec::as_slice).collect();
+        let bytes = leafs_bytes(&borrowed);
+        let map = assemble_d64(d64_map_with_leafs(&bytes)).unwrap();
+
+        let total: usize = encoded.iter().map(Vec::len).sum();
+        prop_assert_eq!(map.leafs().len(), total);
+        let mut cursor = 0_usize;
+        for (i, list) in encoded.iter().enumerate() {
+            let range = map.subsectors()[i].leafs.clone();
+            prop_assert_eq!(range.clone(), cursor..cursor + list.len());
+            for (leaf, &(v, s)) in map.leafs()[range].iter().zip(list) {
+                prop_assert_eq!(leaf.vertex, VertexIdx(usize::from(v)));
+                prop_assert_eq!(leaf.seg, if s == 0xFFFF { None } else { Some(SegIdx(0)) });
+            }
+            cursor += list.len();
+        }
+    }
 }
