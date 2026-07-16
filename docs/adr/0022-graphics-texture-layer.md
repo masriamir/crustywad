@@ -71,15 +71,16 @@ the first texture in the section. This is the exact anti-pattern this ADR
 rejects for crustywad: a miss must be an explicit `None` plus a warning, never
 a silent substitute value.
 
-**Collisions are real, not theoretical**: a 16-bit hash over up to 8 uppercase
-characters has a large but finite domain, and the engine's own tie-break rule
-(first match in disk order) is therefore load-bearing, not incidental — a
-resolver that picked, say, last-match or an arbitrary match would diverge from
-the engine on any WAD with a collision. The empirical pass across the retail
-`DOOM64.WAD`'s `MAP01` resolved all 82 distinct references with zero misses
-using exactly this first-match rule (samples: `32→SDFLTAB`, `111→"?"` — a
-texture literally named `?`, `4098→SFLATAE`), which validates the algorithm
-and the tie-break rule against real data rather than engine source alone.
+**Collisions are structurally possible, not observed**: a 16-bit hash over up
+to 8 uppercase characters has a large but finite domain, so the engine's own
+tie-break rule (first match in disk order) is load-bearing for any WAD that
+does produce one — a resolver that picked, say, last-match or an arbitrary
+match would diverge from the engine on such a WAD. The empirical pass across
+the retail `DOOM64.WAD`'s `MAP01` observed zero collisions: all 82 distinct
+references resolved uniquely (82/82) with zero misses using exactly this
+first-match rule (samples: `32→SDFLTAB`, `111→"?"` — a texture literally named
+`?`, `4098→SFLATAE`), which validates the algorithm and the tie-break rule
+against real data rather than engine source alone.
 
 **Documentation correction.** `TextureRef::Index`'s current rustdoc reads:
 
@@ -111,9 +112,15 @@ markers," and today that logic does not exist anywhere in the crate.
 **Marker inventory**, from the two research passes:
 
 - **Classic:** `F_START`/`F_END` (flats), `S_START`/`S_END` (sprites),
-  `P_START`/`P_END` (patches) — plus the IWADs' own **nested** sub-namespaces
-  `F1_`/`F2_START..END` and `S1_`/`S2_START..END`, and the community-standard
-  `FF_`/`PP_` variants used by PWAD tooling.
+  `P_START`/`P_END` (patches) — plus nested sub-namespaces `F1_`/`F2_START..END`
+  and `P1_`/`P2_START..END` (a third `F3_`/`P3_` pair in Doom II-lineage IWADs),
+  verified against the retail collection: DOOM/DOOM2/Heretic/Hexen IWADs.
+  Sprites do **not** nest in any retail IWAD — no `S1_`/`S2_` pair appears
+  anywhere in the collection. Boom additionally recognizes a doubled-first-letter
+  alias rule for single-character prefixes (`FF_`/`PP_`/`SS_` aliasing
+  `F_`/`P_`/`S_`), per PrBoom+'s `w_wad.c` `IsMarker`:
+  > doubled first character test for single-character prefixes only
+  > FF_\* is valid alias for F_\*, but HI_\* should not allow HHI_\*
 - **Doom 64:** `S_START..END` (sprites), `T_START..END` (world textures —
   walls *and* flats share this one pool, see §4), `DS_START..END` (digital
   sound); `G_START..END` appears in Doom64 EX's own `wadgen` emission order
@@ -241,7 +248,8 @@ structured error — `UdmfWriteError::UnsupportedSourceFormat { format:
 MapFormat }` and `DoomWriteError::UnsupportedSourceFormat { format: MapFormat
 }` — for a `MapFormat::Doom64` map in **both** strictness modes," and:
 "Lifting the rejection — resolving `Index` to names during conversion — is
-explicitly the v0.5.0 texture layer's job." This ADR performs that amendment:
+explicitly the v0.5.0 texture layer's job, extending ADR-0019's reversibility
+inventory when it lands." This ADR performs that amendment:
 once every `TextureRef::Index` on a Doom 64-sourced map resolves to a name via
 the hash table, writers accept the map instead of unconditionally rejecting
 it.
@@ -421,6 +429,31 @@ impl Wad {
    and RGBA convenience together give a complete, self-contained read path
    with no external dependency, matching how map parsing already ships
    fully in core.
+
+## Consequences
+
+- The five staged issues (§ Staging table) supersede #156/#157's original
+  draft scopes — those two issues are re-scoped rather than closed, and no
+  longer describe the full graphics surface on their own.
+- ADR-0021 §5's write/convert-gate contract is amended, not replaced: the
+  `MapFormat::Doom64` structured-reject stays in force for every writer path
+  except the specific lift issue 4 implements (`TextureRef::Index` resolved
+  to a name via the hash table); colored lighting's gate is untouched by this
+  ADR.
+- A new optional-dependency class enters the crate via `doom64-gfx` (the
+  `png` crate) — the first optional runtime dependency since `mmap`'s
+  `memmap2` (ADR-0005 lineage); the four-place feature-flag sync rule applies
+  once issue 5 lands the feature, not to this ADR.
+- The §6 hardening table is this surface's fuzz-target charter, not a
+  one-time checklist: each of its rows maps to one of the three staged fuzz
+  targets, and every implementation issue is expected to extend it rather
+  than treat ADR-0016 compliance as satisfied by this ADR alone.
+- `TextureRef::Index`'s rustdoc correction (§1) lands with issue 4, alongside
+  the name-hash function and resolution table it documents — not as a
+  standalone doc-only change.
+- `crates/crustywad/src/map/graph.rs`'s `TextureRef` and the ADR-0021 API
+  surface are otherwise unchanged: no renaming, no new enum variants beyond
+  what ADR-0021 already shipped.
 
 ## More information
 
