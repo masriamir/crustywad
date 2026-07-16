@@ -298,11 +298,27 @@ pub struct MapSeg {
     pub offset: i32,
 }
 
-/// A normalized subsector (a leaf of the BSP tree): a contiguous run of segs.
+/// One Doom 64 render leaf: a corner of its subsector's convex polygon
+/// (Doom64 EX `P_LoadLeafs`, `p_setup.cc`). Leaves exist only on
+/// [`MapFormat::Doom64`] maps; see [`Map::leafs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapLeaf {
+    /// The leaf corner's vertex.
+    pub vertex: VertexIdx,
+    /// The seg this leaf edge follows, or `None` for the on-disk `-1`
+    /// sentinel ("no seg": the edge is implicit geometry).
+    pub seg: Option<SegIdx>,
+}
+
+/// A normalized subsector (a leaf of the BSP tree): a contiguous run of segs,
+/// plus — on Doom 64 maps — a run of render leaves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapSubsector {
     /// The validated `first_seg..first_seg + seg_count` run into [`Map::segs`].
     pub segs: std::ops::Range<usize>,
+    /// The validated run into [`Map::leafs`]; `0..0` for every source format
+    /// except Doom 64, and after a lenient whole-`LEAFS` degrade.
+    pub leafs: std::ops::Range<usize>,
 }
 
 /// A normalized BSP node: a partition line plus its two children and their
@@ -590,6 +606,40 @@ pub enum MapWarning {
         /// The linedef arena length.
         count: usize,
     },
+    /// The `LEAFS` lump was structurally unusable (truncated record or
+    /// trailing partial bytes); all leaves were discarded during lenient
+    /// assembly.
+    #[error("LEAFS lump is malformed ({detail}); all leaves discarded during lenient assembly")]
+    MalformedLeafs {
+        /// What made the lump unusable.
+        detail: &'static str,
+    },
+    /// The `LEAFS` lump's record count did not match the subsector count —
+    /// a hard engine invariant (Doom64 EX `P_LoadLeafs` fatal-errors on
+    /// it); all leaves were discarded during lenient assembly.
+    #[error(
+        "LEAFS record count {leaves} does not match subsector count {subsectors}; all leaves discarded during lenient assembly"
+    )]
+    LeafCountMismatch {
+        /// The number of leaf records the lump encodes.
+        leaves: usize,
+        /// The owning map's subsector count.
+        subsectors: usize,
+    },
+    /// A leaf referenced a vertex or seg past the end of its arena; all
+    /// leaves were discarded during lenient assembly (leaves are
+    /// interlocked render data — partial salvage would mislead).
+    #[error(
+        "leaf references {referent} {index} ({count} available); all leaves discarded during lenient assembly"
+    )]
+    LeafsDangling {
+        /// The arena the out-of-range index referred to (`"vertex"` or `"seg"`).
+        referent: &'static str,
+        /// The out-of-range index.
+        index: u16,
+        /// The referenced arena's length.
+        count: usize,
+    },
 }
 
 /// An assembled Doom map graph: normalized elements addressed by index,
@@ -612,6 +662,7 @@ pub struct Map {
     pub(crate) segs: Vec<MapSeg>,
     pub(crate) subsectors: Vec<MapSubsector>,
     pub(crate) nodes: Vec<MapNode>,
+    pub(crate) leafs: Vec<MapLeaf>,
     pub(crate) reject: Option<MapReject>,
     pub(crate) blockmap: Option<MapBlockmap>,
     pub(crate) warnings: Vec<MapWarning>,
@@ -710,6 +761,15 @@ impl Map {
     #[must_use]
     pub fn bsp_root(&self) -> Option<NodeIdx> {
         (!self.nodes.is_empty()).then(|| NodeIdx(self.nodes.len() - 1))
+    }
+
+    /// All decoded Doom 64 render leaves, in subsector order (each
+    /// [`MapSubsector::leafs`] range indexes into this arena). Empty for
+    /// every source format except [`MapFormat::Doom64`], and after a
+    /// lenient whole-`LEAFS` degrade.
+    #[must_use]
+    pub fn leafs(&self) -> &[MapLeaf] {
+        &self.leafs
     }
 
     /// The decoded `REJECT` sector-visibility table, or `None` when the
@@ -811,6 +871,7 @@ mod tests {
             segs: Vec::new(),
             subsectors: Vec::new(),
             nodes: Vec::new(),
+            leafs: Vec::new(),
             reject: None,
             blockmap: None,
             warnings: vec![],

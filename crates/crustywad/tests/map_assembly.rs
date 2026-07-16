@@ -1007,23 +1007,30 @@ fn doom64_thing_type_out_of_range_strict_errors_lenient_clamps_and_warns() {
 #[test]
 fn assembles_doom64_bsp_onto_the_graph() {
     use crustywad::map::{NodeChild, NodeIdx, SubsectorIdx};
-    let bytes = common::build_doom64_map_wad(
+    let bytes = common::build_doom64_map_wad_from(
         "MAP01",
-        &[],
-        &common::d64_linedef(0, 1, 0, 0, 0xffff),
-        &common::d64_sidedef(0, 0, 0, 0),
-        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
-        &common::d64_sector(0, 0, [0; 5], 0),
-        &common::d64_light(255, 255, 255, 0),
-        &seg(0, 1, 0, 0),
-        &subsector(1, 0),
-        &node(0x8000, 0x8000),
+        &common::Doom64Lumps {
+            linedefs: &common::d64_linedef(0, 1, 0, 0, 0xffff),
+            sidedefs: &common::d64_sidedef(0, 0, 0, 0),
+            vertexes: &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+            sectors: &common::d64_sector(0, 0, [0; 5], 0),
+            lights: &common::d64_light(255, 255, 255, 0),
+            segs: &seg(0, 1, 0, 0),
+            subsectors: &subsector(1, 0),
+            nodes: &node(0x8000, 0x8000),
+            // One record (matching the single subsector above) with a zero
+            // leaf count — the engine's `count != numsubsectors` fatal check
+            // requires a record per subsector even when it carries no leaves.
+            leafs: &0_u16.to_le_bytes(),
+            ..common::Doom64Lumps::default()
+        },
     );
     let wad = crustywad::Wad::from_bytes(bytes).unwrap();
     let group = wad.map_group("MAP01").unwrap();
     let map = Map::assemble(&wad, &group).unwrap();
     assert_eq!(map.segs().len(), 1);
     assert_eq!(map.subsectors()[0].segs, 0..1);
+    assert_eq!(map.subsectors()[0].leafs, 0..0);
     assert_eq!(map.bsp_root(), Some(NodeIdx(0)));
     assert_eq!(map.nodes()[0].left, NodeChild::Subsector(SubsectorIdx(0)));
     assert!(map.warnings().is_empty());

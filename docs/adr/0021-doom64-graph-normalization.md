@@ -274,3 +274,28 @@ inventory when it lands.
   (`resolve_binary_side`), ADR-0016 (hardening), #204/#244/#245 (deferred
   lumps), #253 (unblocked), v0.5.0 texture layer (#156/#157 — resolves
   `TextureRef::Index`).
+
+## Amendment (2026-07-16, #244): LEAFS decoded onto the graph
+
+ADR-0018 deferred `LEAFS` as raw bytes; this amendment (implemented by #244)
+decodes it during `assemble_doom64`:
+
+- **On-disk layout** (Doom64 EX `P_LoadLeafs`, `src/engine/playloop/p_setup.cc`):
+  per-subsector records — a `u16` leaf count, then count × (`u16` vertex
+  index, `i16` seg index), 4 bytes per entry. A seg of `-1` means "no seg".
+- **Count parity is a hard invariant:** the record count must equal the
+  subsector count; the engine fatal-errors otherwise. This reader mirrors
+  it: strict `LeafCountMismatch` error, lenient whole-arena degrade + warning.
+- **Graph shape:** `MapLeaf { vertex: VertexIdx, seg: Option<SegIdx> }` in a
+  `Map::leafs()` arena (subsector order); `MapSubsector.leafs: Range<usize>`
+  mirrors the existing `segs` range. Empty arena and `0..0` ranges for every
+  other source format — the `lights` precedent (§4).
+- **Validation divergence:** indices are checked with `>=`; the engine's own
+  checks are off-by-one (`>`) and its seg check only warns under `devparm`.
+  The retail sweep (40 Doom 64 maps) confirmed no real map depends on the
+  engine's slack.
+- **Lenient policy is whole-LEAFS degrade** (one warning, first failure),
+  matching the whole-BSP degrade of ADR-0015's amendment: leaves are
+  interlocked render data and partial salvage would mislead.
+- `Doom64Map.leafs` (the raw layer) is unchanged; decoding is an assembly
+  concern, consistent with #256's REJECT/BLOCKMAP.

@@ -216,7 +216,7 @@ value with an out-of-range index can still panic.)
 `MapSidedef`'s `upper`/`lower`/`middle` fields and `MapSector`'s `floor_flat`/`ceiling_flat` field
 are a `TextureRef`, not a bare string: `TextureRef::Name(String)` for a name (Doom/Hexen's 8-byte
 lump name, or a UDMF string), or `TextureRef::Index(u16)` for a Doom 64 texture/flat table index
-(Doom 64 has no name until the texture layer, planned for v0.5.0, can resolve it). Classic Doom,
+(Doom 64 has no name until the texture layer, #156/#157, can resolve it). Classic Doom,
 Hexen, and UDMF maps always produce `Name`; Doom 64 maps always produce `Index`.
 `TextureRef::as_name()` returns `Some(&str)` for `Name` and `None` for `Index`, and `TextureRef`
 implements `PartialEq<&str>` against the name, so a Doom/Hexen/UDMF texture can be compared
@@ -349,10 +349,20 @@ uninterpreted).
 
 Doom 64's sidedef/sector texture and flat fields assemble into `TextureRef::Index` rather than
 `TextureRef::Name` (see [Texture references](#texture-references) above). Until the texture layer
-(planned for v0.5.0) can resolve those indices back to a texture identity, a Doom 64-sourced `Map`
+(#156/#157) can resolve those indices back to a texture identity, a Doom 64-sourced `Map`
 cannot be serialized back out: both `write_doom_map` and `write_udmf` (the `write` feature) reject
 it with `UnsupportedSourceFormat`, in **both** strictness modes, before any per-field validation
 runs.
+
+Doom 64 also decodes the `LEAFS` lump — its render leaves — onto the graph. `Map::leafs()` is a
+per-subsector arena of `MapLeaf { vertex: VertexIdx, seg: Option<SegIdx> }`, and each
+`MapSubsector::leafs` range selects that subsector's slice, mirroring the existing `segs` range
+below. The on-disk seg field's `-1` sentinel becomes `seg: None` ("no seg": the edge is implicit
+geometry). The lump's record count must equal the map's subsector count — the engine treats a
+mismatch as fatal, and this reader mirrors it: strict mode rejects with
+`MapAssembleError::LeafCountMismatch`, lenient mode discards the whole `LEAFS` arena and records
+one warning, the same whole-arena degrade policy as the BSP data below. `Map::leafs()` and every
+`MapSubsector::leafs` range are empty for every source format other than Doom 64.
 
 ### BSP data
 

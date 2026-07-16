@@ -427,3 +427,328 @@ proptest! {
         }
     }
 }
+
+// --- #244: LEAFS decode onto the Map graph ---
+
+use crustywad::Wad;
+use crustywad::map::{Map, MapLeaf, MapWarning, SegIdx, VertexIdx};
+
+/// Encodes per-subsector leaf lists into LEAFS lump bytes: for each list a
+/// u16 count then count × (u16 vertex, i16 seg — supplied here as its u16
+/// bit pattern, so 0xFFFF is the on-disk -1 "no seg" sentinel).
+fn leafs_bytes(lists: &[&[(u16, u16)]]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for list in lists {
+        bytes.extend(u16::try_from(list.len()).unwrap().to_le_bytes());
+        for &(vertex, seg) in *list {
+            bytes.extend(vertex.to_le_bytes());
+            bytes.extend(seg.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+/// A one-sector Doom 64 map with 2 subsectors, 2 segs, 2 vertexes, and the
+/// given LEAFS bytes. Seg records use the classic 12-byte layout (shared by
+/// Doom 64, ADR-0018): v1, v2, angle, linedef, side, offset — all u16/i16.
+fn d64_map_with_leafs(leafs: &[u8]) -> Vec<u8> {
+    let mut seg = Vec::new();
+    for v in [0_u16, 1, 0, 0, 0, 0] {
+        seg.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut segs = seg.clone();
+    segs.extend_from_slice(&seg);
+    // Two subsectors of one seg each: (count, first) = (1, 0) and (1, 1).
+    let mut subsectors = Vec::new();
+    for v in [1_u16, 0, 1, 1] {
+        subsectors.extend_from_slice(&v.to_le_bytes());
+    }
+    common::build_doom64_map_wad_from(
+        "MAP01",
+        &common::Doom64Lumps {
+            linedefs: &common::d64_linedef(0, 1, 0, 0, 0xffff),
+            sidedefs: &common::d64_sidedef(0, 0, 0, 0),
+            vertexes: &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+            sectors: &common::d64_sector(0, 0, [0; 5], 0),
+            lights: &common::d64_light(0, 0, 0, 0),
+            segs: &segs,
+            subsectors: &subsectors,
+            leafs,
+            ..common::Doom64Lumps::default()
+        },
+    )
+}
+
+fn assemble_d64(bytes: Vec<u8>) -> Result<Map, crustywad::map::MapAssembleError> {
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    Map::assemble(&wad, &group)
+}
+
+fn assemble_d64_lenient(bytes: Vec<u8>) -> Map {
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap()
+}
+
+#[test]
+fn leafs_decode_attaches_per_subsector_with_sentinel_and_fields() {
+    // Subsector 0: two leaves (vertex 0 + seg 0; vertex 1 + no seg).
+    // Subsector 1: one leaf (vertex 1 + seg 1).
+    let leafs = leafs_bytes(&[&[(0, 0), (1, 0xFFFF)], &[(1, 1)]]);
+    let map = assemble_d64(d64_map_with_leafs(&leafs)).unwrap();
+
+    assert_eq!(map.leafs().len(), 3);
+    assert_eq!(
+        map.leafs()[0],
+        MapLeaf {
+            vertex: VertexIdx(0),
+            seg: Some(SegIdx(0))
+        }
+    );
+    assert_eq!(
+        map.leafs()[1],
+        MapLeaf {
+            vertex: VertexIdx(1),
+            seg: None
+        }
+    );
+    assert_eq!(
+        map.leafs()[2],
+        MapLeaf {
+            vertex: VertexIdx(1),
+            seg: Some(SegIdx(1))
+        }
+    );
+    assert_eq!(map.subsectors()[0].leafs, 0..2);
+    assert_eq!(map.subsectors()[1].leafs, 2..3);
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn leafs_zero_count_record_yields_empty_range() {
+    // Both subsectors present, first has zero leaves (legal per engine).
+    let leafs = leafs_bytes(&[&[], &[(0, 0xFFFF)]]);
+    let map = assemble_d64(d64_map_with_leafs(&leafs)).unwrap();
+    assert_eq!(map.subsectors()[0].leafs, 0..0);
+    assert_eq!(map.subsectors()[1].leafs, 0..1);
+}
+
+#[test]
+fn leafs_empty_lump_with_zero_subsectors_is_silent() {
+    // The default fixture (all lumps empty) has 0 subsectors and 0 leaves.
+    let bytes = common::build_doom64_map_wad_from(
+        "MAP01",
+        &common::Doom64Lumps {
+            linedefs: &common::d64_linedef(0, 1, 0, 0, 0xffff),
+            sidedefs: &common::d64_sidedef(0, 0, 0, 0),
+            vertexes: &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+            sectors: &common::d64_sector(0, 0, [0; 5], 0),
+            lights: &common::d64_light(0, 0, 0, 0),
+            ..common::Doom64Lumps::default()
+        },
+    );
+    let map = assemble_d64(bytes).unwrap();
+    assert!(map.leafs().is_empty());
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn leafs_count_mismatch_strict_errors_lenient_degrades() {
+    // One record, two subsectors — the engine I_Error case.
+    let leafs = leafs_bytes(&[&[(0, 0xFFFF)]]);
+    let err = assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err();
+    assert!(matches!(
+        err,
+        crustywad::map::MapAssembleError::LeafCountMismatch {
+            leaves: 1,
+            subsectors: 2
+        }
+    ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::LeafCountMismatch {
+            leaves: 1,
+            subsectors: 2
+        }
+    )));
+}
+
+#[test]
+fn leafs_truncated_record_strict_errors_lenient_degrades() {
+    // Count word promises 2 entries but only 1 fits: truncated mid-record.
+    let mut leafs = leafs_bytes(&[&[(0, 0xFFFF)]]);
+    leafs[0] = 2; // inflate the count past the available bytes
+    let err = assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err();
+    assert!(matches!(
+        err,
+        crustywad::map::MapAssembleError::MalformedLeafs { .. }
+    ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(
+        map.warnings()
+            .iter()
+            .any(|w| matches!(w, MapWarning::MalformedLeafs { .. }))
+    );
+}
+
+#[test]
+fn leafs_trailing_partial_bytes_strict_errors_lenient_degrades() {
+    // A whole valid record for each subsector, then one stray byte.
+    let mut leafs = leafs_bytes(&[&[(0, 0xFFFF)], &[(1, 0xFFFF)]]);
+    leafs.push(0xAA);
+    assert!(matches!(
+        assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err(),
+        crustywad::map::MapAssembleError::MalformedLeafs { .. }
+    ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+    assert!(
+        map.warnings()
+            .iter()
+            .any(|w| matches!(w, MapWarning::MalformedLeafs { .. }))
+    );
+}
+
+#[test]
+fn leafs_dangling_vertex_strict_errors_lenient_degrades() {
+    // Vertex 9 with only 2 vertexes in the map.
+    let leafs = leafs_bytes(&[&[(9, 0xFFFF)], &[(0, 0xFFFF)]]);
+    let err = assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err();
+    assert!(matches!(
+        err,
+        crustywad::map::MapAssembleError::DanglingReference {
+            referent: "vertex",
+            index: 9,
+            from: "leaf",
+            count: 2,
+        }
+    ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::LeafsDangling {
+            referent: "vertex",
+            index: 9,
+            count: 2
+        }
+    )));
+}
+
+#[test]
+fn leafs_dangling_seg_strict_errors_lenient_degrades() {
+    // Seg 7 (not the 0xFFFF sentinel) with only 2 segs in the map.
+    let leafs = leafs_bytes(&[&[(0, 7)], &[(0, 0xFFFF)]]);
+    let err = assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err();
+    assert!(matches!(
+        err,
+        crustywad::map::MapAssembleError::DanglingReference {
+            referent: "seg",
+            index: 7,
+            from: "leaf",
+            count: 2,
+        }
+    ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::LeafsDangling {
+            referent: "seg",
+            index: 7,
+            count: 2
+        }
+    )));
+}
+
+#[test]
+fn non_doom64_maps_expose_empty_leafs() {
+    // A fresh minimal classic-map fixture: its Map::leafs() must be empty
+    // and every subsector range 0..0.
+    let bytes = common::build_doom_map_wad("MAP01", vec![], vec![], vec![], vec![], vec![]);
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+}
+
+proptest! {
+    #[test]
+    fn leafs_roundtrip_arbitrary_valid_lists(
+        lists in proptest::collection::vec(
+            proptest::collection::vec((0_u16..2, proptest::bool::ANY), 0..4),
+            2..=2,
+        )
+    ) {
+        // Exactly 2 subsectors (matching the fixture); vertex < 2 (the
+        // fixture's vertex count); seg is either the sentinel or seg 0.
+        let encoded: Vec<Vec<(u16, u16)>> = lists
+            .iter()
+            .map(|l| l.iter().map(|&(v, s)| (v, if s { 0 } else { 0xFFFF })).collect())
+            .collect();
+        let borrowed: Vec<&[(u16, u16)]> = encoded.iter().map(Vec::as_slice).collect();
+        let bytes = leafs_bytes(&borrowed);
+        let map = assemble_d64(d64_map_with_leafs(&bytes)).unwrap();
+
+        let total: usize = encoded.iter().map(Vec::len).sum();
+        prop_assert_eq!(map.leafs().len(), total);
+        let mut cursor = 0_usize;
+        for (i, list) in encoded.iter().enumerate() {
+            let range = map.subsectors()[i].leafs.clone();
+            prop_assert_eq!(range.clone(), cursor..cursor + list.len());
+            for (leaf, &(v, s)) in map.leafs()[range].iter().zip(list) {
+                prop_assert_eq!(leaf.vertex, VertexIdx(usize::from(v)));
+                prop_assert_eq!(leaf.seg, if s == 0xFFFF { None } else { Some(SegIdx(0)) });
+            }
+            cursor += list.len();
+        }
+    }
+}
+
+#[test]
+fn leafs_surplus_records_report_full_count_without_decoding_extras() {
+    // Five records against two subsectors: the walk stops decoding entries
+    // once the ranges vec is full (engine two-pass parity — count first,
+    // then load) but still reports the FULL record count in the mismatch.
+    // The third record carries a dangling vertex that must NOT surface:
+    // count parity wins, as in P_LoadLeafs's separate counting pass.
+    let leafs = leafs_bytes(&[
+        &[(0, 0xFFFF)],
+        &[(1, 0xFFFF)],
+        &[(9, 0xFFFF)], // dangling vertex in a surplus record — skipped
+        &[],
+        &[],
+    ]);
+    let err = assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err();
+    assert!(matches!(
+        err,
+        crustywad::map::MapAssembleError::LeafCountMismatch {
+            leaves: 5,
+            subsectors: 2
+        }
+    ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::LeafCountMismatch {
+            leaves: 5,
+            subsectors: 2
+        }
+    )));
+}

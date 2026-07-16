@@ -306,6 +306,52 @@ pub fn is_doom64_map_name(name: &str) -> bool {
     name.len() == 5 && name.starts_with("MAP") && name[3..].bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Byte inputs for one synthetic Doom 64 nested-WAD map; every lump
+/// defaults to empty. Replaces the parameter-list builders below, which
+/// remain as thin wrappers.
+#[derive(Default)]
+#[allow(dead_code)]
+pub struct Doom64Lumps<'a> {
+    pub things: &'a [u8],
+    pub linedefs: &'a [u8],
+    pub sidedefs: &'a [u8],
+    pub vertexes: &'a [u8],
+    pub sectors: &'a [u8],
+    pub lights: &'a [u8],
+    pub segs: &'a [u8],
+    pub subsectors: &'a [u8],
+    pub nodes: &'a [u8],
+    pub reject: &'a [u8],
+    pub blockmap: &'a [u8],
+    pub leafs: &'a [u8],
+    pub macros: &'a [u8],
+}
+
+/// Builds a WAD holding one Doom 64 nested-WAD map lump named `name` from
+/// the given lump bytes (all 13 sub-lumps present, empty unless supplied).
+#[allow(dead_code)]
+pub fn build_doom64_map_wad_from(name: &str, lumps: &Doom64Lumps<'_>) -> Vec<u8> {
+    let nested = build_wad(
+        *b"IWAD",
+        &[
+            ("THINGS", lumps.things),
+            ("LINEDEFS", lumps.linedefs),
+            ("SIDEDEFS", lumps.sidedefs),
+            ("VERTEXES", lumps.vertexes),
+            ("SECTORS", lumps.sectors),
+            ("LIGHTS", lumps.lights),
+            ("SEGS", lumps.segs),
+            ("SSECTORS", lumps.subsectors),
+            ("NODES", lumps.nodes),
+            ("REJECT", lumps.reject),
+            ("BLOCKMAP", lumps.blockmap),
+            ("LEAFS", lumps.leafs),
+            ("MACROS", lumps.macros),
+        ],
+    );
+    build_named_lumps(&[(name, nested)])
+}
+
 /// Builds a WAD holding one Doom 64 nested-WAD map lump named `name`.
 /// All 9 record sub-lumps `read_doom64_map` expects are present (empty unless
 /// supplied), plus the four raw-byte lumps (`REJECT`/`BLOCKMAP`/`LEAFS`/
@@ -357,25 +403,23 @@ pub fn build_doom64_map_wad_full(
     reject: &[u8],
     blockmap: &[u8],
 ) -> Vec<u8> {
-    let nested = build_wad(
-        *b"IWAD",
-        &[
-            ("THINGS", things),
-            ("LINEDEFS", linedefs),
-            ("SIDEDEFS", sidedefs),
-            ("VERTEXES", vertexes),
-            ("SECTORS", sectors),
-            ("LIGHTS", lights),
-            ("SEGS", segs),
-            ("SSECTORS", subsectors),
-            ("NODES", nodes),
-            ("REJECT", reject),
-            ("BLOCKMAP", blockmap),
-            ("LEAFS", &[]),
-            ("MACROS", &[]),
-        ],
-    );
-    build_named_lumps(&[(name, nested)])
+    build_doom64_map_wad_from(
+        name,
+        &Doom64Lumps {
+            things,
+            linedefs,
+            sidedefs,
+            vertexes,
+            sectors,
+            lights,
+            segs,
+            subsectors,
+            nodes,
+            reject,
+            blockmap,
+            ..Doom64Lumps::default()
+        },
+    )
 }
 
 /// One Doom 64 vertex: 16.16 fixed-point coordinates.

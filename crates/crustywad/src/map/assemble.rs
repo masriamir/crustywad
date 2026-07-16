@@ -1,9 +1,10 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLight, MapLinedef, MapNode, MapReject,
-    MapSector, MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild,
-    NodeIdx, SectorIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapNode,
+    MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning,
+    NodeChild, NodeIdx, SectorIdx, SegIdx, SidedefIdx, Special, SubsectorIdx, TextureRef,
+    VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -129,6 +130,24 @@ pub enum MapAssembleError {
         /// The 0-based block index.
         block: usize,
     },
+    /// The `LEAFS` lump was structurally unusable — a record's entries ran
+    /// past the lump end, or trailing bytes did not form a whole record
+    /// (strict mode; lenient discards all leaves and warns).
+    #[error("LEAFS lump is malformed: {detail}")]
+    MalformedLeafs {
+        /// What made the lump unusable.
+        detail: &'static str,
+    },
+    /// The `LEAFS` lump's record count did not match the subsector count,
+    /// which the engine treats as fatal (Doom64 EX `P_LoadLeafs`); strict
+    /// mode rejects, lenient discards all leaves and warns.
+    #[error("LEAFS record count {leaves} does not match subsector count {subsectors}")]
+    LeafCountMismatch {
+        /// The number of leaf records the lump encodes.
+        leaves: usize,
+        /// The owning map's subsector count.
+        subsectors: usize,
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.
@@ -208,6 +227,134 @@ fn decode_reject_blockmap(
         Some(bytes) => MapBlockmap::parse(bytes, linedef_count, strictness, warnings)?,
     };
     Ok((reject, blockmap))
+}
+
+/// Decodes a Doom 64 `LEAFS` lump (Doom64 EX `P_LoadLeafs`, `p_setup.cc`):
+/// per-subsector records of a `u16` leaf count followed by that many
+/// (`u16` vertex, `i16` seg) entries, where a seg of `-1` means "no seg".
+/// The record count must equal `subsector_count` — the engine fatal-errors
+/// otherwise, and this reader mirrors that as an error (strict) or a
+/// whole-arena degrade with one warning (lenient). Index validation uses
+/// `>=`, deliberately tighter than the engine's off-by-one `>` checks.
+///
+/// Single forward pass; total entries are bounded by `bytes.len() / 4`, and
+/// the ranges vec by `subsector_count` — once it is full, surplus records
+/// are tallied without decoding their entries, mirroring the engine's
+/// two-pass order (count first, then load) so a surplus lump reports the
+/// count mismatch rather than a later per-entry defect (ADR-0016 §1).
+fn normalize_leafs(
+    bytes: &[u8],
+    subsector_count: usize,
+    vertex_count: usize,
+    seg_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Vec<MapLeaf>, Vec<std::ops::Range<usize>>), MapAssembleError> {
+    /// The on-disk "no seg" sentinel (`-1` in `P_LoadLeafs`).
+    const NO_SEG: u16 = 0xFFFF;
+
+    let mut leafs = Vec::new();
+    let mut ranges = Vec::with_capacity(subsector_count);
+    let mut record_count = 0_usize;
+    let mut offset = 0_usize;
+    while offset < bytes.len() {
+        if bytes.len() - offset < 2 {
+            return leafs_malformed("trailing byte is not a whole record", strictness, warnings);
+        }
+        let count = usize::from(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]));
+        offset += 2;
+        if (bytes.len() - offset) / 4 < count {
+            return leafs_malformed(
+                "a record's entries run past the lump end",
+                strictness,
+                warnings,
+            );
+        }
+        record_count += 1;
+        if ranges.len() == subsector_count {
+            // More records than subsectors: the count mismatch below is now
+            // inevitable, so skip entry decoding and keep only the record
+            // tally. This keeps `ranges` genuinely bounded by the subsector
+            // count under a surplus-record lump, and mirrors the engine's
+            // two-pass order (`P_LoadLeafs` counts records before loading
+            // any), so the mismatch is what gets reported.
+            offset += count * 4;
+            continue;
+        }
+        let start = leafs.len();
+        for _ in 0..count {
+            let vertex = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+            let seg = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+            offset += 4;
+            if usize::from(vertex) >= vertex_count {
+                return leafs_dangling("vertex", vertex, vertex_count, strictness, warnings);
+            }
+            let seg = if seg == NO_SEG {
+                None
+            } else if usize::from(seg) >= seg_count {
+                return leafs_dangling("seg", seg, seg_count, strictness, warnings);
+            } else {
+                Some(SegIdx(usize::from(seg)))
+            };
+            leafs.push(MapLeaf {
+                vertex: VertexIdx(usize::from(vertex)),
+                seg,
+            });
+        }
+        ranges.push(start..leafs.len());
+    }
+    if record_count != subsector_count {
+        let (leaves, subsectors) = (record_count, subsector_count);
+        return match strictness {
+            Strictness::Strict => Err(MapAssembleError::LeafCountMismatch { leaves, subsectors }),
+            Strictness::Lenient => {
+                warnings.push(MapWarning::LeafCountMismatch { leaves, subsectors });
+                Ok((Vec::new(), Vec::new()))
+            }
+        };
+    }
+    Ok((leafs, ranges))
+}
+
+/// The `MalformedLeafs` strict-error / lenient-degrade fork.
+fn leafs_malformed(
+    detail: &'static str,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Vec<MapLeaf>, Vec<std::ops::Range<usize>>), MapAssembleError> {
+    match strictness {
+        Strictness::Strict => Err(MapAssembleError::MalformedLeafs { detail }),
+        Strictness::Lenient => {
+            warnings.push(MapWarning::MalformedLeafs { detail });
+            Ok((Vec::new(), Vec::new()))
+        }
+    }
+}
+
+/// The dangling-reference strict-error / lenient-degrade fork for leaves.
+fn leafs_dangling(
+    referent: &'static str,
+    index: u16,
+    count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Vec<MapLeaf>, Vec<std::ops::Range<usize>>), MapAssembleError> {
+    match strictness {
+        Strictness::Strict => Err(MapAssembleError::DanglingReference {
+            referent,
+            index: i32::from(index),
+            from: "leaf",
+            count,
+        }),
+        Strictness::Lenient => {
+            warnings.push(MapWarning::LeafsDangling {
+                referent,
+                index,
+                count,
+            });
+            Ok((Vec::new(), Vec::new()))
+        }
+    }
 }
 
 impl MapReject {
@@ -895,7 +1042,10 @@ fn normalize_bsp(
                 }
             }
         };
-        subsectors.push(MapSubsector { segs: range });
+        subsectors.push(MapSubsector {
+            segs: range,
+            leafs: 0..0,
+        });
     }
 
     let node_count = raw_nodes.len();
@@ -1380,6 +1530,7 @@ impl Map {
                     segs,
                     subsectors,
                     nodes,
+                    leafs: Vec::new(),
                     reject,
                     blockmap,
                     warnings,
@@ -1613,7 +1764,7 @@ fn assemble_doom64(
     // references the resolvers below then bound (strict error / lenient
     // clamp-or-degrade). Either way: no panic, no unbounded work. Real
     // support for extended encodings, anywhere, is #199.
-    let (segs, subsectors, nodes) = normalize_bsp_or_degrade(
+    let (segs, mut subsectors, nodes) = normalize_bsp_or_degrade(
         &raw.segs,
         &raw.subsectors,
         &raw.nodes,
@@ -1622,6 +1773,21 @@ fn assemble_doom64(
         s,
         &mut warnings,
     )?;
+
+    let (leaf_arena, leaf_ranges) = normalize_leafs(
+        &raw.leafs,
+        subsectors.len(),
+        vertices.len(),
+        segs.len(),
+        s,
+        &mut warnings,
+    )?;
+    // Empty ranges = no leaves (or a lenient degrade); subsectors keep 0..0.
+    if !leaf_ranges.is_empty() {
+        for (subsector, range) in subsectors.iter_mut().zip(leaf_ranges) {
+            subsector.leafs = range;
+        }
+    }
 
     // Doom64Warning values surface as MapWarning::Doom64 so the caller sees
     // one warning stream regardless of source format.
@@ -1652,6 +1818,7 @@ fn assemble_doom64(
         segs,
         subsectors,
         nodes,
+        leafs: leaf_arena,
         reject,
         blockmap,
         warnings,
@@ -1723,6 +1890,7 @@ fn assemble_udmf(
         segs: Vec::new(),
         subsectors: Vec::new(),
         nodes: Vec::new(),
+        leafs: Vec::new(),
         reject,
         blockmap,
         warnings,
