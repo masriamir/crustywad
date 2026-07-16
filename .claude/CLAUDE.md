@@ -248,6 +248,12 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 Scope is encouraged: `feat(map):`, `fix(cli):`, etc.
 
+**Breaking changes must be marked** with `!` (e.g. `feat(map)!: remove RejectLump`) or a
+`BREAKING CHANGE:` footer — release-plz derives version bumps from these annotations, and an
+unmarked breaking change proposes a semver-violating patch release (caught live on the 0.5.0
+prep). `semver_check = true` in `release-plz.toml` runs `cargo-semver-checks` against the
+published baseline as a safety net, but correct annotations are the first line of defense.
+
 The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
 
 ## Project tracking
