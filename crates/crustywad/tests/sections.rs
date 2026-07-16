@@ -306,3 +306,49 @@ fn sprite_numbered_subs_are_grammar_admitted() {
     let table = wad.sections().unwrap();
     assert_eq!(table.sections()[0].sub_sections.len(), 1);
 }
+
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn well_formed_layouts_scan_strict_clean_and_round_trip(
+        layout in proptest::collection::vec(
+            (
+                prop_oneof![
+                    Just(("S_START", "S_END", SectionKind::Sprites)),
+                    Just(("F_START", "F_END", SectionKind::Flats)),
+                    Just(("P_START", "P_END", SectionKind::Patches)),
+                    Just(("T_START", "T_END", SectionKind::Textures)),
+                    Just(("DS_START", "DS_END", SectionKind::Sounds)),
+                    Just(("G_START", "G_END", SectionKind::Graphics)),
+                ],
+                0_usize..3, // content lumps inside
+            ),
+            0..4,
+        )
+    ) {
+        // One section per DISTINCT kind (duplicates would be row 4).
+        let mut seen = std::collections::HashSet::new();
+        let mut names: Vec<String> = Vec::new();
+        let mut expected: Vec<(SectionKind, usize)> = Vec::new();
+        for ((start, end, kind), content) in &layout {
+            if !seen.insert(*kind) { continue; }
+            names.push((*start).to_owned());
+            for c in 0..*content {
+                names.push(format!("LUMP{c}"));
+            }
+            names.push((*end).to_owned());
+            expected.push((*kind, *content));
+        }
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let wad = wad_of(&name_refs);
+        let table = wad.sections().expect("well-formed layout is strict-clean");
+        prop_assert!(table.warnings().is_empty());
+        prop_assert_eq!(table.sections().len(), expected.len());
+        for (section, (kind, content)) in table.sections().iter().zip(&expected) {
+            prop_assert_eq!(section.kind, *kind);
+            prop_assert_eq!(section.lumps.len(), *content);
+            prop_assert!(section.sub_sections.is_empty());
+        }
+    }
+}
