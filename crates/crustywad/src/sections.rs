@@ -575,10 +575,12 @@ fn handle_eof(
 
 /// The scan. Strict returns the first anomaly; lenient records a warning
 /// per the policy table and recovers. `O(lumps)` single pass; the open set
-/// is bounded by one top-level entry per [`SectionKind`] plus one numbered
-/// child, and warnings by one per marker lump (ADR-0016 §1) — a marker
-/// that already warned at open (orphan promotion, duplicate pair) has its
-/// EOF `UnpairedStart` suppressed to preserve that bound.
+/// is bounded by one top-level entry plus one numbered sub-entry per
+/// [`SectionKind`] (orphan promotion can hold a sub open for each kind
+/// concurrently), i.e. at most `2 × kinds` entries, and warnings by one
+/// per marker lump (ADR-0016 §1) — a marker that already warned at open
+/// (orphan promotion, duplicate pair) has its EOF `UnpairedStart`
+/// suppressed to preserve that bound.
 pub(crate) fn scan(wad: &Wad, strictness: Strictness) -> Result<SectionTable, SectionError> {
     let mut open: Vec<Open> = Vec::new();
     let mut table = SectionTable::default();

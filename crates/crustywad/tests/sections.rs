@@ -489,9 +489,11 @@ proptest! {
     }
 }
 
-/// Env-gated retail smoke (reuses the sweep collection variable; path must
-/// be ABSOLUTE — cargo sets each test binary's CWD to the package root).
-/// Skips gracefully when unset, like the sweep tests.
+/// Retail smoke, gated like the other fixture suites: the `sweep-tests`
+/// feature AND the sweep collection variable (path must be ABSOLUTE —
+/// cargo sets each test binary's CWD to the package root). Skips
+/// gracefully when the variable is unset.
+#[cfg(feature = "sweep-tests")]
 #[test]
 fn retail_iwads_scan_to_their_known_shapes() {
     let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
