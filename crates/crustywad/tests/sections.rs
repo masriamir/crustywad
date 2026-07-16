@@ -501,6 +501,22 @@ fn retail_iwads_scan_to_their_known_shapes() {
         return;
     };
     let dir = std::path::PathBuf::from(dir);
+    // Match the sweep suite's graceful-skip gating: a set-but-unusable
+    // variable (relative path — cargo runs tests from the package root —
+    // or a non-directory) skips with a note rather than failing hard.
+    if !dir.is_absolute() || !dir.is_dir() {
+        eprintln!(
+            "skipping: CRUSTYWAD_SWEEP_DIR is not an absolute path to a directory: {}",
+            dir.display()
+        );
+        return;
+    }
+    for iwad in ["DOOM.WAD", "DOOM2.WAD", "DOOM64.WAD"] {
+        if !dir.join(iwad).is_file() {
+            eprintln!("skipping: {iwad} not present in {}", dir.display());
+            return;
+        }
+    }
 
     let doom = Wad::from_path(dir.join("DOOM.WAD")).expect("DOOM.WAD reads");
     let table = doom.sections().expect("retail DOOM.WAD is strict-clean");
