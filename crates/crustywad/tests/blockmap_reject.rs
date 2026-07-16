@@ -698,3 +698,20 @@ proptest! {
         prop_assert_eq!(bm.block(col, row), Some(&[][..]));
     }
 }
+
+#[test]
+fn reject_astronomical_sector_count_answers_virtual_false_without_overflow() {
+    // A standalone caller can hand parse() a sector_count whose bit indices
+    // exceed usize; such bits lie beyond any storable byte and must read as
+    // virtual padding rather than wrapping (debug panic / release
+    // mis-index).
+    let mut warnings = Vec::new();
+    let reject = MapReject::parse(&[0xFF], usize::MAX / 2, Strictness::Lenient, &mut warnings)
+        .unwrap()
+        .unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(
+        reject.is_rejected(SectorIdx(usize::MAX / 4), SectorIdx(1)),
+        Some(false)
+    );
+}

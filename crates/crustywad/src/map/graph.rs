@@ -358,10 +358,11 @@ impl MapReject {
 
     /// Whether the table pre-rejects line-of-sight from `a` to `b` (bit set
     /// = "hidden"). Bits beyond the stored bytes — possible after a lenient
-    /// undersized recovery — read as `false` ("not rejected"), a
-    /// deterministic choice made by this reader: vanilla instead pads
-    /// undersized tables with level-dependent garbage that emulates its own
-    /// overflow bug (`PadRejectArray`, called from `P_LoadReject`), which is
+    /// undersized recovery, or when the bit index itself would not fit in
+    /// `usize` — read as `false` ("not rejected"), a deterministic choice
+    /// made by this reader: vanilla instead pads undersized tables with
+    /// level-dependent garbage that emulates its own overflow bug
+    /// (`PadRejectArray`, called from `P_LoadReject`), which is
     /// renderer-quirk fidelity a parsing library should not reproduce.
     ///
     /// Returns `None` if either index is `>= sector_count`.
@@ -370,7 +371,16 @@ impl MapReject {
         if a.0 >= self.sector_count || b.0 >= self.sector_count {
             return None;
         }
-        let bit = a.0 * self.sector_count + b.0;
+        // Checked arithmetic: a pathological standalone-caller table
+        // dimension can push the bit index past `usize`; such a bit lies
+        // beyond any storable byte, so it reads as virtual padding rather
+        // than wrapping into a wrong byte.
+        let Some(bit) =
+            a.0.checked_mul(self.sector_count)
+                .and_then(|row| row.checked_add(b.0))
+        else {
+            return Some(false);
+        };
         let mask = 1u8 << (bit % 8);
         Some(self.bits.get(bit / 8).is_some_and(|byte| byte & mask != 0))
     }
