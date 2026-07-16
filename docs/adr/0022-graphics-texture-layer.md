@@ -335,14 +335,14 @@ threshold.
 
 | # | Issue | Depends on |
 |---|---|---|
-| 1 | NEW: `Wad` namespace/section API | — |
-| 2 | #156 (re-scoped): classic pictures, flats, PLAYPAL/COLORMAP + picture/flat RGBA | 1 |
-| 3 | #157 (re-scoped): PNAMES/TEXTUREx, composition, texture RGBA | 2 |
-| 4 | NEW: Doom 64 texture-name resolution + ADR-0021 §5 convert-gate lift | 1 |
-| 5 | NEW: Doom 64 PNG pixel decode (`doom64-gfx` feature, `png` crate) | 4 |
+| 1 | #280: `Wad` namespace/section API | — |
+| 2 | #156 (re-scoped): classic pictures, flats, PLAYPAL/COLORMAP + picture/flat RGBA | #280 |
+| 3 | #157 (re-scoped): PNAMES/TEXTUREx, composition, texture RGBA | #156 |
+| 4 | #281: Doom 64 texture-name resolution + ADR-0021 §5 convert-gate lift | #280 |
+| 5 | #282: Doom 64 PNG pixel decode (`doom64-gfx` feature, `png` crate) | #281 |
 
-Issue 4 is deliberately cheap and can land immediately after issue 1, ahead of
-2/3 — it closes the oldest user-visible wart (Doom 64 maps rejected at
+Issue 4 (#281) is deliberately cheap and can land immediately after #280, ahead of
+#156/#157 — it closes the oldest user-visible wart (Doom 64 maps rejected at
 `convert`) without waiting on the full classic decode stack. All five issues
 carry the ADR-0016 hardening checklist individually.
 
