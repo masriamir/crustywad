@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a7747358.js";
+            window.path_to_searchindex_js = "searchindex-22f8fe4f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -1650,9 +1650,9 @@ relative path resolves against that directory rather than the workspace root and
 <pre><code class="language-bash">CRUSTYWAD_SWEEP_DIR=/path/to/wads \
   cargo test -p crustywad --features sweep-tests --test sweep
 </code></pre>
-<p>Or use the <code>just</code> recipe, which defaults to the repository’s gitignored <code>PWADS/</code>
+<p>Or use the <code>just</code> recipe, which defaults to the repository’s gitignored <code>RETAIL/</code>
 directory as an absolute path (an explicit <code>dir=</code> override should also be absolute):</p>
-<pre><code class="language-bash">just test-sweep              # sweeps ./PWADS
+<pre><code class="language-bash">just test-sweep              # sweeps ./RETAIL
 just test-sweep dir=/path/to/wads
 </code></pre>
 <p>The test skips gracefully when <code>CRUSTYWAD_SWEEP_DIR</code> is unset or contains no WAD files.</p>
