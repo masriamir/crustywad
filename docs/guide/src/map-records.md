@@ -3,7 +3,10 @@
 Doom maps are stored as a group of sequentially named lumps. After the marker lump
 (e.g. `E1M1`) come the parsed map data lumps. The table below covers the record lumps
 that `crustywad` decodes; classic Doom maps also include additional lumps such as
-`REJECT` and `BLOCKMAP` after `SECTORS`:
+`REJECT` and `BLOCKMAP` after `SECTORS`. Unlike the flat record lumps below, `REJECT`
+and `BLOCKMAP` decode into typed, queryable structures (`MapReject` sector-visibility
+lookups, `MapBlockmap` per-block linedef lists) during map assembly — see
+[REJECT and BLOCKMAP](#reject-and-blockmap) below.
 
 | Lump | Record type | Record size |
 |---|---|---|
@@ -412,3 +415,71 @@ a reference that cannot be clamped (for example, a node child pointing into an a
 `SSECTORS` arena) drops all three arenas, records the dangling reference as a warning, and the
 rest of the map still assembles. BSP data is optional (ADR-0015 §5), so it never fails a
 lenient assembly.
+
+### REJECT and BLOCKMAP
+
+Like the BSP lumps above, `REJECT` and `BLOCKMAP` decode into typed, queryable structures during
+map assembly rather than staying raw bytes: `map.reject()` returns `Option<&MapReject>` and
+`map.blockmap()` returns `Option<&MapBlockmap>`, `None` when the map carries no (or an empty)
+lump of that kind — an editable PWAD with no built REJECT/BLOCKMAP table is as normal as one with
+no built nodes.
+
+`MapReject` is a row-major sector-visibility bit matrix, `sector_count × sector_count` bits,
+LSB-first within each byte (layout verified against Chocolate Doom's `P_LoadReject` /
+`P_CheckSight`):
+
+```rust
+use crustywad::Wad;
+use crustywad::map::{Map, SectorIdx};
+
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&wad, &group)?;
+    if let Some(reject) = map.reject() {
+        for i in 0..reject.sector_count() {
+            let sector = SectorIdx(i);
+            if reject.is_rejected(sector, sector) == Some(true) {
+                println!("sector {i} pre-rejects sight to itself");
+            }
+        }
+    }
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
+
+`MapBlockmap` is a grid of 128-map-unit blocks, each holding the linedefs that cross it (layout
+verified against Chocolate Doom's `P_LoadBlockMap` / `P_BlockLinesIterator`). `map.blockmap()`
+exposes `origin()`, `columns()`/`rows()`, `block(col, row)` (grid-indexed lookup), and
+`block_at(x, y)` (map-space coordinate lookup, `None` outside the grid or for non-finite
+coordinates):
+
+```rust
+use crustywad::Wad;
+use crustywad::map::Map;
+
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+if let Some(group) = wad.map_group("E1M1") {
+    let map = Map::assemble(&wad, &group)?;
+    if let Some(blockmap) = map.blockmap() {
+        if let Some(linedefs) = blockmap.block_at(0.0, 0.0) {
+            println!("{} linedefs cross the block at the origin", linedefs.len());
+        }
+    }
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
+
+Internally `MapBlockmap` stores the lump's words once and each block holds a validated range
+into them, so offset aliasing (ZDBSP-style whole-list sharing) and tail sharing (ZokumBSP-style
+partial-list sharing) cost no extra memory (ADR-0016 §1).
+
+Both types honor the same strict/lenient policy as the rest of assembly: an undersized `REJECT`
+table is a strict error (`MapAssembleError::UndersizedReject`) or a lenient warning with the
+missing bits treated as "not rejected" (`MapWarning::UndersizedReject`); a malformed `BLOCKMAP`
+header, an out-of-lump block offset, an unterminated block list, or a block list referencing a
+nonexistent linedef are each a strict error
+(`MapAssembleError::MalformedBlockmap` / `BlockmapBlockOffset` / `UnterminatedBlockmapList` /
+`DanglingReference`) or a lenient recovery with a matching `MapWarning` — discarding the whole
+table, truncating the list, or emptying the one affected block, respectively. An empty `REJECT`
+or `BLOCKMAP` lump (as `crustywad`'s own writer emits, ADR-0019 §4) is read back as simply
+absent, in both modes, with no warning.
