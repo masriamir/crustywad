@@ -41,13 +41,14 @@ docs/guide/mermaid-init.js
 /*.wad
 /*.WAD
 
-# Local retail WAD collection (fixture source for the optional sweep/fixture
+# Local retail WAD collection — mixed IWAD/PWAD magic: retail IWADs plus their
+# BFG/KEX/SVE companion PWADs (fixture source for the optional sweep/fixture
 # tests — retail blobs are never committed)
-/PWADS/
+/RETAIL/
 
 # Local extended-node WAD collection (ZDBSP-derived Freedoom variants for the
 # gate-expecting sweep, #269 — regenerable, never committed)
-/PWADS-EXT/
+/RETAIL-EXT/
 
 # Benchmark output
 /criterion/

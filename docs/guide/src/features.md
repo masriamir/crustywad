@@ -189,11 +189,11 @@ CRUSTYWAD_SWEEP_DIR=/path/to/wads \
   cargo test -p crustywad --features sweep-tests --test sweep
 ```
 
-Or use the `just` recipe, which defaults to the repository's gitignored `PWADS/`
+Or use the `just` recipe, which defaults to the repository's gitignored `RETAIL/`
 directory as an absolute path (an explicit `dir=` override should also be absolute):
 
 ```bash
-just test-sweep              # sweeps ./PWADS
+just test-sweep              # sweeps ./RETAIL
 just test-sweep dir=/path/to/wads
 ```
 
