@@ -7,7 +7,9 @@ use crustywad::{ParseOptions, Wad};
 // (incl. children) bounded by lump count; every range well-formed and
 // in-bounds (end_marker may equal the lump count — the lenient EOF-closed
 // convention); nesting depth <= 2 (children have no children); warnings
-// bounded by one per marker lump, conservatively <= lump count.
+// bounded by one per marker lump, conservatively <= lump count (a marker
+// that warned at open — orphan promotion, duplicate pair — has its EOF
+// UnpairedStart suppressed, so the one-per-marker bound holds exactly).
 fuzz_target!(|data: &[u8]| {
     if let Ok(wad) = Wad::from_bytes_with_options(data.to_vec(), ParseOptions::lenient()) {
         let n = wad.lumps().len();

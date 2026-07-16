@@ -307,6 +307,78 @@ fn sprite_numbered_subs_are_grammar_admitted() {
     assert_eq!(table.sections()[0].sub_sections.len(), 1);
 }
 
+#[test]
+fn promoted_orphan_sub_is_never_adopted_by_a_later_parent() {
+    // The fuzzer-found shape (#280 Task 2): an orphaned P1_ pair opens
+    // BEFORE any P_START exists, is promoted (row 7), and closes while a
+    // later-opened P_START is open. A parent must ENCLOSE its child —
+    // the promoted section stays top-level.
+    let wad = wad_of(&["P1_START", "A", "P_START", "W1", "P1_END", "B"]);
+    let table = lenient(&wad);
+    assert_eq!(table.of_kind(SectionKind::Patches).count(), 2);
+    for section in table.sections() {
+        for child in &section.sub_sections {
+            assert!(child.start_marker > section.start_marker);
+            assert!(child.end_marker <= section.end_marker);
+        }
+    }
+    // The promoted sub: markers 0 and 4. The outer P: 2 to EOF (6).
+    let mut patches = table.of_kind(SectionKind::Patches);
+    let first = patches.next().unwrap();
+    assert_eq!((first.start_marker, first.end_marker), (0, 4));
+    assert!(first.sub_sections.is_empty());
+    let second = patches.next().unwrap();
+    assert_eq!((second.start_marker, second.end_marker), (2, 6));
+    assert!(second.sub_sections.is_empty());
+}
+
+#[test]
+fn orphan_sub_left_unclosed_warns_exactly_once() {
+    // One warning per marker lump (#280 Task 2, second fuzzer find): the
+    // orphan promotion warning (row 7) already covers the recovery, so EOF
+    // cleanup must not add a second UnpairedStart for the same marker.
+    let wad = wad_of(&["F1_START", "A"]);
+    let table = lenient(&wad);
+    assert_eq!(table.warnings().len(), 1);
+    assert!(matches!(
+        table.warnings()[0],
+        SectionWarning::OrphanSubPair {
+            kind: SectionKind::Flats,
+            index: 0
+        }
+    ));
+    assert_eq!(table.sections().len(), 1);
+    let s = &table.sections()[0];
+    assert_eq!(s.kind, SectionKind::Flats);
+    // Promoted to top level and EOF-closed.
+    assert_eq!((s.start_marker, s.end_marker), (0, 2));
+    assert!(s.sub_sections.is_empty());
+}
+
+#[test]
+fn duplicate_pair_left_unclosed_warns_exactly_once() {
+    // The second F_START warns DuplicatePair at open; when it then reaches
+    // EOF unclosed, no additional UnpairedStart is emitted for that marker.
+    let wad = wad_of(&["F_START", "A", "F_END", "F_START", "B"]);
+    let table = lenient(&wad);
+    assert_eq!(table.warnings().len(), 1);
+    assert!(matches!(
+        table.warnings()[0],
+        SectionWarning::DuplicatePair {
+            kind: SectionKind::Flats,
+            first_start: 0,
+            second_start: 3
+        }
+    ));
+    assert_eq!(table.of_kind(SectionKind::Flats).count(), 2);
+    let mut flats = table.of_kind(SectionKind::Flats);
+    let first = flats.next().unwrap();
+    assert_eq!((first.start_marker, first.end_marker), (0, 2));
+    // The second pair is EOF-closed.
+    let second = flats.next().unwrap();
+    assert_eq!((second.start_marker, second.end_marker), (3, 5));
+}
+
 use proptest::prelude::*;
 
 proptest! {

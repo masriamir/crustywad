@@ -295,6 +295,10 @@ struct Open {
     sub: bool,
     start: usize,
     children: Vec<Section>,
+    /// A lenient open-time warning (orphan promotion, duplicate pair) was
+    /// already recorded for this marker; EOF cleanup then suppresses the
+    /// `UnpairedStart` so each marker lump warns at most once.
+    start_warned: bool,
 }
 
 impl Open {
@@ -340,6 +344,7 @@ fn handle_top_start(
         }
         return Ok(()); // row 5: redundant marker ignored
     }
+    let mut start_warned = false;
     if let Some(&first_start) = first_completed.get(&kind) {
         match strictness {
             Strictness::Strict => {
@@ -349,11 +354,14 @@ fn handle_top_start(
                     second_start: i,
                 });
             }
-            Strictness::Lenient => table.warnings.push(SectionWarning::DuplicatePair {
-                kind,
-                first_start,
-                second_start: i,
-            }),
+            Strictness::Lenient => {
+                table.warnings.push(SectionWarning::DuplicatePair {
+                    kind,
+                    first_start,
+                    second_start: i,
+                });
+                start_warned = true;
+            }
         }
         // row 4: fall through — the second pair still opens.
     }
@@ -362,6 +370,7 @@ fn handle_top_start(
         sub: false,
         start: i,
         children: Vec::new(),
+        start_warned,
     });
     Ok(())
 }
@@ -398,6 +407,7 @@ fn handle_sub_start(
         }
         return Ok(());
     }
+    let mut start_warned = false;
     if !has_parent {
         match strictness {
             Strictness::Strict => {
@@ -407,6 +417,7 @@ fn handle_sub_start(
                 table
                     .warnings
                     .push(SectionWarning::OrphanSubPair { kind, index: i });
+                start_warned = true;
             }
         }
         // rows 7-8: promote — open as top-level below.
@@ -416,6 +427,7 @@ fn handle_sub_start(
         sub: true,
         start: i,
         children: Vec::new(),
+        start_warned,
     });
     Ok(())
 }
@@ -497,9 +509,16 @@ fn handle_end(
     }
     let section = open.remove(pos).close(i);
     if sub {
-        // Attach to the enclosing open top-level of the same kind; a
-        // promoted orphan has none and stays top-level.
-        if let Some(parent) = open.iter_mut().rev().find(|o| o.kind == kind && !o.sub) {
+        // Attach to the enclosing open top-level of the same kind: it must
+        // both be top-level AND actually ENCLOSE this child (its START must
+        // precede the child's START). A promoted orphan opened before any
+        // same-kind parent existed has no enclosing parent even if one has
+        // since opened, and stays top-level.
+        if let Some(parent) = open
+            .iter_mut()
+            .rev()
+            .find(|o| o.kind == kind && !o.sub && o.start < section.start_marker)
+        {
             parent.children.push(section);
         } else {
             table.sections.push(section);
@@ -527,14 +546,22 @@ fn handle_eof(
                 });
             }
             Strictness::Lenient => {
-                table.warnings.push(SectionWarning::UnpairedStart {
-                    kind: o.kind,
-                    index: o.start,
-                });
+                // One warning per marker lump: an open-time warning (orphan
+                // promotion, duplicate pair) already covers this recovery.
+                if !o.start_warned {
+                    table.warnings.push(SectionWarning::UnpairedStart {
+                        kind: o.kind,
+                        index: o.start,
+                    });
+                }
                 let (kind, sub) = (o.kind, o.sub);
                 let section = o.close(eof);
                 if sub {
-                    if let Some(parent) = open.iter_mut().rev().find(|p| p.kind == kind && !p.sub) {
+                    if let Some(parent) = open
+                        .iter_mut()
+                        .rev()
+                        .find(|p| p.kind == kind && !p.sub && p.start < section.start_marker)
+                    {
                         parent.children.push(section);
                         continue;
                     }
@@ -549,7 +576,9 @@ fn handle_eof(
 /// The scan. Strict returns the first anomaly; lenient records a warning
 /// per the policy table and recovers. `O(lumps)` single pass; the open set
 /// is bounded by one top-level entry per [`SectionKind`] plus one numbered
-/// child, and warnings by one per marker lump (ADR-0016 §1).
+/// child, and warnings by one per marker lump (ADR-0016 §1) — a marker
+/// that already warned at open (orphan promotion, duplicate pair) has its
+/// EOF `UnpairedStart` suppressed to preserve that bound.
 pub(crate) fn scan(wad: &Wad, strictness: Strictness) -> Result<SectionTable, SectionError> {
     let mut open: Vec<Open> = Vec::new();
     let mut table = SectionTable::default();
