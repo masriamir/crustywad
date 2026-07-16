@@ -167,6 +167,39 @@ if let Some(group) = wad.map_group("E1M1") {
 }
 ```
 
+### Directory sections
+
+Besides map groups, a WAD's flat directory brackets other kinds of content between
+zero-size marker lumps: `F_START`/`F_END` for flats, `S_START`/`S_END` for sprites,
+`P_START`/`P_END` for patches, and Doom 64's `T_START`/`T_END` (world textures) and
+`DS_START`/`DS_END` (digital sounds), each with nested numbered sub-namespaces
+(`F1_`/`F2_`/`P1_`/`P2_`/...) and Boom's doubled-letter aliases (`FF_`, `PP_`, `SS_`).
+`Wad::sections` / `Wad::sections_with_options` scan a **single** WAD's directory and
+return a `SectionTable` of `Section`s, each carrying its `SectionKind`, the directory
+range of its marker pair, its content lumps, and any nested sub-sections:
+
+```rust
+use crustywad::{SectionKind, Wad};
+
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+let table = wad.sections()?;
+for flats in table.of_kind(SectionKind::Flats) {
+    println!("flats section spans lumps {:?}", flats.lumps);
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Both reference engines locate a section's extent by unguarded subtraction of two
+independently looked-up marker positions, with no check for a missing, inverted, or
+duplicated marker (ADR-0022 §2) — this API replaces that anti-pattern with a validated
+scan: `Wad::sections` (strict) returns the first `SectionError` on a malformed marker
+layout (an unpaired start/end, a duplicate or nested pair, cross-kind interleaving, or
+an orphaned sub-namespace), while `Wad::sections_with_options` under
+`ParseOptions::lenient()` never errors — it recovers a best-effort `SectionTable` and
+records each anomaly as a `SectionWarning` instead. As with map groups, section
+scanning is scoped to one WAD's directory; multi-WAD load-order overlay is out of
+scope here (tracked on the editor epic's future lump/resource manager, #65).
+
 ### Assembling a `Map`
 
 `Map::assemble` builds a graph from a `MapGroup`'s `THINGS`, `LINEDEFS`, `SIDEDEFS`,
