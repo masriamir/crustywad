@@ -115,12 +115,16 @@ fn doubled_aliases_normalize_and_mixed_pairs_pair_up() {
 #[test]
 fn multi_char_prefixes_never_double_and_junk_is_content() {
     // DSDS_START and TT_START are ordinary content lumps, not markers.
+    // X_START/Q_END are single-character prefixes outside S/F/P/T/G, so the
+    // `single` lookup misses and they fall through to content too.
     let wad = wad_of(&[
         "DSDS_START",
         "TT_START",
         "FX_START",
         "F10_START",
         "F0_START",
+        "X_START",
+        "Q_END",
     ]);
     let table = wad.sections().unwrap();
     assert!(table.sections().is_empty());
@@ -379,6 +383,66 @@ fn duplicate_pair_left_unclosed_warns_exactly_once() {
     assert_eq!((second.start_marker, second.end_marker), (3, 5));
 }
 
+#[test]
+fn numbered_sub_duplicate_while_a_same_kind_sub_is_open() {
+    // Row 5 for numbered sub-pairs: F2_START opens while F1_START (same
+    // parent kind, still a sub) is already open. The redundant marker is
+    // ignored; its lump index still falls inside F1's eventual extent.
+    let wad = wad_of(&[
+        "F_START", "F1_START", "A", "F2_START", "B", "F1_END", "F_END",
+    ]);
+    assert!(matches!(
+        wad.sections().unwrap_err(),
+        SectionError::NestedDuplicate {
+            kind: SectionKind::Flats,
+            outer_start: 1,
+            inner_start: 3
+        }
+    ));
+    let table = lenient(&wad);
+    assert_eq!(table.warnings().len(), 1);
+    assert!(matches!(
+        table.warnings()[0],
+        SectionWarning::NestedDuplicate {
+            kind: SectionKind::Flats,
+            outer_start: 1,
+            inner_start: 3
+        }
+    ));
+    let outer = &table.sections()[0];
+    assert_eq!(outer.sub_sections.len(), 1);
+    // F2_START was never opened as its own sub-section; F1 still spans it.
+    assert_eq!(outer.sub_sections[0].lumps, 2..5);
+}
+
+#[test]
+fn unclosed_sub_and_parent_both_reach_eof_still_nest() {
+    // Neither F1_END nor F_END appears: EOF cleanup pops the sub first (LIFO)
+    // and must still find its still-open parent to attach into, rather than
+    // falling back to a top-level promotion.
+    let wad = wad_of(&["F_START", "F1_START", "FLOORA"]);
+    assert!(matches!(
+        wad.sections().unwrap_err(),
+        SectionError::UnpairedStart {
+            kind: SectionKind::Flats,
+            index: 1
+        }
+    ));
+    let table = lenient(&wad);
+    assert_eq!(table.warnings().len(), 2);
+    assert_eq!(table.sections().len(), 1);
+    let outer = &table.sections()[0];
+    assert_eq!((outer.start_marker, outer.end_marker), (0, 3));
+    assert_eq!(outer.sub_sections.len(), 1);
+    assert_eq!(
+        (
+            outer.sub_sections[0].start_marker,
+            outer.sub_sections[0].end_marker
+        ),
+        (1, 3)
+    );
+}
+
 use proptest::prelude::*;
 
 proptest! {
@@ -423,4 +487,53 @@ proptest! {
             prop_assert!(section.sub_sections.is_empty());
         }
     }
+}
+
+/// Env-gated retail smoke (reuses the sweep collection variable; path must
+/// be ABSOLUTE — cargo sets each test binary's CWD to the package root).
+/// Skips gracefully when unset, like the sweep tests.
+#[test]
+fn retail_iwads_scan_to_their_known_shapes() {
+    let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
+        eprintln!("skipping: CRUSTYWAD_SWEEP_DIR not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+
+    let doom = Wad::from_path(dir.join("DOOM.WAD")).expect("DOOM.WAD reads");
+    let table = doom.sections().expect("retail DOOM.WAD is strict-clean");
+    assert!(table.warnings().is_empty());
+    let flats = table.of_kind(SectionKind::Flats).next().unwrap();
+    assert_eq!(flats.sub_sections.len(), 2);
+    let patches = table.of_kind(SectionKind::Patches).next().unwrap();
+    assert_eq!(patches.sub_sections.len(), 2);
+    assert_eq!(table.of_kind(SectionKind::Sprites).count(), 1);
+
+    let doom2 = Wad::from_path(dir.join("DOOM2.WAD")).expect("DOOM2.WAD reads");
+    let table = doom2.sections().expect("retail DOOM2.WAD is strict-clean");
+    assert_eq!(
+        table
+            .of_kind(SectionKind::Flats)
+            .next()
+            .unwrap()
+            .sub_sections
+            .len(),
+        3
+    );
+    assert_eq!(
+        table
+            .of_kind(SectionKind::Patches)
+            .next()
+            .unwrap()
+            .sub_sections
+            .len(),
+        3
+    );
+
+    let d64 = Wad::from_path(dir.join("DOOM64.WAD")).expect("DOOM64.WAD reads");
+    let table = d64.sections().expect("retail DOOM64.WAD is strict-clean");
+    assert!(table.warnings().is_empty());
+    let textures = table.of_kind(SectionKind::Textures).next().unwrap();
+    assert_eq!(textures.lumps.len(), 503);
+    assert_eq!(table.of_kind(SectionKind::Graphics).count(), 0);
 }
