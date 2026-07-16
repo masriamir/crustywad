@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.4.0...crustywad-v0.5.0) - 2026-07-16
+
+### Added
+
+- *(map)* decode Doom 64 MACROS scripts onto the Map graph ([#276](https://github.com/masriamir/crustywad/pull/276))
+- *(map)* decode Doom 64 LEAFS render leaves onto the Map graph ([#275](https://github.com/masriamir/crustywad/pull/275))
+- *(map)* parse REJECT and BLOCKMAP into typed structures ([#274](https://github.com/masriamir/crustywad/pull/274))
+
+### Fixed
+
+- *(cli)* only print the --lenient hint for writer errors lenient mode can recover ([#272](https://github.com/masriamir/crustywad/pull/272))
+
 ## [0.4.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.3.1...crustywad-v0.4.0) - 2026-07-15
 
 ### Added
