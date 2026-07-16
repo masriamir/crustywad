@@ -365,7 +365,7 @@ one warning, the same whole-arena degrade policy as the BSP data below. `Map::le
 `MapSubsector::leafs` range are empty for every source format other than Doom 64.
 
 Doom 64 also decodes the `MACROS` lump — its scripted action sequences — onto the graph.
-`Map::macros()` is a `Vec<MapMacro>` in lump order, each `MapMacro { actions: Vec<MapMacroAction> }`
+`Map::macros()` returns the decoded macros as a slice, in lump order, each `MapMacro { actions: Vec<MapMacroAction> }`
 holding `MapMacroAction { id, tag, special }` entries; the engine's loader reads one more action
 than the macro's on-disk count states (`count + 1`), and this decode preserves that read exactly.
 Decoding stops at the data: `crustywad` builds no interpreter or execution machinery for these
