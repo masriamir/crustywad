@@ -34,7 +34,7 @@ per the project's ADR-before-code planning process.
   rewrite plus the `wadgen` ROM→PC converter): the PC WAD's texture/sprite/gfx
   lumps are standard PNGs, and the `u16` in sidedef/sector records is a
   truncated rolling hash of the texture's lump name, not an index.
-- **Empirical validation** against the user's retail KEX `PWADS/DOOM64.WAD`
+- **Empirical validation** against the user's retail KEX `RETAIL/DOOM64.WAD`
   (1668 lumps): **503/503** texture-section lumps carry PNG magic (and 50/50
   sampled sprites); the reimplemented name-hash, resolved first-match-in-disk-
   order, resolves **82/82** distinct texture references in `MAP01` with zero
@@ -113,7 +113,7 @@ markers," and today that logic does not exist anywhere in the crate.
 
 - **Classic:** `F_START`/`F_END` (flats), `S_START`/`S_END` (sprites),
   `P_START`/`P_END` (patches) — plus nested sub-namespaces `F1_`/`F2_START..END`
-  and `P1_`/`P2_START..END` (a third `F3_`/`P3_` pair in Doom II-lineage IWADs),
+  and `P1_`/`P2_START..END` (a third `F3_`/`P3_` pair in DOOM2.WAD and its BFG-edition variant),
   verified against the retail collection: DOOM/DOOM2/Heretic/Hexen IWADs.
   Sprites do **not** nest in any retail IWAD — no `S1_`/`S2_` pair appears
   anywhere in the collection. Boom additionally recognizes a doubled-first-letter
@@ -438,7 +438,7 @@ impl Wad {
 - ADR-0021 §5's write/convert-gate contract is amended, not replaced: the
   `MapFormat::Doom64` structured-reject stays in force for every writer path
   except the specific lift issue 4 implements (`TextureRef::Index` resolved
-  to a name via the hash table); colored lighting's gate is untouched by this
+  to a name via the hash table); colored lighting's gate is not lifted by this
   ADR.
 - A new optional-dependency class enters the crate via `doom64-gfx` (the
   `png` crate) — the first optional runtime dependency since `mmap`'s
@@ -472,8 +472,8 @@ impl Wad {
   `doom64/opengl/gl_texture.c`, `doom64/playloop/p_setup.c`,
   `doom64/system/i_png.c`, `src/engine/wad/*.cc`,
   `src/engine/playloop/p_setup.cc`, `include/imp/Wad`,
-  `src/engine/wadgen/*`); the empirical validation against the user's retail
-  `PWADS/DOOM64.WAD` (2020 Steam KEX re-release, 1668 lumps).
+  `src/engine/wadgen/*`); PrBoom+ (`prboom2/src/w_wad.c`); the empirical validation against the user's retail
+  `RETAIL/DOOM64.WAD` (2020 Steam KEX re-release, 1668 lumps).
 - Out of scope, documented here rather than silently dropped: multi-WAD
   load-order/overlay semantics (→ #65); graphics **writing** (patch/TEXTUREx/
   PNG emission) — a future cycle, after the read path proves the model, the
