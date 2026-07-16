@@ -579,3 +579,122 @@ fn udmf_group_carrying_blockmap_is_decoded() {
         Some(&[LinedefIdx(0)][..])
     );
 }
+
+#[test]
+fn doom64_strict_surfaces_blockmap_error() {
+    // A 3-word header is malformed regardless of nesting; exercises the
+    // `decode_reject_blockmap` error path inside Doom 64 assembly.
+    let bytes = common::build_doom64_map_wad_full(
+        "MAP01",
+        &[],
+        &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        &common::d64_sidedef(0, 0, 0, 0),
+        &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        &common::d64_sector(0, 0, [0; 5], 0),
+        &common::d64_light(0, 0, 0, 0),
+        &[],
+        &[],
+        &[],
+        &[],
+        &words_to_bytes(&[0, 0, 1]),
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap_err(),
+        MapAssembleError::MalformedBlockmap { .. }
+    ));
+}
+
+#[test]
+fn udmf_strict_surfaces_blockmap_error() {
+    // Same malformed-header case, exercised through UDMF assembly's own
+    // `decode_reject_blockmap` call site.
+    let textmap = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 64; y = 0; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+        "sidedef { sector = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+    );
+    let bytes = common::build_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", &[]),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("BLOCKMAP", &words_to_bytes(&[0, 0, 1])),
+            ("ENDMAP", &[]),
+        ],
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap_err(),
+        MapAssembleError::MalformedBlockmap { .. }
+    ));
+}
+
+#[test]
+fn blockmap_list_ends_exactly_at_lump_end_after_delimiter() {
+    // Block 0's list is just the leading-0 delimiter, positioned as the
+    // lump's very last word: after skipping it, `start == words.len()`,
+    // so no terminator can possibly follow. Strict mode errors; lenient
+    // mode recovers to an empty block.
+    let bytes = words_to_bytes(&[0, 0, 1, 1, 5, 0]);
+    let mut warnings = Vec::new();
+    assert!(matches!(
+        MapBlockmap::parse(&bytes, 1, Strictness::Strict, &mut warnings).unwrap_err(),
+        MapAssembleError::UnterminatedBlockmapList { block: 0 }
+    ));
+    let mut warnings = Vec::new();
+    let bm = MapBlockmap::parse(&bytes, 1, Strictness::Lenient, &mut warnings)
+        .unwrap()
+        .unwrap();
+    assert_eq!(bm.block(0, 0), Some(&[][..]));
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(
+        warnings[0],
+        MapWarning::UnterminatedBlockmapList { block: 0 }
+    ));
+}
+
+// --- Property: grid arithmetic agrees between block() and block_at() ---
+
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn block_at_cell_center_agrees_with_block(
+        origin_x in -8192_i16..8192,
+        origin_y in -8192_i16..8192,
+        columns in 1_u16..12,
+        rows in 1_u16..12,
+        col in 0_usize..12,
+        row in 0_usize..12,
+    ) {
+        prop_assume!(col < usize::from(columns) && row < usize::from(rows));
+        // Every block's offset points at one shared empty list (word after
+        // the table), keeping the fixture O(1) regardless of grid size.
+        let block_count = usize::from(columns) * usize::from(rows);
+        let list_offset = u16::try_from(4 + block_count).unwrap();
+        let mut w = vec![
+            u16::from_le_bytes(origin_x.to_le_bytes()),
+            u16::from_le_bytes(origin_y.to_le_bytes()),
+            columns,
+            rows,
+        ];
+        w.extend(std::iter::repeat_n(list_offset, block_count));
+        w.push(0xFFFF);
+        let bytes = words_to_bytes(&w);
+        let mut warnings = Vec::new();
+        let bm = MapBlockmap::parse(&bytes, 1, Strictness::Strict, &mut warnings)
+            .unwrap()
+            .unwrap();
+        // The center of cell (col, row) in map space.
+        #[allow(clippy::cast_precision_loss)] // cols/rows < 12: lossless
+        let x = f64::from(origin_x) + (col as f64 + 0.5) * 128.0;
+        #[allow(clippy::cast_precision_loss)] // cols/rows < 12: lossless
+        let y = f64::from(origin_y) + (row as f64 + 0.5) * 128.0;
+        prop_assert_eq!(bm.block_at(x, y), bm.block(col, row));
+        prop_assert_eq!(bm.block(col, row), Some(&[][..]));
+    }
+}
