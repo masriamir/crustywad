@@ -1,9 +1,9 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::graph::{
-    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapNode, MapSector, MapSeg,
-    MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx,
-    SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLight, MapLinedef, MapNode, MapReject,
+    MapSector, MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild,
+    NodeIdx, SectorIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
 use crate::{ParseOptions, Strictness, Wad};
@@ -91,6 +91,44 @@ pub enum MapAssembleError {
         /// The 4-byte signature found at the head of the lump (e.g. `*b"XNOD"`).
         signature: [u8; 4],
     },
+    /// The `REJECT` lump was smaller than the table its map's sector count
+    /// requires (strict mode; lenient reads missing bits as "not rejected").
+    #[error("REJECT lump is {actual} bytes; {expected} bytes required for {sectors} sectors")]
+    UndersizedReject {
+        /// The lump's actual byte length.
+        actual: usize,
+        /// The required table size, `(sectors² + 7) / 8` bytes.
+        expected: usize,
+        /// The owning map's sector count.
+        sectors: usize,
+    },
+    /// The `BLOCKMAP` lump was structurally unusable — shorter than its
+    /// 4-word header, non-positive dimensions, or an offset table extending
+    /// past the lump (strict mode; lenient discards the blockmap and warns).
+    #[error("BLOCKMAP lump is malformed: {detail}")]
+    MalformedBlockmap {
+        /// What made the lump unusable.
+        detail: &'static str,
+    },
+    /// A `BLOCKMAP` block's offset pointed outside the lump (strict mode;
+    /// lenient empties that block's list and warns).
+    #[error("BLOCKMAP block {block} offset {offset} is outside the lump ({words} words)")]
+    BlockmapBlockOffset {
+        /// The 0-based block (offset-table) index.
+        block: usize,
+        /// The out-of-range word offset.
+        offset: usize,
+        /// The lump's total word count.
+        words: usize,
+    },
+    /// A `BLOCKMAP` block's linedef list ran past the end of the lump
+    /// without its `0xFFFF` terminator (strict mode; lenient truncates the
+    /// list at the lump end and warns).
+    #[error("BLOCKMAP block {block} linedef list is unterminated")]
+    UnterminatedBlockmapList {
+        /// The 0-based block index.
+        block: usize,
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.
@@ -147,6 +185,265 @@ fn extended_signature(wad: &Wad, group: &MapGroup, lump: &str) -> Option<[u8; 4]
     let bytes = lump_bytes(wad, group, lump)?;
     let head: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
     EXTENDED_NODE_SIGNATURES.contains(&&head).then_some(head)
+}
+
+/// Decodes a group's `REJECT`/`BLOCKMAP` lumps (either may be absent) once
+/// the owning map's sector and linedef counts are known. Shared by all
+/// three assembly paths so the strict/lenient policy cannot drift between
+/// formats.
+fn decode_reject_blockmap(
+    reject_bytes: Option<&[u8]>,
+    blockmap_bytes: Option<&[u8]>,
+    sector_count: usize,
+    linedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Option<MapReject>, Option<MapBlockmap>), MapAssembleError> {
+    let reject = match reject_bytes {
+        None => None,
+        Some(bytes) => MapReject::parse(bytes, sector_count, strictness, warnings)?,
+    };
+    let blockmap = match blockmap_bytes {
+        None => None,
+        Some(bytes) => MapBlockmap::parse(bytes, linedef_count, strictness, warnings)?,
+    };
+    Ok((reject, blockmap))
+}
+
+impl MapReject {
+    /// Parses a `REJECT` lump against its owning map's sector count.
+    ///
+    /// An empty lump means "not built" (our own writer emits zero-length
+    /// `REJECT` by design, ADR-0019 §4) and yields `Ok(None)` with no
+    /// warning in both modes. An oversized lump is accepted in both modes
+    /// and its tail ignored, as vanilla does (`P_LoadReject` reads
+    /// `minlength`). The stored table is `min(actual, expected)` bytes —
+    /// bounded by the input (ADR-0016 §1).
+    ///
+    /// # Errors
+    ///
+    /// [`MapAssembleError::UndersizedReject`] in strict mode when the lump
+    /// is shorter than `(sector_count² + 7) / 8` bytes; lenient mode records
+    /// [`MapWarning::UndersizedReject`] instead and the missing bits read as
+    /// "not rejected".
+    pub fn parse(
+        bytes: &[u8],
+        sector_count: usize,
+        strictness: Strictness,
+        warnings: &mut Vec<MapWarning>,
+    ) -> Result<Option<Self>, MapAssembleError> {
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        // Saturating: a pathological standalone-caller count still yields a
+        // deterministic "undersized" comparison rather than an overflow.
+        let expected = sector_count.saturating_mul(sector_count).div_ceil(8);
+        if bytes.len() < expected {
+            match strictness {
+                Strictness::Strict => {
+                    return Err(MapAssembleError::UndersizedReject {
+                        actual: bytes.len(),
+                        expected,
+                        sectors: sector_count,
+                    });
+                }
+                Strictness::Lenient => warnings.push(MapWarning::UndersizedReject {
+                    actual: bytes.len(),
+                    expected,
+                    sectors: sector_count,
+                }),
+            }
+        }
+        let stored = &bytes[..bytes.len().min(expected)];
+        Ok(Some(Self {
+            sector_count,
+            bits: stored.into(),
+        }))
+    }
+}
+
+impl MapBlockmap {
+    /// Parses a `BLOCKMAP` lump against its owning map's linedef count.
+    ///
+    /// An empty lump means "not built" (ADR-0019 §4) and yields `Ok(None)`
+    /// with no warning in both modes. A trailing odd byte is ignored, as
+    /// vanilla's word-count division does (`P_LoadBlockMap`). List entries
+    /// are read as **unsigned**, zero-extended, with only the `0xFFFF`
+    /// terminator special-cased — the Boom fix (`PrBoom+` `P_LoadBlockMap`,
+    /// killough 3/1/98: "treating all offsets except -1 as unsigned")
+    /// that doubles the addressable linedefs over vanilla's accidental
+    /// signed read. Offsets may alias or overlap freely — block lists are
+    /// ranges into a single shared word arena, so parse work and memory
+    /// stay `O(input)` (ADR-0016 §1).
+    ///
+    /// # Errors
+    ///
+    /// In strict mode: [`MapAssembleError::MalformedBlockmap`] for a
+    /// structurally unusable lump,
+    /// [`MapAssembleError::BlockmapBlockOffset`] for a block offset outside
+    /// the lump, [`MapAssembleError::UnterminatedBlockmapList`] for a list
+    /// with no terminator, and [`MapAssembleError::DanglingReference`] for
+    /// a list entry past the linedef arena. Lenient mode recovers each with
+    /// the corresponding [`MapWarning`] (discard / empty block / truncate /
+    /// empty block, respectively).
+    ///
+    /// # Panics
+    ///
+    /// Does not panic. The internal `expect` calls on `usize::try_from` are
+    /// preceded by an explicit `columns <= 0 || rows <= 0` check that returns
+    /// (or, in lenient mode, discards the lump) before either conversion runs.
+    #[allow(clippy::too_many_lines)]
+    pub fn parse(
+        bytes: &[u8],
+        linedef_count: usize,
+        strictness: Strictness,
+        warnings: &mut Vec<MapWarning>,
+    ) -> Result<Option<Self>, MapAssembleError> {
+        /// The list terminator word (`-1` in `P_BlockLinesIterator`).
+        const TERMINATOR: u16 = 0xFFFF;
+
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        let malformed = |detail: &'static str, warnings: &mut Vec<MapWarning>| match strictness {
+            Strictness::Strict => Err(MapAssembleError::MalformedBlockmap { detail }),
+            Strictness::Lenient => {
+                warnings.push(MapWarning::MalformedBlockmap { detail });
+                Ok(None)
+            }
+        };
+        if bytes.len() < 8 {
+            return malformed("shorter than the 4-word header", warnings);
+        }
+        let origin_x = f64::from(i16::from_le_bytes([bytes[0], bytes[1]]));
+        let origin_y = f64::from(i16::from_le_bytes([bytes[2], bytes[3]]));
+        let columns = i16::from_le_bytes([bytes[4], bytes[5]]);
+        let rows = i16::from_le_bytes([bytes[6], bytes[7]]);
+        if columns <= 0 || rows <= 0 {
+            return malformed("non-positive grid dimensions", warnings);
+        }
+        let columns = usize::try_from(columns).expect("checked positive above");
+        let rows = usize::try_from(rows).expect("checked positive above");
+        // Fits usize: both factors are <= i16::MAX.
+        let block_count = columns * rows;
+
+        let words: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        if 4 + block_count > words.len() {
+            return malformed("offset table extends past the lump", warnings);
+        }
+
+        // Single reverse pass — O(1) per-block validity AND diagnostic under
+        // arbitrary offset aliasing: for each word position, the index of
+        // the next terminator at or after it (usize::MAX = none), and the
+        // index of the next out-of-range entry at or after it (usize::MAX =
+        // none). This is what makes parse time O(input) regardless of how
+        // many blocks alias the same offset.
+        let mut next_term = vec![usize::MAX; words.len()];
+        let mut next_invalid = vec![usize::MAX; words.len()];
+        let mut last_term = usize::MAX;
+        let mut last_invalid = usize::MAX;
+        for i in (0..words.len()).rev() {
+            let word = words[i];
+            if word == TERMINATOR {
+                last_term = i;
+            } else if usize::from(word) >= linedef_count {
+                last_invalid = i;
+            }
+            next_term[i] = last_term;
+            next_invalid[i] = last_invalid;
+        }
+
+        let entries: Vec<LinedefIdx> = words.iter().map(|&w| LinedefIdx(usize::from(w))).collect();
+        let mut blocks = Vec::with_capacity(block_count);
+        for block in 0..block_count {
+            let offset = usize::from(words[4 + block]);
+            if offset >= words.len() {
+                match strictness {
+                    Strictness::Strict => {
+                        return Err(MapAssembleError::BlockmapBlockOffset {
+                            block,
+                            offset,
+                            words: words.len(),
+                        });
+                    }
+                    Strictness::Lenient => {
+                        warnings.push(MapWarning::BlockmapBlockOffset {
+                            block,
+                            offset,
+                            words: words.len(),
+                        });
+                        blocks.push(0..0);
+                        continue;
+                    }
+                }
+            }
+            // A literal leading 0 is the conventional delimiter (see
+            // `MapBlockmap::block`); skipping it may land exactly on the
+            // lump end, which the unterminated branch below then handles.
+            let start = if words[offset] == 0 {
+                offset + 1
+            } else {
+                offset
+            };
+            let end = if start < words.len() {
+                next_term[start]
+            } else {
+                usize::MAX
+            };
+            let end = if end == usize::MAX {
+                match strictness {
+                    Strictness::Strict => {
+                        return Err(MapAssembleError::UnterminatedBlockmapList { block });
+                    }
+                    Strictness::Lenient => {
+                        warnings.push(MapWarning::UnterminatedBlockmapList { block });
+                        words.len()
+                    }
+                }
+            } else {
+                end
+            };
+            let first_invalid = if start < words.len() {
+                next_invalid[start]
+            } else {
+                usize::MAX
+            };
+            if first_invalid < end {
+                let word = words[first_invalid];
+                match strictness {
+                    Strictness::Strict => {
+                        return Err(MapAssembleError::DanglingReference {
+                            referent: "linedef",
+                            index: i32::from(word),
+                            from: "blockmap block",
+                            count: linedef_count,
+                        });
+                    }
+                    Strictness::Lenient => {
+                        warnings.push(MapWarning::BlockmapListDangling {
+                            block,
+                            index: word,
+                            count: linedef_count,
+                        });
+                        blocks.push(0..0);
+                        continue;
+                    }
+                }
+            }
+            blocks.push(start..end);
+        }
+        Ok(Some(Self {
+            origin_x,
+            origin_y,
+            columns,
+            rows,
+            entries,
+            blocks,
+        }))
+    }
 }
 
 /// Resolves a **required** reference. Empty target arena is always fatal.
@@ -964,6 +1261,7 @@ impl Map {
     /// Doom 64 group, [`MapAssembleError::Doom64`] wraps a failure to read the
     /// marker's nested WAD (both modes) or a missing/undecodable sub-lump
     /// (strict mode; ADR-0021 §2).
+    #[allow(clippy::too_many_lines)]
     pub fn assemble_with_options(
         wad: &Wad,
         group: &MapGroup,
@@ -1060,6 +1358,15 @@ impl Map {
                     )?
                 };
 
+                let (reject, blockmap) = decode_reject_blockmap(
+                    lump_bytes(wad, group, "REJECT"),
+                    lump_bytes(wad, group, "BLOCKMAP"),
+                    sectors.len(),
+                    linedefs.len(),
+                    s,
+                    &mut warnings,
+                )?;
+
                 Ok(Map {
                     name: group.name.clone(),
                     format,
@@ -1073,6 +1380,8 @@ impl Map {
                     segs,
                     subsectors,
                     nodes,
+                    reject,
+                    blockmap,
                     warnings,
                 })
             }
@@ -1318,6 +1627,18 @@ fn assemble_doom64(
     // one warning stream regardless of source format.
     warnings.extend(raw.warnings().iter().cloned().map(MapWarning::Doom64));
 
+    // The nested-WAD reader hands back empty `Vec`s when the REJECT/BLOCKMAP
+    // sub-lumps are missing, and empty means "not built" here just as it
+    // does for the classic/UDMF paths (ADR-0019 §4).
+    let (reject, blockmap) = decode_reject_blockmap(
+        Some(&raw.reject),
+        Some(&raw.blockmap),
+        sectors.len(),
+        linedefs.len(),
+        s,
+        &mut warnings,
+    )?;
+
     Ok(Map {
         name: group.name.clone(),
         format: MapFormat::Doom64,
@@ -1331,6 +1652,8 @@ fn assemble_doom64(
         segs,
         subsectors,
         nodes,
+        reject,
+        blockmap,
         warnings,
     })
 }
@@ -1376,6 +1699,15 @@ fn assemble_udmf(
     )?;
     let things = normalize_udmf_things(&udmf.things, s, &mut warnings)?;
 
+    let (reject, blockmap) = decode_reject_blockmap(
+        lump_bytes(wad, group, "REJECT"),
+        lump_bytes(wad, group, "BLOCKMAP"),
+        sectors.len(),
+        linedefs.len(),
+        s,
+        &mut warnings,
+    )?;
+
     Ok(Map {
         name: group.name.clone(),
         format: MapFormat::Udmf,
@@ -1391,6 +1723,8 @@ fn assemble_udmf(
         segs: Vec::new(),
         subsectors: Vec::new(),
         nodes: Vec::new(),
+        reject,
+        blockmap,
         warnings,
     })
 }

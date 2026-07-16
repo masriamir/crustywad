@@ -32,7 +32,7 @@ pub mod hexen;
 pub mod udmf;
 
 pub use assemble::MapAssembleError;
-pub use common::{BlockmapLump, Name8, Node, RejectLump, Sector, Seg, Sidedef, Subsector, Vertex};
+pub use common::{Name8, Node, Sector, Seg, Sidedef, Subsector, Vertex};
 #[cfg(feature = "write")]
 pub use doom::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, write_doom_map};
 pub use doom64::{
@@ -40,9 +40,9 @@ pub use doom64::{
     read_doom64_map,
 };
 pub use graph::{
-    LightIdx, LinedefIdx, Map, MapFormat, MapLight, MapLinedef, MapNode, MapSector, MapSeg,
-    MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx,
-    SegIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
+    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLight, MapLinedef, MapNode, MapReject,
+    MapSector, MapSeg, MapSidedef, MapSubsector, MapThing, MapVertex, MapWarning, NodeChild,
+    NodeIdx, SectorIdx, SegIdx, SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
 pub use udmf::{UdmfParseError, parse_udmf};

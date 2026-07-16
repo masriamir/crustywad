@@ -249,21 +249,3 @@ pub struct Sector {
     /// the tag mechanism).
     pub tag: i16,
 }
-
-/// Placeholder for the `REJECT` lump (not yet parsed).
-///
-/// The `REJECT` lump is a bit matrix used by the engine to quickly determine
-/// whether a monster in one sector can potentially see the player in another.
-/// It exists as a performance optimization for the AI line-of-sight check.
-/// Full parsing is deferred to a future milestone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct RejectLump;
-
-/// Placeholder for the `BLOCKMAP` lump (not yet parsed).
-///
-/// The `BLOCKMAP` lump is a spatial index that divides the map into a grid of
-/// 128×128 map-unit cells and records which linedefs cross each cell.  The
-/// engine uses it to accelerate collision detection.  Full parsing is deferred
-/// to a future milestone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BlockmapLump;

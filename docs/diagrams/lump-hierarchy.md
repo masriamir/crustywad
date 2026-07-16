@@ -23,8 +23,8 @@ graph TD
     Map --> SSECTORS["SSECTORS → Subsector\n4 bytes per record"]
     Map --> NODES["NODES → Node\n28 bytes per record"]
     Map --> SECTORS["SECTORS → Sector\n26 bytes per record"]
-    Map --> REJECT["REJECT → RejectLump\n(stub — not yet parsed)"]
-    Map --> BLOCKMAP["BLOCKMAP → BlockmapLump\n(stub — not yet parsed)"]
+    Map --> REJECT["REJECT → MapReject\nsector-visibility bit matrix"]
+    Map --> BLOCKMAP["BLOCKMAP → MapBlockmap\nspatial linedef index"]
 
     NS --> SS["S_START / S_END\n(sprite namespace)"]
     NS --> PP["P_START / P_END\n(patch namespace)"]
@@ -36,4 +36,4 @@ graph TD
     Special --> PNAMES["PNAMES\n(patch name list — planned)"]
 ```
 
-Record-based map lump types are defined in `crates/crustywad/src/map/` — format-specific records (`Thing`, `Linedef`) in `doom.rs`, and records whose byte layout is shared across formats (`Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) in `common.rs` — and decoded via `parse_records::<T>`. Items marked **stub** (`RejectLump`, `BlockmapLump`) have zero-sized placeholder types and are not parsed via `parse_records`. Items marked **planned** are future milestones with no current typed struct.
+Record-based map lump types are defined in `crates/crustywad/src/map/` — format-specific records (`Thing`, `Linedef`) in `doom.rs`, and records whose byte layout is shared across formats (`Sidedef`, `Vertex`, `Seg`, `Subsector`, `Node`, `Sector`) in `common.rs` — and decoded via `parse_records::<T>`. `REJECT`/`BLOCKMAP` are variable-length, not fixed-size records, so they decode via `MapReject::parse`/`MapBlockmap::parse` (`crates/crustywad/src/map/assemble.rs`) into `MapReject`/`MapBlockmap` (`crates/crustywad/src/map/graph.rs`), exposed on an assembled map via `Map::reject`/`Map::blockmap`. Items marked **planned** are future milestones with no current typed struct.

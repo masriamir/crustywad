@@ -880,6 +880,8 @@ mod tests {
             segs: Vec::new(),
             subsectors: Vec::new(),
             nodes: Vec::new(),
+            reject: None,
+            blockmap: None,
             warnings: vec![],
         }
     }
