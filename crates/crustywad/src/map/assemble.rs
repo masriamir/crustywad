@@ -237,8 +237,11 @@ fn decode_reject_blockmap(
 /// whole-arena degrade with one warning (lenient). Index validation uses
 /// `>=`, deliberately tighter than the engine's off-by-one `>` checks.
 ///
-/// Single forward pass; total entries are bounded by `bytes.len() / 4`
-/// (ADR-0016 §1).
+/// Single forward pass; total entries are bounded by `bytes.len() / 4`, and
+/// the ranges vec by `subsector_count` — once it is full, surplus records
+/// are tallied without decoding their entries, mirroring the engine's
+/// two-pass order (count first, then load) so a surplus lump reports the
+/// count mismatch rather than a later per-entry defect (ADR-0016 §1).
 fn normalize_leafs(
     bytes: &[u8],
     subsector_count: usize,
@@ -252,6 +255,7 @@ fn normalize_leafs(
 
     let mut leafs = Vec::new();
     let mut ranges = Vec::with_capacity(subsector_count);
+    let mut record_count = 0_usize;
     let mut offset = 0_usize;
     while offset < bytes.len() {
         if bytes.len() - offset < 2 {
@@ -265,6 +269,17 @@ fn normalize_leafs(
                 strictness,
                 warnings,
             );
+        }
+        record_count += 1;
+        if ranges.len() == subsector_count {
+            // More records than subsectors: the count mismatch below is now
+            // inevitable, so skip entry decoding and keep only the record
+            // tally. This keeps `ranges` genuinely bounded by the subsector
+            // count under a surplus-record lump, and mirrors the engine's
+            // two-pass order (`P_LoadLeafs` counts records before loading
+            // any), so the mismatch is what gets reported.
+            offset += count * 4;
+            continue;
         }
         let start = leafs.len();
         for _ in 0..count {
@@ -288,8 +303,8 @@ fn normalize_leafs(
         }
         ranges.push(start..leafs.len());
     }
-    if ranges.len() != subsector_count {
-        let (leaves, subsectors) = (ranges.len(), subsector_count);
+    if record_count != subsector_count {
+        let (leaves, subsectors) = (record_count, subsector_count);
         return match strictness {
             Strictness::Strict => Err(MapAssembleError::LeafCountMismatch { leaves, subsectors }),
             Strictness::Lenient => {

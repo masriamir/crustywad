@@ -434,7 +434,8 @@ use crustywad::Wad;
 use crustywad::map::{Map, MapLeaf, MapWarning, SegIdx, VertexIdx};
 
 /// Encodes per-subsector leaf lists into LEAFS lump bytes: for each list a
-/// u16 count then count × (u16 vertex, u16 seg; 0xFFFF = no seg).
+/// u16 count then count × (u16 vertex, i16 seg — supplied here as its u16
+/// bit pattern, so 0xFFFF is the on-disk -1 "no seg" sentinel).
 fn leafs_bytes(lists: &[&[(u16, u16)]]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for list in lists {
@@ -715,4 +716,39 @@ proptest! {
             cursor += list.len();
         }
     }
+}
+
+#[test]
+fn leafs_surplus_records_report_full_count_without_decoding_extras() {
+    // Five records against two subsectors: the walk stops decoding entries
+    // once the ranges vec is full (engine two-pass parity — count first,
+    // then load) but still reports the FULL record count in the mismatch.
+    // The third record carries a dangling vertex that must NOT surface:
+    // count parity wins, as in P_LoadLeafs's separate counting pass.
+    let leafs = leafs_bytes(&[
+        &[(0, 0xFFFF)],
+        &[(1, 0xFFFF)],
+        &[(9, 0xFFFF)], // dangling vertex in a surplus record — skipped
+        &[],
+        &[],
+    ]);
+    let err = assemble_d64(d64_map_with_leafs(&leafs)).unwrap_err();
+    assert!(matches!(
+        err,
+        crustywad::map::MapAssembleError::LeafCountMismatch {
+            leaves: 5,
+            subsectors: 2
+        }
+    ));
+
+    let map = assemble_d64_lenient(d64_map_with_leafs(&leafs));
+    assert!(map.leafs().is_empty());
+    assert!(map.subsectors().iter().all(|ss| ss.leafs == (0..0)));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::LeafCountMismatch {
+            leaves: 5,
+            subsectors: 2
+        }
+    )));
 }

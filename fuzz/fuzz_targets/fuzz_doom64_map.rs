@@ -74,19 +74,25 @@ fuzz_target!(|data: &[u8]| {
         );
 
         // Path 3 (#244): the same nested-WAD bytes assembled through the
-        // graph, in both strictness modes. Oracle: no panic; on a
-        // successful strict-or-lenient decode with a non-empty leaf arena,
-        // the LEAFS walk consumed its lump exactly — every leaf entry is 4
-        // bytes plus a 2-byte count per subsector record (P_LoadLeafs
-        // stride), so the sizes must reconcile with the raw lump.
+        // graph, in both strictness modes. Oracle: no panic; the LEAFS walk
+        // consumed its lump exactly — every leaf entry is 4 bytes plus a
+        // 2-byte count per subsector record (P_LoadLeafs stride), so the
+        // sizes must reconcile with the raw lump. A strict success implies
+        // exact consumption unconditionally (any surplus is malformed or a
+        // count mismatch, both strict errors), including the all-zero-count
+        // case; a lenient success only guarantees it when the arena is
+        // non-empty (a lenient whole-degrade empties the arena while the
+        // raw lump keeps its bytes).
         let outer = wrap_as_map_lump(&input);
         if let Ok(wad) = crustywad::Wad::from_bytes(outer) {
             if let Some(group) = wad.map_group("MAP01") {
-                for options in [ParseOptions::strict(), ParseOptions::lenient()] {
+                for (options, is_strict) in
+                    [(ParseOptions::strict(), true), (ParseOptions::lenient(), false)]
+                {
                     if let Ok(assembled) =
                         crustywad::map::Map::assemble_with_options(&wad, &group, options)
                     {
-                        if !assembled.leafs().is_empty() {
+                        if is_strict || !assembled.leafs().is_empty() {
                             assert_eq!(
                                 assembled.leafs().len() * 4 + assembled.subsectors().len() * 2,
                                 map.leafs.len(),
