@@ -112,8 +112,10 @@ markers," and today that logic does not exist anywhere in the crate.
 **Marker inventory**, from the two research passes:
 
 - **Classic:** `F_START`/`F_END` (flats), `S_START`/`S_END` (sprites),
-  `P_START`/`P_END` (patches) — plus nested sub-namespaces `F1_`/`F2_START..END`
-  and `P1_`/`P2_START..END` (a third `F3_`/`P3_` pair in DOOM2.WAD and its BFG-edition variant),
+  `P_START`/`P_END` (patches) — plus nested sub-namespace pairs
+  `F1_START`/`F1_END`, `F2_START`/`F2_END`, `P1_START`/`P1_END`, and
+  `P2_START`/`P2_END` (with third pairs `F3_START`/`F3_END` and
+  `P3_START`/`P3_END` in DOOM2.WAD and its BFG-edition variant),
   verified against the retail collection: DOOM/DOOM2/Heretic/Hexen IWADs.
   Sprites do **not** nest in any retail IWAD — no `S1_`/`S2_` pair appears
   anywhere in the collection. Boom additionally recognizes a doubled-first-letter
@@ -249,7 +251,10 @@ MapFormat }` and `DoomWriteError::UnsupportedSourceFormat { format: MapFormat
 }` — for a `MapFormat::Doom64` map in **both** strictness modes," and:
 "Lifting the rejection — resolving `Index` to names during conversion — is
 explicitly the v0.5.0 texture layer's job, extending ADR-0019's reversibility
-inventory when it lands." This ADR performs that amendment:
+inventory when it lands." (The quote is verbatim; its "v0.5.0" predates the
+2026-07-15 milestone renumbering that made v0.5.0 the map-domain closeout —
+the texture layer it refers to is this ADR's v0.6.0 scope.) This ADR performs
+that amendment:
 once every `TextureRef::Index` on a Doom 64-sourced map resolves to a name via
 the hash table, writers accept the map instead of unconditionally rejecting
 it.
