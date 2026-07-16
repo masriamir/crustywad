@@ -539,3 +539,34 @@ fn retail_iwads_scan_to_their_known_shapes() {
     assert_eq!(textures.lumps.len(), 503);
     assert_eq!(table.of_kind(SectionKind::Graphics).count(), 0);
 }
+
+#[test]
+fn promoted_orphan_close_across_same_kind_parent_warns_only_once() {
+    // The fuzzer-found adoption shape, warning-accounting view: the
+    // promoted P1_'s close jumps the later same-kind P_START, which is NOT
+    // cross-kind interleaving (row 6) — the promotion warning already
+    // covers the anomaly, so no same-kind Interleaved is emitted.
+    let wad = wad_of(&["P1_START", "A", "P_START", "W1", "P1_END", "B"]);
+    let table = lenient(&wad);
+    assert_eq!(table.warnings().len(), 2); // OrphanSubPair + parent's EOF UnpairedStart
+    assert!(matches!(
+        table.warnings()[0],
+        SectionWarning::OrphanSubPair {
+            kind: SectionKind::Patches,
+            index: 0
+        }
+    ));
+    assert!(matches!(
+        table.warnings()[1],
+        SectionWarning::UnpairedStart {
+            kind: SectionKind::Patches,
+            index: 2
+        }
+    ));
+    assert!(
+        !table
+            .warnings()
+            .iter()
+            .any(|w| matches!(w, SectionWarning::Interleaved { .. }))
+    );
+}

@@ -169,8 +169,9 @@ if let Some(group) = wad.map_group("E1M1") {
 
 ### Directory sections
 
-Besides map groups, a WAD's flat directory brackets other kinds of content between
-zero-size marker lumps: `F_START`/`F_END` for flats, `S_START`/`S_END` for sprites,
+Besides map groups, a WAD's lump directory brackets other kinds of content between
+marker lumps (typically zero-size; recognized by name): `F_START`/`F_END` for flats,
+`S_START`/`S_END` for sprites,
 `P_START`/`P_END` for patches, and Doom 64's `T_START`/`T_END` (world textures) and
 `DS_START`/`DS_END` (digital sounds), each with nested numbered sub-namespaces
 (`F1_`/`F2_`/`P1_`/`P2_`/...) and Boom's doubled-letter aliases (`FF_`, `PP_`, `SS_`).

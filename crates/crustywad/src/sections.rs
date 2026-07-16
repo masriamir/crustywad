@@ -1,7 +1,8 @@
 //! Marker-delimited directory sections (ADR-0022 §2, issue #280).
 //!
-//! Classic WADs bracket flats/sprites/patches between zero-size marker
-//! lumps (`F_START..F_END`, ...); Doom 64 WADs bracket sprites, world
+//! Classic WADs bracket flats/sprites/patches between marker lumps
+//! (`F_START..F_END`, ... — typically zero-size, though recognition here
+//! is by name only); Doom 64 WADs bracket sprites, world
 //! textures, and sounds (`S_`/`T_`/`DS_START..END`). Both reference
 //! engines derive section extents by unguarded subtraction of two
 //! independently looked-up marker names; this module replaces that
@@ -84,6 +85,9 @@ impl SectionTable {
     }
 
     /// All top-level sections of `kind`, in directory order.
+    ///
+    /// (No `#[must_use]` needed: `Iterator` is already `#[must_use]`, and
+    /// clippy's `double_must_use` rejects restating it.)
     pub fn of_kind(&self, kind: SectionKind) -> impl Iterator<Item = &Section> {
         self.sections.iter().filter(move |s| s.kind == kind)
     }
@@ -458,12 +462,16 @@ fn handle_end(
     if pos != open.len() - 1 {
         // Entries above `pos` are jumped. Same-kind numbered children of
         // this section close at this END (row 2, one warning each,
-        // attributed to their own START); any foreign kind is row 6 (ONE
-        // warning, topmost).
+        // attributed to their own START); a DIFFERENT kind is row 6 (ONE
+        // warning, topmost). A jumped same-kind top-level can only arise
+        // from the lenient promoted-orphan shape (rows 4/5 keep at most one
+        // top-level per kind open, and strict rejects the orphan at its
+        // `START`), whose promotion warning already covers the anomaly —
+        // so same-kind entries never count as interleaving.
         let jumped_foreign = open[pos + 1..]
             .iter()
             .rev()
-            .find(|o| !(o.sub && o.kind == kind))
+            .find(|o| o.kind != kind)
             .map(|o| o.kind);
         if let Some(open_kind) = jumped_foreign {
             match strictness {
