@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6de0052b.js";
+            window.path_to_searchindex_js = "searchindex-b8e2f6b7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -521,6 +521,13 @@ mismatch as fatal, and this reader mirrors it: strict mode rejects with
 <code>MapAssembleError::LeafCountMismatch</code>, lenient mode discards the whole <code>LEAFS</code> arena and records
 one warning, the same whole-arena degrade policy as the BSP data below. <code>Map::leafs()</code> and every
 <code>MapSubsector::leafs</code> range are empty for every source format other than Doom 64.</p>
+<p>Doom 64 also decodes the <code>MACROS</code> lump — its scripted action sequences — onto the graph.
+<code>Map::macros()</code> returns the decoded macros as a slice, in lump order, each <code>MapMacro { actions: Vec&lt;MapMacroAction&gt; }</code>
+holding <code>MapMacroAction { id, tag, special }</code> entries; the engine’s loader reads one more action
+than the macro’s on-disk count states (<code>count + 1</code>), and this decode preserves that read exactly.
+Decoding stops at the data: <code>crustywad</code> builds no interpreter or execution machinery for these
+scripts, since running them is the ACS epic’s job (#248), not a WAD-reading concern. <code>Map::macros()</code>
+is empty for every source format other than Doom 64.</p>
 <h3 id="bsp-data"><a class="header" href="#bsp-data">BSP data</a></h3>
 <p>Beyond the geometry arenas, <code>Map</code> also exposes the engine-built BSP (Binary Space Partitioning)
 tree: <code>map.segs()</code>, <code>map.subsectors()</code>, and <code>map.nodes()</code>, normalized from the <code>SEGS</code>, <code>SSECTORS</code>,
