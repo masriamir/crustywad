@@ -7,10 +7,11 @@ use crustywad::map::{MapBlockmap, MapReject};
 // First four input bytes pick the sector/linedef counts; the rest is the
 // lump payload, fed to both parsers in both strictness modes. Oracles per
 // ADR-0016: no panic, and output bounded by the input — the REJECT table
-// stores at most the payload's bytes (virtual padding), the BLOCKMAP block
-// table is bounded by the offset table that physically fit in the payload,
-// and warnings are bounded by one per block plus one whole-lump warning
-// per parser.
+// stores at most the payload's bytes (virtual padding) and warns at most
+// once; the BLOCKMAP block table is bounded by the offset table that
+// physically fit in the payload, with warnings bounded by two per block on
+// the Ok(Some) path and by one on the whole-lump discard path (the two
+// paths are mutually exclusive — see the per-assert comments below).
 fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
         return;

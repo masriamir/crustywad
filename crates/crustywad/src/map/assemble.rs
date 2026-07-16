@@ -267,10 +267,14 @@ impl MapBlockmap {
     ///
     /// An empty lump means "not built" (ADR-0019 §4) and yields `Ok(None)`
     /// with no warning in both modes. A trailing odd byte is ignored, as
-    /// vanilla's word-count division does (`P_LoadBlockMap`). Offsets may
-    /// alias or overlap freely — block lists are ranges into a single
-    /// shared word arena, so parse work and memory stay `O(input)`
-    /// (ADR-0016 §1).
+    /// vanilla's word-count division does (`P_LoadBlockMap`). List entries
+    /// are read as **unsigned**, zero-extended, with only the `0xFFFF`
+    /// terminator special-cased — the Boom fix (`PrBoom+` `P_LoadBlockMap`,
+    /// killough 3/1/98: "treating all offsets except -1 as unsigned")
+    /// that doubles the addressable linedefs over vanilla's accidental
+    /// signed read. Offsets may alias or overlap freely — block lists are
+    /// ranges into a single shared word arena, so parse work and memory
+    /// stay `O(input)` (ADR-0016 §1).
     ///
     /// # Errors
     ///
