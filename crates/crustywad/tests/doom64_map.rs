@@ -943,3 +943,28 @@ fn non_doom64_maps_expose_empty_macros() {
     let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
     assert!(map.macros().is_empty());
 }
+
+proptest! {
+    #[test]
+    fn macros_roundtrip_arbitrary_valid_defs(
+        defs in proptest::collection::vec(
+            proptest::collection::vec(
+                (proptest::num::i16::ANY, proptest::num::i16::ANY, proptest::num::i16::ANY),
+                1..4,
+            ),
+            0..4,
+        )
+    ) {
+        let borrowed: Vec<&[(i16, i16, i16)]> = defs.iter().map(Vec::as_slice).collect();
+        let lump = macros_bytes(&borrowed);
+        let map = assemble_d64(d64_map_with_macros(&lump)).unwrap();
+
+        prop_assert_eq!(map.macros().len(), defs.len());
+        for (decoded, expected) in map.macros().iter().zip(&defs) {
+            prop_assert_eq!(decoded.actions.len(), expected.len());
+            for (action, &(id, tag, special)) in decoded.actions.iter().zip(expected) {
+                prop_assert_eq!(*action, MapMacroAction { id, tag, special });
+            }
+        }
+    }
+}
