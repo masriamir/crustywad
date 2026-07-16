@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec6f03b6.js";
+            window.path_to_searchindex_js = "searchindex-6de0052b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -386,7 +386,7 @@ value with an out-of-range index can still panic.)</p>
 <p><code>MapSidedef</code>’s <code>upper</code>/<code>lower</code>/<code>middle</code> fields and <code>MapSector</code>’s <code>floor_flat</code>/<code>ceiling_flat</code> field
 are a <code>TextureRef</code>, not a bare string: <code>TextureRef::Name(String)</code> for a name (Doom/Hexen’s 8-byte
 lump name, or a UDMF string), or <code>TextureRef::Index(u16)</code> for a Doom 64 texture/flat table index
-(Doom 64 has no name until the texture layer, planned for v0.5.0, can resolve it). Classic Doom,
+(Doom 64 has no name until the texture layer, #156/#157, can resolve it). Classic Doom,
 Hexen, and UDMF maps always produce <code>Name</code>; Doom 64 maps always produce <code>Index</code>.
 <code>TextureRef::as_name()</code> returns <code>Some(&amp;str)</code> for <code>Name</code> and <code>None</code> for <code>Index</code>, and <code>TextureRef</code>
 implements <code>PartialEq&lt;&amp;str&gt;</code> against the name, so a Doom/Hexen/UDMF texture can be compared
@@ -508,10 +508,19 @@ format has no such field; <code>MapSector.flags</code> carries the sector’s ra
 uninterpreted).</p>
 <p>Doom 64’s sidedef/sector texture and flat fields assemble into <code>TextureRef::Index</code> rather than
 <code>TextureRef::Name</code> (see <a href="#texture-references">Texture references</a> above). Until the texture layer
-(planned for v0.5.0) can resolve those indices back to a texture identity, a Doom 64-sourced <code>Map</code>
+(#156/#157) can resolve those indices back to a texture identity, a Doom 64-sourced <code>Map</code>
 cannot be serialized back out: both <code>write_doom_map</code> and <code>write_udmf</code> (the <code>write</code> feature) reject
 it with <code>UnsupportedSourceFormat</code>, in <strong>both</strong> strictness modes, before any per-field validation
 runs.</p>
+<p>Doom 64 also decodes the <code>LEAFS</code> lump — its render leaves — onto the graph. <code>Map::leafs()</code> is a
+per-subsector arena of <code>MapLeaf { vertex: VertexIdx, seg: Option&lt;SegIdx&gt; }</code>, and each
+<code>MapSubsector::leafs</code> range selects that subsector’s slice, mirroring the existing <code>segs</code> range
+below. The on-disk seg field’s <code>-1</code> sentinel becomes <code>seg: None</code> (“no seg”: the edge is implicit
+geometry). The lump’s record count must equal the map’s subsector count — the engine treats a
+mismatch as fatal, and this reader mirrors it: strict mode rejects with
+<code>MapAssembleError::LeafCountMismatch</code>, lenient mode discards the whole <code>LEAFS</code> arena and records
+one warning, the same whole-arena degrade policy as the BSP data below. <code>Map::leafs()</code> and every
+<code>MapSubsector::leafs</code> range are empty for every source format other than Doom 64.</p>
 <h3 id="bsp-data"><a class="header" href="#bsp-data">BSP data</a></h3>
 <p>Beyond the geometry arenas, <code>Map</code> also exposes the engine-built BSP (Binary Space Partitioning)
 tree: <code>map.segs()</code>, <code>map.subsectors()</code>, and <code>map.nodes()</code>, normalized from the <code>SEGS</code>, <code>SSECTORS</code>,
