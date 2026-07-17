@@ -670,6 +670,7 @@ fn retail_classic_graphics_decode_strict_clean() {
 
 #[cfg(feature = "sweep-tests")]
 #[test]
+#[allow(clippy::too_many_lines)]
 fn retail_texture_sets_compose_strict_clean() {
     use crustywad::{SectionKind, WadKind};
 
@@ -690,6 +691,7 @@ fn retail_texture_sets_compose_strict_clean() {
     let mut composed = 0usize;
     let mut lenient_pwads = 0usize;
     let mut no_textures = 0usize;
+    let mut gate_contract_iwads = 0usize;
     for entry in std::fs::read_dir(&dir).expect("sweep dir reads") {
         let path = entry.expect("dir entry").path();
         if !path
@@ -729,6 +731,46 @@ fn retail_texture_sets_compose_strict_clean() {
                     composed += 1;
                 }
             }
+            Err(crustywad::gfx::GfxError::NegativePatchCount { texture, count }) => {
+                // Known-anomaly gate contract (#269 precedent; adjudicated
+                // 2026-07-17): exactly one retail IWAD — Strife — ships four
+                // TEXTUREx records with genuinely negative on-disk patchcount
+                // fields (SIGN12/SIGN13 -96, WALTEK12 -18, STAIR07 -15).
+                // Strict correctly refuses (the field is malformed; the
+                // engine's signed patch loop simply never iterates, silently
+                // yielding zero-patch textures). Keyed by error identity,
+                // not filename: the exact first offender is pinned, and the
+                // count of such IWADs is asserted to be exactly one below.
+                assert_eq!(
+                    wad.kind(),
+                    WadKind::Iwad,
+                    "{name}: gate contract expects an IWAD"
+                );
+                assert_eq!(
+                    (texture, count),
+                    (162, -96),
+                    "{name}: unexpected negative-patchcount offender"
+                );
+                gate_contract_iwads += 1;
+                let set = wad
+                    .texture_set_with_options(ParseOptions::lenient())
+                    .expect("lenient build never fails")
+                    .expect("TEXTUREx present");
+                let neg_warns = set
+                    .warnings()
+                    .iter()
+                    .filter(|w| matches!(w, crustywad::gfx::GfxWarning::NegativePatchCount { .. }))
+                    .count();
+                assert_eq!(
+                    neg_warns, 4,
+                    "{name}: expected exactly 4 negative-patchcount warnings"
+                );
+                for i in 0..set.textures().len() {
+                    let _ = set
+                        .compose(i, &ParseOptions::lenient())
+                        .unwrap_or_else(|e| panic!("{name}: lenient compose {i}: {e}"));
+                }
+            }
             Err(e) => {
                 // PWADs referencing base-IWAD patches cannot resolve without
                 // a merge model (spec's PWAD reality note): rerun leniently,
@@ -753,8 +795,12 @@ fn retail_texture_sets_compose_strict_clean() {
         }
     }
     assert!(sets > 0, "sweep composed no IWAD texture sets");
+    assert_eq!(
+        gate_contract_iwads, 1,
+        "expected exactly one gate-contract IWAD (Strife) in the collection"
+    );
     eprintln!(
-        "texture sweep: {sets} strict set(s), {composed} texture(s) composed strict-clean, {lenient_pwads} PWAD(s) lenient, {no_textures} WAD(s) without TEXTUREx"
+        "texture sweep: {sets} strict set(s), {composed} texture(s) composed strict-clean, {lenient_pwads} PWAD(s) lenient, {no_textures} WAD(s) without TEXTUREx, {gate_contract_iwads} gate-contract IWAD(s)"
     );
 }
 
