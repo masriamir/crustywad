@@ -152,7 +152,9 @@ pub enum GfxError {
     /// texture).
     #[error("texture {texture} offset {offset} is outside the {len}-byte lump")]
     TextureOffsetOutOfBounds {
-        /// 0-based texture index.
+        /// 0-based index within the parsed `TEXTUREx` lump's offset table
+        /// (NOT a [`TextureSet::textures`] index — `TEXTURE2` entries are
+        /// offset by `TEXTURE1`'s count there).
         texture: usize,
         /// The raw on-disk offset.
         offset: i32,
@@ -163,7 +165,9 @@ pub enum GfxError {
     /// texture with no patch references).
     #[error("texture {texture} declares a negative patch count {count}")]
     NegativePatchCount {
-        /// 0-based texture index.
+        /// 0-based index within the parsed `TEXTUREx` lump's offset table
+        /// (NOT a [`TextureSet::textures`] index — `TEXTURE2` entries are
+        /// offset by `TEXTURE1`'s count there).
         texture: usize,
         /// The raw on-disk patch count.
         count: i16,
@@ -172,7 +176,9 @@ pub enum GfxError {
     /// lump (lenient clamps to the patch references in bounds).
     #[error("texture {texture} extends to byte {needed}, past the {len}-byte lump")]
     TextureExtentOutOfBounds {
-        /// 0-based texture index.
+        /// 0-based index within the parsed `TEXTUREx` lump's offset table
+        /// (NOT a [`TextureSet::textures`] index — `TEXTURE2` entries are
+        /// offset by `TEXTURE1`'s count there).
         texture: usize,
         /// The byte offset the texture's declared extent requires.
         needed: usize,
@@ -187,7 +193,8 @@ pub enum GfxError {
         "cumulative texture data exceeded the {len}-byte lump at texture {texture}; offsets alias the same bytes"
     )]
     ExcessiveTextureData {
-        /// The texture at which the budget ran out.
+        /// The index (within the parsed `TEXTUREx` lump's offset table) at
+        /// which the budget ran out.
         texture: usize,
         /// The lump's actual length (the budget).
         len: usize,
@@ -403,7 +410,9 @@ pub enum GfxWarning {
         "texture {texture} offset {offset} is outside the {len}-byte lump; texture skipped during lenient parsing"
     )]
     TextureOffsetOutOfBounds {
-        /// 0-based texture index.
+        /// 0-based index within the parsed `TEXTUREx` lump's offset table
+        /// (NOT a [`TextureSet::textures`] index — `TEXTURE2` entries are
+        /// offset by `TEXTURE1`'s count there).
         texture: usize,
         /// The raw on-disk offset.
         offset: i32,
@@ -416,7 +425,9 @@ pub enum GfxWarning {
         "texture {texture} declares a negative patch count {count}; texture kept with no patch references during lenient parsing"
     )]
     NegativePatchCount {
-        /// 0-based texture index.
+        /// 0-based index within the parsed `TEXTUREx` lump's offset table
+        /// (NOT a [`TextureSet::textures`] index — `TEXTURE2` entries are
+        /// offset by `TEXTURE1`'s count there).
         texture: usize,
         /// The raw on-disk patch count.
         count: i16,
@@ -427,7 +438,9 @@ pub enum GfxWarning {
         "texture {texture} extends to byte {needed}, past the {len}-byte lump; references clamped to those in bounds during lenient parsing"
     )]
     TextureExtentOutOfBounds {
-        /// 0-based texture index.
+        /// 0-based index within the parsed `TEXTUREx` lump's offset table
+        /// (NOT a [`TextureSet::textures`] index — `TEXTURE2` entries are
+        /// offset by `TEXTURE1`'s count there).
         texture: usize,
         /// The byte offset the texture's declared extent requires.
         needed: usize,
@@ -440,7 +453,8 @@ pub enum GfxWarning {
         "cumulative texture data exceeded the {len}-byte lump at texture {texture}; remaining textures skipped during lenient parsing"
     )]
     ExcessiveTextureData {
-        /// The texture at which the budget ran out.
+        /// The index (within the parsed `TEXTUREx` lump's offset table) at
+        /// which the budget ran out.
         texture: usize,
         /// The lump's actual length (the budget).
         len: usize,
