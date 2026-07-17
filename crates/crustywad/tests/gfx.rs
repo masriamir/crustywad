@@ -1041,3 +1041,215 @@ fn texture_set_bad_index_and_unresolved_name() {
         GfxWarning::PatchPictureFailed { name } if name == "BADPIC"
     )));
 }
+
+// ⚠ TASK-3 TESTS BELOW ⚠ — the next two tests call `compose`, which Task 3
+// implements. Task 2's implementer SKIPS them (they are listed here beside
+// the fixtures they reuse); Task 3's implementer writes them in ITS Step 1
+// alongside the tests shown in Task 3.
+
+#[test]
+fn find_texture1_shadows_texture2_and_dead_refs_compose_as_holes() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    // TEXTURE1 and TEXTURE2 both define "DUP"; find() must return the
+    // TEXTURE1 entry (index 0 — "earlier entries win").
+    let patch = build_picture(1, 1, &[vec![(0, vec![7])]]);
+    let pn = build_pnames(&["PA"]);
+    let tx1 = build_texturex(&[("DUP", 1, 1, &[(0, 0, 0)])]);
+    let tx2 = build_texturex(&[("DUP", 2, 2, &[(0, 0, 0)])]);
+    let wad = Wad::from_bytes(common::build_wad(
+        *b"IWAD",
+        &[
+            ("PNAMES", &pn),
+            ("TEXTURE1", &tx1),
+            ("TEXTURE2", &tx2),
+            ("PA", &patch),
+        ],
+    ))
+    .unwrap();
+    let set = wad.texture_set().unwrap().unwrap();
+    assert_eq!(set.textures().len(), 2);
+    assert_eq!(set.find("DUP"), Some(0));
+    assert_eq!(set.textures()[0].width, 1); // the TEXTURE1 def
+
+    // A texture whose ONLY ref is dead (bad index) composes as all-holes
+    // Medusa in lenient mode — dead refs are not contributors, no re-warn
+    // beyond the build-time index warning.
+    let wad = textured_wad(&["PA"], &[("DEAD", 1, 1, &[(0, 0, 9)])], &[("PA", patch)]);
+    let set = wad
+        .texture_set_with_options(ParseOptions::lenient())
+        .unwrap()
+        .unwrap();
+    assert!(
+        set.warnings()
+            .iter()
+            .any(|w| matches!(w, GfxWarning::PatchIndexOutOfBounds { patch: 9, .. }))
+    );
+    let (img, warnings) = set.compose(0, &ParseOptions::lenient()).unwrap();
+    assert!(img.mask.iter().all(|m| !m));
+    assert!(matches!(
+        warnings.as_slice(),
+        [GfxWarning::MedusaColumns {
+            first_column: 0,
+            count: 1
+        }]
+    ));
+    // Strict compose on the same set: Medusa error (build was lenient,
+    // compose strictness is the caller's choice per call).
+    assert!(matches!(
+        set.compose(0, &ParseOptions::strict()).unwrap_err(),
+        GfxError::MedusaColumn { column: 0 }
+    ));
+}
+
+#[test]
+fn compose_negative_dimension_strict_errors_lenient_clamps() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    let patch = build_picture(1, 1, &[vec![(0, vec![7])]]);
+    let wad = textured_wad(&["PA"], &[("NEGW", -3, 4, &[(0, 0, 0)])], &[("PA", patch)]);
+    let set = wad.texture_set().unwrap().unwrap();
+    assert!(matches!(
+        set.compose(0, &ParseOptions::strict()).unwrap_err(),
+        GfxError::NegativeDimension {
+            field: "width",
+            value: -3
+        }
+    ));
+    let (img, warnings) = set.compose(0, &ParseOptions::lenient()).unwrap();
+    assert_eq!((img.width, img.height), (0, 4));
+    assert!(img.pixels.is_empty());
+    // Zero columns: the Medusa scan is vacuous — only the clamp warning.
+    assert!(matches!(
+        warnings.as_slice(),
+        [GfxWarning::NegativeDimension {
+            field: "width",
+            value: -3
+        }]
+    ));
+}
+
+#[test]
+fn compose_golden_two_patches_with_overlap_and_medusa() {
+    use crustywad::gfx::GfxWarning;
+    // 4×4 texture; PATCHA (2 wide) at (0,0): col0 post@0 [1,2]; col1 post@2 [3].
+    // PATCHB (2 wide) at (1,1): col0 post@1 [9]; col1 empty.
+    // x=0: A only → rows 0,1 = 1,2. x=1: A col1 row2=3 then B col0 row 1+1=2 → 9.
+    // x=2: B col1 only — a contributor with no coverage: NOT Medusa, all holes.
+    // x=3: no contributor → Medusa.
+    let pa = build_picture(2, 4, &[vec![(0, vec![1, 2])], vec![(2, vec![3])]]);
+    let pb = build_picture(2, 4, &[vec![(1, vec![9])], vec![]]);
+    let wad = textured_wad(
+        &["PA", "PB"],
+        &[("TEX0", 4, 4, &[(0, 0, 0), (1, 1, 1)])],
+        &[("PA", pa), ("PB", pb)],
+    );
+
+    // Strict: Medusa at column 3.
+    let set = wad.texture_set().unwrap().unwrap();
+    assert!(matches!(
+        set.compose(0, &ParseOptions::strict()).unwrap_err(),
+        crustywad::gfx::GfxError::MedusaColumn { column: 3 }
+    ));
+
+    // Lenient: full image with holes + one aggregated warning.
+    let (img, warnings) = set.compose(0, &ParseOptions::lenient()).unwrap();
+    assert_eq!((img.width, img.height), (4, 4));
+    let at = |x: usize, y: usize| (img.pixels[y * 4 + x], img.mask[y * 4 + x]);
+    assert_eq!(at(0, 0), (1, true));
+    assert_eq!(at(0, 1), (2, true));
+    assert_eq!(at(1, 2), (9, true)); // later patch wins over A's 3
+    assert!(!at(2, 0).1); // contributor but no coverage: hole, not Medusa
+    assert!(!at(3, 0).1); // Medusa hole
+    assert_eq!(img.mask.iter().filter(|m| **m).count(), 3);
+    assert!(matches!(
+        warnings.as_slice(),
+        [GfxWarning::MedusaColumns {
+            first_column: 3,
+            count: 1
+        }]
+    ));
+}
+
+#[test]
+fn compose_single_patch_equivalence_and_clamping() {
+    // Equivalence: texture dims == patch dims, one ref at (0,0) → compose
+    // output must equal the patch's own indexed view.
+    let pa = build_picture(
+        2,
+        8,
+        &[vec![(1, vec![5, 6])], vec![(0, vec![7]), (3, vec![8])]],
+    );
+    let wad = textured_wad(
+        &["PA"],
+        &[("SOLO", 2, 8, &[(0, 0, 0)])],
+        &[("PA", pa.clone())],
+    );
+    let set = wad.texture_set().unwrap().unwrap();
+    let (img, warnings) = set.compose(0, &ParseOptions::strict()).unwrap();
+    assert!(warnings.is_empty());
+    let direct = Picture::parse(&pa, &ParseOptions::strict())
+        .unwrap()
+        .to_indexed();
+    assert_eq!((img.pixels, img.mask), (direct.pixels, direct.mask));
+
+    // Horizontal clamping: patch hangs off both edges; vertical clip too.
+    let wide = build_picture(2, 4, &[vec![(0, vec![1; 4])], vec![(0, vec![2; 4])]]);
+    let wad = textured_wad(
+        &["PW"],
+        // 1×2 texture, patch at (-1,-1): only patch col1 lands (x=0), rows shift up by 1.
+        &[("CLIP", 1, 2, &[(-1, -1, 0)])],
+        &[("PW", wide)],
+    );
+    let set = wad.texture_set().unwrap().unwrap();
+    let (img, warnings) = set.compose(0, &ParseOptions::strict()).unwrap();
+    assert!(warnings.is_empty());
+    // Patch col1 posts: rows 0..4 of value 2; origin_y -1 shifts to rows -1..3;
+    // clipped to texture rows 0..2 → both rows covered with 2.
+    assert_eq!(img.pixels, vec![2, 2]);
+    assert!(img.mask.iter().all(|m| *m));
+}
+
+#[test]
+fn compose_too_large_errors_in_both_modes() {
+    use crustywad::gfx::GfxError;
+    // Full-width (300), post-free patch: every column has a contributor, so
+    // composing under the default (generous) limit hits neither the size
+    // cap nor a spurious Medusa column — isolating this test to the
+    // CompositeTooLarge policy alone. A narrower patch would leave most
+    // columns with no contributor and legitimately trip MedusaColumn,
+    // conflating this test with `compose_golden_two_patches_...`.
+    let columns = vec![Vec::new(); 300];
+    let pa = build_picture(300, 1, &columns);
+    let wad = textured_wad(&["PA"], &[("BIG", 300, 300, &[(0, 0, 0)])], &[("PA", pa)]);
+    let set = wad.texture_set().unwrap().unwrap();
+    let tight = ParseOptions {
+        limits: Limits::new().with_max_composite_pixels(1024),
+        ..ParseOptions::strict()
+    };
+    assert!(matches!(
+        set.compose(0, &tight).unwrap_err(),
+        GfxError::CompositeTooLarge {
+            width: 300,
+            height: 300,
+            max_pixels: 1024
+        }
+    ));
+    let tight_lenient = ParseOptions {
+        limits: Limits::new().with_max_composite_pixels(1024),
+        ..ParseOptions::lenient()
+    };
+    assert!(set.compose(0, &tight_lenient).is_err()); // BOTH modes
+    // Default limits admit it fine.
+    assert!(set.compose(0, &ParseOptions::strict()).is_ok());
+}
+
+#[test]
+fn compose_rgba_applies_palette_with_holes_transparent() {
+    let pa = build_picture(1, 2, &[vec![(0, vec![5])]]);
+    let wad = textured_wad(&["PA"], &[("T", 1, 2, &[(0, 0, 0)])], &[("PA", pa)]);
+    let set = wad.texture_set().unwrap().unwrap();
+    let (rgba, _) = set
+        .compose_rgba(0, &ParseOptions::strict(), &gray_palette())
+        .unwrap();
+    assert_eq!(&rgba.pixels[0..4], &[5, 5, 5, 255]);
+    assert_eq!(rgba.pixels[7], 0); // row 1 uncovered → alpha 0
+}

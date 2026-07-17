@@ -364,7 +364,7 @@ use super::Picture;
 
 /// Parsed texture definitions plus their resolved patch pictures — built
 /// once via [`Wad::texture_set`](crate::Wad::texture_set), composed per
-/// texture with `TextureSet::compose` (Task 3). Patch names resolve through the
+/// texture with [`TextureSet::compose`]. Patch names resolve through the
 /// crate's first-match [`lump_by_name`](crate::Wad::lump_by_name) after
 /// uppercasing (vanilla uppercases its search name — ADR-0022 §3); a
 /// PWAD referencing base-IWAD patches therefore cannot resolve here
@@ -373,11 +373,15 @@ use super::Picture;
 #[derive(Debug, Clone)]
 pub struct TextureSet {
     textures: Vec<TextureDef>,
-    // `pnames`/`patches` are consumed by `TextureSet::compose` (Task 3);
-    // Task 2 only builds and validates them.
+    // `compose` indexes `patches` directly by `PNAMES` position; it never
+    // needs the *names* themselves (no diagnostic in the compose path
+    // surfaces a patch's name — dead refs are already named at build time
+    // via `GfxWarning::UnresolvedPatchName`/`PatchPictureFailed`). Retained
+    // as struct data (parallel to `patches`) since it is the natural home
+    // for a future name-surfacing accessor; until one exists the field
+    // itself is unread, hence the explicit allow.
     #[allow(dead_code)]
     pnames: Vec<String>,
-    #[allow(dead_code)]
     patches: Vec<Option<Picture>>, // parallel to pnames
     warnings: Vec<GfxWarning>,
 }
@@ -512,9 +516,143 @@ impl TextureSet {
 
     /// Set-level non-fatal issues from lenient building (lump parses,
     /// index validation, patch resolution). Per-compose issues are
-    /// returned by `TextureSet::compose` (Task 3) instead.
+    /// returned by [`TextureSet::compose`] instead.
     #[must_use]
     pub fn warnings(&self) -> &[GfxWarning] {
         &self.warnings
+    }
+
+    /// Composes one texture into an indexed image + coverage mask,
+    /// reimplementing the `R_GenerateComposite` contract (ADR-0022 §3):
+    /// patches draw in def order (later placements overwrite), horizontal
+    /// placement is clamped to the canvas, rows outside the canvas are
+    /// silently clipped (vanilla behavior), and a column no live patch
+    /// spans is the Medusa case — strict error, lenient warning + hole.
+    ///
+    /// Returns the composed image plus per-compose warnings (set-level
+    /// warnings stay on [`TextureSet::warnings`]).
+    ///
+    /// # Errors
+    ///
+    /// [`GfxError::CompositeTooLarge`] in BOTH modes when
+    /// `width × height` exceeds
+    /// [`Limits::max_composite_pixels`](crate::Limits::max_composite_pixels);
+    /// strict mode additionally: [`GfxError::NegativeDimension`] and
+    /// [`GfxError::MedusaColumn`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.textures().len()` (obtain indices from
+    /// [`TextureSet::find`] or by iterating [`TextureSet::textures`]).
+    pub fn compose(
+        &self,
+        index: usize,
+        options: &crate::ParseOptions,
+    ) -> Result<(super::IndexedImage, Vec<GfxWarning>), GfxError> {
+        let strictness = options.strictness;
+        let def = &self.textures[index];
+        let mut warnings = Vec::new();
+        let width = super::picture::clamp_dimension(def.width, "width", strictness, &mut warnings)?;
+        let height =
+            super::picture::clamp_dimension(def.height, "height", strictness, &mut warnings)?;
+        let (w, h) = (usize::from(width), usize::from(height));
+        if w * h > options.limits.max_composite_pixels {
+            // Both modes: a DoS cap, not a recoverable anomaly (spec).
+            return Err(GfxError::CompositeTooLarge {
+                width: def.width,
+                height: def.height,
+                max_pixels: options.limits.max_composite_pixels,
+            });
+        }
+
+        let mut pixels = vec![0u8; w * h];
+        let mut mask = vec![false; w * h];
+        let mut contributors = vec![0u32; w];
+
+        for patch_ref in &def.patches {
+            let Some(picture) = usize::try_from(patch_ref.patch)
+                .ok()
+                .filter(|i| *i < self.patches.len())
+                .and_then(|i| self.patches[i].as_ref())
+            else {
+                continue; // dead ref: warned at build, not a contributor
+            };
+            let x1 = i32::from(patch_ref.origin_x).max(0);
+            let x2 = (i32::from(patch_ref.origin_x) + i32::from(picture.width))
+                .min(i32::try_from(w).unwrap_or(i32::MAX));
+            for x in x1..x2 {
+                #[allow(clippy::cast_sign_loss)] // x1 >= 0
+                let xu = x as usize;
+                contributors[xu] += 1;
+                #[allow(clippy::cast_sign_loss)] // x >= x1 >= origin_x
+                let px = (x - i32::from(patch_ref.origin_x)) as usize;
+                for post in &picture.columns()[px].posts {
+                    for (i, &value) in post.pixels.iter().enumerate() {
+                        let y = i32::from(patch_ref.origin_y)
+                            + i32::from(post.top_delta)
+                            + i32::try_from(i).unwrap_or(i32::MAX);
+                        // Rows outside the canvas silently clip (vanilla
+                        // R_DrawColumnInCache behavior — not an anomaly).
+                        if let Ok(yu) = usize::try_from(y) {
+                            if yu < h {
+                                pixels[yu * w + xu] = value;
+                                mask[yu * w + xu] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Medusa scan: columns no LIVE patch spans (dead refs never count —
+        // documented divergence from vanilla, which counts refs from the
+        // def regardless of lookup failure; only-live is what the explicit
+        // holes model requires).
+        let mut medusa_iter = contributors.iter().enumerate().filter(|(_, c)| **c == 0);
+        if let Some((first_column, _)) = medusa_iter.next() {
+            let count = 1 + medusa_iter.count();
+            match strictness {
+                crate::Strictness::Strict => {
+                    return Err(GfxError::MedusaColumn {
+                        column: first_column,
+                    });
+                }
+                crate::Strictness::Lenient => {
+                    warnings.push(GfxWarning::MedusaColumns {
+                        first_column,
+                        count,
+                    });
+                }
+            }
+        }
+
+        Ok((
+            super::IndexedImage {
+                width,
+                height,
+                pixels,
+                mask,
+            },
+            warnings,
+        ))
+    }
+
+    /// [`TextureSet::compose`] plus palette application (tier 3).
+    ///
+    /// # Errors
+    ///
+    /// Exactly [`TextureSet::compose`]'s errors.
+    ///
+    /// # Panics
+    ///
+    /// Exactly [`TextureSet::compose`]'s panic condition.
+    pub fn compose_rgba(
+        &self,
+        index: usize,
+        options: &crate::ParseOptions,
+        palette: &super::Palette,
+    ) -> Result<(super::RgbaImage, Vec<GfxWarning>), GfxError> {
+        let (image, warnings) = self.compose(index, options)?;
+        Ok((image.to_rgba(palette), warnings))
     }
 }

@@ -224,6 +224,32 @@ pub enum GfxError {
         #[source]
         source: Box<GfxError>,
     },
+    /// A composed texture's `width × height` exceeds
+    /// [`Limits::max_composite_pixels`](crate::Limits::max_composite_pixels).
+    /// Fires in **both** strictness modes — the DoS-cap exception to
+    /// ADR-0003 (the same policy as the UDMF nesting-depth limit): an
+    /// oversized composite is a resource-exhaustion risk, not a
+    /// recoverable parse anomaly, so lenient mode does not clamp past it.
+    #[error("texture {width}\u{d7}{height} exceeds the composite limit of {max_pixels} pixels")]
+    CompositeTooLarge {
+        /// The texture's declared width.
+        width: i16,
+        /// The texture's declared height.
+        height: i16,
+        /// The active [`Limits::max_composite_pixels`](crate::Limits::max_composite_pixels) cap.
+        max_pixels: usize,
+    },
+    /// A composited column no live patch spans (the Medusa case, ADR-0022
+    /// §3: vanilla's `R_GenerateComposite` prints a warning and leaves
+    /// later columns uninitialized, with the engine's own abort commented
+    /// out). Strict mode treats this as fatal; lenient mode instead
+    /// records [`GfxWarning::MedusaColumns`] and leaves the column(s) as
+    /// holes.
+    #[error("column {column} has no contributing patch (the Medusa case)")]
+    MedusaColumn {
+        /// 0-based column index of the first uncovered column.
+        column: usize,
+    },
 }
 
 /// A non-fatal issue recovered while decoding a classic graphics lump in
@@ -454,5 +480,19 @@ pub enum GfxWarning {
     PatchPictureFailed {
         /// The patch name whose lump failed to parse.
         name: String,
+    },
+    /// One or more columns of a composited texture had no contributing
+    /// patch (the Medusa case); left as holes during lenient composition.
+    /// Aggregated: strict mode fails on the first such column
+    /// ([`GfxError::MedusaColumn`]), lenient mode records this single
+    /// warning describing the run.
+    #[error(
+        "{count} column(s) starting at {first_column} have no contributing patch (the Medusa case); left as holes during lenient composition"
+    )]
+    MedusaColumns {
+        /// 0-based index of the first uncovered column.
+        first_column: usize,
+        /// How many columns (not necessarily contiguous) had no contributor.
+        count: usize,
     },
 }
