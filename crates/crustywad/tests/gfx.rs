@@ -250,7 +250,55 @@ fn picture_bad_column_offset_strict_errors_lenient_empties() {
 
     // Negative offset takes the same row.
     bytes[8..12].copy_from_slice(&(-4i32).to_le_bytes());
-    assert!(Picture::parse(&bytes, &ParseOptions::strict()).is_err());
+    assert!(matches!(
+        Picture::parse(&bytes, &ParseOptions::strict()).unwrap_err(),
+        GfxError::ColumnOffsetOutOfBounds { column: 0, .. }
+    ));
+    let pic = Picture::parse(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(pic.columns()[0].posts.is_empty());
+    assert!(matches!(
+        pic.warnings(),
+        [GfxWarning::ColumnOffsetOutOfBounds { column: 0, .. }]
+    ));
+}
+
+#[test]
+fn picture_post_header_truncated_mid_length_byte() {
+    // A post's top_delta byte is present but the lump ends before its
+    // length byte (the `pos + 2 > bytes.len()` guard, distinct from the
+    // whole-column EOF check).
+    let mut bytes = build_picture(1, 4, &[vec![(0, vec![1])]]);
+    bytes.truncate(13); // keep only the top_delta byte (0) at offset 12
+    assert!(matches!(
+        Picture::parse(&bytes, &ParseOptions::strict()).unwrap_err(),
+        GfxError::UnterminatedColumn { column: 0 }
+    ));
+    let pic = Picture::parse(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(pic.columns()[0].posts.is_empty());
+    assert!(matches!(
+        pic.warnings(),
+        [GfxWarning::UnterminatedColumn { column: 0 }]
+    ));
+}
+
+#[test]
+fn picture_post_body_truncated_mid_pixel_data() {
+    // The post's top_delta and length bytes are present but the lump ends
+    // before the declared pixel/pad bytes are all readable (the
+    // `pos + full > bytes.len()` guard, distinct from both the whole-column
+    // EOF check and the header-truncation check above).
+    let mut bytes = build_picture(1, 4, &[vec![(0, vec![1, 2])]]);
+    bytes.truncate(16); // cuts the second pixel byte, trailing pad, and 0xFF
+    assert!(matches!(
+        Picture::parse(&bytes, &ParseOptions::strict()).unwrap_err(),
+        GfxError::UnterminatedColumn { column: 0 }
+    ));
+    let pic = Picture::parse(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(pic.columns()[0].posts.is_empty());
+    assert!(matches!(
+        pic.warnings(),
+        [GfxWarning::UnterminatedColumn { column: 0 }]
+    ));
 }
 
 #[test]
@@ -437,4 +485,103 @@ fn wad_playpal_and_colormap_singletons() {
     ))
     .unwrap();
     assert_eq!(dup.playpal().unwrap().unwrap().palettes().len(), 1);
+}
+
+#[test]
+fn flat_lenient_truncates_a_long_flat_at_conversion() {
+    // Task-3 review gap: the > 4096-byte lenient truncate path had no direct
+    // test. Parse keeps the actual bytes (ADR-0022 §3: "proceeds with what
+    // is present"); truncation happens only at `to_indexed` conversion.
+    let long = vec![3u8; 5000];
+    let flat = Flat::parse(&long, &ParseOptions::lenient()).unwrap();
+    assert_eq!(flat.pixels().len(), 5000);
+    assert!(matches!(
+        flat.warnings(),
+        [GfxWarning::FlatSize { len: 5000 }]
+    ));
+    assert_eq!(flat.to_indexed().pixels.len(), 4096);
+}
+
+#[cfg(feature = "sweep-tests")]
+#[test]
+fn retail_classic_graphics_decode_strict_clean() {
+    use crustywad::SectionKind; // crate-root re-export (tests/sections.rs idiom)
+
+    let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
+        eprintln!("skipping: CRUSTYWAD_SWEEP_DIR not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_absolute() || !dir.is_dir() {
+        eprintln!(
+            "skipping: CRUSTYWAD_SWEEP_DIR is not an absolute path to a directory: {}",
+            dir.display()
+        );
+        return;
+    }
+
+    let mut wads = 0usize;
+    let mut pictures = 0usize;
+    let mut flats = 0usize;
+    for entry in std::fs::read_dir(&dir).expect("sweep dir reads") {
+        let path = entry.expect("dir entry").path();
+        let is_wad = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("wad"));
+        if !is_wad {
+            continue;
+        }
+        let wad = crustywad::Wad::from_path(&path).expect("retail WAD reads");
+        let sections = wad.sections().expect("retail sections scan strict-clean");
+        // Doom 64 signature: a Textures section — its graphics are PNGs
+        // (#282), not this format.
+        if sections.of_kind(SectionKind::Textures).next().is_some() {
+            eprintln!("skipping Doom 64-format WAD: {}", path.display());
+            continue;
+        }
+        wads += 1;
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+
+        if let Some(pal) = wad
+            .playpal()
+            .unwrap_or_else(|e| panic!("{name}: PLAYPAL strict: {e}"))
+        {
+            assert!(!pal.palettes().is_empty(), "{name}: empty PLAYPAL");
+        }
+        let _ = wad
+            .colormap()
+            .unwrap_or_else(|e| panic!("{name}: COLORMAP strict: {e}"));
+
+        for kind in [SectionKind::Sprites, SectionKind::Patches] {
+            for section in sections.of_kind(kind) {
+                for i in section.lumps.clone() {
+                    let bytes = wad.lump_bytes(i).unwrap();
+                    if bytes.is_empty() {
+                        continue; // nested sub-namespace markers
+                    }
+                    let lump_name = wad.lump(i).unwrap().name().to_owned();
+                    let pic = Picture::parse(bytes, &ParseOptions::strict()).unwrap_or_else(|e| {
+                        panic!("{name}: {kind:?} lump {lump_name} strict: {e}")
+                    });
+                    assert!(pic.warnings().is_empty());
+                    pictures += 1;
+                }
+            }
+        }
+        for section in sections.of_kind(SectionKind::Flats) {
+            for i in section.lumps.clone() {
+                let bytes = wad.lump_bytes(i).unwrap();
+                if bytes.is_empty() {
+                    continue;
+                }
+                let lump_name = wad.lump(i).unwrap().name().to_owned();
+                Flat::parse(bytes, &ParseOptions::strict())
+                    .unwrap_or_else(|e| panic!("{name}: flat {lump_name} strict: {e}"));
+                flats += 1;
+            }
+        }
+    }
+    assert!(wads > 0, "sweep found no classic WADs");
+    assert!(pictures > 0 && flats > 0, "sweep decoded nothing");
+    eprintln!("gfx sweep: {wads} WAD(s), {pictures} picture(s), {flats} flat(s), all strict-clean");
 }
