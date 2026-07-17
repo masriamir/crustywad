@@ -450,13 +450,80 @@ fn writes_sidedef_offsety_and_sector_special() {
     assert!(sector.contains("special = 9; "), "{sector}");
 }
 
-// --- ADR-0021 §5: a Doom 64-sourced map has no classic/UDMF representation ---
-// --- (texture indices, colored lighting) until the texture layer (#156/#157). ---
+// --- ADR-0021 §5 amendment 3: a Doom 64-sourced map's colored lighting is ---
+// --- tier-3 data loss; texture refs resolve to names at assembly (#156/#157, ADR-0022 §4). ---
 
 #[test]
-fn doom64_sourced_map_is_rejected_by_both_writers_in_both_modes() {
+fn doom64_sourced_map_lighting_is_tier3_data_loss_in_both_writers() {
     use crustywad::map::doom::write_doom_map;
+    // Assemble from a textured outer WAD so every ref is a Name — with a
+    // table present ALL five texture fields must resolve for strict
+    // assembly to succeed; the texture half of the old gate is satisfied
+    // and lighting remains.
+    let wall = crustywad::map::texture_name_hash("SDOORA");
+    let flat = crustywad::map::texture_name_hash("SFLATAE");
+    let bytes = common::build_doom64_wad_with_textures(
+        "MAP01",
+        &common::Doom64Lumps {
+            linedefs: &common::d64_linedef(0, 1, 0, 0, 0xffff),
+            sidedefs: &common::d64_sidedef(wall, wall, wall, 0),
+            vertexes: &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+            sectors: &common::d64_sector(flat, flat, [0; 5], 0),
+            lights: &common::d64_light(0, 0, 0, 0),
+            ..common::Doom64Lumps::default()
+        },
+        &["SDOORA", "SFLATAE"],
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
 
+    // Strict: refused for colored lighting (tier 3), NOT for the format.
+    assert!(matches!(
+        write_udmf(&map, &WriteOptions::strict()).unwrap_err(),
+        UdmfWriteError::UnrepresentableField {
+            block: "sector",
+            field: "colors",
+            ..
+        }
+    ));
+    assert!(matches!(
+        write_doom_map(&map, &WriteOptions::strict()).unwrap_err(),
+        crustywad::map::doom::DoomWriteError::UnrepresentableField {
+            block: "sector",
+            field: "colors",
+            ..
+        }
+    ));
+
+    // Lenient: converts, drops lighting, warns once per map.
+    let (text, warnings) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+    assert!(text.contains("SDOORA"));
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| matches!(w, UdmfWriteWarning::ColoredLightingDropped))
+            .count(),
+        1
+    );
+    let (_lumps, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| matches!(
+                w,
+                crustywad::map::doom::DoomWriteWarning::ColoredLightingDropped
+            ))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn leftover_texture_index_still_hits_the_defensive_error() {
+    // A sectionless nested-map WAD assembles with Index refs; strict hits
+    // the lighting refusal first (before any per-field handling runs),
+    // lenient gets past lighting (warn) and then hits the still-unresolved
+    // index — the defensive both-modes error is unchanged.
     let bytes = common::build_doom64_map_wad(
         "MAP01",
         &[],
@@ -471,22 +538,17 @@ fn doom64_sourced_map_is_rejected_by_both_writers_in_both_modes() {
     );
     let wad = Wad::from_bytes(bytes).unwrap();
     let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
-    assert_eq!(map.format(), crustywad::map::MapFormat::Doom64);
 
-    for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
-        assert!(matches!(
-            write_udmf(&map, &opts).unwrap_err(),
-            UdmfWriteError::UnsupportedSourceFormat {
-                format: crustywad::map::MapFormat::Doom64
-            }
-        ));
-        assert!(matches!(
-            write_doom_map(&map, &opts).unwrap_err(),
-            crustywad::map::doom::DoomWriteError::UnsupportedSourceFormat {
-                format: crustywad::map::MapFormat::Doom64
-            }
-        ));
-    }
+    // Strict hits the lighting refusal first; lenient gets past lighting
+    // (warn) and then hits the unresolved index.
+    assert!(matches!(
+        write_udmf(&map, &WriteOptions::strict()).unwrap_err(),
+        UdmfWriteError::UnrepresentableField { .. }
+    ));
+    assert!(matches!(
+        write_udmf(&map, &WriteOptions::lenient()).unwrap_err(),
+        UdmfWriteError::UnresolvedTextureIndex { .. }
+    ));
 }
 
 // --- Hexen -> UDMF: thing flags must not come out inverted (ADR-0019 §2). ---

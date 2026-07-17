@@ -158,9 +158,10 @@ pub enum DoomWriteError {
         /// Its length in bytes.
         len: usize,
     },
-    /// A [`TextureRef::Index`] reached the writer; a Doom 64 texture index
-    /// cannot be written as a name until the texture layer (#156/#157) can
-    /// resolve it (both strictness modes; ADR-0021 §5).
+    /// A [`TextureRef::Index`] reached the writer; assembly resolves a Doom
+    /// 64 texture hash to a name only when the outer WAD carries a
+    /// `T_START..T_END` section (ADR-0022 §4), so a leftover `Index` has no
+    /// name this writer can invent (both strictness modes; ADR-0021 §5).
     #[error("unresolvable texture index for {field} in {block} #{index}")]
     UnresolvedTextureIndex {
         /// The block kind (`"sidedef"` or `"sector"`).
@@ -170,10 +171,14 @@ pub enum DoomWriteError {
         /// The 0-based block index.
         index: usize,
     },
-    /// The map's source format cannot be expressed by this writer — a Doom 64
-    /// map's texture indices and colored lighting have no classic/UDMF
-    /// representation until the texture layer (#156/#157) exists (both
-    /// strictness modes; ADR-0021 §5).
+    /// The map's source format has no writer policy at all — a defensive
+    /// fallback for a future [`MapFormat`] variant this writer has never
+    /// heard of (returned in **both** strictness modes: there is no policy
+    /// to even attempt recovery under). A [`MapFormat::Doom64`] map is
+    /// **not** this variant — it writes under the tier-3 colored-lighting
+    /// policy instead (see
+    /// [`UnrepresentableField`][Self::UnrepresentableField] /
+    /// [`DoomWriteWarning::ColoredLightingDropped`]; ADR-0021 §5 amendment 3).
     #[error("cannot write a {format:?}-sourced map")]
     UnsupportedSourceFormat {
         /// The assembled map's source format.
@@ -287,6 +292,15 @@ pub enum DoomWriteWarning {
         /// The offending name.
         name: String,
     },
+    /// A Doom 64 map's colored lighting (sector color references and the
+    /// engine-model lights table) has no slot in the Doom format and was
+    /// dropped. Emitted at most once per map (lenient mode only — strict
+    /// mode instead returns [`DoomWriteError::UnrepresentableField`] naming
+    /// `block: "sector", field: "colors"`; ADR-0021 §5 amendment 3).
+    #[error(
+        "the map's Doom 64 colored lighting (sector color references and lights table) has no Doom slot and was dropped"
+    )]
+    ColoredLightingDropped,
 }
 
 /// The five serialized Doom map data lumps, in canonical order.
@@ -650,9 +664,10 @@ fn narrow_linedefs(
     Ok(out)
 }
 
-/// Resolves a [`TextureRef`] to a name, or fails: a Doom 64 texture index has
-/// no name until the texture layer (#156/#157) exists, so this is not a
-/// recoverable defect (ADR-0021 §5) — it errors in **both** strictness modes.
+/// Resolves a [`TextureRef`] to a name, or fails: assembly already resolved
+/// every Doom 64 texture hash it could (ADR-0022 §4), so a leftover `Index`
+/// reaching this writer has no name to invent — not a recoverable defect
+/// (ADR-0021 §5) — it errors in **both** strictness modes.
 fn texture_name<'a>(
     block: &'static str,
     field: &'static str,
@@ -732,12 +747,20 @@ fn narrow_things(n: &mut Narrower, raw: &[MapThing]) -> Result<Vec<Thing>, DoomW
 /// three-tier data-loss policy.
 ///
 /// # Errors
-/// - [`DoomWriteError::UnsupportedSourceFormat`] — `map.format()` is
-///   [`MapFormat::Doom64`] (returned in **both** strictness modes; ADR-0021 §5).
+/// - [`DoomWriteError::UnrepresentableField`] — includes `map.format()`
+///   being [`MapFormat::Doom64`] in strict mode: colored lighting (sector
+///   color references and the engine-model lights table) has no slot in the
+///   Doom format (`block: "sector", field: "colors"`, `index: 0`; ADR-0021
+///   §5 amendment 3). Lenient mode instead drops it and returns
+///   [`DoomWriteWarning::ColoredLightingDropped`].
+/// - [`DoomWriteError::UnsupportedSourceFormat`] — an unrecognized future
+///   [`MapFormat`] variant this writer has no policy for (returned in
+///   **both** strictness modes).
 /// - [`DoomWriteError::TooManyElements`] — an arena exceeds Doom's `u16` index
 ///   space (returned in **both** strictness modes).
 /// - [`DoomWriteError::UnresolvedTextureIndex`] — a sidedef/sector carries a
-///   [`TextureRef::Index`] (returned in **both** strictness modes; ADR-0021 §5).
+///   [`TextureRef::Index`] left unresolved by assembly (returned in **both**
+///   strictness modes; ADR-0021 §5, ADR-0022 §4).
 /// - In strict mode only: [`DoomWriteError::NonFiniteCoordinate`],
 ///   [`DoomWriteError::FractionalCoordinate`], [`DoomWriteError::ValueOutOfRange`],
 ///   [`DoomWriteError::UnrepresentableField`], [`DoomWriteError::NameTooLong`].
@@ -745,10 +768,31 @@ pub fn write_doom_map(
     map: &Map,
     opts: &WriteOptions,
 ) -> Result<(DoomMapLumps, Vec<DoomWriteWarning>), DoomWriteError> {
-    if map.format() == MapFormat::Doom64 {
-        return Err(DoomWriteError::UnsupportedSourceFormat {
-            format: map.format(),
-        });
+    match map.format() {
+        MapFormat::Doom | MapFormat::Hexen | MapFormat::Udmf => {}
+        MapFormat::Doom64 => {
+            // Colored lighting (sector color refs + the engine-model lights
+            // table) has no slot in this target — tier-3 data loss
+            // (ADR-0019). The texture half of the old blanket gate is gone:
+            // refs resolve to names at assembly when a texture section is
+            // present (ADR-0022 §4); any leftover `Index` still hits
+            // `UnresolvedTextureIndex` below, in both modes.
+            if opts.strictness == Strictness::Strict {
+                return Err(DoomWriteError::UnrepresentableField {
+                    block: "sector",
+                    field: "colors",
+                    index: 0,
+                });
+            }
+        }
+        // A future `MapFormat` variant this writer has never heard of:
+        // reject in both modes rather than silently mis-writing. `MapFormat`
+        // is `#[non_exhaustive]` for downstream crates, but every variant
+        // known to this crate is already matched above, so this arm is
+        // unreachable today — it exists purely as a defensive fallback for
+        // when a new variant is added.
+        #[allow(unreachable_patterns)]
+        format => return Err(DoomWriteError::UnsupportedSourceFormat { format }),
     }
 
     for (kind, count, max) in [
@@ -762,6 +806,9 @@ pub fn write_doom_map(
     }
 
     let mut n = Narrower::new(opts.strictness);
+    if map.format() == MapFormat::Doom64 {
+        n.warnings.push(DoomWriteWarning::ColoredLightingDropped);
+    }
     let vertices = narrow_vertices(&mut n, map.vertices())?;
     let linedefs = narrow_linedefs(&mut n, map.linedefs(), map.format())?;
     let sidedefs = narrow_sidedefs(&mut n, map.sidedefs())?;
@@ -1042,9 +1089,9 @@ mod tests {
         }));
     }
 
-    /// A Doom 64 texture index has no name until the texture layer (#156/#157)
-    /// exists, so a `TextureRef::Index` is rejected in both strictness modes —
-    /// there is no honest recovery (ADR-0021 §5).
+    /// A leftover `TextureRef::Index` (one assembly could not resolve to a
+    /// name, ADR-0022 §4) is rejected in both strictness modes — there is no
+    /// honest recovery (ADR-0021 §5).
     #[test]
     fn texture_index_is_rejected_in_both_modes() {
         let mut map = tiny_map();
@@ -1083,24 +1130,36 @@ mod tests {
         }
     }
 
-    /// A Doom 64-sourced map has no classic representation (texture indices,
-    /// colored lighting) until the texture layer (#156/#157) exists, so it is
-    /// rejected in both strictness modes (ADR-0021 §5) — before any per-field
-    /// handling runs, so a Doom64 map's `TextureRef::Index` values never reach
-    /// the texture-resolving logic.
+    /// A Doom 64-sourced map's colored lighting has no slot in the Doom
+    /// format: strict refuses it (tier-3 loss, ADR-0021 §5 amendment 3),
+    /// lenient drops it and warns exactly once. Texture resolution is a
+    /// separate concern (ADR-0022 §4) — `tiny_map`'s refs are already
+    /// `TextureRef::Name`, so this test isolates the lighting policy.
     #[test]
-    fn doom64_sourced_map_is_rejected_in_both_modes() {
+    fn doom64_sourced_map_lighting_is_tier3_loss() {
         let mut map = tiny_map();
         map.format = MapFormat::Doom64;
-        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
-            let err = write_doom_map(&map, &opts).unwrap_err();
-            assert_eq!(
-                err,
-                DoomWriteError::UnsupportedSourceFormat {
-                    format: MapFormat::Doom64
-                }
-            );
-        }
+
+        let err = write_doom_map(&map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            DoomWriteError::UnrepresentableField {
+                block: "sector",
+                field: "colors",
+                index: 0
+            }
+        );
+
+        let (lumps, warnings) = write_doom_map(&map, &WriteOptions::lenient()).unwrap();
+        let sidedefs: Vec<crate::map::Sidedef> = parse_records(&lumps.sidedefs).unwrap();
+        assert_eq!(sidedefs[0].middle_texture.as_str_lossy(), "STARTAN3");
+        assert_eq!(
+            warnings
+                .iter()
+                .filter(|w| matches!(w, DoomWriteWarning::ColoredLightingDropped))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1721,6 +1780,10 @@ mod tests {
             }
             .to_string(),
             "name \"TOOLONGNAME\" was truncated to 8 bytes"
+        );
+        assert_eq!(
+            DoomWriteWarning::ColoredLightingDropped.to_string(),
+            "the map's Doom 64 colored lighting (sector color references and lights table) has no Doom slot and was dropped"
         );
     }
 
