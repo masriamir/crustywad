@@ -11,7 +11,7 @@ mod picture;
 
 pub use flat::Flat;
 pub use palette::{Colormap, Palette, Playpal};
-pub use picture::{Column, IndexedImage, Picture, Post, RgbaImage};
+pub use picture::{Column, Picture, Post};
 
 /// A fatal problem decoding a classic graphics lump in strict mode; every
 /// variant's lenient recovery is described on the matching [`GfxWarning`].
