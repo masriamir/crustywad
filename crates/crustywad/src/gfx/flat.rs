@@ -66,8 +66,13 @@ impl Flat {
     /// zero-pads to 4096 at conversion.
     #[must_use]
     pub fn to_indexed(&self) -> IndexedImage {
-        let mut pixels = self.pixels.clone();
-        pixels.resize(4096, 0);
+        // Build the 4096-byte rendered buffer directly: only the first
+        // 64×64 bytes are ever rendered, so cloning an oversized stored
+        // lump (strict allows 8192; lenient keeps any length) just to
+        // truncate it would be a wasted transient allocation.
+        let mut pixels = vec![0u8; 4096];
+        let take = self.pixels.len().min(4096);
+        pixels[..take].copy_from_slice(&self.pixels[..take]);
         IndexedImage {
             width: Self::WIDTH,
             height: Self::HEIGHT,
