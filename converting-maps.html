@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ac5817bc.js";
+            window.path_to_searchindex_js = "searchindex-62fb301b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -409,6 +409,29 @@ following has nowhere to go:</p>
 <p>This is exactly why a ZDoom-namespace UDMF map typically fails strict
 conversion — “this map is not expressible in Doom format” is the correct
 answer, and <code>WriteOptions::lenient()</code> is how a caller accepts that.</p>
+<h2 id="doom-64-maps"><a class="header" href="#doom-64-maps">Doom 64 maps</a></h2>
+<p>A <code>Map</code> assembled from a Doom 64 source converts to UDMF (and to classic
+Doom) like any other format, provided its texture references resolved to
+names at assembly time (see <a href="map-records.html#doom-64-maps">Doom 64 maps</a> —
+this requires the outer WAD to carry a <code>Textures</code> section; without one, every
+texture field stays <code>TextureRef::Index</code> and conversion fails in both modes
+with <code>UnresolvedTextureIndex</code>, since the writer has no name to invent).</p>
+<p>The one remaining unrepresentable piece is Doom 64’s per-sector colored
+lighting (<code>MapSector.colors</code>, <code>Map::lights()</code>): neither UDMF nor classic Doom
+has a slot for it, so it follows the tier-3 policy above:</p>
+<ul>
+<li><strong>Strict</strong> refuses with <code>UnrepresentableField { block: "sector", field: "colors", .. }</code>, naming the offending sector.</li>
+<li><strong>Lenient</strong> drops the colors and converts, recording one
+<code>ColoredLightingDropped</code> warning per map.</li>
+</ul>
+<pre><code class="language-bash">cwad convert doom64.wad -o doom64.udmf.wad --to udmf
+# error: cannot convert map MAP01 to udmf: sector #0 has a colors value, which UDMF cannot represent
+# note: re-run with --lenient to accept the data loss
+
+cwad --lenient convert doom64.wad -o doom64.udmf.wad --to udmf
+# converted 1 map to udmf
+# warning: MAP01: the map's Doom 64 colored lighting (sector color references and lights table) has no UDMF slot and was dropped
+</code></pre>
 <h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
 <p><code>write_doom_map()</code> and <code>add_doom_map()</code> return
 <code>Result&lt;(DoomMapLumps, Vec&lt;DoomWriteWarning&gt;), DoomWriteError&gt;</code> and
