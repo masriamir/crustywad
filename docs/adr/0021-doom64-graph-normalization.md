@@ -337,3 +337,32 @@ ADR-0018 deferred `MACROS` as raw bytes; this amendment (implemented by
   ACS spike (#248). This decode deliberately creates no execution
   machinery, leaving #248 unconstrained (the #245/#242 cross-link).
 - The retail sweep (40 Doom 64 maps, real MACROS) passed strict-clean.
+
+## Amendment (2026-07-16, #281): texture resolution lifts §5's gate
+
+- The `u16` texture fields resolve to names at assembly: ADR-0022 §1/§4's
+  name-hash mechanism (seed 1315423911, ≤8 uppercased chars, & 0xFFFF),
+  first-match-in-disk-order over the WAD's `Textures` section, O(1) via a
+  hash-keyed table. A WAD without a `Textures` section keeps
+  `TextureRef::Index` silently (bare nested-map WADs are legitimate); a
+  present-section miss is a strict error / lenient keep-and-warn — never
+  the engine's silent fallback to texture 0.
+- §5's writer gate is lifted: `UnsupportedSourceFormat` no longer fires
+  for `MapFormat::Doom64`. The remaining unrepresentable data — colored
+  lighting (sector color refs, the §4 lights table) — follows ADR-0019's
+  tier 3: strict refuses (`UnrepresentableField`, sector colors), lenient
+  drops with one per-map warning (`ColoredLightingDropped`) and converts.
+  This is the "extending ADR-0019's reversibility inventory" step §5
+  promised. Leftover unresolved `Index` refs still hit the defensive
+  `UnresolvedTextureIndex` in both modes.
+- `UnsupportedSourceFormat` narrows to genuinely-unknown future
+  `MapFormat` variants (the `#[non_exhaustive]` defensive arm).
+- Observed result: the retail sweep (`DOOM64.WAD`, 40 maps) assembles
+  strict-clean in both modes with every sidedef and sector texture field
+  resolved to `TextureRef::Name` (`retail_doom64_map01_resolves_every_texture_ref`,
+  `crates/crustywad/tests/doom64_textures.rs`); retail `MAP01` converts to
+  UDMF under `--lenient` (`cwad --lenient convert ... --to udmf --map
+  MAP01`), exiting 0 with a single `ColoredLightingDropped` warning on
+  stderr and resolved texture names quoted in the emitted `TEXTMAP`
+  (`convert_retail_doom64_map01_lenient_smoke`,
+  `crates/crustywad-cli/tests/cli.rs`).

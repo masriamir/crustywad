@@ -238,6 +238,34 @@ This is exactly why a ZDoom-namespace UDMF map typically fails strict
 conversion — "this map is not expressible in Doom format" is the correct
 answer, and `WriteOptions::lenient()` is how a caller accepts that.
 
+## Doom 64 maps
+
+A `Map` assembled from a Doom 64 source converts to UDMF (and to classic
+Doom) like any other format, provided its texture references resolved to
+names at assembly time (see [Doom 64 maps](map-records.md#doom-64-maps) —
+this requires the outer WAD to carry a `Textures` section; without one, every
+texture field stays `TextureRef::Index` and conversion fails in both modes
+with `UnresolvedTextureIndex`, since the writer has no name to invent).
+
+The one remaining unrepresentable piece is Doom 64's per-sector colored
+lighting (`MapSector.colors`, `Map::lights()`): neither UDMF nor classic Doom
+has a slot for it, so it follows the tier-3 policy above:
+
+- **Strict** refuses with `UnrepresentableField { block: "sector", field:
+  "colors", .. }`, naming the offending sector.
+- **Lenient** drops the colors and converts, recording one
+  `ColoredLightingDropped` warning per map.
+
+```bash
+cwad convert doom64.wad -o doom64.udmf.wad --to udmf
+# error: cannot convert map MAP01 to udmf: sector #0 has a colors value, which UDMF cannot represent
+# note: re-run with --lenient to accept the data loss
+
+cwad --lenient convert doom64.wad -o doom64.udmf.wad --to udmf
+# converted 1 map to udmf
+# warning: MAP01: the map's Doom 64 colored lighting (sector color references and lights table) has no UDMF slot and was dropped
+```
+
 ## Error handling
 
 `write_doom_map()` and `add_doom_map()` return

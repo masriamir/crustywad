@@ -147,10 +147,13 @@ Doom/Doom II/Heretic share the classic binary record layout (differing only in m
 e.g. `MAP01` vs `E1M1`); Hexen is detected via the `BEHAVIOR` lump and assembles with format-tagged
 extended fields. **Doom 64** stores each map as a nested WAD inside its `MAPxx` marker lump
 (detected by name **and** magic) and assembles into the same graph — its sidedef/sector
-texture and flat fields become a `TextureRef::Index` rather than a name, and its per-sector
+texture and flat fields carry a `u16` hash on disk that assembly resolves to a `TextureRef::Name`
+whenever the outer WAD carries a `Textures` section (first-match-in-disk-order on a collision;
+`TextureRef::Index` otherwise, or on an unresolved hash under lenient assembly). Its per-sector
 colored lighting becomes `MapSector.colors` indexing `Map::lights()`, the map's combined light
-table. Until the texture layer (#156/#157) can resolve those indices, a Doom 64-sourced
-`Map` cannot be written back out: `write_doom_map` and `write_udmf` both reject it.
+table. A Doom 64-sourced `Map` writes back out (`write_doom_map` / `write_udmf`) once its texture
+references resolve to names; the remaining unrepresentable colored lighting follows the same
+three-tier policy as every other conversion (strict refuses, lenient drops it and warns).
 `REJECT` and `BLOCKMAP` decode into typed, queryable structures (`MapReject` sector-visibility lookups, `MapBlockmap` per-block linedef lists) during map assembly, and Doom 64's `LEAFS` render leaves decode into a per-subsector `MapLeaf` arena. `MACROS` scripts decode read-only into `MapMacro` action lists.
 UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with
 `write_udmf` / `add_udmf_map` (the `write` feature). The same `Map` graph converts a UDMF
