@@ -736,9 +736,11 @@ fn retail_texture_sets_compose_strict_clean() {
                 // 2026-07-17): exactly one retail IWAD — Strife — ships four
                 // TEXTUREx records with genuinely negative on-disk patchcount
                 // fields (SIGN12/SIGN13 -96, WALTEK12 -18, STAIR07 -15).
-                // Strict correctly refuses (the field is malformed; the
-                // engine's signed patch loop simply never iterates, silently
-                // yielding zero-patch textures). Keyed by error identity,
+                // Strict correctly refuses: the field is malformed on disk.
+                // (Whether vanilla survives it is unverified — the spike
+                // research flags r_data.c's use of the signed count for
+                // alloc sizing as a hazard, not a benign path; see the
+                // ADR-0022 #157 amendment.) Keyed by error identity,
                 // not filename: the exact first offender is pinned, and the
                 // count of such IWADs is asserted to be exactly one below.
                 assert_eq!(

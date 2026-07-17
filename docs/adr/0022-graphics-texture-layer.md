@@ -519,10 +519,14 @@ The retail compose sweep found exactly one IWAD in the collection — Strife
 (`strife1.wad`) — shipping four `TEXTUREx` records with genuinely negative
 on-disk `patchcount` fields (`SIGN12`/`SIGN13` at -96, `WALTEK12` at -18,
 `STAIR07` at -15; verified by a raw directory walk, no other retail WAD
-affected). Engines survive these only because the patch loop in
-`R_InitTextures` (r_data.c, cited in §3's basis) uses a signed bound a
-negative count never satisfies — the records silently become zero-patch
-textures. Adjudication: `NegativePatchCount` remains a strict error (the
+affected). Whether vanilla survives a negative count is **unverified**:
+§3's cited source basis flags this exact field as a hazard —
+`R_InitTextures` (`r_data.c`) sizes allocations and bounds loops from the
+signed count, uncapped ("alloc issues" in the spike's hardening table) —
+so the signed loop bound plausibly never iterates, but the
+allocation-sizing path was flagged as a risk, not confirmed benign. What
+is verified is the on-disk data: the field is malformed.
+Adjudication: `NegativePatchCount` remains a strict error (the
 field is malformed, and strict mode says so honestly); the sweep pins the
 anomaly as a gate contract in the #269 style — the one affected IWAD must
 fail strict with exactly the pinned first offender, then build leniently
