@@ -2,7 +2,7 @@
 
 mod common;
 
-use crustywad::map::texture_name_hash;
+use crustywad::map::{Map, MapAssembleError, MapWarning, TextureRef, texture_name_hash};
 use crustywad::{ParseOptions, Wad};
 
 /// A WAD whose directory is a `T_START..T_END` section holding `names`.
@@ -111,4 +111,110 @@ fn duplicate_sections_concatenate_in_disk_order_lenient() {
     assert_eq!(table.get(4098), Some("SFLATAE"));
     // Strict errors on the duplicate pair (propagated SectionError).
     assert!(wad.doom64_texture_names().is_err());
+}
+
+/// A one-sector Doom 64 map wrapped in an outer IWAD with a T_ section of
+/// `textures`. `sidedef` = [upper, lower, middle] hashes; `flats` =
+/// [floor, ceiling] hashes. With a table present EVERY texture field is
+/// resolved, so tests must make all five resolvable except the one under
+/// test.
+fn d64_map_in_textured_wad(sidedef: [u16; 3], flats: [u16; 2], textures: &[&str]) -> Wad {
+    let nested_lumps = common::Doom64Lumps {
+        linedefs: &common::d64_linedef(0, 1, 0, 0, 0xffff),
+        sidedefs: &common::d64_sidedef(sidedef[0], sidedef[1], sidedef[2], 0),
+        vertexes: &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+        sectors: &common::d64_sector(flats[0], flats[1], [0; 5], 0),
+        lights: &common::d64_light(0, 0, 0, 0),
+        ..common::Doom64Lumps::default()
+    };
+    let bytes = common::build_doom64_wad_with_textures("MAP01", &nested_lumps, textures);
+    Wad::from_bytes(bytes).expect("fixture WAD parses")
+}
+
+#[test]
+fn assembly_resolves_hashes_to_names_when_the_section_is_present() {
+    let wall = texture_name_hash("SDOORA");
+    let flat = texture_name_hash("SFLATAE");
+    let wad = d64_map_in_textured_wad([wall; 3], [flat; 2], &["SDOORA", "SFLATAE"]);
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert!(map.warnings().is_empty());
+    assert_eq!(map.sidedefs()[0].upper, TextureRef::Name("SDOORA".into()));
+    assert_eq!(map.sidedefs()[0].middle, TextureRef::Name("SDOORA".into()));
+    assert_eq!(
+        map.sectors()[0].floor_flat,
+        TextureRef::Name("SFLATAE".into())
+    );
+    assert_eq!(
+        map.sectors()[0].ceiling_flat,
+        TextureRef::Name("SFLATAE".into())
+    );
+}
+
+#[test]
+fn assembly_miss_with_section_strict_errors_lenient_keeps_index() {
+    // Upper = 0xBEEF matches no name; every other field resolves, so the
+    // miss under test is the only one.
+    let wall = texture_name_hash("SDOORA");
+    let flat = texture_name_hash("SFLATAE");
+    let wad = d64_map_in_textured_wad([0xBEEF, wall, wall], [flat; 2], &["SDOORA", "SFLATAE"]);
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::UnresolvedTextureHash {
+            hash: 0xBEEF,
+            from: "sidedef"
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.sidedefs()[0].upper, TextureRef::Index(0xBEEF));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::UnresolvedTextureHash {
+            hash: 0xBEEF,
+            from: "sidedef"
+        }
+    )));
+}
+
+#[test]
+fn assembly_without_a_textures_section_keeps_index_silently() {
+    // The plain nested-map builder has no outer T_ section: the pre-#281
+    // behavior is preserved exactly for every existing fixture.
+    let bytes = common::build_doom64_map_wad_from(
+        "MAP01",
+        &common::Doom64Lumps {
+            linedefs: &common::d64_linedef(0, 1, 0, 0, 0xffff),
+            sidedefs: &common::d64_sidedef(7, 0, 0, 0),
+            vertexes: &[common::d64_vertex(0.0, 0.0), common::d64_vertex(64.0, 0.0)].concat(),
+            sectors: &common::d64_sector(0, 0, [0; 5], 0),
+            lights: &common::d64_light(0, 0, 0, 0),
+            ..common::Doom64Lumps::default()
+        },
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let map = Map::assemble(&wad, &wad.map_group("MAP01").unwrap()).unwrap();
+    assert_eq!(map.sidedefs()[0].upper, TextureRef::Index(7));
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn assembly_bridges_lenient_section_warnings_and_strict_section_errors() {
+    // Outer wad with a malformed texture section: unpaired T_START.
+    let nested = common::build_doom64_nested_bytes(&common::Doom64Lumps::default());
+    let bytes = common::build_wad(
+        *b"IWAD",
+        &[("T_START", &[]), ("AWALL", &[]), ("MAP01", &nested)],
+    );
+    let wad = Wad::from_bytes(bytes).unwrap();
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::TextureSections { .. }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(
+        map.warnings()
+            .iter()
+            .any(|w| matches!(w, MapWarning::TextureSection(_)))
+    );
 }

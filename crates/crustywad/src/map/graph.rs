@@ -127,8 +127,10 @@ pub(crate) fn linedef_id_unset(format: MapFormat) -> i32 {
 pub enum TextureRef {
     /// A texture name (a Doom/Hexen 8-byte lump name, or a UDMF string).
     Name(String),
-    /// A Doom 64 texture/flat table index — resolvable to a texture identity
-    /// once the texture layer (#156/#157) exists.
+    /// A truncated rolling hash of the referenced lump's name (ADR-0022
+    /// §1), resolved first-match-in-disk-order over the outer WAD's texture
+    /// section during assembly when one is present. "Index" is the engine's
+    /// historical field name for this hash, not a positional index.
     Index(u16),
 }
 
@@ -159,14 +161,20 @@ pub struct MapSidedef {
     pub x_offset: i32,
     /// The vertical texture offset, in map units.
     pub y_offset: i32,
-    /// The upper texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
-    /// has no name until the texture layer (#156/#157) can resolve it.
+    /// The upper texture, or an empty name if none. A Doom 64 map's
+    /// [`TextureRef::Index`] resolves to a [`TextureRef::Name`] during
+    /// assembly when the outer WAD's texture section is present (ADR-0022
+    /// §4); otherwise it stays an unresolved hash.
     pub upper: TextureRef,
-    /// The lower texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
-    /// has no name until the texture layer (#156/#157) can resolve it.
+    /// The lower texture, or an empty name if none. A Doom 64 map's
+    /// [`TextureRef::Index`] resolves to a [`TextureRef::Name`] during
+    /// assembly when the outer WAD's texture section is present (ADR-0022
+    /// §4); otherwise it stays an unresolved hash.
     pub lower: TextureRef,
-    /// The middle texture, or an empty name if none. A Doom 64 map's [`TextureRef::Index`]
-    /// has no name until the texture layer (#156/#157) can resolve it.
+    /// The middle texture, or an empty name if none. A Doom 64 map's
+    /// [`TextureRef::Index`] resolves to a [`TextureRef::Name`] during
+    /// assembly when the outer WAD's texture section is present (ADR-0022
+    /// §4); otherwise it stays an unresolved hash.
     pub middle: TextureRef,
 }
 
@@ -198,11 +206,15 @@ pub struct MapSector {
     pub floor_height: i32,
     /// The ceiling height, in map units.
     pub ceiling_height: i32,
-    /// The floor flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
-    /// name until the texture layer (#156/#157) can resolve it.
+    /// The floor flat (texture). A Doom 64 map's [`TextureRef::Index`]
+    /// resolves to a [`TextureRef::Name`] during assembly when the outer
+    /// WAD's texture section is present (ADR-0022 §4); otherwise it stays
+    /// an unresolved hash.
     pub floor_flat: TextureRef,
-    /// The ceiling flat (texture). A Doom 64 map's [`TextureRef::Index`] has no
-    /// name until the texture layer (#156/#157) can resolve it.
+    /// The ceiling flat (texture). A Doom 64 map's [`TextureRef::Index`]
+    /// resolves to a [`TextureRef::Name`] during assembly when the outer
+    /// WAD's texture section is present (ADR-0022 §4); otherwise it stays
+    /// an unresolved hash.
     pub ceiling_flat: TextureRef,
     // Doom stores sector special/tag as i16; widen losslessly to i32
     // (avoids an i16->u16 sign-loss cast that clippy::pedantic rejects).
@@ -671,6 +683,23 @@ pub enum MapWarning {
     MalformedMacros {
         /// What made the lump unusable.
         detail: &'static str,
+    },
+    /// A marker anomaly in the outer WAD's texture section(s), recovered
+    /// while building the Doom 64 texture-name table during lenient
+    /// assembly; see [`SectionWarning`](crate::sections::SectionWarning).
+    #[error("texture section: {0}")]
+    TextureSection(crate::sections::SectionWarning),
+    /// A Doom 64 texture hash matched no texture-section lump; the
+    /// unresolved [`TextureRef::Index`] was kept during lenient assembly
+    /// (never the engine's silent fallback to texture 0).
+    #[error(
+        "texture name hash {hash:#06x} on {from} matches no texture-section lump; kept as an unresolved index during lenient assembly"
+    )]
+    UnresolvedTextureHash {
+        /// The on-disk 16-bit name hash.
+        hash: u16,
+        /// The element kind carrying the reference (`"sidedef"` or `"sector"`).
+        from: &'static str,
     },
 }
 

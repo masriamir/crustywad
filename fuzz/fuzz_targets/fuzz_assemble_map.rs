@@ -46,6 +46,18 @@ fuzz_target!(|data: &[u8]| {
                 // map (whole-degrade on first structural failure; success
                 // emits zero) — verified directly against `normalize_macros`
                 // in assemble.rs.
+                // #281: `resolve_texture_ref` (the Doom 64 arm only) pushes
+                // at most one `UnresolvedTextureHash` warning per texture
+                // field it resolves — 3 fields per sidedef (upper/lower/
+                // middle) and 2 per sector (floor/ceiling flat), verified
+                // directly against `normalize_doom64_sidedefs`/
+                // `normalize_doom64_sectors` in assemble.rs. Building the
+                // texture-name table itself bridges the outer WAD's section
+                // scan (`Wad::sections_with_options`) into at most one
+                // `TextureSection` warning per marker lump in the WAD (a
+                // `SectionWarning` is recovered per anomalous marker, never
+                // more than one per lump) — bounded here by the WAD's total
+                // lump count.
                 let warning_count = map.warnings().len();
                 // Saturating arithmetic keeps the bound meaningful even for a
                 // pathologically large synthesized map (no overflow).
@@ -62,7 +74,10 @@ fuzz_target!(|data: &[u8]| {
                     .saturating_add(map.nodes().len().saturating_mul(2))
                     .saturating_add(2)
                     .saturating_add(1)
-                    .saturating_add(1);
+                    .saturating_add(1)
+                    .saturating_add(map.sidedefs().len().saturating_mul(3))
+                    .saturating_add(map.sectors().len().saturating_mul(2))
+                    .saturating_add(wad.lumps().len());
                 assert!(
                     warning_count <= bound,
                     "warning count {warning_count} exceeded upper bound {bound}"
