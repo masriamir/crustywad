@@ -177,6 +177,62 @@ fn assembly_miss_with_section_strict_errors_lenient_keeps_index() {
 }
 
 #[test]
+fn assembly_sector_floor_miss_with_section_strict_errors_lenient_keeps_index() {
+    // Floor flat = 0xBEEF matches no name; every other field (walls and the
+    // ceiling flat) resolves, so the miss under test is the sector's floor
+    // — the `from: "sector"` counterpart to the sidedef-miss test above,
+    // isolating the resolve_texture_ref call site for MapSector::floor_flat.
+    let wall = texture_name_hash("SDOORA");
+    let flat = texture_name_hash("SFLATAE");
+    let wad = d64_map_in_textured_wad([wall; 3], [0xBEEF, flat], &["SDOORA", "SFLATAE"]);
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::UnresolvedTextureHash {
+            hash: 0xBEEF,
+            from: "sector"
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.sectors()[0].floor_flat, TextureRef::Index(0xBEEF));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::UnresolvedTextureHash {
+            hash: 0xBEEF,
+            from: "sector"
+        }
+    )));
+}
+
+#[test]
+fn assembly_sector_ceiling_miss_with_section_strict_errors_lenient_keeps_index() {
+    // Ceiling flat = 0xBEEF matches no name; the floor flat resolves fine,
+    // so the miss under test is specifically the ceiling — the
+    // resolve_texture_ref call site for MapSector::ceiling_flat, reached
+    // only when the preceding floor resolution succeeds.
+    let wall = texture_name_hash("SDOORA");
+    let flat = texture_name_hash("SFLATAE");
+    let wad = d64_map_in_textured_wad([wall; 3], [flat, 0xBEEF], &["SDOORA", "SFLATAE"]);
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::UnresolvedTextureHash {
+            hash: 0xBEEF,
+            from: "sector"
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert_eq!(map.sectors()[0].ceiling_flat, TextureRef::Index(0xBEEF));
+    assert!(map.warnings().iter().any(|w| matches!(
+        w,
+        MapWarning::UnresolvedTextureHash {
+            hash: 0xBEEF,
+            from: "sector"
+        }
+    )));
+}
+
+#[test]
 fn assembly_without_a_textures_section_keeps_index_silently() {
     // The plain nested-map builder has no outer T_ section: the pre-#281
     // behavior is preserved exactly for every existing fixture.
@@ -217,4 +273,62 @@ fn assembly_bridges_lenient_section_warnings_and_strict_section_errors() {
             .iter()
             .any(|w| matches!(w, MapWarning::TextureSection(_)))
     );
+}
+
+// ---------------------------------------------------------------------------
+// Retail sweep smoke (#281): a real Doom 64 IWAD, gated on `sweep-tests` +
+// `CRUSTYWAD_SWEEP_DIR` with the sweep suite's graceful-skip idiom
+// (tests/sweep.rs / tests/sections.rs:498).
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "sweep-tests")]
+#[test]
+fn retail_doom64_map01_resolves_every_texture_ref() {
+    let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
+        eprintln!("skipping: CRUSTYWAD_SWEEP_DIR not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    // Match the sweep suite's graceful-skip gating: a set-but-unusable
+    // variable (relative path — cargo runs tests from the package root —
+    // or a non-directory) skips with a note rather than failing hard.
+    if !dir.is_absolute() || !dir.is_dir() {
+        eprintln!(
+            "skipping: CRUSTYWAD_SWEEP_DIR is not an absolute path to a directory: {}",
+            dir.display()
+        );
+        return;
+    }
+    let path = dir.join("DOOM64.WAD");
+    if !path.is_file() {
+        eprintln!("skipping: DOOM64.WAD not present in {}", dir.display());
+        return;
+    }
+
+    let wad = Wad::from_path(&path).expect("DOOM64.WAD reads");
+    let group = wad.map_group("MAP01").expect("retail MAP01 exists");
+    let map = Map::assemble(&wad, &group).expect("retail MAP01 assembles strict-clean");
+    assert!(map.warnings().is_empty());
+
+    // Every texture field on every sidedef and sector resolved to a name.
+    let mut refs = 0_usize;
+    for side in map.sidedefs() {
+        for r in [&side.upper, &side.lower, &side.middle] {
+            assert!(
+                matches!(r, TextureRef::Name(_)),
+                "unresolved sidedef ref: {r:?}"
+            );
+            refs += 1;
+        }
+    }
+    for sector in map.sectors() {
+        for r in [&sector.floor_flat, &sector.ceiling_flat] {
+            assert!(
+                matches!(r, TextureRef::Name(_)),
+                "unresolved sector ref: {r:?}"
+            );
+            refs += 1;
+        }
+    }
+    assert!(refs > 0, "MAP01 must carry texture refs");
 }

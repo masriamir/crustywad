@@ -3264,3 +3264,57 @@ fn convert_corrupt_map_exits_3() {
         .stderr(predicate::str::contains("failed to assemble map MAP01"))
         .stderr(predicate::str::contains("thread '").not());
 }
+
+// ---------------------------------------------------------------------------
+// Retail sweep smoke (#281)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn convert_retail_doom64_map01_lenient_smoke() {
+    // Env-gated retail smoke (the CLI crate has no fixture feature flag;
+    // env-only gating with graceful skip mirrors the library sweep
+    // suite). Exit 0 alone proves full texture resolution: any leftover
+    // unresolved index would be a both-modes writer error.
+    let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
+        eprintln!("skipping: CRUSTYWAD_SWEEP_DIR not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_absolute() || !dir.is_dir() {
+        eprintln!(
+            "skipping: CRUSTYWAD_SWEEP_DIR is not an absolute path to a directory: {}",
+            dir.display()
+        );
+        return;
+    }
+    let wad_path = dir.join("DOOM64.WAD");
+    if !wad_path.is_file() {
+        eprintln!("skipping: DOOM64.WAD not present in {}", dir.display());
+        return;
+    }
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad_path.to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--map",
+            "MAP01",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 1 map to udmf"))
+        .stderr(predicate::str::contains("colored lighting"));
+
+    // TEXTMAP carries quoted resolved names (quotes distinguish UDMF
+    // content from pass-through directory entries).
+    let bytes = std::fs::read(out.path()).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("texturefloor = \""));
+}
