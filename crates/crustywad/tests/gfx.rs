@@ -668,6 +668,96 @@ fn retail_classic_graphics_decode_strict_clean() {
     );
 }
 
+#[cfg(feature = "sweep-tests")]
+#[test]
+fn retail_texture_sets_compose_strict_clean() {
+    use crustywad::{SectionKind, WadKind};
+
+    let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
+        eprintln!("skipping: CRUSTYWAD_SWEEP_DIR not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_absolute() || !dir.is_dir() {
+        eprintln!(
+            "skipping: CRUSTYWAD_SWEEP_DIR is not an absolute path to a directory: {}",
+            dir.display()
+        );
+        return;
+    }
+
+    let mut sets = 0usize;
+    let mut composed = 0usize;
+    let mut lenient_pwads = 0usize;
+    let mut no_textures = 0usize;
+    for entry in std::fs::read_dir(&dir).expect("sweep dir reads") {
+        let path = entry.expect("dir entry").path();
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("wad"))
+        {
+            continue;
+        }
+        let wad = crustywad::Wad::from_path(&path).expect("retail WAD reads");
+        // Doom 64 has no PNAMES/TEXTUREx (ADR-0022 §4) — data-driven skip.
+        let sections = wad
+            .sections_with_options(ParseOptions::lenient())
+            .expect("lenient scan never fails");
+        if sections.of_kind(SectionKind::Textures).next().is_some() {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+
+        match wad.texture_set() {
+            Ok(None) => no_textures += 1,
+            Ok(Some(set)) => {
+                assert!(
+                    set.warnings().is_empty(),
+                    "{name}: strict build must be clean"
+                );
+                sets += 1;
+                for i in 0..set.textures().len() {
+                    let (_, warnings) =
+                        set.compose(i, &ParseOptions::strict()).unwrap_or_else(|e| {
+                            panic!(
+                                "{name}: texture {} ({}) strict compose: {e}",
+                                i,
+                                set.textures()[i].name
+                            )
+                        });
+                    assert!(warnings.is_empty());
+                    composed += 1;
+                }
+            }
+            Err(e) => {
+                // PWADs referencing base-IWAD patches cannot resolve without
+                // a merge model (spec's PWAD reality note): rerun leniently,
+                // composes must not panic. Anything else = STOP.
+                let is_unresolved =
+                    matches!(e, crustywad::gfx::GfxError::UnresolvedPatchName { .. });
+                assert!(
+                    is_unresolved && wad.kind() == WadKind::Pwad,
+                    "{name}: unexpected strict set-build failure: {e}"
+                );
+                lenient_pwads += 1;
+                let set = wad
+                    .texture_set_with_options(ParseOptions::lenient())
+                    .expect("lenient build never fails")
+                    .expect("TEXTUREx present");
+                for i in 0..set.textures().len() {
+                    let _ = set
+                        .compose(i, &ParseOptions::lenient())
+                        .unwrap_or_else(|e| panic!("{name}: lenient compose {i}: {e}"));
+                }
+            }
+        }
+    }
+    assert!(sets > 0, "sweep composed no IWAD texture sets");
+    eprintln!(
+        "texture sweep: {sets} strict set(s), {composed} texture(s) composed strict-clean, {lenient_pwads} PWAD(s) lenient, {no_textures} WAD(s) without TEXTUREx"
+    );
+}
+
 /// Builds a PNAMES lump from names (8-byte NUL-padded each).
 fn build_pnames(names: &[&str]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -1040,6 +1130,49 @@ fn texture_set_bad_index_and_unresolved_name() {
         w,
         GfxWarning::PatchPictureFailed { name } if name == "BADPIC"
     )));
+}
+
+#[test]
+fn texture_set_negative_patch_index_strict_errors_lenient_warns_and_composes_as_hole() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    // A negative PNAMES index (distinct from an out-of-range *positive*
+    // index, already covered above): `usize::try_from` fails for it in the
+    // set's referenced-name resolution pass, so it must never mark a name
+    // referenced or panic — only the earlier validation pass's bounds check
+    // (`patch_ref.patch < 0`) sees it.
+    let patch = build_picture(1, 1, &[vec![(0, vec![7])]]);
+    let wad = textured_wad(&["PA"], &[("NEG", 1, 1, &[(0, 0, -1)])], &[("PA", patch)]);
+    assert!(matches!(
+        wad.texture_set().unwrap_err(),
+        GfxError::PatchIndexOutOfBounds {
+            texture: 0,
+            patch: -1,
+            pnames_len: 1
+        }
+    ));
+    let set = wad
+        .texture_set_with_options(ParseOptions::lenient())
+        .unwrap()
+        .unwrap();
+    assert!(set.warnings().iter().any(|w| matches!(
+        w,
+        GfxWarning::PatchIndexOutOfBounds {
+            texture: 0,
+            patch: -1,
+            ..
+        }
+    )));
+    // The dead negative ref contributes no column: composes as an all-holes
+    // Medusa case, exactly like the positive out-of-bounds index.
+    let (img, warnings) = set.compose(0, &ParseOptions::lenient()).unwrap();
+    assert!(img.mask.iter().all(|m| !m));
+    assert!(matches!(
+        warnings.as_slice(),
+        [GfxWarning::MedusaColumns {
+            first_column: 0,
+            count: 1
+        }]
+    ));
 }
 
 // ⚠ TASK-3 TESTS BELOW ⚠ — the next two tests call `compose`, which Task 3
