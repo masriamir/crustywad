@@ -99,7 +99,98 @@ Doom 64's texture, sprite, and gfx lumps are complete PNG files, not this format
 (ADR-0022 §3/§5). They are decoded separately behind the `doom64-gfx` feature
 ([#282](https://github.com/masriamir/crustywad/issues/282)) once that feature lands.
 
+## Texture composition
+
+`crustywad::gfx::TextureSet` is "tier 2" of ADR-0022 §3's three-tier plan: assembling
+`TEXTURE1`/`TEXTURE2` texture definitions plus the `PNAMES` patch-name table and their
+resolved `Picture` lumps into named, multi-patch composite images — reimplementing the
+contract of vanilla's `R_GenerateComposite`/`R_GenerateLookup`.
+
+### Worked example
+
+```rust
+use crustywad::{ParseOptions, Wad};
+
+# fn run(wad: &Wad) -> Result<(), Box<dyn std::error::Error>> {
+let Some(set) = wad.texture_set()? else {
+    return Ok(()); // no TEXTURE1/TEXTURE2 in this WAD
+};
+let Some(index) = set.find("STARTAN2") else {
+    return Ok(()); // this WAD doesn't define the texture
+};
+let (image, warnings) = set.compose(index, &ParseOptions::strict())?;
+assert!(warnings.is_empty()); // strict mode: no warnings ever accompany Ok
+// `image` is an `IndexedImage` (palette indices + a coverage mask); apply a
+// palette in the same step with `compose_rgba` instead when RGBA8 is wanted:
+let palette = wad.playpal()?.map(|p| p.palettes()[0].clone());
+if let Some(palette) = palette {
+    let (rgba, _) = set.compose_rgba(index, &ParseOptions::strict(), &palette)?;
+    let _ = rgba; // width * height * 4 bytes, row-major RGBA8
+}
+# Ok(())
+# }
+```
+
+`Wad::texture_set()` (strict) / `Wad::texture_set_with_options()` (either mode) build the
+set once; `TextureSet::compose`/`compose_rgba` are then called per texture, as many times
+as needed — the resolved patch pictures are shared across every `compose` call.
+
+### Build strictness policy
+
+Building the set parses `TEXTURE1`/`TEXTURE2` (see the [Strictness policy](#strictness-policy)
+table above for those rows) and `PNAMES`, then resolves and validates every patch reference:
+
+| Condition | Strict | Lenient |
+|---|---|---|
+| `TEXTUREx` present but no `PNAMES` lump exists | `GfxError::MissingPnames` | Set built with an empty name table; `GfxWarning::MissingPnames` |
+| A patch reference indexes past the resolved `PNAMES` table (including a negative index) | `GfxError::PatchIndexOutOfBounds` | Reference ignored; `GfxWarning::PatchIndexOutOfBounds` |
+| A resolved patch name matches no lump in the WAD | `GfxError::UnresolvedPatchName` | Patch left unresolved; `GfxWarning::UnresolvedPatchName` |
+| A resolved patch lump fails to parse as a `Picture` | `GfxError::PatchPictureFailed` | Patch left unresolved; `GfxWarning::PatchPictureFailed` |
+
+**The PWAD reality.** Patch names resolve through the crate's first-match
+[`Wad::lump_by_name`] after uppercasing (vanilla uppercases its own search name too).
+A PWAD that references patches shipped only in the base IWAD therefore cannot resolve
+them here — multi-WAD merge (loading a PWAD layered over its IWAD) is out of scope for
+a single `Wad` — so a retail PWAD's strict `texture_set()` commonly fails with
+`GfxError::UnresolvedPatchName` even though the WAD is perfectly well-formed; building
+leniently instead recovers with those patches left unresolved (composing them draws
+holes rather than failing).
+
+### Compose strictness policy
+
+`TextureSet::compose` composites one texture already validated at build time:
+
+| Condition | Strict | Lenient |
+|---|---|---|
+| Negative composed width/height | `GfxError::NegativeDimension` | Clamped to 0 (see the picture `NegativeDimension` row above) |
+| `width × height` exceeds [`Limits::max_composite_pixels`] | `GfxError::CompositeTooLarge` in **both** modes | `GfxError::CompositeTooLarge` in **both** modes |
+| A composited column has no contributing patch (the Medusa case) | `GfxError::MedusaColumn` | Column(s) left as holes; `GfxWarning::MedusaColumns` |
+
+`Limits::max_composite_pixels` (default `1 << 24`) bounds the pixel buffer a single
+`compose` call allocates. A `TEXTUREx` header can declare a 32767×32767 canvas (nearly
+1 GiB) from a 30-byte lump, so this cap is enforced in **both** strictness modes — the
+same DoS-cap exception to the strict/lenient contract that the UDMF nesting-depth limit
+uses (ADR-0016): an oversized composite is a resource-exhaustion risk, not a recoverable
+parse anomaly, so lenient mode does not clamp past it and instead returns the same error
+strict mode does.
+
+**Medusa policy vs. vanilla (ADR-0022 §3).** Vanilla's `R_GenerateLookup` handles a
+texture column with no contributing patch by printing "column without a patch" and
+**returning early from the entire function**, leaving every later column's composite
+state uninitialized — a silent, partial, engine-visible bug (the well-known "Medusa
+effect"). A stricter `I_Error` abort exists in the vanilla source but is commented out.
+`compose` instead treats the Medusa case as a `Strictness::Strict` error and a
+`Strictness::Lenient` warning-with-hole: the column decodes with an explicit gap rather
+than either aborting the whole texture or silently leaving other columns corrupt —
+deliberately better than either of vanilla's two behaviors. Dead patch references (an
+unresolved or out-of-bounds `PNAMES` index) never count as contributors, even though
+vanilla's own column-contributor count includes them regardless of lookup failure; only
+*live*, resolved patches count here, which is what the explicit-holes model requires.
+
 ## What's next
 
-Composing multi-patch textures from `TEXTUREx`/`PNAMES` — the tier-2 layer ADR-0022 §3
-describes — arrives with [#157](https://github.com/masriamir/crustywad/issues/157).
+Doom 64's texture, sprite, and gfx lumps ship as PNG files rather than this format; they
+land behind the `doom64-gfx` feature ([#282](https://github.com/masriamir/crustywad/issues/282)).
+
+[`Wad::lump_by_name`]: https://docs.rs/crustywad/latest/crustywad/struct.Wad.html#method.lump_by_name
+[`Limits::max_composite_pixels`]: https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_composite_pixels
