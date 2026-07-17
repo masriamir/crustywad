@@ -88,7 +88,7 @@ fn colormap_exact_strict_pad_and_truncate_lenient() {
         [GfxWarning::ColormapSize { len: 300 }]
     ));
 
-    // Long, aligned (9000 % 256 = 40 != 0): strict errors; lenient warns and
+    // Long, misaligned (9000 % 256 = 40 != 0): strict errors; lenient warns and
     // truncates the trailing partial table to 8960 = 35 whole tables.
     let long = vec![5u8; 9000];
     assert!(matches!(

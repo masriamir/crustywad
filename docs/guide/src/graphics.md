@@ -43,7 +43,8 @@ matching `GfxWarning`.
 
 | Condition | Strict | Lenient |
 |---|---|---|
-| Picture lump under 8 bytes, or under `8 + width × 4` bytes for its offset table | `GfxError::TruncatedPicture` | Width clamped to the offsets present; `GfxWarning::TruncatedPicture` |
+| Picture lump under 8 bytes (no header to recover from) | `GfxError::TruncatedPicture` | Error in both modes |
+| Picture lump under `8 + width × 4` bytes (offset table truncated) | `GfxError::TruncatedPicture` | Width clamped to the offsets present; `GfxWarning::TruncatedPicture` |
 | Negative picture width/height | `GfxError::NegativeDimension` | Clamped to 0; `GfxWarning::NegativeDimension` |
 | Column offset outside the lump (including a negative offset) | `GfxError::ColumnOffsetOutOfBounds` | Column left empty; `GfxWarning::ColumnOffsetOutOfBounds` |
 | Post chain runs past the lump end without a `0xFF` terminator | `GfxError::UnterminatedColumn` | Posts fully read so far are kept; `GfxWarning::UnterminatedColumn` |
