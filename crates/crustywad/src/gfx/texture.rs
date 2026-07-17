@@ -402,9 +402,14 @@ impl TextureSet {
         for lump_name in ["TEXTURE1", "TEXTURE2"] {
             if let Some(lump) = wad.lump_by_name(lump_name) {
                 any_lump = true;
-                let parsed = TextureX::parse(wad.lump_data(lump), options)?;
-                warnings.extend_from_slice(parsed.warnings());
-                textures.extend_from_slice(parsed.textures());
+                // Same-module destructure: move the parsed vectors instead
+                // of cloning hundreds of defs per retail lump.
+                let TextureX {
+                    textures: parsed_textures,
+                    warnings: parsed_warnings,
+                } = TextureX::parse(wad.lump_data(lump), options)?;
+                warnings.extend(parsed_warnings);
+                textures.extend(parsed_textures);
             }
         }
         if !any_lump {
@@ -414,9 +419,14 @@ impl TextureSet {
         let mut pnames_present = true;
         let pnames = match wad.lump_by_name("PNAMES") {
             Some(lump) => {
-                let parsed = Pnames::parse(wad.lump_data(lump), options)?;
-                warnings.extend_from_slice(parsed.warnings());
-                parsed.names().to_vec()
+                // Same-module destructure: move the name strings out rather
+                // than re-allocating each one.
+                let Pnames {
+                    names,
+                    warnings: pnames_warnings,
+                } = Pnames::parse(wad.lump_data(lump), options)?;
+                warnings.extend(pnames_warnings);
+                names
             }
             None => match strictness {
                 crate::Strictness::Strict => return Err(GfxError::MissingPnames),
