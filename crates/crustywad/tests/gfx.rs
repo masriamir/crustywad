@@ -57,7 +57,15 @@ fn playpal_empty_is_a_strict_error_and_a_lenient_zero_palette_warning() {
 fn colormap_exact_strict_pad_and_truncate_lenient() {
     let exact = vec![3u8; 8192];
     let map = Colormap::parse(&exact, &ParseOptions::strict()).unwrap();
+    assert_eq!(map.tables().len(), 32);
     assert_eq!(map.tables()[31][255], 3);
+    assert!(map.warnings().is_empty());
+
+    // Retail reality pin: 34 tables (8704 bytes) is strict-clean.
+    let retail = vec![6u8; 8704];
+    let map = Colormap::parse(&retail, &ParseOptions::strict()).unwrap();
+    assert_eq!(map.tables().len(), 34);
+    assert_eq!(map.tables()[33][255], 6);
     assert!(map.warnings().is_empty());
 
     // Short: strict errors; lenient zero-pads to 8192 (the #256 precedent).
@@ -67,6 +75,7 @@ fn colormap_exact_strict_pad_and_truncate_lenient() {
         GfxError::ColormapSize { len: 300 }
     ));
     let map = Colormap::parse(&short, &ParseOptions::lenient()).unwrap();
+    assert_eq!(map.tables().len(), 32);
     assert_eq!(map.tables()[0][255], 9); // byte 255
     assert_eq!(map.tables()[1][43], 9); // byte 299, the last real one
     assert_eq!(map.tables()[1][44], 0); // byte 300: zero-padded from here
@@ -76,13 +85,33 @@ fn colormap_exact_strict_pad_and_truncate_lenient() {
         [GfxWarning::ColormapSize { len: 300 }]
     ));
 
-    // Long: lenient truncates.
+    // Long, aligned (9000 % 256 = 40 != 0): strict errors; lenient warns and
+    // truncates the trailing partial table to 8960 = 35 whole tables.
     let long = vec![5u8; 9000];
+    assert!(matches!(
+        Colormap::parse(&long, &ParseOptions::strict()).unwrap_err(),
+        GfxError::ColormapSize { len: 9000 }
+    ));
     let map = Colormap::parse(&long, &ParseOptions::lenient()).unwrap();
-    assert_eq!(map.tables()[31][255], 5);
+    assert_eq!(map.tables().len(), 35);
+    assert_eq!(map.tables()[34][255], 5);
     assert!(matches!(
         map.warnings(),
         [GfxWarning::ColormapSize { len: 9000 }]
+    ));
+
+    // Misaligned 8492 (8492 % 256 = 44 != 0): strict errors; lenient
+    // truncates to 33 whole tables (8448 bytes).
+    let misaligned = vec![4u8; 8492];
+    assert!(matches!(
+        Colormap::parse(&misaligned, &ParseOptions::strict()).unwrap_err(),
+        GfxError::ColormapSize { len: 8492 }
+    ));
+    let map = Colormap::parse(&misaligned, &ParseOptions::lenient()).unwrap();
+    assert_eq!(map.tables().len(), 33);
+    assert!(matches!(
+        map.warnings(),
+        [GfxWarning::ColormapSize { len: 8492 }]
     ));
 }
 
@@ -94,6 +123,20 @@ fn flat_exact_strict_tolerant_lenient() {
     assert!(flat.warnings().is_empty());
     assert_eq!((Flat::WIDTH, Flat::HEIGHT), (64, 64));
 
+    // Heretic's 4160-byte flat: strict-clean, rendered view still 64x64.
+    let heretic = vec![8u8; 4160];
+    let flat = Flat::parse(&heretic, &ParseOptions::strict()).unwrap();
+    assert_eq!(flat.pixels().len(), 4160);
+    assert!(flat.warnings().is_empty());
+    assert_eq!(flat.to_indexed().pixels.len(), 4096);
+
+    // Hexen's 8192-byte flat: strict-clean likewise.
+    let hexen = vec![2u8; 8192];
+    let flat = Flat::parse(&hexen, &ParseOptions::strict()).unwrap();
+    assert_eq!(flat.pixels().len(), 8192);
+    assert!(flat.warnings().is_empty());
+    assert_eq!(flat.to_indexed().pixels.len(), 4096);
+
     let short = vec![1u8; 100];
     assert!(matches!(
         Flat::parse(&short, &ParseOptions::strict()).unwrap_err(),
@@ -104,6 +147,20 @@ fn flat_exact_strict_tolerant_lenient() {
     assert!(matches!(
         flat.warnings(),
         [GfxWarning::FlatSize { len: 100 }]
+    ));
+
+    // 4100 is >= 4096 but not a 64-byte multiple (4100 % 64 = 4): strict
+    // errors; lenient keeps the actual bytes and warns.
+    let misaligned = vec![3u8; 4100];
+    assert!(matches!(
+        Flat::parse(&misaligned, &ParseOptions::strict()).unwrap_err(),
+        GfxError::FlatSize { len: 4100 }
+    ));
+    let flat = Flat::parse(&misaligned, &ParseOptions::lenient()).unwrap();
+    assert_eq!(flat.pixels().len(), 4100);
+    assert!(matches!(
+        flat.warnings(),
+        [GfxWarning::FlatSize { len: 4100 }]
     ));
 }
 
@@ -490,8 +547,10 @@ fn wad_playpal_and_colormap_singletons() {
 #[test]
 fn flat_lenient_truncates_a_long_flat_at_conversion() {
     // Task-3 review gap: the > 4096-byte lenient truncate path had no direct
-    // test. Parse keeps the actual bytes (ADR-0022 §3: "proceeds with what
-    // is present"); truncation happens only at `to_indexed` conversion.
+    // test. 5000 is misaligned (5000 % 64 = 8 != 0), so it still warns even
+    // under the corrected 64-byte-multiple rule. Parse keeps the actual
+    // bytes (ADR-0022 §3: "proceeds with what is present"); truncation
+    // happens only at `to_indexed` conversion.
     let long = vec![3u8; 5000];
     let flat = Flat::parse(&long, &ParseOptions::lenient()).unwrap();
     assert_eq!(flat.pixels().len(), 5000);
@@ -523,6 +582,7 @@ fn retail_classic_graphics_decode_strict_clean() {
     let mut wads = 0usize;
     let mut pictures = 0usize;
     let mut flats = 0usize;
+    let mut skipped_skies = 0usize;
     for entry in std::fs::read_dir(&dir).expect("sweep dir reads") {
         let path = entry.expect("dir entry").path();
         let is_wad = path
@@ -532,7 +592,12 @@ fn retail_classic_graphics_decode_strict_clean() {
             continue;
         }
         let wad = crustywad::Wad::from_path(&path).expect("retail WAD reads");
-        let sections = wad.sections().expect("retail sections scan strict-clean");
+        // Lenient enumeration: marker anomalies (SVE.wad's bare top-level
+        // P3_START, #292) stay in the sections domain; graphics decode below
+        // stays strict.
+        let sections = wad
+            .sections_with_options(ParseOptions::lenient())
+            .expect("lenient scan never fails");
         // Doom 64 signature: a Textures section — its graphics are PNGs
         // (#282), not this format.
         if sections.of_kind(SectionKind::Textures).next().is_some() {
@@ -575,6 +640,13 @@ fn retail_classic_graphics_decode_strict_clean() {
                     continue;
                 }
                 let lump_name = wad.lump(i).unwrap().name().to_owned();
+                if lump_name.starts_with("F_SKY") {
+                    // Engines special-case sky flats by NAME and never read
+                    // their pixels (retail placeholders are 4 bytes) — the
+                    // skip is engine-faithful, not a data exemption.
+                    skipped_skies += 1;
+                    continue;
+                }
                 Flat::parse(bytes, &ParseOptions::strict())
                     .unwrap_or_else(|e| panic!("{name}: flat {lump_name} strict: {e}"));
                 flats += 1;
@@ -583,5 +655,8 @@ fn retail_classic_graphics_decode_strict_clean() {
     }
     assert!(wads > 0, "sweep found no classic WADs");
     assert!(pictures > 0 && flats > 0, "sweep decoded nothing");
-    eprintln!("gfx sweep: {wads} WAD(s), {pictures} picture(s), {flats} flat(s), all strict-clean");
+    eprintln!(
+        "gfx sweep: {wads} WAD(s), {pictures} picture(s), {flats} flat(s), \
+         {skipped_skies} sky flat(s) skipped, all strict-clean"
+    );
 }

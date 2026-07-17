@@ -21,12 +21,18 @@ need a format-specific gate (ADR-0022 §3).
   disk — the palette count is derived from the lump's length (`len / 768`). Strict mode
   rejects a length that is not a positive multiple of 768; lenient mode truncates the
   remainder and warns (ADR-0022 §3).
-- **`Colormap`**: `32 × 256 = 8192` bytes exactly (`NUMCOLORMAPS` is a vanilla
-  compile-time constant, not a value read from the lump). Strict mode requires exactly
-  8192 bytes; lenient mode zero-pads a short lump or truncates a long one (ADR-0022 §3).
-- **`Flat`**: a raw 4096-byte (64×64) blob — an assumption vanilla makes only at render
-  time, never validated against the lump's actual length at load. Strict mode requires
-  exactly 4096 bytes; lenient mode keeps the actual bytes and warns (ADR-0022 §3).
+- **`Colormap`**: `N × 256` bytes (`NUMCOLORMAPS` is a vanilla compile-time constant of
+  32, not a value read from the lump, and the engine loads the lump with no size check).
+  Strict mode requires a whole number of 256-byte tables totaling at least 8192 bytes (the
+  32-table floor); lenient mode zero-pads a short lump to 8192 or truncates a long one's
+  trailing partial table (ADR-0022 §3, corrected by the §3 amendment). Retail lumps carry
+  34 tables — id, Freedoom, Raven, and Rogue all ship 8704 bytes — and every table is
+  exposed via `tables()`.
+- **`Flat`**: a raw 64×64 blob, at least 4096 bytes — an assumption vanilla makes only at
+  render time, never validated against the lump's actual length at load. Strict mode
+  requires a whole number of 64-byte rows totaling at least 4096 bytes (accepting
+  Heretic's 4160-byte and Hexen's 8192-byte retail flats); lenient mode keeps the actual
+  bytes and warns (ADR-0022 §3, corrected by the §3 amendment).
 
 ## Strictness policy
 
@@ -44,8 +50,8 @@ matching `GfxWarning`.
 | A post's rows exceed the picture height | `GfxError::PostOutOfBounds` | Clipped to the picture height (dropped if entirely out of bounds); `GfxWarning::PostOutOfBounds` |
 | Cumulative post-chain bytes consumed exceed the lump length (aliased column offsets) | `GfxError::ExcessivePostData` | Remaining columns left empty; `GfxWarning::ExcessivePostData` |
 | `PLAYPAL` length not a positive multiple of 768 | `GfxError::PlaypalSize` | Remainder truncated (zero palettes for a zero-length lump); `GfxWarning::PlaypalSize` |
-| `COLORMAP` length not exactly 8192 | `GfxError::ColormapSize` | Zero-padded (short) or truncated (long); `GfxWarning::ColormapSize` |
-| `Flat` length not exactly 4096 | `GfxError::FlatSize` | Actual bytes kept as parsed (`to_indexed` pads or truncates to 4096); `GfxWarning::FlatSize` |
+| `COLORMAP` length not a 256-byte multiple of at least 8192 | `GfxError::ColormapSize` | Zero-padded to 8192 (short) or truncated to whole tables (long); `GfxWarning::ColormapSize` |
+| `Flat` length not a 64-byte multiple of at least 4096 | `GfxError::FlatSize` | Actual bytes kept as parsed (`to_indexed` pads or truncates to 4096); `GfxWarning::FlatSize` |
 
 The consumed-bytes budget behind `ExcessivePostData` is a hardening addition beyond the
 spec's plain post-chain description (ADR-0016 §1): cumulative bytes actually consumed

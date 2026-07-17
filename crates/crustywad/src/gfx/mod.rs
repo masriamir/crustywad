@@ -89,16 +89,20 @@ pub enum GfxError {
         /// The lump's actual length.
         len: usize,
     },
-    /// `COLORMAP` length is not exactly 32 × 256 = 8192 (lenient zero-pads
-    /// a short lump / truncates a long one — the virtual-pad precedent).
-    #[error("COLORMAP length {len} is not exactly 8192")]
+    /// COLORMAP length is not a whole number of 256-byte tables totaling
+    /// at least 8192 bytes — vanilla's 32-table floor (lenient zero-pads
+    /// short lumps to 8192 / truncates a trailing partial table). Retail
+    /// lumps carry 34 tables (ADR-0022 §3 correction amendment).
+    #[error("COLORMAP length {len} is not a 256-byte multiple of at least 8192")]
     ColormapSize {
         /// The lump's actual length.
         len: usize,
     },
-    /// Flat length is not exactly 64 × 64 = 4096 (lenient keeps the actual
-    /// bytes; view conversions pad or truncate, documented there).
-    #[error("flat length {len} is not exactly 4096")]
+    /// Flat length is not a whole number of 64-pixel rows totaling at
+    /// least 4096 bytes (lenient keeps the actual bytes; the rendered view
+    /// is always the first 64×64). Heretic ships 4160-byte and Hexen
+    /// 8192-byte flats (ADR-0022 §3 correction amendment).
+    #[error("flat length {len} is not a 64-byte multiple of at least 4096")]
     FlatSize {
         /// The lump's actual length.
         len: usize,
@@ -186,17 +190,19 @@ pub enum GfxWarning {
         /// The lump's actual length.
         len: usize,
     },
-    /// A wrong-size `COLORMAP` was zero-padded or truncated to 8192 during
-    /// lenient parsing.
+    /// A wrong-size `COLORMAP` was zero-padded or truncated to a whole
+    /// number of tables during lenient parsing.
     #[error(
-        "COLORMAP length {len} is not exactly 8192; zero-padded or truncated during lenient parsing"
+        "COLORMAP length {len} is not a 256-byte multiple of at least 8192; zero-padded to 8192 or truncated to whole tables during lenient parsing"
     )]
     ColormapSize {
         /// The lump's actual length.
         len: usize,
     },
     /// A wrong-size flat was kept as-is during lenient parsing.
-    #[error("flat length {len} is not exactly 4096; kept as-is during lenient parsing")]
+    #[error(
+        "flat length {len} is not a 64-byte multiple of at least 4096; kept as-is during lenient parsing"
+    )]
     FlatSize {
         /// The lump's actual length.
         len: usize,

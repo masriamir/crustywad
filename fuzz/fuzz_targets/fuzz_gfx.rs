@@ -29,7 +29,12 @@ fuzz_target!(|data: &[u8]| {
             assert_eq!(pal.palettes().len(), data.len() / 768);
         }
         if let Ok(map) = Colormap::parse(data, &options) {
-            assert_eq!(map.tables().len(), 32);
+            let tables = map.tables().len();
+            // Post-parse invariant: >= 32 tables; pad adds at most 8192
+            // bytes' worth, truncation only removes, so the count is
+            // bounded by the input plus the 32-table floor.
+            assert!(tables >= 32);
+            assert!(tables <= data.len() / 256 + 32);
         }
         if let Ok(flat) = Flat::parse(data, &options) {
             assert!(flat.pixels().len() <= data.len().max(4096));

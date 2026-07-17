@@ -71,12 +71,17 @@ impl Playpal {
     }
 }
 
-/// The `COLORMAP` lump: 32 light-diminishing tables of 256 palette-index
-/// remappings each (8192 bytes; the 32 is a vanilla compile-time constant,
-/// never read from the lump — ADR-0022 §3).
+/// The `COLORMAP` lump: `N × 256` light-diminishing tables of 256
+/// palette-index remappings each. Vanilla's `NUMCOLORMAPS` compile-time
+/// constant is 32 and the engine loads the lump with no size check against
+/// it (ADR-0022 §3); retail lumps universally carry 34 tables (11/11 in the
+/// collection — ADR-0022 §3 correction amendment, #156), so the strict rule
+/// is a whole number of 256-byte tables totaling at least 8192 bytes (the
+/// 32-table floor every consumer indexes), and every table on disk is
+/// exposed rather than only the first 32.
 #[derive(Debug, Clone)]
 pub struct Colormap {
-    tables: Box<[[u8; 256]; 32]>,
+    tables: Vec<[u8; 256]>,
     warnings: Vec<GfxWarning>,
 }
 
@@ -85,12 +90,13 @@ impl Colormap {
     ///
     /// # Errors
     ///
-    /// Strict mode: [`GfxError::ColormapSize`] when the length is not
-    /// exactly 8192. Lenient mode zero-pads a short lump / truncates a long
-    /// one (the virtual-pad precedent), warns, and never fails.
+    /// Strict mode: [`GfxError::ColormapSize`] when the length is not a
+    /// 256-byte multiple of at least 8192. Lenient mode zero-pads a short
+    /// lump to 8192 / truncates a long one's trailing partial table, warns,
+    /// and never fails.
     pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<Self, GfxError> {
         let mut warnings = Vec::new();
-        if bytes.len() != 8192 {
+        if bytes.len() % 256 != 0 || bytes.len() < 8192 {
             match options.strictness {
                 Strictness::Strict => {
                     return Err(GfxError::ColormapSize { len: bytes.len() });
@@ -100,16 +106,27 @@ impl Colormap {
                 }
             }
         }
-        let mut tables = Box::new([[0u8; 256]; 32]);
-        for (i, byte) in bytes.iter().take(8192).enumerate() {
-            tables[i / 256][i % 256] = *byte;
+        let mut data = bytes.to_vec();
+        if data.len() < 8192 {
+            data.resize(8192, 0);
+        } else {
+            data.truncate(data.len() - data.len() % 256);
         }
+        let tables = data
+            .chunks_exact(256)
+            .map(|chunk| {
+                let mut table = [0u8; 256];
+                table.copy_from_slice(chunk);
+                table
+            })
+            .collect();
         Ok(Self { tables, warnings })
     }
 
-    /// The 32 diminishing tables, brightest first (lump order).
+    /// The diminishing tables, brightest first (lump order); at least 32 in
+    /// both modes — retail lumps carry 34.
     #[must_use]
-    pub fn tables(&self) -> &[[u8; 256]; 32] {
+    pub fn tables(&self) -> &[[u8; 256]] {
         &self.tables
     }
 
