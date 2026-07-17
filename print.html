@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-62fb301b.js";
+            window.path_to_searchindex_js = "searchindex-34c5eba8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fd61d5e0.js"></script>
+        <script src="toc-c2918eee.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1331,6 +1331,107 @@ nonexistent linedef are each a strict error
 table, truncating the list, or emptying the one affected block, respectively. An empty <code>REJECT</code>
 or <code>BLOCKMAP</code> lump (as <code>crustywad</code>’s own writer emits, ADR-0019 §4) is read back as simply
 absent, in both modes, with no warning.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="graphics"><a class="header" href="#graphics">Graphics</a></h1>
+<p><code>crustywad::gfx</code> decodes the classic Doom graphics lumps: the picture format used by
+patches and sprites, the raw 64×64 flat format, and the <code>PLAYPAL</code>/<code>COLORMAP</code> palette
+lumps. This is “tier 1” of ADR-0022 §3’s three-tier plan (raw typed lumps); tier 2
+(TEXTUREx/PNAMES composition) is <a href="https://github.com/masriamir/crustywad/issues/157">#157</a>.</p>
+<p>The module is <strong>dependency-free and lives in the core crate with no feature flag</strong> —
+the same precedent map parsing set: a format this central to the WAD ecosystem does not
+need a format-specific gate (ADR-0022 §3).</p>
+<h2 id="the-four-lump-types"><a class="header" href="#the-four-lump-types">The four lump types</a></h2>
+<ul>
+<li><strong><code>Picture</code></strong> (patches and sprites): an 8-byte header of four little-endian <code>i16</code>
+fields (<code>width</code>, <code>height</code>, <code>left_offset</code>, <code>top_offset</code>), followed by exactly <code>width</code>
+little-endian <code>i32</code> column offsets counted from the start of the lump. Each column is
+a chain of posts: <code>top_delta</code> (<code>u8</code>; <code>0xFF</code> terminates the chain), <code>length</code> (<code>u8</code>), a
+padding byte, <code>length</code> pixel bytes, and a trailing padding byte. <code>top_delta</code> is plain,
+not cumulative — vanilla has no DeePsea-style “tall patch” handling (ADR-0022 §3).</li>
+<li><strong><code>Playpal</code></strong>: <code>N × 768</code> bytes (256 RGB entries per palette), with no count field on
+disk — the palette count is derived from the lump’s length (<code>len / 768</code>). Strict mode
+rejects a length that is not a positive multiple of 768; lenient mode truncates the
+remainder and warns (ADR-0022 §3).</li>
+<li><strong><code>Colormap</code></strong>: <code>N × 256</code> bytes (<code>NUMCOLORMAPS</code> is a vanilla compile-time constant of
+32, not a value read from the lump, and the engine loads the lump with no size check).
+Strict mode requires a whole number of 256-byte tables totaling at least 8192 bytes (the
+32-table floor); lenient mode zero-pads a short lump to 8192 or truncates a long one’s
+trailing partial table (ADR-0022 §3, corrected by the §3 amendment). Retail lumps carry
+34 tables — id, Freedoom, Raven, and Rogue all ship 8704 bytes — and every table is
+exposed via <code>tables()</code>.</li>
+<li><strong><code>Flat</code></strong>: a raw 64×64 blob, at least 4096 bytes — an assumption vanilla makes only at
+render time, never validated against the lump’s actual length at load. Strict mode
+requires a whole number of 64-byte rows totaling at least 4096 bytes (accepting
+Heretic’s 4160-byte and Hexen’s 8192-byte retail flats); lenient mode keeps the actual
+bytes and warns (ADR-0022 §3, corrected by the §3 amendment).</li>
+</ul>
+<h2 id="strictness-policy"><a class="header" href="#strictness-policy">Strictness policy</a></h2>
+<p>Every lump type follows the crate-wide strict/lenient contract
+(<code>ParseOptions::strict()</code>/<code>ParseOptions::lenient()</code>): strict mode returns the first
+<code>GfxError</code> encountered; lenient mode recovers with a best-effort value and records the
+matching <code>GfxWarning</code> — with one exception: a picture lump under 8 bytes has no
+header to recover from and errors in both modes.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Strict</th><th>Lenient</th></tr>
+</thead>
+<tbody>
+<tr><td>Picture lump under 8 bytes (no header to recover from)</td><td><code>GfxError::TruncatedPicture</code></td><td>Error in both modes</td></tr>
+<tr><td>Picture lump under <code>8 + width × 4</code> bytes (offset table truncated)</td><td><code>GfxError::TruncatedPicture</code></td><td>Width clamped to the offsets present; <code>GfxWarning::TruncatedPicture</code></td></tr>
+<tr><td>Negative picture width/height</td><td><code>GfxError::NegativeDimension</code></td><td>Clamped to 0; <code>GfxWarning::NegativeDimension</code></td></tr>
+<tr><td>Column offset outside the lump (including a negative offset)</td><td><code>GfxError::ColumnOffsetOutOfBounds</code></td><td>Column left empty; <code>GfxWarning::ColumnOffsetOutOfBounds</code></td></tr>
+<tr><td>Post chain runs past the lump end without a <code>0xFF</code> terminator</td><td><code>GfxError::UnterminatedColumn</code></td><td>Posts fully read so far are kept; <code>GfxWarning::UnterminatedColumn</code></td></tr>
+<tr><td>A post’s rows exceed the picture height</td><td><code>GfxError::PostOutOfBounds</code></td><td>Clipped to the picture height (dropped if entirely out of bounds); <code>GfxWarning::PostOutOfBounds</code></td></tr>
+<tr><td>Cumulative post-chain bytes consumed exceed the lump length (aliased column offsets)</td><td><code>GfxError::ExcessivePostData</code></td><td>Remaining columns left empty; <code>GfxWarning::ExcessivePostData</code></td></tr>
+<tr><td><code>PLAYPAL</code> length not a positive multiple of 768</td><td><code>GfxError::PlaypalSize</code></td><td>Remainder truncated (zero palettes for a zero-length lump); <code>GfxWarning::PlaypalSize</code></td></tr>
+<tr><td><code>COLORMAP</code> length not a 256-byte multiple of at least 8192</td><td><code>GfxError::ColormapSize</code></td><td>Zero-padded to 8192 (short) or truncated to whole tables (long); <code>GfxWarning::ColormapSize</code></td></tr>
+<tr><td><code>Flat</code> length not a 64-byte multiple of at least 4096</td><td><code>GfxError::FlatSize</code></td><td>Actual bytes kept as parsed (<code>to_indexed</code> pads or truncates to 4096); <code>GfxWarning::FlatSize</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The consumed-bytes budget behind <code>ExcessivePostData</code> is a hardening addition beyond the
+spec’s plain post-chain description (ADR-0016 §1): cumulative bytes actually consumed
+across all posts and columns (<code>4 + pixel length</code> per post) is capped at the lump length,
+closing an <code>O(width × length)</code> blowup that aliased column offsets would otherwise allow.</p>
+<h2 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{ParseOptions, SectionKind, Wad};
+use crustywad::gfx::Picture;
+
+<span class="boring">fn run(wad: &amp;Wad) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let sections = wad.sections()?;
+let Some(palette) = wad.playpal()? else {
+    return Ok(()); // no PLAYPAL in this WAD
+};
+
+for section in sections.of_kind(SectionKind::Sprites) {
+    for i in section.lumps.clone() {
+        let bytes = wad.lump_bytes(i).expect("valid lump index");
+        if bytes.is_empty() {
+            continue; // nested sub-namespace marker
+        }
+        let pic = Picture::parse(bytes, &amp;ParseOptions::strict())?;
+        let rgba = pic.to_rgba(&amp;palette.palettes()[0]);
+        // `rgba.pixels` is `width * height * 4` bytes, row-major RGBA8.
+        let _ = rgba;
+    }
+}
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p><code>Picture::to_indexed</code> produces an <code>IndexedImage</code> (palette indices plus a coverage mask —
+posts don’t have to cover every row of every column); <code>Picture::to_rgba</code> composes that
+with a <code>Palette</code> in one step. <code>Flat</code> has the same <code>to_indexed</code>/<code>to_rgba</code> pair, always
+fully covered since a flat has no post gaps.</p>
+<h2 id="doom-64-graphics"><a class="header" href="#doom-64-graphics">Doom 64 graphics</a></h2>
+<p>Doom 64’s texture, sprite, and gfx lumps are complete PNG files, not this format
+(ADR-0022 §3/§5). They are decoded separately behind the <code>doom64-gfx</code> feature
+(<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>) once that feature lands.</p>
+<h2 id="whats-next-1"><a class="header" href="#whats-next-1">What’s next</a></h2>
+<p>Composing multi-patch textures from <code>TEXTUREx</code>/<code>PNAMES</code> — the tier-2 layer ADR-0022 §3
+describes — arrives with <a href="https://github.com/masriamir/crustywad/issues/157">#157</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cli-usage"><a class="header" href="#cli-usage">CLI Usage</a></h1>
 <p>The <code>cwad</code> binary ships with the <code>crustywad-cli</code> crate and provides quick WAD

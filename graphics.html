@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Performance - crustywad</title>
+        <title>Graphics - crustywad</title>
 
 
         <!-- Custom HTML head -->
@@ -177,103 +177,116 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="performance"><a class="header" href="#performance">Performance</a></h1>
-<p><code>crustywad</code> tracks performance via <a href="https://bheisler.github.io/criterion.rs/book/">Criterion</a>
-micro-benchmarks that run in CI on every push to <code>main</code>. Results are published as interactive
-trend charts so regressions are visible before they reach a release.</p>
-<hr>
-<h2 id="live-benchmark-charts"><a class="header" href="#live-benchmark-charts">Live benchmark charts</a></h2>
-<p><strong><a href="https://crustywad.dev/dev/bench/">crustywad.dev/dev/bench/</a></strong></p>
-<p>The chart page shows throughput and latency trends over time for every benchmark group. Each
-data point corresponds to a CI run on <code>main</code> (push or <code>workflow_dispatch</code>).</p>
-<h3 id="benchmark-groups"><a class="header" href="#benchmark-groups">Benchmark groups</a></h3>
+                        <h1 id="graphics"><a class="header" href="#graphics">Graphics</a></h1>
+<p><code>crustywad::gfx</code> decodes the classic Doom graphics lumps: the picture format used by
+patches and sprites, the raw 64×64 flat format, and the <code>PLAYPAL</code>/<code>COLORMAP</code> palette
+lumps. This is “tier 1” of ADR-0022 §3’s three-tier plan (raw typed lumps); tier 2
+(TEXTUREx/PNAMES composition) is <a href="https://github.com/masriamir/crustywad/issues/157">#157</a>.</p>
+<p>The module is <strong>dependency-free and lives in the core crate with no feature flag</strong> —
+the same precedent map parsing set: a format this central to the WAD ecosystem does not
+need a format-specific gate (ADR-0022 §3).</p>
+<h2 id="the-four-lump-types"><a class="header" href="#the-four-lump-types">The four lump types</a></h2>
+<ul>
+<li><strong><code>Picture</code></strong> (patches and sprites): an 8-byte header of four little-endian <code>i16</code>
+fields (<code>width</code>, <code>height</code>, <code>left_offset</code>, <code>top_offset</code>), followed by exactly <code>width</code>
+little-endian <code>i32</code> column offsets counted from the start of the lump. Each column is
+a chain of posts: <code>top_delta</code> (<code>u8</code>; <code>0xFF</code> terminates the chain), <code>length</code> (<code>u8</code>), a
+padding byte, <code>length</code> pixel bytes, and a trailing padding byte. <code>top_delta</code> is plain,
+not cumulative — vanilla has no DeePsea-style “tall patch” handling (ADR-0022 §3).</li>
+<li><strong><code>Playpal</code></strong>: <code>N × 768</code> bytes (256 RGB entries per palette), with no count field on
+disk — the palette count is derived from the lump’s length (<code>len / 768</code>). Strict mode
+rejects a length that is not a positive multiple of 768; lenient mode truncates the
+remainder and warns (ADR-0022 §3).</li>
+<li><strong><code>Colormap</code></strong>: <code>N × 256</code> bytes (<code>NUMCOLORMAPS</code> is a vanilla compile-time constant of
+32, not a value read from the lump, and the engine loads the lump with no size check).
+Strict mode requires a whole number of 256-byte tables totaling at least 8192 bytes (the
+32-table floor); lenient mode zero-pads a short lump to 8192 or truncates a long one’s
+trailing partial table (ADR-0022 §3, corrected by the §3 amendment). Retail lumps carry
+34 tables — id, Freedoom, Raven, and Rogue all ship 8704 bytes — and every table is
+exposed via <code>tables()</code>.</li>
+<li><strong><code>Flat</code></strong>: a raw 64×64 blob, at least 4096 bytes — an assumption vanilla makes only at
+render time, never validated against the lump’s actual length at load. Strict mode
+requires a whole number of 64-byte rows totaling at least 4096 bytes (accepting
+Heretic’s 4160-byte and Hexen’s 8192-byte retail flats); lenient mode keeps the actual
+bytes and warns (ADR-0022 §3, corrected by the §3 amendment).</li>
+</ul>
+<h2 id="strictness-policy"><a class="header" href="#strictness-policy">Strictness policy</a></h2>
+<p>Every lump type follows the crate-wide strict/lenient contract
+(<code>ParseOptions::strict()</code>/<code>ParseOptions::lenient()</code>): strict mode returns the first
+<code>GfxError</code> encountered; lenient mode recovers with a best-effort value and records the
+matching <code>GfxWarning</code> — with one exception: a picture lump under 8 bytes has no
+header to recover from and errors in both modes.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Group</th><th>What is measured</th></tr>
+<tr><th>Condition</th><th>Strict</th><th>Lenient</th></tr>
 </thead>
 <tbody>
-<tr><td><code>parse/from_bytes_strict</code></td><td><code>Wad::from_bytes</code> — strict mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs</td></tr>
-<tr><td><code>parse/from_bytes_lenient</code></td><td><code>Wad::from_bytes_with_options</code> — lenient mode — on small (10 × 256 B), medium (100 × 4 KiB), and large (1 000 × 16 KiB) synthetic WADs</td></tr>
-<tr><td><code>parse/from_path</code></td><td><code>Wad::from_path</code> and <code>Wad::from_path_with_options</code> on a tempfile-backed medium WAD; mmap variants when the <code>mmap</code> feature is enabled</td></tr>
-<tr><td><code>lump_access</code></td><td><code>lump(idx)</code>, <code>lump_by_name</code> (first-match and worst-case last-match), <code>lump_bytes</code>, <code>lump_data</code>, <code>lumps().iter().count()</code>, <code>clone</code>, <code>into_bytes</code></td></tr>
-<tr><td><code>map_records</code></td><td><code>parse_records::&lt;T&gt;</code> for all eight classic map-record types (<code>Thing</code>, <code>Linedef</code>, <code>Sidedef</code>, <code>Vertex</code>, <code>Seg</code>, <code>Subsector</code>, <code>Node</code>, <code>Sector</code>) against 1 000 records each</td></tr>
-<tr><td><code>write/build_strict</code></td><td><code>WadBuilder::build</code> — strict mode — on small / medium / large synthetic WADs</td></tr>
-<tr><td><code>write/build_lenient</code></td><td><code>WadBuilder::build_with_options(&amp;WriteOptions::lenient())</code> on the same sizes</td></tr>
-<tr><td><code>write/build_from_scratch</code></td><td><code>WadBuilder</code> populated entirely at runtime (10 or 100 lumps)</td></tr>
-<tr><td><code>write/roundtrip</code></td><td><code>Wad::from_bytes</code> → <code>Wad::to_builder</code> → <code>WadBuilder::build</code> end-to-end</td></tr>
-<tr><td><code>freedoom</code></td><td><code>Wad::from_bytes</code>, <code>Wad::lump_by_name</code> (hit and miss), and <code>roundtrip</code> on real Freedoom WAD files; skipped when <code>CRUSTYWAD_FREEDOOM_DIR</code> is not set</td></tr>
+<tr><td>Picture lump under 8 bytes (no header to recover from)</td><td><code>GfxError::TruncatedPicture</code></td><td>Error in both modes</td></tr>
+<tr><td>Picture lump under <code>8 + width × 4</code> bytes (offset table truncated)</td><td><code>GfxError::TruncatedPicture</code></td><td>Width clamped to the offsets present; <code>GfxWarning::TruncatedPicture</code></td></tr>
+<tr><td>Negative picture width/height</td><td><code>GfxError::NegativeDimension</code></td><td>Clamped to 0; <code>GfxWarning::NegativeDimension</code></td></tr>
+<tr><td>Column offset outside the lump (including a negative offset)</td><td><code>GfxError::ColumnOffsetOutOfBounds</code></td><td>Column left empty; <code>GfxWarning::ColumnOffsetOutOfBounds</code></td></tr>
+<tr><td>Post chain runs past the lump end without a <code>0xFF</code> terminator</td><td><code>GfxError::UnterminatedColumn</code></td><td>Posts fully read so far are kept; <code>GfxWarning::UnterminatedColumn</code></td></tr>
+<tr><td>A post’s rows exceed the picture height</td><td><code>GfxError::PostOutOfBounds</code></td><td>Clipped to the picture height (dropped if entirely out of bounds); <code>GfxWarning::PostOutOfBounds</code></td></tr>
+<tr><td>Cumulative post-chain bytes consumed exceed the lump length (aliased column offsets)</td><td><code>GfxError::ExcessivePostData</code></td><td>Remaining columns left empty; <code>GfxWarning::ExcessivePostData</code></td></tr>
+<tr><td><code>PLAYPAL</code> length not a positive multiple of 768</td><td><code>GfxError::PlaypalSize</code></td><td>Remainder truncated (zero palettes for a zero-length lump); <code>GfxWarning::PlaypalSize</code></td></tr>
+<tr><td><code>COLORMAP</code> length not a 256-byte multiple of at least 8192</td><td><code>GfxError::ColormapSize</code></td><td>Zero-padded to 8192 (short) or truncated to whole tables (long); <code>GfxWarning::ColormapSize</code></td></tr>
+<tr><td><code>Flat</code> length not a 64-byte multiple of at least 4096</td><td><code>GfxError::FlatSize</code></td><td>Actual bytes kept as parsed (<code>to_indexed</code> pads or truncates to 4096); <code>GfxWarning::FlatSize</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>Throughput groups report <strong>MB/s</strong> via <code>Throughput::Bytes</code> so results scale naturally with
-input size. Latency groups report <strong>ns/iter</strong>.</p>
-<hr>
-<h2 id="running-benchmarks-locally"><a class="header" href="#running-benchmarks-locally">Running benchmarks locally</a></h2>
-<h3 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h3>
-<p>Benchmarks are part of the standard workspace and require a stable Rust toolchain. The
-<code>just bench</code> / <code>just bench-open</code> recipes also require
-<a href="https://github.com/casey/just"><code>just</code></a>; if you prefer not to install it, use the
-equivalent <code>cargo</code> command directly:</p>
-<pre><code class="language-sh">cargo bench --all-features --benches
-</code></pre>
-<h3 id="quick-run"><a class="header" href="#quick-run">Quick run</a></h3>
-<pre><code class="language-sh"># Run all benchmarks and print the path to the HTML report:
-just bench
+<p>The consumed-bytes budget behind <code>ExcessivePostData</code> is a hardening addition beyond the
+spec’s plain post-chain description (ADR-0016 §1): cumulative bytes actually consumed
+across all posts and columns (<code>4 + pixel length</code> per post) is capped at the lump length,
+closing an <code>O(width × length)</code> blowup that aliased column offsets would otherwise allow.</p>
+<h2 id="worked-example"><a class="header" href="#worked-example">Worked example</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{ParseOptions, SectionKind, Wad};
+use crustywad::gfx::Picture;
 
-# Run benchmarks and open the HTML report in the default browser:
-just bench-open
-</code></pre>
-<p><code>just bench-open</code> uses <code>open</code> on macOS, <code>xdg-open</code> on Linux, and <code>explorer</code> on Windows.</p>
-<p>The Criterion HTML report is written to:</p>
-<pre><code>target/criterion/report/index.html
-</code></pre>
-<p>Open it to see per-benchmark violin plots, regression detection, and historical comparisons
-between the last two runs on your machine.</p>
-<h3 id="running-a-specific-group"><a class="header" href="#running-a-specific-group">Running a specific group</a></h3>
-<p>Pass a filter after <code>--</code> to run only matching benchmarks:</p>
-<pre><code class="language-sh"># Only the lump_access group:
-cargo bench --all-features --benches -- lump_access
+<span class="boring">fn run(wad: &amp;Wad) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let sections = wad.sections()?;
+let Some(palette) = wad.playpal()? else {
+    return Ok(()); // no PLAYPAL in this WAD
+};
 
-# Only the write/roundtrip benchmarks:
-cargo bench --all-features --benches -- "write/roundtrip"
-</code></pre>
-<h3 id="freedoom-real-world-benchmarks"><a class="header" href="#freedoom-real-world-benchmarks">Freedoom real-world benchmarks</a></h3>
-<p>The <code>freedoom</code> group is skipped by default. To enable it, fetch the fixtures first and point
-the environment variable at the directory:</p>
-<pre><code class="language-sh">just fetch-fixtures                         # downloads freedoom1.wad / freedoom2.wad
-# Absolute path required — cargo runs the bench binary from the package root.
-CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" just bench
-</code></pre>
-<hr>
-<h2 id="ci-benchmark-workflow"><a class="header" href="#ci-benchmark-workflow">CI benchmark workflow</a></h2>
-<p>The <code>bench.yml</code> workflow runs on every push to <code>main</code> and on <code>workflow_dispatch</code>. It is
-<strong>non-blocking</strong> — <code>fail-on-alert: false</code> ensures benchmark regressions never fail the run
-or block a merge.</p>
-<p>Each run:</p>
-<ol>
-<li>Compiles and runs all Criterion bench targets with <code>--output-format bencher</code>.</li>
-<li>Uploads the Criterion HTML report as a downloadable GitHub Actions artifact
-(90-day retention) named <code>criterion-html-report</code>.</li>
-<li>Appends trend data to the <code>gh-pages</code> branch at <code>dev/bench/</code> via
-<a href="https://github.com/benchmark-action/github-action-benchmark"><code>github-action-benchmark</code></a>,
-which powers the chart page at <code>crustywad.dev/dev/bench/</code>.</li>
-</ol>
-<p>The bench workflow and the guide deploy workflow share a <code>concurrency: group: gh-pages</code> so
-they never write to the branch simultaneously.</p>
-<p>To trigger a benchmark run manually without pushing to <code>main</code>:</p>
-<pre><code class="language-sh">gh workflow run bench.yml
-</code></pre>
+for section in sections.of_kind(SectionKind::Sprites) {
+    for i in section.lumps.clone() {
+        let bytes = wad.lump_bytes(i).expect("valid lump index");
+        if bytes.is_empty() {
+            continue; // nested sub-namespace marker
+        }
+        let pic = Picture::parse(bytes, &amp;ParseOptions::strict())?;
+        let rgba = pic.to_rgba(&amp;palette.palettes()[0]);
+        // `rgba.pixels` is `width * height * 4` bytes, row-major RGBA8.
+        let _ = rgba;
+    }
+}
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p><code>Picture::to_indexed</code> produces an <code>IndexedImage</code> (palette indices plus a coverage mask —
+posts don’t have to cover every row of every column); <code>Picture::to_rgba</code> composes that
+with a <code>Palette</code> in one step. <code>Flat</code> has the same <code>to_indexed</code>/<code>to_rgba</code> pair, always
+fully covered since a flat has no post gaps.</p>
+<h2 id="doom-64-graphics"><a class="header" href="#doom-64-graphics">Doom 64 graphics</a></h2>
+<p>Doom 64’s texture, sprite, and gfx lumps are complete PNG files, not this format
+(ADR-0022 §3/§5). They are decoded separately behind the <code>doom64-gfx</code> feature
+(<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>) once that feature lands.</p>
+<h2 id="whats-next"><a class="header" href="#whats-next">What’s next</a></h2>
+<p>Composing multi-patch textures from <code>TEXTUREx</code>/<code>PNAMES</code> — the tier-2 layer ADR-0022 §3
+describes — arrives with <a href="https://github.com/masriamir/crustywad/issues/157">#157</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="features.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="map-records.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="architecture.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="cli.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -283,11 +296,11 @@ they never write to the branch simultaneously.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="features.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="map-records.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="architecture.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="cli.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
