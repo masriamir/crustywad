@@ -9,6 +9,7 @@
 - [Writing WAD Files](writing-wads.md)
 - [Converting maps](converting-maps.md)
 - [Map Record Parsing](map-records.md)
+- [Graphics](graphics.md)
 - [CLI Usage](cli.md)
 - [Feature Flags](features.md)
 - [Performance](performance.md)
