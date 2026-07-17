@@ -64,6 +64,7 @@ mod error;
 pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
+pub mod sections;
 mod util;
 #[cfg(feature = "write")]
 pub mod write;
@@ -78,6 +79,7 @@ use binrw::{BinRead, BinReaderExt};
 use memmap2::Mmap;
 
 pub use error::{ParseError, ParseWarning};
+pub use sections::{Section, SectionError, SectionKind, SectionTable, SectionWarning};
 #[cfg(feature = "write")]
 pub use write::{WadBuilder, WriteError, WriteOptions, WriteWarning};
 
@@ -673,6 +675,33 @@ impl Wad {
     #[must_use]
     pub fn map_group(&self, name: &str) -> Option<crate::map::MapGroup> {
         crate::map::group::map_group(self, name)
+    }
+
+    /// Scans the directory for marker-delimited sections, strictly (the
+    /// [`Map::assemble`](crate::map::Map::assemble) idiom — the first
+    /// malformed marker layout is an error).
+    ///
+    /// # Errors
+    ///
+    /// Every [`SectionError`] variant documents its condition; lenient
+    /// mode ([`Wad::sections_with_options`]) recovers each into a
+    /// [`SectionWarning`] instead.
+    pub fn sections(&self) -> Result<crate::sections::SectionTable, crate::sections::SectionError> {
+        self.sections_with_options(ParseOptions::strict())
+    }
+
+    /// [`Wad::sections`] honoring the given [`ParseOptions`]' strictness;
+    /// lenient mode never fails and records recoveries as warnings on the
+    /// returned table.
+    ///
+    /// # Errors
+    ///
+    /// Strict mode only: the first marker anomaly, per [`SectionError`].
+    pub fn sections_with_options(
+        &self,
+        options: ParseOptions,
+    ) -> Result<crate::sections::SectionTable, crate::sections::SectionError> {
+        crate::sections::scan(self, options.strictness)
     }
 
     /// Returns the raw bytes for the lump at the given zero-based index, or

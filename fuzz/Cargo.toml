@@ -60,6 +60,12 @@ path = "fuzz_targets/fuzz_parse_reject_blockmap.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_sections"
+path = "fuzz_targets/fuzz_sections.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 crustywad = { path = "../crates/crustywad", features = ["write"] }
