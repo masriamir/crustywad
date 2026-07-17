@@ -30,15 +30,18 @@ fuzz_target!(|data: &[u8]| {
             assert_eq!(lumps.things.len(), map.things().len() * 10);
 
             // Bounded warning growth: at most a small constant per element,
-            // plus the single always-on NodesNotBuilt warning. 16 is a loose
-            // upper bound on the per-element warning count (the widest element,
-            // a thing, can emit at most 4 drops + 2 per coordinate + 1 flags).
+            // plus the single always-on NodesNotBuilt warning, plus at most
+            // one more ColoredLightingDropped warning for a Doom 64-sourced
+            // map (ADR-0021 §5 amendment 3 — one per map, not per element).
+            // 16 is a loose upper bound on the per-element warning count (the
+            // widest element, a thing, can emit at most 4 drops + 2 per
+            // coordinate + 1 flags).
             let elements = map.vertices().len()
                 + map.linedefs().len()
                 + map.sidedefs().len()
                 + map.sectors().len()
                 + map.things().len();
-            let bound = elements.saturating_mul(16).saturating_add(1);
+            let bound = elements.saturating_mul(16).saturating_add(2);
             assert!(
                 warnings.len() <= bound,
                 "warning count {} exceeded upper bound {bound}",

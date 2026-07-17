@@ -327,11 +327,13 @@ pub struct Doom64Lumps<'a> {
     pub macros: &'a [u8],
 }
 
-/// Builds a WAD holding one Doom 64 nested-WAD map lump named `name` from
-/// the given lump bytes (all 13 sub-lumps present, empty unless supplied).
+/// Builds the raw bytes of one Doom 64 nested-WAD map (all 13 sub-lumps
+/// present, empty unless supplied). Shared by [`build_doom64_map_wad_from`]
+/// and [`build_doom64_wad_with_textures`] so both wrap the identical nested
+/// layout.
 #[allow(dead_code)]
-pub fn build_doom64_map_wad_from(name: &str, lumps: &Doom64Lumps<'_>) -> Vec<u8> {
-    let nested = build_wad(
+pub fn build_doom64_nested_bytes(lumps: &Doom64Lumps<'_>) -> Vec<u8> {
+    build_wad(
         *b"IWAD",
         &[
             ("THINGS", lumps.things),
@@ -348,8 +350,32 @@ pub fn build_doom64_map_wad_from(name: &str, lumps: &Doom64Lumps<'_>) -> Vec<u8>
             ("LEAFS", lumps.leafs),
             ("MACROS", lumps.macros),
         ],
-    );
-    build_named_lumps(&[(name, nested)])
+    )
+}
+
+/// Builds a WAD holding one Doom 64 nested-WAD map lump named `name` from
+/// the given lump bytes (all 13 sub-lumps present, empty unless supplied).
+#[allow(dead_code)]
+pub fn build_doom64_map_wad_from(name: &str, lumps: &Doom64Lumps<'_>) -> Vec<u8> {
+    build_named_lumps(&[(name, build_doom64_nested_bytes(lumps))])
+}
+
+/// Wraps one Doom 64 nested-WAD map in an outer IWAD that ALSO carries a
+/// `T_START..T_END` texture section holding `texture_names` (zero-size
+/// lumps — resolution is name-only). The section precedes the map lump,
+/// matching the retail layout.
+#[allow(dead_code)]
+pub fn build_doom64_wad_with_textures(
+    name: &str,
+    lumps: &Doom64Lumps<'_>,
+    texture_names: &[&str],
+) -> Vec<u8> {
+    let nested = build_doom64_nested_bytes(lumps);
+    let mut outer: Vec<(&str, &[u8])> = vec![("T_START", &[])];
+    outer.extend(texture_names.iter().map(|n| (*n, &b""[..])));
+    outer.push(("T_END", &[]));
+    outer.push((name, nested.as_slice()));
+    build_wad(*b"IWAD", &outer)
 }
 
 /// Builds a WAD holding one Doom 64 nested-WAD map lump named `name`.

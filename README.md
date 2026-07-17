@@ -18,7 +18,7 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 
 ## Status
 
-`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, converting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
+`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); [classic graphics decode](https://crustywad.dev/graphics.html): pictures (patches/sprites), flats, PLAYPAL/COLORMAP, with indexed + RGBA8 views; and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, converting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
 
 Integration tests for each layer live in `crates/crustywad/tests/`:
 - `wad_reader.rs` — WAD header and directory parsing
@@ -147,10 +147,13 @@ Doom/Doom II/Heretic share the classic binary record layout (differing only in m
 e.g. `MAP01` vs `E1M1`); Hexen is detected via the `BEHAVIOR` lump and assembles with format-tagged
 extended fields. **Doom 64** stores each map as a nested WAD inside its `MAPxx` marker lump
 (detected by name **and** magic) and assembles into the same graph — its sidedef/sector
-texture and flat fields become a `TextureRef::Index` rather than a name, and its per-sector
+texture and flat fields carry a `u16` hash on disk that assembly resolves to a `TextureRef::Name`
+whenever the outer WAD carries a `Textures` section (first-match-in-disk-order on a collision;
+`TextureRef::Index` otherwise, or on an unresolved hash under lenient assembly). Its per-sector
 colored lighting becomes `MapSector.colors` indexing `Map::lights()`, the map's combined light
-table. Until the texture layer (#156/#157) can resolve those indices, a Doom 64-sourced
-`Map` cannot be written back out: `write_doom_map` and `write_udmf` both reject it.
+table. A Doom 64-sourced `Map` writes back out (`write_doom_map` / `write_udmf`) once its texture
+references resolve to names; the remaining unrepresentable colored lighting follows the same
+three-tier policy as every other conversion (strict refuses, lenient drops it and warns).
 `REJECT` and `BLOCKMAP` decode into typed, queryable structures (`MapReject` sector-visibility lookups, `MapBlockmap` per-block linedef lists) during map assembly, and Doom 64's `LEAFS` render leaves decode into a per-subsector `MapLeaf` arena. `MACROS` scripts decode read-only into `MapMacro` action lists.
 UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with
 `write_udmf` / `add_udmf_map` (the `write` feature). The same `Map` graph converts a UDMF

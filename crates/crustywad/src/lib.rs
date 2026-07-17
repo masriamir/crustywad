@@ -61,6 +61,7 @@ values alongside the serialized bytes.
 //! scaffolding for the classic map record lumps.
 
 mod error;
+pub mod gfx;
 pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
@@ -702,6 +703,90 @@ impl Wad {
         options: ParseOptions,
     ) -> Result<crate::sections::SectionTable, crate::sections::SectionError> {
         crate::sections::scan(self, options.strictness)
+    }
+
+    /// Builds the Doom 64 texture-name resolution table strictly (the
+    /// [`Wad::sections`] idiom). `Ok(None)` when the WAD has no `Textures`
+    /// section — not an error (a bare nested-map WAD is legitimate).
+    ///
+    /// # Errors
+    ///
+    /// The first marker anomaly from the underlying strict section scan,
+    /// per [`SectionError`].
+    pub fn doom64_texture_names(
+        &self,
+    ) -> Result<Option<crate::map::Doom64TextureNames>, crate::sections::SectionError> {
+        self.doom64_texture_names_with_options(ParseOptions::strict())
+    }
+
+    /// [`Wad::doom64_texture_names`] honoring the given strictness. Lenient
+    /// scan warnings are discarded here — callers wanting them scan via
+    /// [`Wad::sections_with_options`] themselves (map assembly does, to
+    /// bridge them into its warning stream).
+    ///
+    /// # Errors
+    ///
+    /// Strict mode only: the first marker anomaly, per [`SectionError`].
+    pub fn doom64_texture_names_with_options(
+        &self,
+        options: ParseOptions,
+    ) -> Result<Option<crate::map::Doom64TextureNames>, crate::sections::SectionError> {
+        let sections = self.sections_with_options(options)?;
+        Ok(crate::map::Doom64TextureNames::from_sections(
+            self, &sections,
+        ))
+    }
+
+    /// Parses the WAD's `PLAYPAL` lump strictly, or `Ok(None)` when no such
+    /// lump exists (PWADs commonly omit it). Uses the crate's documented
+    /// first-match [`Wad::lump_by_name`] contract; vanilla's backward
+    /// directory scan would take the last occurrence instead (ADR-0022 §2's
+    /// precedence note) — duplicate `PLAYPAL` lumps in one WAD are
+    /// degenerate, and crate-wide consistency wins.
+    ///
+    /// # Errors
+    ///
+    /// [`gfx::GfxError::PlaypalSize`] per strict parsing.
+    pub fn playpal(&self) -> Result<Option<gfx::Playpal>, gfx::GfxError> {
+        self.playpal_with_options(ParseOptions::strict())
+    }
+
+    /// [`Wad::playpal`] honoring the given strictness.
+    ///
+    /// # Errors
+    ///
+    /// Strict mode only: [`gfx::GfxError::PlaypalSize`].
+    pub fn playpal_with_options(
+        &self,
+        options: ParseOptions,
+    ) -> Result<Option<gfx::Playpal>, gfx::GfxError> {
+        self.lump_by_name("PLAYPAL")
+            .map(|lump| gfx::Playpal::parse(self.lump_data(lump), &options))
+            .transpose()
+    }
+
+    /// Parses the WAD's `COLORMAP` lump strictly, or `Ok(None)` when no
+    /// such lump exists (same lookup contract as [`Wad::playpal`]).
+    ///
+    /// # Errors
+    ///
+    /// [`gfx::GfxError::ColormapSize`] per strict parsing.
+    pub fn colormap(&self) -> Result<Option<gfx::Colormap>, gfx::GfxError> {
+        self.colormap_with_options(ParseOptions::strict())
+    }
+
+    /// [`Wad::colormap`] honoring the given strictness.
+    ///
+    /// # Errors
+    ///
+    /// Strict mode only: [`gfx::GfxError::ColormapSize`].
+    pub fn colormap_with_options(
+        &self,
+        options: ParseOptions,
+    ) -> Result<Option<gfx::Colormap>, gfx::GfxError> {
+        self.lump_by_name("COLORMAP")
+            .map(|lump| gfx::Colormap::parse(self.lump_data(lump), &options))
+            .transpose()
     }
 
     /// Returns the raw bytes for the lump at the given zero-based index, or
