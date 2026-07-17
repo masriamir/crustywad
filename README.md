@@ -18,7 +18,7 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 
 ## Status
 
-`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, converting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
+`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); [classic graphics decode](https://crustywad.dev/graphics.html): pictures (patches/sprites), flats, PLAYPAL/COLORMAP, with indexed + RGBA8 views; and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, converting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
 
 Integration tests for each layer live in `crates/crustywad/tests/`:
 - `wad_reader.rs` — WAD header and directory parsing

@@ -487,3 +487,28 @@ impl Wad {
   (left to issue 5's design); sound/music lumps (v0.7.0); the `?`-named
   texture and other naming oddities, which are data, not defects —
   `Name8`/lump names already carry arbitrary bytes.
+
+## Amendment (2026-07-17, #156): retail sizes correct §3's COLORMAP and flat rules
+
+The first retail graphics sweep falsified two §3 sizing claims:
+
+- **COLORMAP:** "32 × 256 = 8192 bytes exactly" described vanilla's
+  `NUMCOLORMAPS` compile-time constant, not on-disk reality. Every retail
+  WAD in the collection carrying the lump — 11 of 11, across id, Freedoom,
+  Raven, and Rogue — ships 34 × 256 = 8704 bytes. The engine loads the lump
+  with no size check (§3's own observation), so the corrected strict rule is
+  a whole number of 256-byte tables totaling at least 8192 (the 32-table
+  floor every consumer indexes); all N tables are exposed.
+- **Flats:** "4096 exactly" fails retail data: `HERETIC.WAD` ships seven
+  4160-byte flats and `HEXEN.WAD` eleven 8192-byte flats. Corrected strict
+  rule: a whole number of 64-byte rows totaling at least 4096; the rendered
+  view remains the first 64×64 (vanilla's renderer reads exactly that
+  regardless of lump size), with all bytes exposed raw.
+- **Sky placeholders:** `F_SKY*` lumps are name-special-cased by engines and
+  their pixels never read (Heretic's `F_SKY1` is 4 bytes); the graphics
+  sweep skips them by name — engine-faithful, not a data exemption.
+- **SVE.wad** opens a bare top-level `P3_START` with no `P_` parent and
+  therefore strict-errors the §2 section scan; whether that shape is a
+  legitimate wild variant or an anomaly is deferred to #292. The graphics
+  sweep enumerates sections leniently so its decode assertions stay strict.
+- Strife (`strife1.wad`), the anticipated risk, decodes fully strict-clean.
