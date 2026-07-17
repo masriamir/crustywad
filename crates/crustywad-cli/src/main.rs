@@ -227,16 +227,12 @@ fn dropped_group_lumps(wad: &Wad, group: &crustywad::map::MapGroup) -> Vec<Strin
 /// A map writer's refusal, normalized across the Doom and UDMF writers for
 /// `cwad convert` error reporting: the rendered message plus the strictness
 /// classification the follow-up note dispatches on (#264) — the `--lenient`
-/// hint is only honest when lenient mode actually recovers the error, and a
-/// texture-gated refusal (ADR-0021 §5) names the real blocker instead.
+/// hint is only honest when lenient mode actually recovers the error.
 struct Refusal {
     /// The writer error's `Display` rendering.
     message: String,
     /// Whether re-running with `--lenient` turns this error into warnings.
     lenient_recoverable: bool,
-    /// Whether this is `UnsupportedSourceFormat` — unconvertible until the
-    /// texture layer (#156/#157) exists.
-    texture_gated: bool,
 }
 
 /// Groups each lump's data slice by name; duplicate names accumulate in directory order.
@@ -715,10 +711,7 @@ fn run(cli: Cli) -> Result<i32> {
             kind,
         } => {
             use crustywad::map::detect_map_format;
-            use crustywad::map::{
-                DoomWriteError, Map, MapFormat, MapGroup, UdmfWriteError, add_doom_map,
-                add_udmf_map,
-            };
+            use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
 
             let wad = Wad::from_path_with_options(&input, options)
                 .with_context(|| format!("failed to load {}", input.display()))?;
@@ -850,10 +843,6 @@ fn run(cli: Cli) -> Result<i32> {
                                 .map(|ws| ws.iter().map(ToString::to_string).collect())
                                 .map_err(|e| Refusal {
                                     lenient_recoverable: e.is_lenient_recoverable(),
-                                    texture_gated: matches!(
-                                        e,
-                                        DoomWriteError::UnsupportedSourceFormat { .. }
-                                    ),
                                     message: e.to_string(),
                                 })
                         }
@@ -862,10 +851,6 @@ fn run(cli: Cli) -> Result<i32> {
                                 .map(|ws| ws.iter().map(ToString::to_string).collect())
                                 .map_err(|e| Refusal {
                                     lenient_recoverable: e.is_lenient_recoverable(),
-                                    texture_gated: matches!(
-                                        e,
-                                        UdmfWriteError::UnsupportedSourceFormat { .. }
-                                    ),
                                     message: e.to_string(),
                                 })
                         }
@@ -878,19 +863,9 @@ fn run(cli: Cli) -> Result<i32> {
                                 group.name, refusal.message
                             );
                             // The hint is only honest for errors lenient mode
-                            // actually recovers (#264); a both-modes refusal
-                            // gets the capability note instead, if one applies.
-                            if refusal.lenient_recoverable {
-                                if !cli.lenient {
-                                    eprintln!(
-                                        "note: re-run with --lenient to accept the data loss"
-                                    );
-                                }
-                            } else if refusal.texture_gated {
-                                eprintln!(
-                                    "note: this map's source format cannot be converted until \
-                                     crustywad has texture support"
-                                );
+                            // actually recovers (#264).
+                            if refusal.lenient_recoverable && !cli.lenient {
+                                eprintln!("note: re-run with --lenient to accept the data loss");
                             }
                             return Ok(3);
                         }

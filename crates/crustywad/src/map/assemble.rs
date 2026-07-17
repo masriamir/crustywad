@@ -1,5 +1,6 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
+use crate::map::doom64::Doom64TextureNames;
 use crate::map::graph::{
     LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
     MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,
@@ -159,6 +160,26 @@ pub enum MapAssembleError {
     MalformedMacros {
         /// What made the lump unusable.
         detail: &'static str,
+    },
+    /// Scanning the outer WAD's sections (to build the Doom 64
+    /// texture-name table) failed in strict mode. The scan classifies
+    /// markers of every kind, so the underlying
+    /// [`SectionError`](crate::sections::SectionError) may concern a
+    /// non-texture section; it names the section kind itself.
+    #[error("scanning sections for Doom 64 texture resolution failed: {source}")]
+    TextureSections {
+        /// The underlying section-scan error.
+        #[source]
+        source: crate::sections::SectionError,
+    },
+    /// A Doom 64 texture hash matched no texture-section lump (strict
+    /// mode; lenient keeps the unresolved index and warns).
+    #[error("texture name hash {hash:#06x} on {from} matches no texture-section lump")]
+    UnresolvedTextureHash {
+        /// The on-disk 16-bit name hash.
+        hash: u16,
+        /// The element kind carrying the reference (`"sidedef"` or `"sector"`).
+        from: &'static str,
     },
 }
 
@@ -1685,14 +1706,43 @@ fn normalize_doom64_lights(raw: &[doom64::Light]) -> Vec<MapLight> {
     lights
 }
 
+/// Resolves one on-disk Doom 64 texture hash against the outer WAD's
+/// texture-name table (ADR-0022 §1/§4): a hit becomes a name; a miss with
+/// a table present is a strict error / lenient keep-index-and-warn; no
+/// table (no `Textures` section — a bare nested-map WAD) keeps the index
+/// silently.
+fn resolve_texture_ref(
+    hash: u16,
+    textures: Option<&Doom64TextureNames>,
+    from: &'static str,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<TextureRef, MapAssembleError> {
+    let Some(table) = textures else {
+        return Ok(TextureRef::Index(hash));
+    };
+    if let Some(name) = table.get(hash) {
+        return Ok(TextureRef::Name(name.to_owned()));
+    }
+    match strictness {
+        Strictness::Strict => Err(MapAssembleError::UnresolvedTextureHash { hash, from }),
+        Strictness::Lenient => {
+            warnings.push(MapWarning::UnresolvedTextureHash { hash, from });
+            Ok(TextureRef::Index(hash))
+        }
+    }
+}
+
 /// Widens raw Doom 64 `SECTORS` records into normalized [`MapSector`]s,
 /// validating each of the five colored-lighting references against
 /// `light_count` — the length of the engine-style combined light table (256
 /// implicit grayscale entries plus the `LIGHTS` lump records; see
-/// [`normalize_doom64_lights`]).
+/// [`normalize_doom64_lights`]) — and resolving each flat hash against
+/// `textures` (ADR-0022 §4; `None` keeps the index unresolved).
 fn normalize_doom64_sectors(
     raw: &[doom64::Sector],
     light_count: usize,
+    textures: Option<&Doom64TextureNames>,
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<Vec<MapSector>, MapAssembleError> {
@@ -1712,8 +1762,20 @@ fn normalize_doom64_sectors(
         sectors.push(MapSector {
             floor_height: i32::from(sec.floor_height),
             ceiling_height: i32::from(sec.ceiling_height),
-            floor_flat: TextureRef::Index(sec.floor_tex),
-            ceiling_flat: TextureRef::Index(sec.ceiling_tex),
+            floor_flat: resolve_texture_ref(
+                sec.floor_tex,
+                textures,
+                "sector",
+                strictness,
+                warnings,
+            )?,
+            ceiling_flat: resolve_texture_ref(
+                sec.ceiling_tex,
+                textures,
+                "sector",
+                strictness,
+                warnings,
+            )?,
             light: 0, // Doom 64 has no scalar light level (ADR-0021 §2)
             special: i32::from(sec.special),
             tag: i32::from(sec.tag),
@@ -1725,10 +1787,13 @@ fn normalize_doom64_sectors(
 }
 
 /// Widens raw Doom 64 `SIDEDEFS` records into normalized [`MapSidedef`]s,
-/// validating each sidedef's sector cross-reference.
+/// validating each sidedef's sector cross-reference and resolving each
+/// texture hash against `textures` (ADR-0022 §4; `None` keeps the index
+/// unresolved).
 fn normalize_doom64_sidedefs(
     raw: &[doom64::Sidedef],
     sector_count: usize,
+    textures: Option<&Doom64TextureNames>,
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<Vec<MapSidedef>, MapAssembleError> {
@@ -1745,9 +1810,9 @@ fn normalize_doom64_sidedefs(
             )?),
             x_offset: i32::from(sd.x_offset),
             y_offset: i32::from(sd.y_offset),
-            upper: TextureRef::Index(sd.upper),
-            lower: TextureRef::Index(sd.lower),
-            middle: TextureRef::Index(sd.middle),
+            upper: resolve_texture_ref(sd.upper, textures, "sidedef", strictness, warnings)?,
+            lower: resolve_texture_ref(sd.lower, textures, "sidedef", strictness, warnings)?,
+            middle: resolve_texture_ref(sd.middle, textures, "sidedef", strictness, warnings)?,
         });
     }
     Ok(sidedefs)
@@ -1850,10 +1915,39 @@ fn assemble_doom64(
         .map_err(|source| MapAssembleError::Doom64 { source })?;
     let s = options.strictness;
 
+    // ADR-0022 §4: build the texture-name table from the OUTER wad's
+    // sections, bridging scan anomalies into this map's error/warning
+    // stream (the Doom64Warning wrapping precedent).
+    let texture_names = match wad.sections_with_options(options) {
+        Ok(section_table) => {
+            warnings.extend(
+                section_table
+                    .warnings()
+                    .iter()
+                    .cloned()
+                    .map(MapWarning::TextureSection),
+            );
+            Doom64TextureNames::from_sections(wad, &section_table)
+        }
+        Err(source) => return Err(MapAssembleError::TextureSections { source }),
+    };
+
     let vertices = normalize_doom64_vertices(&raw.vertexes);
     let lights = normalize_doom64_lights(&raw.lights);
-    let sectors = normalize_doom64_sectors(&raw.sectors, lights.len(), s, &mut warnings)?;
-    let sidedefs = normalize_doom64_sidedefs(&raw.sidedefs, sectors.len(), s, &mut warnings)?;
+    let sectors = normalize_doom64_sectors(
+        &raw.sectors,
+        lights.len(),
+        texture_names.as_ref(),
+        s,
+        &mut warnings,
+    )?;
+    let sidedefs = normalize_doom64_sidedefs(
+        &raw.sidedefs,
+        sectors.len(),
+        texture_names.as_ref(),
+        s,
+        &mut warnings,
+    )?;
     let linedefs = normalize_doom64_linedefs(
         &raw.linedefs,
         vertices.len(),

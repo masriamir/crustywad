@@ -249,9 +249,9 @@ value with an out-of-range index can still panic.)
 
 `MapSidedef`'s `upper`/`lower`/`middle` fields and `MapSector`'s `floor_flat`/`ceiling_flat` field
 are a `TextureRef`, not a bare string: `TextureRef::Name(String)` for a name (Doom/Hexen's 8-byte
-lump name, or a UDMF string), or `TextureRef::Index(u16)` for a Doom 64 texture/flat table index
-(Doom 64 has no name until the texture layer, #156/#157, can resolve it). Classic Doom,
-Hexen, and UDMF maps always produce `Name`; Doom 64 maps always produce `Index`.
+lump name, a UDMF string, or a Doom 64 texture/flat hash resolved against a `Textures` section —
+see [Doom 64 maps](#doom-64-maps) below), or `TextureRef::Index(u16)` for a Doom 64 texture/flat
+table hash that couldn't be resolved. Classic Doom, Hexen, and UDMF maps always produce `Name`.
 `TextureRef::as_name()` returns `Some(&str)` for `Name` and `None` for `Index`, and `TextureRef`
 implements `PartialEq<&str>` against the name, so a Doom/Hexen/UDMF texture can be compared
 directly against a string literal:
@@ -381,12 +381,23 @@ Doom 64's own format headers don't name them, so `crustywad` doesn't invent slot
 format has no such field; `MapSector.flags` carries the sector's raw Doom 64 flag bits (opaque,
 uninterpreted).
 
-Doom 64's sidedef/sector texture and flat fields assemble into `TextureRef::Index` rather than
-`TextureRef::Name` (see [Texture references](#texture-references) above). Until the texture layer
-(#156/#157) can resolve those indices back to a texture identity, a Doom 64-sourced `Map`
-cannot be serialized back out: both `write_doom_map` and `write_udmf` (the `write` feature) reject
-it with `UnsupportedSourceFormat`, in **both** strictness modes, before any per-field validation
-runs.
+Doom 64's sidedef/sector texture and flat fields carry a `u16` hash on disk rather than a name.
+When the containing WAD has a `Textures` section (a `T_START`/`T_END`-delimited run — see
+[Directory sections](#directory-sections) above), assembly resolves every hash to
+the matching texture/flat name in `Textures`, first-match-in-disk-order on a collision, and the
+field becomes `TextureRef::Name` like every other format. A miss against a present section is a
+strict `MapAssembleError::UnresolvedTextureHash` / lenient `MapWarning::UnresolvedTextureHash`
+(keeping `TextureRef::Index`); a WAD with no `Textures` section at all keeps every field as
+`TextureRef::Index` silently, since a bare nested-map WAD (no textures alongside it) is a
+legitimate input.
+
+A Doom 64-sourced `Map` can be serialized back out (`write_doom_map`/`write_udmf`, the `write`
+feature) once its texture references resolve to names. The one remaining unrepresentable piece is
+colored lighting (`MapSector.colors`, described above): strict mode refuses with
+`UnrepresentableField` (`block: "sector", field: "colors"`), lenient mode drops the colors and
+records one `ColoredLightingDropped` warning per map, then converts. A leftover unresolved
+`TextureRef::Index` (no `Textures` section, or an unresolved hash kept under lenient assembly)
+still hits a defensive `UnresolvedTextureIndex` writer error in both modes.
 
 Doom 64 also decodes the `LEAFS` lump — its render leaves — onto the graph. `Map::leafs()` is a
 per-subsector arena of `MapLeaf { vertex: VertexIdx, seg: Option<SegIdx> }`, and each

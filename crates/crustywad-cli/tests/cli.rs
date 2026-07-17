@@ -2823,11 +2823,14 @@ fn convert_strict_accepts_a_group_with_no_extra_lumps() {
         .stderr(predicate::str::contains("cannot convert").not());
 }
 
-/// A PWAD holding one Doom 64 nested-WAD map (`MAP01`): a single marker lump
-/// whose bytes are themselves a WAD carrying the 13 sub-lumps `read_doom64_map`
-/// expects. Record bytes mirror the library test suite's `common::d64_*`
-/// helpers; the map assembles strict-clean as `MapFormat::Doom64`.
-fn write_doom64_map_wad() -> NamedTempFile {
+/// A Doom 64 nested-WAD map (a single marker lump whose bytes are themselves
+/// a WAD carrying the 13 sub-lumps `read_doom64_map` expects), wrapped in an
+/// outer `T_START..T_END` texture section whose two names hash to the values
+/// carried by every sidedef/sector texture field (`SDOORA` = 2712, `SFLATAE`
+/// = 4098 — the empirically validated vectors, ADR-0022 §1), so assembly
+/// resolves every ref to a name and the only convert obstacle left is
+/// colored lighting.
+fn write_doom64_textured_map_wad() -> NamedTempFile {
     // Two vertices in 16.16 fixed point: (0, 0) and (64, 0).
     let mut vertexes = Vec::new();
     for v in [0_i32, 0, 64 << 16, 0] {
@@ -2844,22 +2847,22 @@ fn write_doom64_map_wad() -> NamedTempFile {
         linedefs.extend_from_slice(&v.to_le_bytes());
     }
 
-    // One sidedef: x/y offsets (i16), upper/lower/middle texture index,
-    // sector (u16).
+    // One sidedef: x/y offsets (i16), upper/lower/middle texture hash
+    // (all SDOORA), sector (u16).
     let mut sidedefs = Vec::new();
     for v in [0_i16; 2] {
         sidedefs.extend_from_slice(&v.to_le_bytes());
     }
-    for v in [0_u16; 4] {
+    for v in [2712_u16, 2712, 2712, 0] {
         sidedefs.extend_from_slice(&v.to_le_bytes());
     }
 
-    // One sector: floor/ceiling height (i16), floor/ceiling flat index, five
-    // color refs, special, tag, flags (u16).
+    // One sector: floor/ceiling height (i16), floor/ceiling flat hash
+    // (both SFLATAE), five color refs, special, tag, flags (u16).
     let mut sectors = Vec::new();
     sectors.extend_from_slice(&0_i16.to_le_bytes());
     sectors.extend_from_slice(&128_i16.to_le_bytes());
-    for v in [0_u16; 10] {
+    for v in [4098_u16, 4098, 0, 0, 0, 0, 0, 0, 0, 0] {
         sectors.extend_from_slice(&v.to_le_bytes());
     }
 
@@ -2884,16 +2887,25 @@ fn write_doom64_map_wad() -> NamedTempFile {
             ("MACROS", &[]),
         ],
     );
-    write_wad(*b"PWAD", &[("MAP01", &nested)])
+    write_wad(
+        *b"IWAD",
+        &[
+            ("T_START", &[]),
+            ("SDOORA", &[]),
+            ("SFLATAE", &[]),
+            ("T_END", &[]),
+            ("MAP01", &nested),
+        ],
+    )
 }
 
 #[test]
-fn convert_doom64_source_notes_texture_gap_without_lenient_hint() {
-    // A Doom 64-sourced map is refused by the UDMF writer in BOTH strictness
-    // modes (`UnsupportedSourceFormat`, ADR-0021 §5), so the strict-mode
-    // "re-run with --lenient" hint would be a lie (#264): the error must carry
-    // the texture-layer note instead.
-    let wad = write_doom64_map_wad();
+fn convert_doom64_strict_refuses_lighting_with_lenient_hint() {
+    // ADR-0021 §5 amendment 3: the texture gate is gone; strict now refuses
+    // for colored lighting (tier 3) with an HONEST --lenient hint (this
+    // exact fixture converts under --lenient below), and the #264
+    // texture-support note is retired.
+    let wad = write_doom64_textured_map_wad();
     let out = NamedTempFile::new().unwrap();
 
     Command::cargo_bin("cwad")
@@ -2909,18 +2921,14 @@ fn convert_doom64_source_notes_texture_gap_without_lenient_hint() {
         .assert()
         .code(3)
         .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
-        .stderr(predicate::str::contains("Doom64"))
-        .stderr(predicate::str::contains(
-            "note: this map's source format cannot be converted until crustywad has texture support",
-        ))
-        .stderr(predicate::str::contains("--lenient").not());
+        .stderr(predicate::str::contains("colors"))
+        .stderr(predicate::str::contains("--lenient"))
+        .stderr(predicate::str::contains("texture support").not());
 }
 
 #[test]
-fn convert_doom64_source_notes_texture_gap_in_lenient_mode_too() {
-    // The texture-layer note is about a capability gap, not strictness, so it
-    // prints in lenient mode as well.
-    let wad = write_doom64_map_wad();
+fn convert_doom64_lenient_drops_lighting_and_writes_resolved_names() {
+    let wad = write_doom64_textured_map_wad();
     let out = NamedTempFile::new().unwrap();
 
     Command::cargo_bin("cwad")
@@ -2935,11 +2943,18 @@ fn convert_doom64_source_notes_texture_gap_in_lenient_mode_too() {
             "udmf",
         ])
         .assert()
-        .code(3)
-        .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
-        .stderr(predicate::str::contains(
-            "note: this map's source format cannot be converted until crustywad has texture support",
-        ));
+        .code(0)
+        .stdout(predicate::str::contains("converted 1 map to udmf"))
+        .stderr(predicate::str::contains("colored lighting"));
+
+    // The output WAD's TEXTMAP carries resolved NAMES. Assert the QUOTED
+    // UDMF form — the bare name would also appear as a directory entry if
+    // convert copies the input's texture lumps through, so quotes are what
+    // prove TEXTMAP content.
+    let bytes = std::fs::read(out.path()).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("\"SDOORA\""));
+    assert!(text.contains("\"SFLATAE\""));
 }
 
 #[test]
@@ -3248,4 +3263,58 @@ fn convert_corrupt_map_exits_3() {
         .code(3)
         .stderr(predicate::str::contains("failed to assemble map MAP01"))
         .stderr(predicate::str::contains("thread '").not());
+}
+
+// ---------------------------------------------------------------------------
+// Retail sweep smoke (#281)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn convert_retail_doom64_map01_lenient_smoke() {
+    // Env-gated retail smoke (the CLI crate has no fixture feature flag;
+    // env-only gating with graceful skip mirrors the library sweep
+    // suite). Exit 0 alone proves full texture resolution: any leftover
+    // unresolved index would be a both-modes writer error.
+    let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
+        eprintln!("skipping: CRUSTYWAD_SWEEP_DIR not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_absolute() || !dir.is_dir() {
+        eprintln!(
+            "skipping: CRUSTYWAD_SWEEP_DIR is not an absolute path to a directory: {}",
+            dir.display()
+        );
+        return;
+    }
+    let wad_path = dir.join("DOOM64.WAD");
+    if !wad_path.is_file() {
+        eprintln!("skipping: DOOM64.WAD not present in {}", dir.display());
+        return;
+    }
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad_path.to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--map",
+            "MAP01",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 1 map to udmf"))
+        .stderr(predicate::str::contains("colored lighting"));
+
+    // TEXTMAP carries quoted resolved names (quotes distinguish UDMF
+    // content from pass-through directory entries).
+    let bytes = std::fs::read(out.path()).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("texturefloor = \""));
 }

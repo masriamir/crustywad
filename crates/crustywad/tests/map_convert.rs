@@ -539,6 +539,14 @@ fn udmf_write_error_classifies_lenient_recoverability_per_variant() {
     );
     assert!(E::EmptyNamespace.is_lenient_recoverable());
     assert!(E::NoFrontSide { index: 0 }.is_lenient_recoverable());
+    assert!(
+        E::UnrepresentableField {
+            block: "sector",
+            field: "colors",
+            index: 0
+        }
+        .is_lenient_recoverable()
+    );
 
     // Returned in both modes — no honest recovery, the hint would mislead.
     assert!(

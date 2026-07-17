@@ -49,9 +49,10 @@ pub enum UdmfWriteError {
         /// The 0-based linedef index.
         index: usize,
     },
-    /// A [`TextureRef::Index`] reached the writer; a Doom 64 texture index
-    /// cannot be written as a name until the texture layer (#156/#157) can
-    /// resolve it (both strictness modes; ADR-0021 §5).
+    /// A [`TextureRef::Index`] reached the writer; assembly resolves a Doom
+    /// 64 texture hash to a name only when the outer WAD carries a
+    /// `T_START..T_END` section (ADR-0022 §4), so a leftover `Index` has no
+    /// name this writer can invent (both strictness modes; ADR-0021 §5).
     #[error("unresolvable texture index for {field} in {block} #{index}")]
     UnresolvedTextureIndex {
         /// The block kind (`"sidedef"` or `"sector"`).
@@ -61,14 +62,32 @@ pub enum UdmfWriteError {
         /// The 0-based block index.
         index: usize,
     },
-    /// The map's source format cannot be expressed by this writer — a Doom 64
-    /// map's texture indices and colored lighting have no classic/UDMF
-    /// representation until the texture layer (#156/#157) exists (both
-    /// strictness modes; ADR-0021 §5).
+    /// The map's source format has no writer policy at all — a defensive
+    /// fallback for a future [`MapFormat`] variant this writer has never
+    /// heard of (returned in **both** strictness modes: there is no policy
+    /// to even attempt recovery under). A [`MapFormat::Doom64`] map is
+    /// **not** this variant — it writes under the tier-3 colored-lighting
+    /// policy instead (see
+    /// [`UnrepresentableField`][Self::UnrepresentableField] /
+    /// [`UdmfWriteWarning::ColoredLightingDropped`]; ADR-0021 §5 amendment 3).
     #[error("cannot write a {format:?}-sourced map")]
     UnsupportedSourceFormat {
         /// The assembled map's source format.
         format: MapFormat,
+    },
+    /// A field carried data this writer's target format has no slot for
+    /// (strict; lenient drops and warns). Currently produced only for a
+    /// Doom 64 map's colored lighting (`block: "sector", field: "colors"`;
+    /// ADR-0021 §5 amendment 3), mirroring
+    /// [`DoomWriteError::UnrepresentableField`](crate::map::doom::DoomWriteError::UnrepresentableField).
+    #[error("{block} #{index} has a {field} value, which UDMF cannot represent")]
+    UnrepresentableField {
+        /// The block kind.
+        block: &'static str,
+        /// The field name (e.g. `"colors"`).
+        field: &'static str,
+        /// The 0-based element index.
+        index: usize,
     },
 }
 
@@ -84,9 +103,10 @@ impl UdmfWriteError {
     #[must_use]
     pub fn is_lenient_recoverable(&self) -> bool {
         match self {
-            Self::NonFiniteCoordinate { .. } | Self::EmptyNamespace | Self::NoFrontSide { .. } => {
-                true
-            }
+            Self::NonFiniteCoordinate { .. }
+            | Self::EmptyNamespace
+            | Self::NoFrontSide { .. }
+            | Self::UnrepresentableField { .. } => true,
             Self::UnresolvedTextureIndex { .. } | Self::UnsupportedSourceFormat { .. } => false,
         }
     }
@@ -121,6 +141,15 @@ pub enum UdmfWriteWarning {
         /// The 0-based linedef index.
         index: usize,
     },
+    /// A Doom 64 map's colored lighting (sector color references and the
+    /// engine-model lights table) has no UDMF slot and was dropped. Emitted
+    /// at most once per map (lenient mode only — strict mode instead returns
+    /// [`UdmfWriteError::UnrepresentableField`] naming `block: "sector",
+    /// field: "colors"`; ADR-0021 §5 amendment 3).
+    #[error(
+        "the map's Doom 64 colored lighting (sector color references and lights table) has no UDMF slot and was dropped"
+    )]
+    ColoredLightingDropped,
 }
 
 /// Quotes and escapes `s` as a UDMF string literal, mirroring every escape the
@@ -137,9 +166,10 @@ fn escape_udmf_string(s: &str) -> String {
     )
 }
 
-/// Resolves a [`TextureRef`] to a name, or fails: a Doom 64 texture index has
-/// no name until the texture layer (#156/#157) exists, so this is not a
-/// recoverable defect (ADR-0021 §5) — it errors in **both** strictness modes.
+/// Resolves a [`TextureRef`] to a name, or fails: assembly already resolved
+/// every Doom 64 texture hash it could (ADR-0022 §4), so a leftover `Index`
+/// reaching this writer has no name to invent — not a recoverable defect
+/// (ADR-0021 §5) — it errors in **both** strictness modes.
 fn texture_name<'a>(
     block: &'static str,
     field: &'static str,
@@ -417,25 +447,56 @@ impl Writer {
 /// `f64` coordinates narrow to integer form when whole. See the module docs.
 ///
 /// # Errors
-/// - [`UdmfWriteError::UnsupportedSourceFormat`] — `map.format()` is
-///   [`MapFormat::Doom64`] (returned in **both** strictness modes; ADR-0021 §5).
+/// - [`UdmfWriteError::UnrepresentableField`] — includes `map.format()`
+///   being [`MapFormat::Doom64`] in strict mode: colored lighting (sector
+///   color references and the engine-model lights table) has no UDMF slot
+///   (`block: "sector", field: "colors"`, `index: 0`; ADR-0021 §5 amendment
+///   3). Lenient mode instead drops it and returns
+///   [`UdmfWriteWarning::ColoredLightingDropped`].
+/// - [`UdmfWriteError::UnsupportedSourceFormat`] — an unrecognized future
+///   [`MapFormat`] variant this writer has no policy for (returned in
+///   **both** strictness modes).
 /// - [`UdmfWriteError::EmptyNamespace`] — `map.namespace()` is `Some("")` (strict).
 /// - [`UdmfWriteError::NonFiniteCoordinate`] — a coordinate/height is NaN or ∞ (strict).
 /// - [`UdmfWriteError::NoFrontSide`] — a linedef has no front sidedef, which
 ///   UDMF cannot represent (strict).
 /// - [`UdmfWriteError::UnresolvedTextureIndex`] — a sidedef/sector carries a
-///   [`TextureRef::Index`] (returned in **both** strictness modes; ADR-0021 §5).
+///   [`TextureRef::Index`] left unresolved by assembly (returned in **both**
+///   strictness modes; ADR-0021 §5, ADR-0022 §4).
 pub fn write_udmf(
     map: &Map,
     opts: &WriteOptions,
 ) -> Result<(String, Vec<UdmfWriteWarning>), UdmfWriteError> {
-    if map.format() == MapFormat::Doom64 {
-        return Err(UdmfWriteError::UnsupportedSourceFormat {
-            format: map.format(),
-        });
+    match map.format() {
+        MapFormat::Doom | MapFormat::Hexen | MapFormat::Udmf => {}
+        MapFormat::Doom64 => {
+            // Colored lighting (sector color refs + the engine-model lights
+            // table) has no slot in this target — tier-3 data loss
+            // (ADR-0019). The texture half of the old blanket gate is gone:
+            // refs resolve to names at assembly when a texture section is
+            // present (ADR-0022 §4); any leftover `Index` still hits
+            // `UnresolvedTextureIndex` below, in both modes.
+            if opts.strictness == Strictness::Strict {
+                return Err(UdmfWriteError::UnrepresentableField {
+                    block: "sector",
+                    field: "colors",
+                    index: 0,
+                });
+            }
+        }
+        // A future `MapFormat` variant this writer has never heard of:
+        // reject in both modes rather than silently mis-writing. Every
+        // variant known to this crate is already matched above, so this arm
+        // is unreachable today — it exists purely as a defensive fallback
+        // for when a new variant is added.
+        #[allow(unreachable_patterns)]
+        format => return Err(UdmfWriteError::UnsupportedSourceFormat { format }),
     }
 
     let mut w = Writer::new(opts.strictness);
+    if map.format() == MapFormat::Doom64 {
+        w.warnings.push(UdmfWriteWarning::ColoredLightingDropped);
+    }
 
     let namespace = match map.namespace() {
         Some("") => match opts.strictness {
@@ -496,8 +557,9 @@ pub fn write_udmf(
 ///
 /// # Errors
 /// Same as [`write_udmf`]: [`UdmfWriteError::EmptyNamespace`],
-/// [`UdmfWriteError::NonFiniteCoordinate`], and
-/// [`UdmfWriteError::NoFrontSide`] (strict mode); and
+/// [`UdmfWriteError::NonFiniteCoordinate`],
+/// [`UdmfWriteError::NoFrontSide`], and
+/// [`UdmfWriteError::UnrepresentableField`] (strict mode); and
 /// [`UdmfWriteError::UnresolvedTextureIndex`] and
 /// [`UdmfWriteError::UnsupportedSourceFormat`] (both modes).
 pub fn add_udmf_map(
@@ -845,9 +907,9 @@ mod tests {
         }
     }
 
-    /// A Doom 64 texture index has no name until the texture layer (#156/#157)
-    /// exists, so a `TextureRef::Index` is rejected in both strictness modes —
-    /// there is no honest recovery (ADR-0021 §5).
+    /// A leftover `TextureRef::Index` (one assembly could not resolve to a
+    /// name, ADR-0022 §4) is rejected in both strictness modes — there is no
+    /// honest recovery (ADR-0021 §5).
     #[test]
     fn texture_index_is_rejected_in_both_modes() {
         let mut map = tiny_map();
@@ -905,23 +967,43 @@ mod tests {
         }
     }
 
-    /// A Doom 64-sourced map has no UDMF representation (texture indices,
-    /// colored lighting) until the texture layer (#156/#157) exists, so it is
-    /// rejected in both strictness modes (ADR-0021 §5), before namespace
-    /// derivation or any per-field handling runs.
+    /// A Doom 64-sourced map's colored lighting has no UDMF slot: strict
+    /// refuses it (tier-3 loss, ADR-0021 §5 amendment 3), lenient drops it
+    /// and warns exactly once. Texture resolution is a separate concern
+    /// (ADR-0022 §4) — `tiny_map`'s refs are already `TextureRef::Name`, so
+    /// this test isolates the lighting policy.
     #[test]
-    fn doom64_sourced_map_is_rejected_in_both_modes() {
+    fn doom64_sourced_map_lighting_is_tier3_loss() {
         let mut map = tiny_map();
         map.format = MapFormat::Doom64;
-        for opts in [WriteOptions::strict(), WriteOptions::lenient()] {
-            let err = write_udmf(&map, &opts).unwrap_err();
-            assert_eq!(
-                err,
-                UdmfWriteError::UnsupportedSourceFormat {
-                    format: MapFormat::Doom64
-                }
-            );
-        }
+
+        let err = write_udmf(&map, &WriteOptions::strict()).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfWriteError::UnrepresentableField {
+                block: "sector",
+                field: "colors",
+                index: 0
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "sector #0 has a colors value, which UDMF cannot represent"
+        );
+
+        let (text, warnings) = write_udmf(&map, &WriteOptions::lenient()).unwrap();
+        assert!(text.contains("WALL"));
+        assert_eq!(
+            warnings
+                .iter()
+                .filter(|w| matches!(w, UdmfWriteWarning::ColoredLightingDropped))
+                .count(),
+            1
+        );
+        assert_eq!(
+            UdmfWriteWarning::ColoredLightingDropped.to_string(),
+            "the map's Doom 64 colored lighting (sector color references and lights table) has no UDMF slot and was dropped"
+        );
     }
 
     #[test]

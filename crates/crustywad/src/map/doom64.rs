@@ -482,3 +482,78 @@ mod tests {
         }
     }
 }
+
+/// The Doom 64 texture-name hash: the on-disk `u16` carried by sidedef and
+/// sector texture fields (ADR-0022 §1). Doom64 EX's `W_HashLumpName`
+/// computes exactly this over up to 8 uppercased characters truncated to
+/// 16 bits, and the master rewrite's reimplementation preserves the same
+/// semantics; empirically validated against the retail KEX IWAD (82/82
+/// `MAP01` references resolve — ADR-0022 §1).
+#[must_use]
+pub fn texture_name_hash(name: &str) -> u16 {
+    let mut hash: u32 = 1_315_423_911;
+    for byte in name.bytes().take(8) {
+        hash ^= (hash << 5)
+            .wrapping_add(u32::from(byte.to_ascii_uppercase()))
+            .wrapping_add(hash >> 2);
+    }
+    #[allow(clippy::cast_possible_truncation)] // the & 0xFFFF makes it exact
+    {
+        (hash & 0xFFFF) as u16
+    }
+}
+
+/// A resolution table from the on-disk `u16` texture hash to the texture
+/// lump's name, built first-match-in-disk-order over a WAD's `Textures`
+/// section(s) — the engine's own tie-break on 16-bit collisions
+/// (`P_InitTextureHashTable`/`P_GetTextureHashKey`, ADR-0022 §1). Lookups
+/// are `O(1)` by the hash key, replacing the engine's per-reference
+/// first-match resolution over the section (ADR-0022 §1).
+#[derive(Debug, Clone)]
+pub struct Doom64TextureNames {
+    map: std::collections::HashMap<u16, String>,
+}
+
+impl Doom64TextureNames {
+    /// Builds the table from an already-scanned section table, or `None`
+    /// when the WAD has no `Textures` section at all (a bare nested-map
+    /// WAD is legitimate; resolution is best-effort context).
+    pub(crate) fn from_sections(
+        wad: &crate::Wad,
+        sections: &crate::sections::SectionTable,
+    ) -> Option<Self> {
+        let mut map = std::collections::HashMap::new();
+        let mut section_seen = false;
+        for section in sections.of_kind(crate::sections::SectionKind::Textures) {
+            section_seen = true;
+            for index in section.lumps.clone() {
+                if let Some(lump) = wad.lump(index) {
+                    map.entry(texture_name_hash(lump.name()))
+                        .or_insert_with(|| lump.name().to_owned());
+                }
+            }
+        }
+        section_seen.then_some(Self { map })
+    }
+
+    /// The texture name whose hash is `hash`, if any texture-section lump
+    /// matches (first match in disk order wins on collision).
+    #[must_use]
+    pub fn get(&self, hash: u16) -> Option<&str> {
+        self.map.get(&hash).map(String::as_str)
+    }
+
+    /// Number of distinct hashes in the table. Collisions collapse to the
+    /// first-match winner, so this can be less than the section's lump
+    /// count.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Whether the table holds no entries (an empty `Textures` section).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
