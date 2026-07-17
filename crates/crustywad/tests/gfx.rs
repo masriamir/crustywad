@@ -921,3 +921,123 @@ fn texturex_policy_rows() {
             .any(|w| matches!(w, GfxWarning::ExcessiveTextureData { .. }))
     );
 }
+
+/// A WAD with PNAMES, TEXTURE1, and real patch lumps.
+fn textured_wad(pnames: &[&str], texture1: &[DefSpec<'_>], patch_lumps: &[(&str, Vec<u8>)]) -> Wad {
+    let pn = build_pnames(pnames);
+    let tx = build_texturex(texture1);
+    let mut lumps: Vec<(&str, &[u8])> = vec![("PNAMES", &pn), ("TEXTURE1", &tx)];
+    for (name, bytes) in patch_lumps {
+        lumps.push((name, bytes));
+    }
+    Wad::from_bytes(common::build_wad(*b"IWAD", &lumps)).unwrap()
+}
+
+#[test]
+fn texture_set_builds_and_finds_in_order() {
+    let patch = build_picture(2, 4, &[vec![(0, vec![1, 2])], vec![(0, vec![3])]]);
+    let wad = textured_wad(
+        &["PA"],
+        &[("TEX0", 2, 4, &[(0, 0, 0)]), ("TEX1", 2, 4, &[(0, 0, 0)])],
+        &[("PA", patch)],
+    );
+    let set = wad.texture_set().unwrap().expect("TEXTURE1 present");
+    assert!(set.warnings().is_empty());
+    assert_eq!(set.textures().len(), 2);
+    assert_eq!(set.find("TEX1"), Some(1));
+    assert_eq!(set.find("TEX0"), Some(0));
+    assert_eq!(set.find("NOPE"), None);
+
+    let bare = Wad::from_bytes(common::build_wad(*b"PWAD", &[("THINGS", &[])])).unwrap();
+    assert!(bare.texture_set().unwrap().is_none());
+}
+
+#[test]
+fn texture_set_missing_pnames_strict_errors_lenient_warns() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    let tx = build_texturex(&[("TEX0", 2, 4, &[(0, 0, 0)])]);
+    let wad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("TEXTURE1", &tx)])).unwrap();
+    assert!(matches!(
+        wad.texture_set().unwrap_err(),
+        GfxError::MissingPnames
+    ));
+    let set = wad
+        .texture_set_with_options(ParseOptions::lenient())
+        .unwrap()
+        .expect("set still builds");
+    assert!(
+        set.warnings()
+            .iter()
+            .any(|w| matches!(w, GfxWarning::MissingPnames))
+    );
+}
+
+#[test]
+fn texture_set_bad_index_and_unresolved_name() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    let patch = build_picture(1, 1, &[vec![(0, vec![7])]]);
+    // Index 5 out of bounds for a 1-name PNAMES.
+    let wad = textured_wad(
+        &["PA"],
+        &[("TEX0", 1, 1, &[(0, 0, 5)])],
+        &[("PA", patch.clone())],
+    );
+    assert!(matches!(
+        wad.texture_set().unwrap_err(),
+        GfxError::PatchIndexOutOfBounds {
+            texture: 0,
+            patch: 5,
+            pnames_len: 1
+        }
+    ));
+    let set = wad
+        .texture_set_with_options(ParseOptions::lenient())
+        .unwrap()
+        .unwrap();
+    assert!(set.warnings().iter().any(|w| matches!(
+        w,
+        GfxWarning::PatchIndexOutOfBounds {
+            texture: 0,
+            patch: 5,
+            ..
+        }
+    )));
+
+    // Name that matches no lump.
+    let wad = textured_wad(
+        &["GHOST"],
+        &[("TEX0", 1, 1, &[(0, 0, 0)])],
+        &[("PA", patch)],
+    );
+    assert!(matches!(
+        wad.texture_set().unwrap_err(),
+        GfxError::UnresolvedPatchName { .. }
+    ));
+    let set = wad
+        .texture_set_with_options(ParseOptions::lenient())
+        .unwrap()
+        .unwrap();
+    assert!(set.warnings().iter().any(|w| matches!(
+        w,
+        GfxWarning::UnresolvedPatchName { name } if name == "GHOST"
+    )));
+
+    // Name resolves but the lump is not a valid picture (6 bytes < header).
+    let wad = textured_wad(
+        &["BADPIC"],
+        &[("TEX0", 1, 1, &[(0, 0, 0)])],
+        &[("BADPIC", vec![1, 2, 3, 4, 5, 6])],
+    );
+    assert!(matches!(
+        wad.texture_set().unwrap_err(),
+        GfxError::PatchPictureFailed { .. }
+    ));
+    let set = wad
+        .texture_set_with_options(ParseOptions::lenient())
+        .unwrap()
+        .unwrap();
+    assert!(set.warnings().iter().any(|w| matches!(
+        w,
+        GfxWarning::PatchPictureFailed { name } if name == "BADPIC"
+    )));
+}

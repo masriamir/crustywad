@@ -122,7 +122,7 @@ pub struct TexturePatchRef {
     /// Vertical placement of the patch's top edge on the canvas.
     pub origin_y: i16,
     /// Index into the `PNAMES` table (raw; validated when a
-    /// `TextureSet` is built).
+    /// [`TextureSet`] is built).
     pub patch: i16,
     /// Historically dead on-disk field (`stepdir`); preserved raw.
     pub step_dir: i16,
@@ -186,7 +186,8 @@ impl TextureX {
         }
         #[allow(clippy::cast_sign_loss)] // non-negative checked above
         let mut count = raw_count as usize;
-        let needed = 4 + count * 4;
+        // Saturating: a hostile count must not overflow 32-bit usize before the guard (ADR-0016).
+        let needed = 4usize.saturating_add(count.saturating_mul(4));
         if needed > bytes.len() {
             match strictness {
                 Strictness::Strict => {
@@ -353,6 +354,165 @@ impl TextureX {
     }
 
     /// Non-fatal issues recovered during lenient parsing.
+    #[must_use]
+    pub fn warnings(&self) -> &[GfxWarning] {
+        &self.warnings
+    }
+}
+
+use super::Picture;
+
+/// Parsed texture definitions plus their resolved patch pictures — built
+/// once via [`Wad::texture_set`](crate::Wad::texture_set), composed per
+/// texture with `TextureSet::compose` (Task 3). Patch names resolve through the
+/// crate's first-match [`lump_by_name`](crate::Wad::lump_by_name) after
+/// uppercasing (vanilla uppercases its search name — ADR-0022 §3); a
+/// PWAD referencing base-IWAD patches therefore cannot resolve here
+/// (multi-WAD merge is out of scope) — strict errors honestly, lenient
+/// builds with unresolved slots and composes with holes.
+#[derive(Debug, Clone)]
+pub struct TextureSet {
+    textures: Vec<TextureDef>,
+    // `pnames`/`patches` are consumed by `TextureSet::compose` (Task 3);
+    // Task 2 only builds and validates them.
+    #[allow(dead_code)]
+    pnames: Vec<String>,
+    #[allow(dead_code)]
+    patches: Vec<Option<Picture>>, // parallel to pnames
+    warnings: Vec<GfxWarning>,
+}
+
+impl TextureSet {
+    pub(crate) fn from_wad(
+        wad: &crate::Wad,
+        options: &crate::ParseOptions,
+    ) -> Result<Option<Self>, GfxError> {
+        let strictness = options.strictness;
+        let mut warnings = Vec::new();
+
+        let mut textures = Vec::new();
+        let mut any_lump = false;
+        for lump_name in ["TEXTURE1", "TEXTURE2"] {
+            if let Some(lump) = wad.lump_by_name(lump_name) {
+                any_lump = true;
+                let parsed = TextureX::parse(wad.lump_data(lump), options)?;
+                warnings.extend_from_slice(parsed.warnings());
+                textures.extend_from_slice(parsed.textures());
+            }
+        }
+        if !any_lump {
+            return Ok(None);
+        }
+
+        let pnames = match wad.lump_by_name("PNAMES") {
+            Some(lump) => {
+                let parsed = Pnames::parse(wad.lump_data(lump), options)?;
+                warnings.extend_from_slice(parsed.warnings());
+                parsed.names().to_vec()
+            }
+            None => match strictness {
+                crate::Strictness::Strict => return Err(GfxError::MissingPnames),
+                crate::Strictness::Lenient => {
+                    warnings.push(GfxWarning::MissingPnames);
+                    Vec::new()
+                }
+            },
+        };
+
+        // Validate every ref's index once, at build (set-level warnings).
+        for (t, def) in textures.iter().enumerate() {
+            for patch_ref in &def.patches {
+                if patch_ref.patch < 0 || usize::try_from(patch_ref.patch).unwrap() >= pnames.len()
+                {
+                    match strictness {
+                        crate::Strictness::Strict => {
+                            return Err(GfxError::PatchIndexOutOfBounds {
+                                texture: t,
+                                patch: patch_ref.patch,
+                                pnames_len: pnames.len(),
+                            });
+                        }
+                        crate::Strictness::Lenient => {
+                            warnings.push(GfxWarning::PatchIndexOutOfBounds {
+                                texture: t,
+                                patch: patch_ref.patch,
+                                pnames_len: pnames.len(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resolve + parse each REFERENCED name once.
+        let mut referenced = vec![false; pnames.len()];
+        for def in &textures {
+            for patch_ref in &def.patches {
+                if let Ok(i) = usize::try_from(patch_ref.patch) {
+                    if i < pnames.len() {
+                        referenced[i] = true;
+                    }
+                }
+            }
+        }
+        let mut patches: Vec<Option<Picture>> = vec![None; pnames.len()];
+        for (i, name) in pnames.iter().enumerate() {
+            if !referenced[i] {
+                continue;
+            }
+            let upper = name.to_uppercase();
+            let Some(lump) = wad.lump_by_name(&upper) else {
+                match strictness {
+                    crate::Strictness::Strict => {
+                        return Err(GfxError::UnresolvedPatchName { name: name.clone() });
+                    }
+                    crate::Strictness::Lenient => {
+                        warnings.push(GfxWarning::UnresolvedPatchName { name: name.clone() });
+                        continue;
+                    }
+                }
+            };
+            match Picture::parse(wad.lump_data(lump), options) {
+                Ok(picture) => patches[i] = Some(picture),
+                Err(source) => match strictness {
+                    crate::Strictness::Strict => {
+                        return Err(GfxError::PatchPictureFailed {
+                            name: name.clone(),
+                            source: Box::new(source),
+                        });
+                    }
+                    crate::Strictness::Lenient => {
+                        warnings.push(GfxWarning::PatchPictureFailed { name: name.clone() });
+                    }
+                },
+            }
+        }
+
+        Ok(Some(Self {
+            textures,
+            pnames,
+            patches,
+            warnings,
+        }))
+    }
+
+    /// The texture definitions: `TEXTURE1`'s then `TEXTURE2`'s, lump order.
+    #[must_use]
+    pub fn textures(&self) -> &[TextureDef] {
+        &self.textures
+    }
+
+    /// First texture with this exact, case-sensitive name (vanilla's
+    /// "earlier entries win"; retail names are uppercase — vanilla
+    /// uppercases its query, this method does not).
+    #[must_use]
+    pub fn find(&self, name: &str) -> Option<usize> {
+        self.textures.iter().position(|t| t.name == name)
+    }
+
+    /// Set-level non-fatal issues from lenient building (lump parses,
+    /// index validation, patch resolution). Per-compose issues are
+    /// returned by `TextureSet::compose` (Task 3) instead.
     #[must_use]
     pub fn warnings(&self) -> &[GfxWarning] {
         &self.warnings

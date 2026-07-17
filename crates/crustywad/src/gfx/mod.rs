@@ -13,7 +13,7 @@ mod texture;
 pub use flat::Flat;
 pub use palette::{Colormap, Palette, Playpal};
 pub use picture::{Column, IndexedImage, Picture, Post, RgbaImage};
-pub use texture::{Pnames, TextureDef, TexturePatchRef, TextureX};
+pub use texture::{Pnames, TextureDef, TexturePatchRef, TextureSet, TextureX};
 
 /// A fatal problem decoding a classic graphics lump in strict mode; every
 /// variant's lenient recovery is described on the matching [`GfxWarning`].
@@ -191,6 +191,38 @@ pub enum GfxError {
         texture: usize,
         /// The lump's actual length (the budget).
         len: usize,
+    },
+    /// `TEXTUREx` present but no `PNAMES` lump exists (lenient builds the
+    /// set with an empty name table).
+    #[error("TEXTUREx present but no PNAMES lump exists")]
+    MissingPnames,
+    /// A texture's patch reference indexes past the resolved `PNAMES` table
+    /// (lenient ignores the reference).
+    #[error("texture {texture} references PNAMES index {patch}, but only {pnames_len} names exist")]
+    PatchIndexOutOfBounds {
+        /// 0-based texture index (into [`TextureSet::textures`]).
+        texture: usize,
+        /// The raw on-disk `PNAMES` index.
+        patch: i16,
+        /// The number of names in the resolved `PNAMES` table.
+        pnames_len: usize,
+    },
+    /// A resolved patch name matches no lump in the WAD (lenient leaves the
+    /// slot unresolved).
+    #[error("patch {name:?} matches no lump")]
+    UnresolvedPatchName {
+        /// The patch name that failed to resolve.
+        name: String,
+    },
+    /// A resolved patch lump failed to parse as a [`Picture`] (lenient
+    /// leaves the slot unresolved).
+    #[error("patch {name:?} failed to parse as a picture: {source}")]
+    PatchPictureFailed {
+        /// The patch name whose lump failed to parse.
+        name: String,
+        /// The underlying picture-parse failure.
+        #[source]
+        source: Box<GfxError>,
     },
 }
 
@@ -386,5 +418,41 @@ pub enum GfxWarning {
         texture: usize,
         /// The lump's actual length (the budget).
         len: usize,
+    },
+    /// `TEXTUREx` present but no `PNAMES` lump exists; the set built with an
+    /// empty name table during lenient parsing.
+    #[error(
+        "TEXTUREx present but no PNAMES lump exists; the set built with an empty name table during lenient parsing"
+    )]
+    MissingPnames,
+    /// A texture's patch reference indexed past the resolved `PNAMES` table;
+    /// reference ignored during lenient parsing.
+    #[error(
+        "texture {texture} references PNAMES index {patch}, but only {pnames_len} names exist; reference ignored during lenient parsing"
+    )]
+    PatchIndexOutOfBounds {
+        /// 0-based texture index (into [`TextureSet::textures`]).
+        texture: usize,
+        /// The raw on-disk `PNAMES` index.
+        patch: i16,
+        /// The number of names in the resolved `PNAMES` table.
+        pnames_len: usize,
+    },
+    /// A resolved patch name matched no lump; patch left unresolved during
+    /// lenient parsing.
+    #[error("patch {name:?} matches no lump; patch left unresolved during lenient parsing")]
+    UnresolvedPatchName {
+        /// The patch name that failed to resolve.
+        name: String,
+    },
+    /// A resolved patch lump failed to parse as a picture; patch left
+    /// unresolved during lenient parsing. The picture's own warnings are
+    /// not bridged here — its failure is the event.
+    #[error(
+        "patch {name:?} failed to parse as a picture; patch left unresolved during lenient parsing"
+    )]
+    PatchPictureFailed {
+        /// The patch name whose lump failed to parse.
+        name: String,
     },
 }

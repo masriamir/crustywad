@@ -817,6 +817,34 @@ impl Wad {
             .transpose()
     }
 
+    /// Builds the WAD's [`gfx::TextureSet`] strictly from its `TEXTURE1`
+    /// and/or `TEXTURE2` lumps (plus `PNAMES` and the patch lumps they
+    /// reference), or `Ok(None)` when neither `TEXTUREx` lump is present.
+    ///
+    /// # Errors
+    ///
+    /// Strict mode: [`gfx::GfxError::MissingPnames`],
+    /// [`gfx::GfxError::PatchIndexOutOfBounds`],
+    /// [`gfx::GfxError::UnresolvedPatchName`],
+    /// [`gfx::GfxError::PatchPictureFailed`], or any [`gfx::GfxError`] from
+    /// parsing `TEXTUREx`/`PNAMES`/a patch picture. Lenient recovers each
+    /// and never fails.
+    pub fn texture_set(&self) -> Result<Option<gfx::TextureSet>, gfx::GfxError> {
+        self.texture_set_with_options(ParseOptions::strict())
+    }
+
+    /// [`Wad::texture_set`] honoring the given strictness.
+    ///
+    /// # Errors
+    ///
+    /// Strict mode only: the rows listed on [`Wad::texture_set`].
+    pub fn texture_set_with_options(
+        &self,
+        options: ParseOptions,
+    ) -> Result<Option<gfx::TextureSet>, gfx::GfxError> {
+        gfx::TextureSet::from_wad(self, &options)
+    }
+
     /// Returns the raw bytes for the lump at the given zero-based index, or
     /// `None` if the index is out of range.
     ///
