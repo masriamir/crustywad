@@ -1,4 +1,7 @@
-//! Classic graphics decode (#156, ADR-0022 §3): PLAYPAL, COLORMAP, flats.
+//! Classic graphics decode (#156, ADR-0022 §3): the picture format,
+//! flats, PLAYPAL, and COLORMAP — parser policy rows in both strictness
+//! modes, indexed/RGBA view conversions, the `Wad` singleton accessors,
+//! and the sweep-gated retail decode gate.
 
 mod common;
 

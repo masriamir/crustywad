@@ -18,12 +18,20 @@ fuzz_target!(|data: &[u8]| {
                 .map(|p| 4 + p.pixels.len())
                 .sum();
             assert!(consumed <= data.len(), "post budget exceeded the lump");
-            let img = pic.to_indexed();
+            // Bound the view-conversion exercise: a tiny lump can declare a
+            // huge height, and the w×h grid is the DOCUMENTED render
+            // allocation, not a parse-time bound — materializing hundreds
+            // of megabytes per iteration adds no oracle signal (the loops
+            // are identical at any size). 1M pixels keeps every realistic
+            // shape covered.
             let area = usize::from(pic.width) * usize::from(pic.height);
-            assert_eq!(img.pixels.len(), area);
-            assert_eq!(img.mask.len(), area);
-            let palette = crustywad::gfx::Palette([[0; 3]; 256]);
-            assert_eq!(pic.to_rgba(&palette).pixels.len(), area * 4);
+            if area <= 1_048_576 {
+                let img = pic.to_indexed();
+                assert_eq!(img.pixels.len(), area);
+                assert_eq!(img.mask.len(), area);
+                let palette = crustywad::gfx::Palette([[0; 3]; 256]);
+                assert_eq!(pic.to_rgba(&palette).pixels.len(), area * 4);
+            }
         }
         if let Ok(pal) = Playpal::parse(data, &options) {
             assert_eq!(pal.palettes().len(), data.len() / 768);
