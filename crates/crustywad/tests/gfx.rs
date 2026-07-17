@@ -3,7 +3,8 @@
 mod common;
 
 use crustywad::ParseOptions;
-use crustywad::gfx::{Colormap, Flat, GfxError, GfxWarning, Picture, Playpal, Post};
+use crustywad::Wad;
+use crustywad::gfx::{Colormap, Flat, GfxError, GfxWarning, Palette, Picture, Playpal, Post};
 
 #[test]
 fn playpal_parses_multiple_palettes_and_indexes_rgb() {
@@ -334,4 +335,106 @@ fn picture_aliased_offsets_hit_the_consumed_bytes_budget() {
             .iter()
             .any(|w| matches!(w, GfxWarning::ExcessivePostData { .. }))
     );
+}
+
+fn gray_palette() -> Palette {
+    let mut entries = [[0u8; 3]; 256];
+    for (i, entry) in entries.iter_mut().enumerate() {
+        let v = u8::try_from(i).unwrap();
+        *entry = [v, v, v];
+    }
+    Palette(entries)
+}
+
+#[test]
+fn picture_golden_indexed_and_rgba() {
+    // The Task 2 fixture: 2×8, col 0 post@1 [5,6]; col 1 posts @0 [7], @3 [8].
+    let bytes = build_picture(
+        2,
+        8,
+        &[vec![(1, vec![5, 6])], vec![(0, vec![7]), (3, vec![8])]],
+    );
+    let pic = Picture::parse(&bytes, &ParseOptions::strict()).unwrap();
+    let img = pic.to_indexed();
+    assert_eq!((img.width, img.height), (2, 8));
+    assert_eq!(img.pixels.len(), 16);
+    assert_eq!(img.mask.len(), 16);
+    // Row-major index = y * width + x.
+    let expect_covered = [(1usize, 0usize, 5u8), (2, 0, 6), (0, 1, 7), (3, 1, 8)];
+    for (y, x, v) in expect_covered {
+        assert_eq!(img.pixels[y * 2 + x], v, "pixel at ({x},{y})");
+        assert!(img.mask[y * 2 + x], "mask at ({x},{y})");
+    }
+    assert_eq!(img.mask.iter().filter(|m| **m).count(), 4);
+
+    let rgba = img.to_rgba(&gray_palette());
+    assert_eq!(rgba.pixels.len(), 64);
+    // Covered pixel (0,1): index 5 → gray 5, alpha 255.
+    assert_eq!(&rgba.pixels[8..12], &[5, 5, 5, 255]);
+    // Uncovered pixel (0,0): alpha 0.
+    assert_eq!(rgba.pixels[3], 0);
+    // Picture::to_rgba is the same composition.
+    assert_eq!(pic.to_rgba(&gray_palette()).pixels, rgba.pixels);
+}
+
+#[test]
+fn overlapping_posts_later_wins() {
+    // Two posts covering row 0: chain order draws the later one over.
+    let bytes = build_picture(1, 2, &[vec![(0, vec![1]), (0, vec![2])]]);
+    let pic = Picture::parse(&bytes, &ParseOptions::strict()).unwrap();
+    assert_eq!(pic.to_indexed().pixels[0], 2);
+}
+
+#[test]
+fn flat_views_pad_short_lenient_flats() {
+    let flat = Flat::parse(&vec![9u8; 4096], &ParseOptions::strict()).unwrap();
+    let img = flat.to_indexed();
+    assert_eq!((img.width, img.height), (64, 64));
+    assert!(img.mask.iter().all(|m| *m));
+    assert_eq!(flat.to_rgba(&gray_palette()).pixels.len(), 64 * 64 * 4);
+
+    let short = Flat::parse(&[9u8; 100], &ParseOptions::lenient()).unwrap();
+    let img = short.to_indexed();
+    assert_eq!(img.pixels.len(), 4096); // zero-padded at conversion
+    assert_eq!(img.pixels[99], 9);
+    assert_eq!(img.pixels[100], 0);
+}
+
+#[test]
+fn wad_playpal_and_colormap_singletons() {
+    let playpal_bytes = vec![0u8; 768];
+    let colormap_bytes = vec![0u8; 8192];
+    let wad = Wad::from_bytes(common::build_wad(
+        *b"IWAD",
+        &[("PLAYPAL", &playpal_bytes), ("COLORMAP", &colormap_bytes)],
+    ))
+    .unwrap();
+    assert_eq!(wad.playpal().unwrap().unwrap().palettes().len(), 1);
+    assert!(wad.colormap().unwrap().is_some());
+
+    let bare = Wad::from_bytes(common::build_wad(*b"PWAD", &[("THINGS", &[])])).unwrap();
+    assert!(bare.playpal().unwrap().is_none());
+    assert!(bare.colormap().unwrap().is_none());
+
+    // Strict surfaces parse errors; lenient recovers.
+    let bad = Wad::from_bytes(common::build_wad(*b"IWAD", &[("PLAYPAL", &[0u8; 5])])).unwrap();
+    assert!(bad.playpal().is_err());
+    assert!(
+        bad.playpal_with_options(ParseOptions::lenient())
+            .unwrap()
+            .unwrap()
+            .palettes()
+            .is_empty()
+    );
+
+    // Duplicate lumps: the crate's documented FIRST-match contract wins
+    // (vanilla's backward scan would take the last — noted divergence).
+    let one = vec![0u8; 768];
+    let two = vec![0u8; 1536];
+    let dup = Wad::from_bytes(common::build_wad(
+        *b"IWAD",
+        &[("PLAYPAL", &one), ("PLAYPAL", &two)],
+    ))
+    .unwrap();
+    assert_eq!(dup.playpal().unwrap().unwrap().palettes().len(), 1);
 }

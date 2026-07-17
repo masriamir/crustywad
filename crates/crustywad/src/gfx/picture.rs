@@ -9,7 +9,7 @@
 
 use crate::{ParseOptions, Strictness};
 
-use super::{GfxError, GfxWarning};
+use super::{GfxError, GfxWarning, Palette};
 
 /// A parsed picture: faithful post structure plus draw offsets. Views over
 /// the structure (indexed grid, RGBA8) are separate methods so texture
@@ -293,5 +293,90 @@ fn column_offset_issue(
             });
             Ok(())
         }
+    }
+}
+
+/// A decoded row-major indexed image with a coverage mask — the tier-2
+/// output contract (ADR-0022 §3), shared by pictures, flats, and (in #157)
+/// composed textures. `pixels[y * width + x]` is a palette index; it is
+/// meaningful only where `mask` is `true` (0 elsewhere).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedImage {
+    /// Width in pixels.
+    pub width: u16,
+    /// Height in pixels.
+    pub height: u16,
+    /// Row-major palette indices; `len == width * height`.
+    pub pixels: Vec<u8>,
+    /// Row-major coverage; `false` marks a transparent/uncovered pixel.
+    pub mask: Vec<bool>,
+}
+
+/// A row-major RGBA8 image; `pixels.len() == 4 * width * height`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RgbaImage {
+    /// Width in pixels.
+    pub width: u16,
+    /// Height in pixels.
+    pub height: u16,
+    /// RGBA8 bytes, row-major. Alpha is 255 where covered, 0 elsewhere.
+    pub pixels: Vec<u8>,
+}
+
+impl IndexedImage {
+    /// Applies a palette: covered pixels become opaque RGB, uncovered
+    /// pixels transparent black (tier 3, ADR-0022 §3).
+    #[must_use]
+    pub fn to_rgba(&self, palette: &Palette) -> RgbaImage {
+        let mut pixels = Vec::with_capacity(self.pixels.len() * 4);
+        for (index, covered) in self.pixels.iter().zip(&self.mask) {
+            if *covered {
+                let [r, g, b] = palette.rgb(*index);
+                pixels.extend_from_slice(&[r, g, b, 255]);
+            } else {
+                pixels.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+        RgbaImage {
+            width: self.width,
+            height: self.height,
+            pixels,
+        }
+    }
+}
+
+impl Picture {
+    /// Decodes the post structure into a row-major indexed grid with a
+    /// coverage mask. Posts draw in chain order, so a later overlapping
+    /// post overwrites an earlier one (vanilla's draw order). Allocates
+    /// `width × height` bytes (+ mask).
+    #[must_use]
+    pub fn to_indexed(&self) -> IndexedImage {
+        let w = usize::from(self.width);
+        let h = usize::from(self.height);
+        let mut pixels = vec![0u8; w * h];
+        let mut mask = vec![false; w * h];
+        for (x, column) in self.columns.iter().enumerate() {
+            for post in &column.posts {
+                for (i, &px) in post.pixels.iter().enumerate() {
+                    // Parse guarantees top_delta + pixels fit the height.
+                    let y = usize::from(post.top_delta) + i;
+                    pixels[y * w + x] = px;
+                    mask[y * w + x] = true;
+                }
+            }
+        }
+        IndexedImage {
+            width: self.width,
+            height: self.height,
+            pixels,
+            mask,
+        }
+    }
+
+    /// [`Picture::to_indexed`] plus palette application (tier 3).
+    #[must_use]
+    pub fn to_rgba(&self, palette: &Palette) -> RgbaImage {
+        self.to_indexed().to_rgba(palette)
     }
 }

@@ -3,7 +3,7 @@
 
 use crate::{ParseOptions, Strictness};
 
-use super::{GfxError, GfxWarning};
+use super::{GfxError, GfxWarning, IndexedImage, Palette, RgbaImage};
 
 /// A flat: 4096 raw palette indices (64×64, row-major).
 #[derive(Debug, Clone)]
@@ -54,5 +54,26 @@ impl Flat {
     #[must_use]
     pub fn warnings(&self) -> &[GfxWarning] {
         &self.warnings
+    }
+
+    /// The 64×64 fully-covered indexed view. A lenient wrong-size flat is
+    /// normalized here: short lumps zero-pad to 4096 (the virtual-pad
+    /// precedent), long lumps truncate.
+    #[must_use]
+    pub fn to_indexed(&self) -> IndexedImage {
+        let mut pixels = self.pixels.clone();
+        pixels.resize(4096, 0);
+        IndexedImage {
+            width: Self::WIDTH,
+            height: Self::HEIGHT,
+            pixels,
+            mask: vec![true; 4096],
+        }
+    }
+
+    /// [`Flat::to_indexed`] plus palette application (tier 3).
+    #[must_use]
+    pub fn to_rgba(&self, palette: &Palette) -> RgbaImage {
+        self.to_indexed().to_rgba(palette)
     }
 }
