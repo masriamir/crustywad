@@ -797,10 +797,25 @@ fn retail_texture_sets_compose_strict_clean() {
         }
     }
     assert!(sets > 0, "sweep composed no IWAD texture sets");
-    assert_eq!(
-        gate_contract_iwads, 1,
-        "expected exactly one gate-contract IWAD (Strife) in the collection"
+    // The per-anomaly identity pin above is unconditional. The
+    // COLLECTION-level "exactly one such IWAD" pin only holds for the
+    // project's curated retail collection, so it is opt-in (the #269
+    // extended-sweep precedent) — arbitrary CRUSTYWAD_SWEEP_DIR contents
+    // (a contributor's own WADs, no Strife) still sweep cleanly.
+    assert!(
+        gate_contract_iwads <= 1,
+        "more than one gate-contract IWAD: the anomaly spread beyond Strife"
     );
+    if std::env::var_os("CRUSTYWAD_SWEEP_EXPECT_GATE_CONTRACTS").is_some() {
+        assert_eq!(
+            gate_contract_iwads, 1,
+            "expected exactly one gate-contract IWAD (Strife) in the curated collection"
+        );
+    } else if gate_contract_iwads == 0 {
+        eprintln!(
+            "note: no gate-contract IWAD encountered (Strife absent, or fixed upstream); set CRUSTYWAD_SWEEP_EXPECT_GATE_CONTRACTS=1 to require it"
+        );
+    }
     eprintln!(
         "texture sweep: {sets} strict set(s), {composed} texture(s) composed strict-clean, {lenient_pwads} PWAD(s) lenient, {no_textures} WAD(s) without TEXTUREx, {gate_contract_iwads} gate-contract IWAD(s)"
     );
@@ -1107,6 +1122,13 @@ fn texture_set_missing_pnames_strict_errors_lenient_warns() {
         set.warnings()
             .iter()
             .any(|w| matches!(w, GfxWarning::MissingPnames))
+    );
+    // MissingPnames explains every reference — the per-ref bounds warnings
+    // are suppressed when the lump is absent entirely (no low-signal blast).
+    assert!(
+        !set.warnings()
+            .iter()
+            .any(|w| matches!(w, GfxWarning::PatchIndexOutOfBounds { .. }))
     );
 }
 

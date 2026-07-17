@@ -387,6 +387,9 @@ pub struct TextureSet {
 }
 
 impl TextureSet {
+    // Long like the crate's other policy orchestrators (`TextureX::parse`,
+    // `Picture::parse`): one strict/lenient fork per build stage.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn from_wad(
         wad: &crate::Wad,
         options: &crate::ParseOptions,
@@ -408,6 +411,7 @@ impl TextureSet {
             return Ok(None);
         }
 
+        let mut pnames_present = true;
         let pnames = match wad.lump_by_name("PNAMES") {
             Some(lump) => {
                 let parsed = Pnames::parse(wad.lump_data(lump), options)?;
@@ -418,12 +422,17 @@ impl TextureSet {
                 crate::Strictness::Strict => return Err(GfxError::MissingPnames),
                 crate::Strictness::Lenient => {
                     warnings.push(GfxWarning::MissingPnames);
+                    pnames_present = false;
                     Vec::new()
                 }
             },
         };
 
         // Validate every ref's index once, at build (set-level warnings).
+        // When PNAMES is absent entirely, `MissingPnames` above already
+        // explains every reference — per-ref bounds warnings would be a
+        // low-signal blast (hundreds for a real TEXTUREx), so they are
+        // suppressed; a PRESENT but short/empty PNAMES still warns per ref.
         for (t, def) in textures.iter().enumerate() {
             for patch_ref in &def.patches {
                 if patch_ref.patch < 0 || usize::try_from(patch_ref.patch).unwrap() >= pnames.len()
@@ -437,11 +446,13 @@ impl TextureSet {
                             });
                         }
                         crate::Strictness::Lenient => {
-                            warnings.push(GfxWarning::PatchIndexOutOfBounds {
-                                texture: t,
-                                patch: patch_ref.patch,
-                                pnames_len: pnames.len(),
-                            });
+                            if pnames_present {
+                                warnings.push(GfxWarning::PatchIndexOutOfBounds {
+                                    texture: t,
+                                    patch: patch_ref.patch,
+                                    pnames_len: pnames.len(),
+                                });
+                            }
                         }
                     }
                 }
