@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-22f8fe4f.js";
+            window.path_to_searchindex_js = "searchindex-ac5817bc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fd61d5e0.js"></script>
@@ -336,6 +336,37 @@ if let Some(group) = wad.map_group("E1M1") {
     println!("E1M1 has {} data lumps", group.data_indices.len());
 }
 <span class="boring">}</span></code></pre>
+<h3 id="directory-sections"><a class="header" href="#directory-sections">Directory sections</a></h3>
+<p>Besides map groups, a WAD’s lump directory brackets other kinds of content between
+marker lumps (typically zero-size; recognized by name): <code>F_START</code>/<code>F_END</code> for flats,
+<code>S_START</code>/<code>S_END</code> for sprites,
+<code>P_START</code>/<code>P_END</code> for patches, and Doom 64’s <code>T_START</code>/<code>T_END</code> (world textures) and
+<code>DS_START</code>/<code>DS_END</code> (digital sounds), each with nested numbered sub-namespaces
+(<code>F1_</code>/<code>F2_</code>/<code>P1_</code>/<code>P2_</code>/…) and Boom’s doubled-letter aliases (<code>FF_</code>, <code>PP_</code>, <code>SS_</code>).
+<code>Wad::sections</code> / <code>Wad::sections_with_options</code> scan a <strong>single</strong> WAD’s directory and
+return a <code>SectionTable</code> of <code>Section</code>s, each carrying its <code>SectionKind</code>, the directory
+range of its marker pair, its content lumps, and any nested sub-sections:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{SectionKind, Wad};
+
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>let table = wad.sections()?;
+for flats in table.of_kind(SectionKind::Flats) {
+    println!("flats section spans lumps {:?}", flats.lumps);
+}
+<span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p>Both reference engines locate a section’s extent by unguarded subtraction of two
+independently looked-up marker positions, with no check for a missing, inverted, or
+duplicated marker (ADR-0022 §2) — this API replaces that anti-pattern with a validated
+scan: <code>Wad::sections</code> (strict) returns the first <code>SectionError</code> on a malformed marker
+layout (an unpaired start/end, a duplicate or nested pair, cross-kind interleaving, or
+an orphaned sub-namespace), while <code>Wad::sections_with_options</code> under
+<code>ParseOptions::lenient()</code> never errors — it recovers a best-effort <code>SectionTable</code> and
+records each anomaly as a <code>SectionWarning</code> instead. As with map groups, section
+scanning is scoped to one WAD’s directory; multi-WAD load-order overlay is out of
+scope here (tracked on the editor epic’s future lump/resource manager, #65).</p>
 <h3 id="assembling-a-map"><a class="header" href="#assembling-a-map">Assembling a <code>Map</code></a></h3>
 <p><code>Map::assemble</code> builds a graph from a <code>MapGroup</code>’s <code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>,
 <code>VERTEXES</code>, and <code>SECTORS</code> lumps, decoding the flat records and validating every
