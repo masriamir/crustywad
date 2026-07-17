@@ -61,6 +61,7 @@ values alongside the serialized bytes.
 //! scaffolding for the classic map record lumps.
 
 mod error;
+pub mod gfx;
 pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
