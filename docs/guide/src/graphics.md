@@ -143,7 +143,7 @@ table above for those rows) and `PNAMES`, then resolves and validates every patc
 | Condition | Strict | Lenient |
 |---|---|---|
 | `TEXTUREx` present but no `PNAMES` lump exists | `GfxError::MissingPnames` | Set built with an empty name table; `GfxWarning::MissingPnames` |
-| A patch reference indexes past the resolved `PNAMES` table (including a negative index) | `GfxError::PatchIndexOutOfBounds` | Reference ignored; `GfxWarning::PatchIndexOutOfBounds` |
+| A patch reference indexes past the resolved `PNAMES` table (including a negative index) | `GfxError::PatchIndexOutOfBounds` | Reference ignored; `GfxWarning::PatchIndexOutOfBounds` — suppressed when the `PNAMES` lump is absent entirely (`MissingPnames` already explains every reference) |
 | A resolved patch name matches no lump in the WAD | `GfxError::UnresolvedPatchName` | Patch left unresolved; `GfxWarning::UnresolvedPatchName` |
 | A resolved patch lump fails to parse as a `Picture` | `GfxError::PatchPictureFailed` | Patch left unresolved; `GfxWarning::PatchPictureFailed` |
 

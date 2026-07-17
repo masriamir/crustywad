@@ -827,8 +827,9 @@ impl Wad {
     /// [`gfx::GfxError::PatchIndexOutOfBounds`],
     /// [`gfx::GfxError::UnresolvedPatchName`],
     /// [`gfx::GfxError::PatchPictureFailed`], or any [`gfx::GfxError`] from
-    /// parsing `TEXTUREx`/`PNAMES`/a patch picture. Lenient recovers each
-    /// and never fails.
+    /// parsing `TEXTUREx`/`PNAMES`/a patch picture. For best-effort
+    /// recovery of each case (with warnings on the returned set), use
+    /// [`Wad::texture_set_with_options`] with [`ParseOptions::lenient`].
     pub fn texture_set(&self) -> Result<Option<gfx::TextureSet>, gfx::GfxError> {
         self.texture_set_with_options(ParseOptions::strict())
     }

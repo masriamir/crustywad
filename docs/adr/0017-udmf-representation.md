@@ -672,3 +672,10 @@ here with one-line rationale each:
   regardless of namespace" choice in §4. Note that #55 (Hexen) does **not**
   trigger a revisit of the `Special`/`args[5]` shape: per decision 1 above,
   #55 must conform to the shape this ADR fixes, not the other way around.
+
+## Amendment (2026-07-17, #157): `Limits` construction changed
+
+The `Limits { max_depth }` shorthand above no longer compiles: `Limits` is
+now `#[non_exhaustive]` and also carries `max_composite_pixels` (#157's
+texture-composition cap). Construct via `Limits::new().with_max_depth(..)`.
+The depth-bounding decision this ADR records is unchanged.

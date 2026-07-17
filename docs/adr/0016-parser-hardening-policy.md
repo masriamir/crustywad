@@ -240,3 +240,12 @@ guidance in `.claude/CLAUDE.md`.
   provide beyond nesting depth (e.g. a compression format with a decompression
   ratio limit), extend `Limits` with that specific field rather than adding a
   global budget.
+
+## Amendment (2026-07-17, #157): `Limits` grew and is now `#[non_exhaustive]`
+
+The `Limits` sketch above predates #157: the struct now also carries
+`max_composite_pixels` (the texture-composition allocation cap, enforced in
+both strictness modes) and is `#[non_exhaustive]`, so struct-literal
+construction no longer compiles — construct via `Limits::new()` and the
+`with_max_depth`/`with_max_composite_pixels` setters. Future limits land
+without further breaking changes.
