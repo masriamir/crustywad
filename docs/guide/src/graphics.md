@@ -39,7 +39,8 @@ need a format-specific gate (ADR-0022 §3).
 Every lump type follows the crate-wide strict/lenient contract
 (`ParseOptions::strict()`/`ParseOptions::lenient()`): strict mode returns the first
 `GfxError` encountered; lenient mode recovers with a best-effort value and records the
-matching `GfxWarning`.
+matching `GfxWarning` — with one exception: a picture lump under 8 bytes has no
+header to recover from and errors in both modes.
 
 | Condition | Strict | Lenient |
 |---|---|---|
