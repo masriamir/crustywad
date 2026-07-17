@@ -36,8 +36,8 @@ pub use common::{Name8, Node, Sector, Seg, Sidedef, Subsector, Vertex};
 #[cfg(feature = "write")]
 pub use doom::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, write_doom_map};
 pub use doom64::{
-    Doom64Map, Doom64ReadError, Doom64Warning, is_doom64_map_lump, is_doom64_map_name,
-    read_doom64_map,
+    Doom64Map, Doom64ReadError, Doom64TextureNames, Doom64Warning, is_doom64_map_lump,
+    is_doom64_map_name, read_doom64_map, texture_name_hash,
 };
 pub use graph::{
     LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,

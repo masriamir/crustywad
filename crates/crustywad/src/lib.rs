@@ -704,6 +704,38 @@ impl Wad {
         crate::sections::scan(self, options.strictness)
     }
 
+    /// Builds the Doom 64 texture-name resolution table strictly (the
+    /// [`Wad::sections`] idiom). `Ok(None)` when the WAD has no `Textures`
+    /// section — not an error (a bare nested-map WAD is legitimate).
+    ///
+    /// # Errors
+    ///
+    /// The first marker anomaly from the underlying strict section scan,
+    /// per [`SectionError`].
+    pub fn doom64_texture_names(
+        &self,
+    ) -> Result<Option<crate::map::Doom64TextureNames>, crate::sections::SectionError> {
+        self.doom64_texture_names_with_options(ParseOptions::strict())
+    }
+
+    /// [`Wad::doom64_texture_names`] honoring the given strictness. Lenient
+    /// scan warnings are discarded here — callers wanting them scan via
+    /// [`Wad::sections_with_options`] themselves (map assembly does, to
+    /// bridge them into its warning stream).
+    ///
+    /// # Errors
+    ///
+    /// Strict mode only: the first marker anomaly, per [`SectionError`].
+    pub fn doom64_texture_names_with_options(
+        &self,
+        options: ParseOptions,
+    ) -> Result<Option<crate::map::Doom64TextureNames>, crate::sections::SectionError> {
+        let sections = self.sections_with_options(options)?;
+        Ok(crate::map::Doom64TextureNames::from_sections(
+            self, &sections,
+        ))
+    }
+
     /// Returns the raw bytes for the lump at the given zero-based index, or
     /// `None` if the index is out of range.
     ///
