@@ -5,9 +5,13 @@
 
 mod common;
 
+use crustywad::Limits;
 use crustywad::ParseOptions;
 use crustywad::Wad;
-use crustywad::gfx::{Colormap, Flat, GfxError, GfxWarning, Palette, Picture, Playpal, Post};
+use crustywad::gfx::{
+    Colormap, Flat, GfxError, GfxWarning, Palette, Picture, Playpal, Pnames, Post, TexturePatchRef,
+    TextureX,
+};
 
 #[test]
 fn playpal_parses_multiple_palettes_and_indexes_rgb() {
@@ -661,5 +665,259 @@ fn retail_classic_graphics_decode_strict_clean() {
     eprintln!(
         "gfx sweep: {wads} WAD(s), {pictures} picture(s), {flats} flat(s), \
          {skipped_skies} sky flat(s) skipped, all strict-clean"
+    );
+}
+
+/// Builds a PNAMES lump from names (8-byte NUL-padded each).
+fn build_pnames(names: &[&str]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&i32::try_from(names.len()).unwrap().to_le_bytes());
+    for name in names {
+        let mut field = [0u8; 8];
+        field[..name.len()].copy_from_slice(name.as_bytes());
+        out.extend_from_slice(&field);
+    }
+    out
+}
+
+/// One texture def as (name, width, height, patches: &[(ox, oy, `patch_idx`)]).
+type DefSpec<'a> = (&'a str, i16, i16, &'a [(i16, i16, i16)]);
+
+/// Builds a `TEXTUREx` lump; offsets computed to partition the lump.
+fn build_texturex(defs: &[DefSpec<'_>]) -> Vec<u8> {
+    let mut bodies: Vec<Vec<u8>> = Vec::new();
+    for (name, w, h, patches) in defs {
+        let mut b = Vec::new();
+        let mut field = [0u8; 8];
+        field[..name.len()].copy_from_slice(name.as_bytes());
+        b.extend_from_slice(&field);
+        b.extend_from_slice(&0i32.to_le_bytes()); // masked (dead)
+        b.extend_from_slice(&w.to_le_bytes());
+        b.extend_from_slice(&h.to_le_bytes());
+        b.extend_from_slice(&0i32.to_le_bytes()); // columndirectory (dead)
+        b.extend_from_slice(&i16::try_from(patches.len()).unwrap().to_le_bytes());
+        for (ox, oy, idx) in *patches {
+            b.extend_from_slice(&ox.to_le_bytes());
+            b.extend_from_slice(&oy.to_le_bytes());
+            b.extend_from_slice(&idx.to_le_bytes());
+            b.extend_from_slice(&0i16.to_le_bytes()); // stepdir (dead)
+            b.extend_from_slice(&0i16.to_le_bytes()); // colormap (dead)
+        }
+        bodies.push(b);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&i32::try_from(defs.len()).unwrap().to_le_bytes());
+    let mut offset = 4 + 4 * defs.len();
+    for body in &bodies {
+        out.extend_from_slice(&i32::try_from(offset).unwrap().to_le_bytes());
+        offset += body.len();
+    }
+    for body in &bodies {
+        out.extend_from_slice(body);
+    }
+    out
+}
+
+#[test]
+fn limits_gains_composite_cap_with_const_setters() {
+    let limits = Limits::new();
+    assert_eq!(limits.max_depth, 64);
+    assert_eq!(limits.max_composite_pixels, 1 << 24);
+    let tuned = Limits::new()
+        .with_max_depth(8)
+        .with_max_composite_pixels(1024);
+    assert_eq!((tuned.max_depth, tuned.max_composite_pixels), (8, 1024));
+}
+
+#[test]
+fn pnames_parses_and_trims() {
+    let bytes = build_pnames(&["WALL00", "DOOR2"]);
+    let pnames = Pnames::parse(&bytes, &ParseOptions::strict()).unwrap();
+    assert_eq!(pnames.names(), ["WALL00".to_owned(), "DOOR2".to_owned()]);
+    assert!(pnames.warnings().is_empty());
+}
+
+#[test]
+fn pnames_policy_rows() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    // len < 4
+    assert!(matches!(
+        Pnames::parse(&[1, 0], &ParseOptions::strict()).unwrap_err(),
+        GfxError::TruncatedPnames { len: 2 }
+    ));
+    let p = Pnames::parse(&[1, 0], &ParseOptions::lenient()).unwrap();
+    assert!(p.names().is_empty());
+    assert!(matches!(
+        p.warnings(),
+        [GfxWarning::TruncatedPnames { len: 2 }]
+    ));
+    // negative count
+    let neg = (-5i32).to_le_bytes().to_vec();
+    assert!(matches!(
+        Pnames::parse(&neg, &ParseOptions::strict()).unwrap_err(),
+        GfxError::NegativePnamesCount { count: -5 }
+    ));
+    assert!(
+        Pnames::parse(&neg, &ParseOptions::lenient())
+            .unwrap()
+            .names()
+            .is_empty()
+    );
+    // count exceeds lump: claims 3 names, carries 1
+    let mut short = build_pnames(&["ONLY1"]);
+    short[0] = 3;
+    assert!(matches!(
+        Pnames::parse(&short, &ParseOptions::strict()).unwrap_err(),
+        GfxError::PnamesCountExceedsLump { count: 3, .. }
+    ));
+    let p = Pnames::parse(&short, &ParseOptions::lenient()).unwrap();
+    assert_eq!(p.names(), ["ONLY1".to_owned()]);
+    assert!(matches!(
+        p.warnings(),
+        [GfxWarning::PnamesCountExceedsLump { count: 3, .. }]
+    ));
+}
+
+#[test]
+fn texturex_parses_defs_faithfully_including_dead_fields() {
+    let bytes = build_texturex(&[
+        ("TEX0", 64, 128, &[(0, 0, 0), (32, -4, 1)]),
+        ("TEX1", 8, 8, &[]),
+    ]);
+    let tx = TextureX::parse(&bytes, &ParseOptions::strict()).unwrap();
+    assert!(tx.warnings().is_empty());
+    assert_eq!(tx.textures().len(), 2);
+    let t0 = &tx.textures()[0];
+    assert_eq!((t0.name.as_str(), t0.width, t0.height), ("TEX0", 64, 128));
+    assert_eq!((t0.masked, t0.column_directory), (0, 0)); // dead, preserved
+    assert_eq!(
+        t0.patches[1],
+        TexturePatchRef {
+            origin_x: 32,
+            origin_y: -4,
+            patch: 1,
+            step_dir: 0,
+            colormap: 0
+        }
+    );
+    assert!(tx.textures()[1].patches.is_empty());
+}
+
+#[test]
+fn texturex_header_policy_rows() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    // len < 4
+    assert!(matches!(
+        TextureX::parse(&[9, 9], &ParseOptions::strict()).unwrap_err(),
+        GfxError::TruncatedTextureX { len: 2, needed: 4 }
+    ));
+    assert!(
+        TextureX::parse(&[9, 9], &ParseOptions::lenient())
+            .unwrap()
+            .textures()
+            .is_empty()
+    );
+    // Negative count
+    let neg = (-2i32).to_le_bytes().to_vec();
+    assert!(matches!(
+        TextureX::parse(&neg, &ParseOptions::strict()).unwrap_err(),
+        GfxError::NegativeTextureCount { count: -2 }
+    ));
+    assert!(
+        TextureX::parse(&neg, &ParseOptions::lenient())
+            .unwrap()
+            .textures()
+            .is_empty()
+    );
+    // Offset table truncated: claims 10 textures (needed = 4 + 40 = 44)
+    // on a 30-byte one-texture lump.
+    let mut short = build_texturex(&[("TEX0", 8, 8, &[])]);
+    short[0] = 10;
+    assert!(matches!(
+        TextureX::parse(&short, &ParseOptions::strict()).unwrap_err(),
+        GfxError::TruncatedTextureX { needed: 44, .. }
+    ));
+    let tx = TextureX::parse(&short, &ParseOptions::lenient()).unwrap();
+    assert!(matches!(
+        tx.warnings()[0],
+        GfxWarning::TruncatedTextureX { .. }
+    ));
+}
+
+#[test]
+fn texturex_policy_rows() {
+    use crustywad::gfx::{GfxError, GfxWarning};
+    // Offset past the lump
+    let mut bytes = build_texturex(&[("TEX0", 8, 8, &[])]);
+    let len = bytes.len();
+    bytes[4..8].copy_from_slice(&i32::try_from(len + 40).unwrap().to_le_bytes());
+    assert!(matches!(
+        TextureX::parse(&bytes, &ParseOptions::strict()).unwrap_err(),
+        GfxError::TextureOffsetOutOfBounds { texture: 0, .. }
+    ));
+    let tx = TextureX::parse(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(tx.textures().is_empty()); // skipped
+    assert!(matches!(
+        tx.warnings(),
+        [GfxWarning::TextureOffsetOutOfBounds { texture: 0, .. }]
+    ));
+
+    // Full extent past the lump: header fits, patch refs cut off.
+    let mut bytes = build_texturex(&[("TEX0", 8, 8, &[(0, 0, 0), (1, 1, 1)])]);
+    bytes.truncate(bytes.len() - 10); // drop the second 10-byte ref
+    assert!(matches!(
+        TextureX::parse(&bytes, &ParseOptions::strict()).unwrap_err(),
+        GfxError::TextureExtentOutOfBounds { texture: 0, .. }
+    ));
+    let tx = TextureX::parse(&bytes, &ParseOptions::lenient()).unwrap();
+    assert_eq!(tx.textures()[0].patches.len(), 1); // clamped to in-bounds refs
+    assert!(matches!(
+        tx.warnings(),
+        [GfxWarning::TextureExtentOutOfBounds { texture: 0, .. }]
+    ));
+
+    // Negative patch count
+    let mut bytes = build_texturex(&[("TEX0", 8, 8, &[])]);
+    let pc_at = bytes.len() - 2; // patchcount is the def's last field
+    bytes[pc_at..].copy_from_slice(&(-1i16).to_le_bytes());
+    assert!(matches!(
+        TextureX::parse(&bytes, &ParseOptions::strict()).unwrap_err(),
+        GfxError::NegativePatchCount {
+            texture: 0,
+            count: -1
+        }
+    ));
+    let tx = TextureX::parse(&bytes, &ParseOptions::lenient()).unwrap();
+    assert!(tx.textures()[0].patches.is_empty());
+
+    // Aliased offsets exhaust the cumulative budget.
+    let one = build_texturex(&[("TEX0", 8, 8, &[(0, 0, 0)])]);
+    let body_at = 4 + 4; // count + one offset
+    let body = &one[body_at..]; // 32 bytes: header 22 + one ref 10
+    let count = 40i32;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&count.to_le_bytes());
+    let chain_at = 4 + 4 * usize::try_from(count).unwrap();
+    for _ in 0..count {
+        bytes.extend_from_slice(&i32::try_from(chain_at).unwrap().to_le_bytes());
+    }
+    bytes.extend_from_slice(body);
+    // Each aliased texture consumes 22 + 10 = 32 budget bytes; 40 × 32 = 1280
+    // > lump len (4 + 160 + 32 = 196): strict trips, lenient stops + warns.
+    assert!(matches!(
+        TextureX::parse(&bytes, &ParseOptions::strict()).unwrap_err(),
+        GfxError::ExcessiveTextureData { .. }
+    ));
+    let tx = TextureX::parse(&bytes, &ParseOptions::lenient()).unwrap();
+    let consumed: usize = tx
+        .textures()
+        .iter()
+        .map(|t| 22 + 10 * t.patches.len())
+        .sum();
+    assert!(consumed <= bytes.len());
+    assert!(
+        tx.warnings()
+            .iter()
+            .any(|w| matches!(w, GfxWarning::ExcessiveTextureData { .. }))
     );
 }

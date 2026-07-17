@@ -8,10 +8,12 @@
 mod flat;
 mod palette;
 mod picture;
+mod texture;
 
 pub use flat::Flat;
 pub use palette::{Colormap, Palette, Playpal};
 pub use picture::{Column, IndexedImage, Picture, Post, RgbaImage};
+pub use texture::{Pnames, TextureDef, TexturePatchRef, TextureX};
 
 /// A fatal problem decoding a classic graphics lump in strict mode; every
 /// variant's lenient recovery is described on the matching [`GfxWarning`].
@@ -105,6 +107,89 @@ pub enum GfxError {
     #[error("flat length {len} is not a 64-byte multiple of at least 4096")]
     FlatSize {
         /// The lump's actual length.
+        len: usize,
+    },
+    /// `PNAMES` lump is too short for its 4-byte count field (unrecoverable
+    /// in strict mode; lenient treats the count as 0).
+    #[error("PNAMES lump is {len} bytes; at least 4 needed for the count")]
+    TruncatedPnames {
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// `PNAMES` declared a negative name count (lenient treats the count
+    /// as 0).
+    #[error("PNAMES count {count} is negative")]
+    NegativePnamesCount {
+        /// The raw on-disk count.
+        count: i32,
+    },
+    /// `PNAMES` declared more names than the lump holds (lenient clamps the
+    /// count to the names actually present).
+    #[error("PNAMES count {count} needs more bytes than the {len}-byte lump holds")]
+    PnamesCountExceedsLump {
+        /// The declared count.
+        count: i32,
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// `TEXTUREx` lump is too short for its header or offset table
+    /// (lenient parses no textures).
+    #[error("TEXTUREx lump is {len} bytes; {needed} needed")]
+    TruncatedTextureX {
+        /// The lump's actual length.
+        len: usize,
+        /// The bytes required.
+        needed: usize,
+    },
+    /// `TEXTUREx` declared a negative texture count (lenient treats the
+    /// count as 0).
+    #[error("TEXTUREx texture count {count} is negative")]
+    NegativeTextureCount {
+        /// The raw on-disk count.
+        count: i32,
+    },
+    /// A texture's offset points outside the lump (lenient skips the
+    /// texture).
+    #[error("texture {texture} offset {offset} is outside the {len}-byte lump")]
+    TextureOffsetOutOfBounds {
+        /// 0-based texture index.
+        texture: usize,
+        /// The raw on-disk offset.
+        offset: i32,
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// A texture declared a negative patch count (lenient keeps the
+    /// texture with no patch references).
+    #[error("texture {texture} declares a negative patch count {count}")]
+    NegativePatchCount {
+        /// 0-based texture index.
+        texture: usize,
+        /// The raw on-disk patch count.
+        count: i16,
+    },
+    /// A texture's full extent (header + patch references) runs past the
+    /// lump (lenient clamps to the patch references in bounds).
+    #[error("texture {texture} extends to byte {needed}, past the {len}-byte lump")]
+    TextureExtentOutOfBounds {
+        /// 0-based texture index.
+        texture: usize,
+        /// The byte offset the texture's declared extent requires.
+        needed: usize,
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// Cumulative texture-data bytes consumed exceeded the lump length —
+    /// only possible when texture offsets alias the same bytes (lenient
+    /// stops decoding further textures). Bounds parse work and memory to
+    /// `O(lump length)` in both modes (ADR-0016 §1).
+    #[error(
+        "cumulative texture data exceeded the {len}-byte lump at texture {texture}; offsets alias the same bytes"
+    )]
+    ExcessiveTextureData {
+        /// The texture at which the budget ran out.
+        texture: usize,
+        /// The lump's actual length (the budget).
         len: usize,
     },
 }
@@ -205,6 +290,101 @@ pub enum GfxWarning {
     )]
     FlatSize {
         /// The lump's actual length.
+        len: usize,
+    },
+    /// `PNAMES` was too short for its count field; count treated as 0
+    /// during lenient parsing.
+    #[error(
+        "PNAMES lump is {len} bytes; at least 4 needed for the count; count treated as 0 during lenient parsing"
+    )]
+    TruncatedPnames {
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// A negative `PNAMES` count; count treated as 0 during lenient
+    /// parsing.
+    #[error("PNAMES count {count} is negative; count treated as 0 during lenient parsing")]
+    NegativePnamesCount {
+        /// The raw on-disk count.
+        count: i32,
+    },
+    /// A `PNAMES` count exceeding the lump; count clamped to the names
+    /// present during lenient parsing.
+    #[error(
+        "PNAMES count {count} needs more bytes than the {len}-byte lump holds; count clamped to the names present during lenient parsing"
+    )]
+    PnamesCountExceedsLump {
+        /// The declared count.
+        count: i32,
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// `TEXTUREx` was too short for its header or offset table; no
+    /// textures parsed during lenient parsing.
+    #[error(
+        "TEXTUREx lump is {len} bytes; {needed} needed; no textures parsed during lenient parsing"
+    )]
+    TruncatedTextureX {
+        /// The lump's actual length.
+        len: usize,
+        /// The bytes required.
+        needed: usize,
+    },
+    /// A negative `TEXTUREx` texture count; count treated as 0 during
+    /// lenient parsing.
+    #[error(
+        "TEXTUREx texture count {count} is negative; count treated as 0 during lenient parsing"
+    )]
+    NegativeTextureCount {
+        /// The raw on-disk count.
+        count: i32,
+    },
+    /// A texture offset outside the lump; texture skipped during lenient
+    /// parsing.
+    #[error(
+        "texture {texture} offset {offset} is outside the {len}-byte lump; texture skipped during lenient parsing"
+    )]
+    TextureOffsetOutOfBounds {
+        /// 0-based texture index.
+        texture: usize,
+        /// The raw on-disk offset.
+        offset: i32,
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// A negative patch count; texture kept with no patch references
+    /// during lenient parsing.
+    #[error(
+        "texture {texture} declares a negative patch count {count}; texture kept with no patch references during lenient parsing"
+    )]
+    NegativePatchCount {
+        /// 0-based texture index.
+        texture: usize,
+        /// The raw on-disk patch count.
+        count: i16,
+    },
+    /// A texture's extent ran past the lump; references clamped to those
+    /// in bounds during lenient parsing.
+    #[error(
+        "texture {texture} extends to byte {needed}, past the {len}-byte lump; references clamped to those in bounds during lenient parsing"
+    )]
+    TextureExtentOutOfBounds {
+        /// 0-based texture index.
+        texture: usize,
+        /// The byte offset the texture's declared extent requires.
+        needed: usize,
+        /// The lump's actual length.
+        len: usize,
+    },
+    /// The consumed-texture-bytes budget ran out; remaining textures
+    /// skipped during lenient parsing.
+    #[error(
+        "cumulative texture data exceeded the {len}-byte lump at texture {texture}; remaining textures skipped during lenient parsing"
+    )]
+    ExcessiveTextureData {
+        /// The texture at which the budget ran out.
+        texture: usize,
+        /// The lump's actual length (the budget).
         len: usize,
     },
 }
