@@ -487,7 +487,7 @@ pub enum GfxWarning {
     /// ([`GfxError::MedusaColumn`]), lenient mode records this single
     /// warning describing the run.
     #[error(
-        "{count} column(s) starting at {first_column} have no contributing patch (the Medusa case); left as holes during lenient composition"
+        "{count} column(s), first at {first_column}, have no contributing patch (the Medusa case); left as holes during lenient composition"
     )]
     MedusaColumns {
         /// 0-based index of the first uncovered column.

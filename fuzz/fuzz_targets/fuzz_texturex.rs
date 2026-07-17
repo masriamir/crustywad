@@ -26,11 +26,15 @@ fn wrap_as_texture1(data: &[u8]) -> Vec<u8> {
     for (name, bytes) in lumps {
         body.extend_from_slice(bytes);
         dir.extend_from_slice(&pos.to_le_bytes());
-        dir.extend_from_slice(&i32::try_from(bytes.len()).unwrap().to_le_bytes());
+        // Never panic in the harness: an oversized fuzz input must produce
+        // a (rejectable) malformed WAD, not a spurious crash (the
+        // fuzz_doom64_map convention).
+        let len = i32::try_from(bytes.len()).unwrap_or(i32::MAX);
+        dir.extend_from_slice(&len.to_le_bytes());
         let mut field = [0u8; 8];
         field[..name.len()].copy_from_slice(name.as_bytes());
         dir.extend_from_slice(&field);
-        pos += i32::try_from(bytes.len()).unwrap();
+        pos = pos.saturating_add(len);
     }
     let mut wad = Vec::new();
     wad.extend_from_slice(b"IWAD");
@@ -48,7 +52,9 @@ fuzz_target!(|data: &[u8]| {
             assert!(p.names().len() <= data.len().saturating_sub(4) / 8);
         }
         if let Ok(tx) = TextureX::parse(data, &options) {
-            assert!(tx.textures().len() <= data.len().saturating_sub(4) / 4 + 1);
+            // Tight bound: every texture needs a 4-byte offset entry after
+            // the 4-byte count, and skipped textures only shrink the vec.
+            assert!(tx.textures().len() <= data.len().saturating_sub(4) / 4);
             let consumed: usize =
                 tx.textures().iter().map(|t| 22 + 10 * t.patches.len()).sum();
             assert!(consumed <= data.len(), "texture budget exceeded the lump");
