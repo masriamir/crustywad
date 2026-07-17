@@ -684,10 +684,12 @@ pub enum MapWarning {
         /// What made the lump unusable.
         detail: &'static str,
     },
-    /// A marker anomaly in the outer WAD's texture section(s), recovered
-    /// while building the Doom 64 texture-name table during lenient
-    /// assembly; see [`SectionWarning`](crate::sections::SectionWarning).
-    #[error("texture section: {0}")]
+    /// A marker anomaly recovered from the outer WAD's section scan while
+    /// building the Doom 64 texture-name table during lenient assembly.
+    /// The scan classifies markers of every kind, so the wrapped
+    /// [`SectionWarning`](crate::sections::SectionWarning) may concern a
+    /// non-texture section; it names the section kind itself.
+    #[error("scanning sections for Doom 64 texture resolution: {0}")]
     TextureSection(crate::sections::SectionWarning),
     /// A Doom 64 texture hash matched no texture-section lump; the
     /// unresolved [`TextureRef::Index`] was kept during lenient assembly

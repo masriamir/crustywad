@@ -162,8 +162,11 @@ pub enum MapAssembleError {
         detail: &'static str,
     },
     /// Scanning the outer WAD's sections (to build the Doom 64
-    /// texture-name table) failed in strict mode.
-    #[error("failed to scan texture sections: {source}")]
+    /// texture-name table) failed in strict mode. The scan classifies
+    /// markers of every kind, so the underlying
+    /// [`SectionError`](crate::sections::SectionError) may concern a
+    /// non-texture section; it names the section kind itself.
+    #[error("scanning sections for Doom 64 texture resolution failed: {source}")]
     TextureSections {
         /// The underlying section-scan error.
         #[source]
