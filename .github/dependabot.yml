@@ -12,3 +12,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # One PR per round for ALL actions updates: lockstep actions (the
+    # codeql-action init/analyze pair) fail CI when bumped in separate PRs —
+    # each PR alone runs a mismatched pair ("Loaded a configuration file for
+    # version X, but running version Y").
+    groups:
+      github-actions:
+        patterns:
+          - "*"
