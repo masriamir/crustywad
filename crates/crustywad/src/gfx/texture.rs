@@ -475,7 +475,9 @@ impl TextureSet {
             if !referenced[i] {
                 continue;
             }
-            let upper = name.to_uppercase();
+            // ASCII uppercase only: WAD lump names are ASCII bytes and vanilla's
+            // toupper is C-locale — Unicode case mapping could change length.
+            let upper = name.to_ascii_uppercase();
             let Some(lump) = wad.lump_by_name(&upper) else {
                 match strictness {
                     crate::Strictness::Strict => {

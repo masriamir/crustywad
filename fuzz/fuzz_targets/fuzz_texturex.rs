@@ -55,8 +55,15 @@ fuzz_target!(|data: &[u8]| {
             // Tight bound: every texture needs a 4-byte offset entry after
             // the 4-byte count, and skipped textures only shrink the vec.
             assert!(tx.textures().len() <= data.len().saturating_sub(4) / 4);
-            let consumed: usize =
-                tx.textures().iter().map(|t| 22 + 10 * t.patches.len()).sum();
+            // Saturating fold: a wrap here could mask a parser bug, and
+            // saturation only makes the oracle stricter (a saturated value
+            // still fails the <= len assert).
+            let consumed: usize = tx
+                .textures()
+                .iter()
+                .fold(0usize, |acc, t| {
+                    acc.saturating_add(22usize.saturating_add(10usize.saturating_mul(t.patches.len())))
+                });
             assert!(consumed <= data.len(), "texture budget exceeded the lump");
         }
     }
