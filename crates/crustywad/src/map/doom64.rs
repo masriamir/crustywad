@@ -484,10 +484,11 @@ mod tests {
 }
 
 /// The Doom 64 texture-name hash: the on-disk `u16` carried by sidedef and
-/// sector texture fields (ADR-0022 §1). Doom64 EX `W_HashLumpName` (classic)
-/// and `LumpHash` (master) compute exactly this over up to 8 uppercased
-/// characters, truncated to 16 bits; validated against the retail KEX IWAD
-/// (82/82 MAP01 references resolve, #271 spike).
+/// sector texture fields (ADR-0022 §1). Doom64 EX's `W_HashLumpName`
+/// computes exactly this over up to 8 uppercased characters truncated to
+/// 16 bits, and the master rewrite's reimplementation preserves the same
+/// semantics; empirically validated against the retail KEX IWAD (82/82
+/// `MAP01` references resolve — ADR-0022 §1).
 #[must_use]
 pub fn texture_name_hash(name: &str) -> u16 {
     let mut hash: u32 = 1_315_423_911;
@@ -504,11 +505,10 @@ pub fn texture_name_hash(name: &str) -> u16 {
 
 /// A resolution table from the on-disk `u16` texture hash to the texture
 /// lump's name, built first-match-in-disk-order over a WAD's `Textures`
-/// section(s) — the tie-break the engine's own first-match linear scan
-/// applies on 16-bit collisions (ADR-0022 §1). Lookups are `O(1)` by the
-/// hash; the engine's per-reference linear scan (an
-/// algorithmic-complexity hazard, ADR-0022 §6) is deliberately not
-/// reproduced.
+/// section(s) — the engine's own tie-break on 16-bit collisions
+/// (`P_InitTextureHashTable`/`P_GetTextureHashKey`, ADR-0022 §1). Lookups
+/// are `O(1)` by the hash key, replacing the engine's per-reference
+/// first-match resolution over the section (ADR-0022 §1).
 #[derive(Debug, Clone)]
 pub struct Doom64TextureNames {
     map: std::collections::HashMap<u16, String>,
