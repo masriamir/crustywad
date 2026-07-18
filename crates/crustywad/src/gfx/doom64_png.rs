@@ -82,7 +82,22 @@ impl Doom64Png {
             });
         }
         let trns = resolve_trns(info, plte.len(), strictness, &mut warnings)?;
-        let bit_depth = info.bit_depth as u8;
+        // Explicit map instead of `as u8`: the numeric repr of an external
+        // enum is not a stable contract, and an unexpected depth must not
+        // reach the unpacking math (which requires a divisor of 8).
+        let bit_depth: u8 = match info.bit_depth {
+            png::BitDepth::One => 1,
+            png::BitDepth::Two => 2,
+            png::BitDepth::Four => 4,
+            png::BitDepth::Eight => 8,
+            // The PNG spec forbids 16-bit indexed images; the crate should
+            // reject them first — defensive bridge, never a panic.
+            png::BitDepth::Sixteen => {
+                return Err(GfxError::PngDecode {
+                    detail: "16-bit indexed PNG".to_owned(),
+                });
+            }
+        };
         let pixels = decode_pixels(&mut reader, width, height, bit_depth)?;
         check_pixel_range(&pixels, plte.len(), strictness, &mut warnings)?;
         let offsets = resolve_grab(bytes, strictness, &mut warnings)?;
