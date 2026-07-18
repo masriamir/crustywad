@@ -79,8 +79,9 @@ impl DmxSound {
 
         // Invariant: 32 <= length <= available. When it holds, the declared
         // length is authoritative; when it does not, strict fails and lenient
-        // clamps to what is present (an under-min length keeps its own value,
-        // which already fits within `available`).
+        // clamps to `min(length, available)` — an under-min length that fits
+        // keeps its own value, and anything larger than the lump clamps to
+        // what is present.
         let length_usize = length as usize;
         let invariant_holds = length >= Self::PAD_TOTAL && length_usize <= available;
         let effective = if invariant_holds {
