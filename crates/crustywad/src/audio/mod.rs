@@ -202,6 +202,11 @@ pub enum AudioWarning {
     /// unplayable, though its own comment calls the cut-off approximate.
     /// Recorded in **both** modes: the floor is a playability heuristic, not
     /// a structural property (ADR-0023 §2), so the lump still parses.
+    ///
+    /// Only emitted when the structural length invariant holds
+    /// (`32 <= length <= lump_len - 8`) — an out-of-range length is
+    /// surfaced by [`LengthOutOfRange`](AudioWarning::LengthOutOfRange)
+    /// instead, never by both.
     #[error("DMX declared length {length} is at or below the playability floor of 48 bytes")]
     PlayabilityFloor {
         /// The declared length.

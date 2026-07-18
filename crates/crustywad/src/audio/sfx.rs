@@ -51,7 +51,11 @@ impl DmxSound {
     /// Trailing slack, a declared length at or below the 48-byte playability
     /// floor, and a zero sample rate are warnings in **both** modes
     /// ([`AudioWarning::TrailingSlack`], [`AudioWarning::PlayabilityFloor`],
-    /// [`AudioWarning::ZeroSampleRate`]); the parse still succeeds.
+    /// [`AudioWarning::ZeroSampleRate`]); the parse still succeeds. The
+    /// floor warning is only emitted when the length invariant holds — a
+    /// length that is both out of range and below the floor is surfaced by
+    /// [`AudioError::LengthOutOfRange`] /
+    /// [`AudioWarning::LengthOutOfRange`] alone.
     pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<Self, AudioError> {
         let len = bytes.len();
         if len < Self::HEADER {
