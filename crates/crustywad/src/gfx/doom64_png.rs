@@ -183,7 +183,10 @@ impl Doom64Png {
     /// recorded follow-up (ADR-0022 §5).
     #[must_use]
     pub fn to_rgba(&self) -> super::RgbaImage {
-        let mut out = Vec::with_capacity(self.pixels.len() * 4);
+        // Saturating: the multiply could overflow a 32-bit usize under a
+        // raised decode cap; saturation degrades to reallocation, never a
+        // panic (ADR-0016).
+        let mut out = Vec::with_capacity(self.pixels.len().saturating_mul(4));
         for &i in &self.pixels {
             let idx = usize::from(i);
             match self.plte.get(idx) {

@@ -328,7 +328,9 @@ impl IndexedImage {
     /// pixels transparent black (tier 3, ADR-0022 §3).
     #[must_use]
     pub fn to_rgba(&self, palette: &Palette) -> RgbaImage {
-        let mut pixels = Vec::with_capacity(self.pixels.len() * 4);
+        // Saturating: same 32-bit overflow class as the Doom 64 RGBA view;
+        // saturation degrades to reallocation, never a panic (ADR-0016).
+        let mut pixels = Vec::with_capacity(self.pixels.len().saturating_mul(4));
         for (index, covered) in self.pixels.iter().zip(&self.mask) {
             if *covered {
                 let [r, g, b] = palette.rgb(*index);
