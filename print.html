@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-22c9058b.js";
+            window.path_to_searchindex_js = "searchindex-cc73847a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2918eee.js"></script>
@@ -235,11 +235,11 @@ uses to store maps, graphics, audio, and other game assets.</p>
 <h2 id="adding-crustywad-to-your-project"><a class="header" href="#adding-crustywad-to-your-project">Adding crustywad to your project</a></h2>
 <p>Add the crate to your <code>Cargo.toml</code>:</p>
 <pre><code class="language-toml">[dependencies]
-crustywad = "0.5.0"
+crustywad = "0.6.0"
 </code></pre>
 <p>Enable optional features as needed:</p>
 <pre><code class="language-toml">[dependencies]
-crustywad = { version = "0.5.0", features = ["mmap"] }
+crustywad = { version = "0.6.0", features = ["mmap"] }
 </code></pre>
 <h2 id="basic-usage"><a class="header" href="#basic-usage">Basic usage</a></h2>
 <p>Parse a WAD from an in-memory byte slice:</p>
@@ -401,7 +401,7 @@ match wad.kind() {
 <h1 id="writing-wad-files"><a class="header" href="#writing-wad-files">Writing WAD Files</a></h1>
 <p><code>WadBuilder</code>, behind the <code>write</code> feature flag, builds a new WAD from scratch
 or re-serializes an existing one.</p>
-<pre><code class="language-toml">crustywad = { version = "0.5.0", features = ["write"] }
+<pre><code class="language-toml">crustywad = { version = "0.6.0", features = ["write"] }
 </code></pre>
 <h2 id="building-from-scratch"><a class="header" href="#building-from-scratch">Building from scratch</a></h2>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -535,7 +535,7 @@ strict/lenient write mode comparison, and <a href="#data-model">Data model</a> f
 <p><code>crustywad::map</code> can convert an assembled <a href="#map-record-parsing"><code>Map</code></a> between the
 UDMF text format and the classic Doom binary format, in both directions. Both
 directions are behind the <code>write</code> feature:</p>
-<pre><code class="language-toml">crustywad = { version = "0.5.0", features = ["write"] }
+<pre><code class="language-toml">crustywad = { version = "0.6.0", features = ["write"] }
 </code></pre>
 <p>Conversion is <code>read → Map → write</code>: there is no direct format-to-format path.
 A UDMF field that the <code>Map</code> graph does not model is already lost at <em>read</em>
@@ -1802,7 +1802,7 @@ actually accessed. The tradeoff is a small amount of <code>unsafe</code> code in
 of whether this feature is enabled.</p>
 <h3 id="usage"><a class="header" href="#usage">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.5.0", features = ["mmap"] }
+crustywad = { version = "0.6.0", features = ["mmap"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -1922,7 +1922,7 @@ just test-sweep dir=/path/to/wads
 <code>[12-byte header][lump data blobs][16-byte directory entries]</code>.</p>
 <h3 id="usage-1"><a class="header" href="#usage-1">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.5.0", features = ["write"] }
+crustywad = { version = "0.6.0", features = ["write"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -1975,7 +1975,7 @@ convention). The declared <code>width × height</code> is checked against
 strictness modes (the same DoS-cap exception <code>TextureSet::compose</code>’s composite limit uses).</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.5.0", features = ["doom64-gfx"] }
+crustywad = { version = "0.6.0", features = ["doom64-gfx"] }
 </code></pre>
 <p>Or with <code>cargo add</code>:</p>
 <pre><code class="language-sh">cargo add crustywad --features doom64-gfx
@@ -2747,9 +2747,9 @@ each crate carries its own explicit <code>version</code> field in its <code>[pac
 inheriting from <code>[workspace.package]</code>. <code>release-plz</code> manages each package independently,
 proposing version bumps only for crates whose content has changed since the last release.</p>
 <p><strong>Dependency constraint:</strong> <code>crates/crustywad-cli/Cargo.toml</code> pins the library with an explicit
-caret requirement (currently <code>crustywad = { version = "0.5.0", ... }</code>), required by
+caret requirement (currently <code>crustywad = { version = "0.6.0", ... }</code>), required by
 <code>cargo-deny</code>’s <code>wildcards = "deny"</code> setting (which disallows <code>*</code> version requirements).
-<code>version = "0.5.0"</code> resolves as <code>^0.5.0</code> (<code>&gt;=0.5.0, &lt;0.6.0</code>), so patch bumps to <code>crustywad</code>
+<code>version = "0.6.0"</code> resolves as <code>^0.6.0</code> (<code>&gt;=0.6.0, &lt;0.7.0</code>), so patch bumps to <code>crustywad</code>
 within the same minor series are satisfied automatically. When <code>crustywad</code>’s version moves
 outside that range (e.g., to <code>0.6.0</code>), this field must be updated manually before merging —
 otherwise <code>cargo build</code> and crates.io publishing will fail.</p>

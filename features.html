@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-22c9058b.js";
+            window.path_to_searchindex_js = "searchindex-cc73847a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2918eee.js"></script>
@@ -209,7 +209,7 @@ actually accessed. The tradeoff is a small amount of <code>unsafe</code> code in
 of whether this feature is enabled.</p>
 <h3 id="usage"><a class="header" href="#usage">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.5.0", features = ["mmap"] }
+crustywad = { version = "0.6.0", features = ["mmap"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -329,7 +329,7 @@ just test-sweep dir=/path/to/wads
 <code>[12-byte header][lump data blobs][16-byte directory entries]</code>.</p>
 <h3 id="usage-1"><a class="header" href="#usage-1">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.5.0", features = ["write"] }
+crustywad = { version = "0.6.0", features = ["write"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -382,7 +382,7 @@ convention). The declared <code>width × height</code> is checked against
 strictness modes (the same DoS-cap exception <code>TextureSet::compose</code>’s composite limit uses).</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.5.0", features = ["doom64-gfx"] }
+crustywad = { version = "0.6.0", features = ["doom64-gfx"] }
 </code></pre>
 <p>Or with <code>cargo add</code>:</p>
 <pre><code class="language-sh">cargo add crustywad --features doom64-gfx
