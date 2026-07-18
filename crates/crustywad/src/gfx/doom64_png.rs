@@ -268,6 +268,15 @@ fn decode_pixels(
     height: u16,
     bit_depth: u8,
 ) -> Result<Vec<u8>, GfxError> {
+    // Zero-dimension PNGs are a valid EMPTY image per the decode policy —
+    // return before any row chunking, where `line_size == 0` would panic
+    // in `chunks_exact`. Whether the `png` crate can deliver zero
+    // dimensions is deliberately NOT assumed (the missing-PLTE guard
+    // taught that crate-side validation assumptions can be wrong); the
+    // fuzz target's no-panic oracle covers the question empirically.
+    if width == 0 || height == 0 {
+        return Ok(Vec::new());
+    }
     let line_size = (usize::from(width) * usize::from(bit_depth)).div_ceil(8);
     // Coverage note: `output_buffer_size` returns `None` only when the
     // deinterlaced frame would not fit in `isize`; `check_dimensions`
