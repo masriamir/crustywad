@@ -189,8 +189,9 @@ vanilla's own column-contributor count includes them regardless of lookup failur
 
 ## What's next
 
-Doom 64's texture, sprite, and gfx lumps ship as PNG files rather than this format; they
-land behind the `doom64-gfx` feature ([#282](https://github.com/masriamir/crustywad/issues/282)).
+Doom 64's graphics are a different family entirely — see the [Doom 64
+graphics](#doom-64-graphics) note above; PNG decoding lands behind the
+`doom64-gfx` feature ([#282](https://github.com/masriamir/crustywad/issues/282)).
 
 [`Wad::lump_by_name`]: https://docs.rs/crustywad/latest/crustywad/struct.Wad.html#method.lump_by_name
 [`Limits::max_composite_pixels`]: https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_composite_pixels
