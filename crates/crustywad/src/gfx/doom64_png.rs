@@ -122,7 +122,8 @@ impl Doom64Png {
     #[must_use]
     pub fn palette_row(&self, row: usize) -> Option<[[u8; 3]; 16]> {
         let start = row.checked_mul(16)?;
-        let slice = self.plte.get(start..start + 16)?;
+        let end = start.checked_add(16)?;
+        let slice = self.plte.get(start..end)?;
         let mut out = [[0u8; 3]; 16];
         out.copy_from_slice(slice);
         Some(out)
