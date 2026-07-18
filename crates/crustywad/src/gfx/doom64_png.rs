@@ -70,12 +70,13 @@ impl Doom64Png {
             .map(|p| p.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
             .unwrap_or_default();
         if plte.is_empty() {
-            // Coverage note: unreachable via any stream this crate's own
-            // decoder accepts — verified against `png` 0.18.1
-            // (`decoder::stream::start_chunk`'s `chunk::PLTE => 3..=768`
-            // enforces a minimum one-entry PLTE for an Indexed-color
-            // image). Kept as defense in depth rather than indexing into
-            // nothing, per ADR-0016.
+            // Reachable: the `png` crate only enforces PLTE presence when
+            // EXPAND transformations are requested (`create_transform_fn`'s
+            // `PaletteRequired` arm). This reader uses the default
+            // `Transformations::IDENTITY`, so an Indexed-color PNG with no
+            // `PLTE` chunk decodes through the crate and lands here — see
+            // `indexed_png_without_plte_hits_the_missing_plte_guard` in
+            // `tests/doom64_gfx.rs`.
             return Err(GfxError::PngDecode {
                 detail: "missing PLTE".to_owned(),
             });

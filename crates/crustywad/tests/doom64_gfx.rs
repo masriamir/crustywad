@@ -184,6 +184,46 @@ fn garbage_and_truncation_bridge_as_png_decode() {
 }
 
 #[test]
+fn indexed_png_without_plte_hits_the_missing_plte_guard() {
+    // Hand-crafted: the encoder refuses palette-less indexed PNGs, but the
+    // DECODER accepts them under IDENTITY transformations (no EXPAND), so
+    // the missing-PLTE guard is a live path.
+    #[allow(clippy::trivially_copy_pass_by_ref)] // matches call sites (`b"IHDR"` etc. are `&[u8; 4]`)
+    fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let crc_input: Vec<u8> = [kind.as_slice(), data].concat();
+        out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+        out
+    }
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&1u32.to_be_bytes()); // width 1
+    ihdr.extend_from_slice(&1u32.to_be_bytes()); // height 1
+    ihdr.extend_from_slice(&[8, 3, 0, 0, 0]); // depth 8, Indexed, std rest
+    // zlib stored block: header 78 01; stored-final 01, len 0002, nlen FDFF;
+    // data = [filter 0x00, index 0x07]; adler32(data) = 0x00090008 (BE).
+    let idat = [
+        0x78, 0x01, 0x01, 0x02, 0x00, 0xFD, 0xFF, 0x00, 0x07, 0x00, 0x09, 0x00, 0x08,
+    ];
+    let mut png_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    png_bytes.extend_from_slice(&chunk(b"IHDR", &ihdr));
+    png_bytes.extend_from_slice(&chunk(b"IDAT", &idat));
+    png_bytes.extend_from_slice(&chunk(b"IEND", &[]));
+
+    for opts in [ParseOptions::strict(), ParseOptions::lenient()] {
+        match Doom64Png::decode(&png_bytes, &opts).unwrap_err() {
+            GfxError::PngDecode { detail } => assert!(
+                detail.contains("missing PLTE"),
+                "unexpected detail: {detail}"
+            ),
+            other => panic!("expected the missing-PLTE guard, got: {other}"),
+        }
+    }
+}
+
+#[test]
 fn caps_fire_in_both_modes_before_allocation() {
     let plte = [0u8, 0, 0];
     let bytes = build_png(64, 64, png::BitDepth::Eight, &plte, None, &[0; 64 * 64]);
