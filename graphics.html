@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-34c5eba8.js";
+            window.path_to_searchindex_js = "searchindex-a345198b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2918eee.js"></script>
@@ -274,9 +274,99 @@ fully covered since a flat has no post gaps.</p>
 <p>Doom 64’s texture, sprite, and gfx lumps are complete PNG files, not this format
 (ADR-0022 §3/§5). They are decoded separately behind the <code>doom64-gfx</code> feature
 (<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>) once that feature lands.</p>
+<h2 id="texture-composition"><a class="header" href="#texture-composition">Texture composition</a></h2>
+<p><code>crustywad::gfx::TextureSet</code> is “tier 2” of ADR-0022 §3’s three-tier plan: assembling
+<code>TEXTURE1</code>/<code>TEXTURE2</code> texture definitions plus the <code>PNAMES</code> patch-name table and their
+resolved <code>Picture</code> lumps into named, multi-patch composite images — reimplementing the
+contract of vanilla’s <code>R_GenerateComposite</code>/<code>R_GenerateLookup</code>.</p>
+<h3 id="worked-example-1"><a class="header" href="#worked-example-1">Worked example</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{ParseOptions, Wad};
+
+<span class="boring">fn run(wad: &amp;Wad) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let Some(set) = wad.texture_set()? else {
+    return Ok(()); // no TEXTURE1/TEXTURE2 in this WAD
+};
+let Some(index) = set.find("STARTAN2") else {
+    return Ok(()); // this WAD doesn't define the texture
+};
+let (image, warnings) = set.compose(index, &amp;ParseOptions::strict())?;
+assert!(warnings.is_empty()); // strict mode: no warnings ever accompany Ok
+// `image` is an `IndexedImage` (palette indices + a coverage mask); apply a
+// palette in the same step with `compose_rgba` instead when RGBA8 is wanted:
+let palette = wad.playpal()?.map(|p| p.palettes()[0].clone());
+if let Some(palette) = palette {
+    let (rgba, _) = set.compose_rgba(index, &amp;ParseOptions::strict(), &amp;palette)?;
+    let _ = rgba; // width * height * 4 bytes, row-major RGBA8
+}
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<p><code>Wad::texture_set()</code> (strict) / <code>Wad::texture_set_with_options()</code> (either mode) build the
+set once; <code>TextureSet::compose</code>/<code>compose_rgba</code> are then called per texture, as many times
+as needed — the resolved patch pictures are shared across every <code>compose</code> call.</p>
+<h3 id="build-strictness-policy"><a class="header" href="#build-strictness-policy">Build strictness policy</a></h3>
+<p>Building the set parses <code>TEXTURE1</code>/<code>TEXTURE2</code> (see the <a href="#strictness-policy">Strictness policy</a>
+table above for those rows) and <code>PNAMES</code>, then resolves and validates every patch reference:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Strict</th><th>Lenient</th></tr>
+</thead>
+<tbody>
+<tr><td><code>TEXTUREx</code> present but no <code>PNAMES</code> lump exists</td><td><code>GfxError::MissingPnames</code></td><td>Set built with an empty name table; <code>GfxWarning::MissingPnames</code></td></tr>
+<tr><td>A patch reference indexes past the resolved <code>PNAMES</code> table (including a negative index)</td><td><code>GfxError::PatchIndexOutOfBounds</code></td><td>Reference ignored; <code>GfxWarning::PatchIndexOutOfBounds</code> — suppressed when the <code>PNAMES</code> lump is absent entirely (<code>MissingPnames</code> already explains every reference)</td></tr>
+<tr><td>A resolved patch name matches no lump in the WAD</td><td><code>GfxError::UnresolvedPatchName</code></td><td>Patch left unresolved; <code>GfxWarning::UnresolvedPatchName</code></td></tr>
+<tr><td>A resolved patch lump fails to parse as a <code>Picture</code></td><td><code>GfxError::PatchPictureFailed</code></td><td>Patch left unresolved; <code>GfxWarning::PatchPictureFailed</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>The PWAD reality.</strong> Patch names resolve through the crate’s first-match
+<a href="https://docs.rs/crustywad/latest/crustywad/struct.Wad.html#method.lump_by_name"><code>Wad::lump_by_name</code></a> after uppercasing (vanilla uppercases its own search name too).
+A PWAD that references patches shipped only in the base IWAD therefore cannot resolve
+them here — multi-WAD merge (loading a PWAD layered over its IWAD) is out of scope for
+a single <code>Wad</code> — so a retail PWAD’s strict <code>texture_set()</code> commonly fails with
+<code>GfxError::UnresolvedPatchName</code> even though the WAD is perfectly well-formed; building
+leniently instead recovers with those patches left unresolved (composing them draws
+holes rather than failing).</p>
+<h3 id="compose-strictness-policy"><a class="header" href="#compose-strictness-policy">Compose strictness policy</a></h3>
+<p><code>TextureSet::compose</code> composites one texture already validated at build time:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Condition</th><th>Strict</th><th>Lenient</th></tr>
+</thead>
+<tbody>
+<tr><td>Negative composed width/height</td><td><code>GfxError::NegativeDimension</code></td><td>Clamped to 0 (see the picture <code>NegativeDimension</code> row above)</td></tr>
+<tr><td><code>width × height</code> exceeds <a href="https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_composite_pixels"><code>Limits::max_composite_pixels</code></a></td><td><code>GfxError::CompositeTooLarge</code> in <strong>both</strong> modes</td><td><code>GfxError::CompositeTooLarge</code> in <strong>both</strong> modes</td></tr>
+<tr><td>A composited column has no contributing patch (the Medusa case)</td><td><code>GfxError::MedusaColumn</code></td><td>Column(s) left as holes; <code>GfxWarning::MedusaColumns</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>Limits::max_composite_pixels</code> (default <code>1 &lt;&lt; 24</code>) bounds the pixel buffer a single
+<code>compose</code> call allocates. A <code>TEXTUREx</code> header can declare a 32767×32767 canvas (nearly
+1 GiB) from a 30-byte lump, so this cap is enforced in <strong>both</strong> strictness modes — the
+same DoS-cap exception to the strict/lenient contract that the UDMF nesting-depth limit
+uses (ADR-0016): an oversized composite is a resource-exhaustion risk, not a recoverable
+parse anomaly, so lenient mode does not clamp past it and instead returns the same error
+strict mode does.</p>
+<p><strong>Medusa policy vs. vanilla (ADR-0022 §3).</strong> Vanilla’s <code>R_GenerateLookup</code> handles a
+texture column with no contributing patch by printing “column without a patch” and
+<strong>returning early from the entire function</strong>, leaving every later column’s composite
+state uninitialized — a silent, partial, engine-visible bug (the well-known “Medusa
+effect”). A stricter <code>I_Error</code> abort exists in the vanilla source but is commented out.
+<code>compose</code> instead treats the Medusa case as a <code>Strictness::Strict</code> error and a
+<code>Strictness::Lenient</code> warning-with-hole: the column decodes with an explicit gap rather
+than either aborting the whole texture or silently leaving other columns corrupt —
+deliberately better than either of vanilla’s two behaviors. Dead patch references (an
+unresolved or out-of-bounds <code>PNAMES</code> index) never count as contributors, even though
+vanilla’s own column-contributor count includes them regardless of lookup failure; only
+<em>live</em>, resolved patches count here, which is what the explicit-holes model requires.</p>
 <h2 id="whats-next"><a class="header" href="#whats-next">What’s next</a></h2>
-<p>Composing multi-patch textures from <code>TEXTUREx</code>/<code>PNAMES</code> — the tier-2 layer ADR-0022 §3
-describes — arrives with <a href="https://github.com/masriamir/crustywad/issues/157">#157</a>.</p>
+<p>Doom 64’s graphics are a different family entirely — see the <a href="#doom-64-graphics">Doom 64
+graphics</a> note above; PNG decoding lands behind the
+<code>doom64-gfx</code> feature (<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>).</p>
 
                     </main>
 
