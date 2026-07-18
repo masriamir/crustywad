@@ -54,6 +54,9 @@ jobs:
       - name: Fuzz fuzz_doom64_png
         run: cargo fuzz run fuzz_doom64_png -- -max_total_time=60
         working-directory: fuzz
+      - name: Fuzz fuzz_audio_sfx
+        run: cargo fuzz run fuzz_audio_sfx -- -max_total_time=60
+        working-directory: fuzz
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -60,6 +60,7 @@ values alongside the serialized bytes.
 //! The current milestone implements real header and directory parsing plus typed
 //! scaffolding for the classic map record lumps.
 
+pub mod audio;
 mod error;
 pub mod gfx;
 pub mod map;
