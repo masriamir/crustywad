@@ -263,11 +263,16 @@ pub enum GfxError {
         /// 0-based column index of the first uncovered column.
         column: usize,
     },
-    /// The underlying `png` crate failed to decode the lump (produced by
-    /// the `doom64-gfx` feature; unrecoverable in both modes).
+    /// The PNG stream could not be decoded (produced by the `doom64-gfx`
+    /// feature; unrecoverable in both modes) — either the underlying `png`
+    /// crate rejected it, or a crustywad-side structural guard did (a
+    /// palette PNG with no `PLTE`, a 16-bit indexed depth, an output-size
+    /// anomaly).
     #[error("PNG decode failed: {detail}")]
     PngDecode {
-        /// The `png` crate's error, rendered via its own `Display`.
+        /// Human-readable cause: the `png` crate's error rendered via its
+        /// `Display`, or a crustywad guard's own message (e.g. `"missing
+        /// PLTE"`).
         detail: String,
     },
     /// A Doom 64 PNG's color type is not palette-indexed (produced by the
