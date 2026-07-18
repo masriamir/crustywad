@@ -70,8 +70,12 @@ impl Doom64Png {
             .map(|p| p.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
             .unwrap_or_default();
         if plte.is_empty() {
-            // The crate normally rejects palette PNGs without PLTE; guard
-            // defensively rather than indexing into nothing.
+            // Coverage note: unreachable via any stream this crate's own
+            // decoder accepts — verified against `png` 0.18.1
+            // (`decoder::stream::start_chunk`'s `chunk::PLTE => 3..=768`
+            // enforces a minimum one-entry PLTE for an Indexed-color
+            // image). Kept as defense in depth rather than indexing into
+            // nothing, per ADR-0016.
             return Err(GfxError::PngDecode {
                 detail: "missing PLTE".to_owned(),
             });
@@ -248,6 +252,13 @@ fn decode_pixels(
     bit_depth: u8,
 ) -> Result<Vec<u8>, GfxError> {
     let line_size = (usize::from(width) * usize::from(bit_depth)).div_ceil(8);
+    // Coverage note: `output_buffer_size` returns `None` only when the
+    // deinterlaced frame would not fit in `isize`; `check_dimensions`
+    // already bounds both sides to `u16`, so the product (<= 65535 x
+    // 65535) cannot approach `isize::MAX` (~9.2e18) on any 64-bit target —
+    // the whole matrix this crate is tested on. Kept as defense in depth
+    // (a 32-bit target could reach it) rather than an unwrap, per
+    // ADR-0016.
     let Some(buf_size) = reader.output_buffer_size() else {
         return Err(GfxError::PngDecode {
             detail: "output size overflow".to_owned(),
@@ -263,6 +274,14 @@ fn decode_pixels(
             detail: e.to_string(),
         })?;
     let needed = line_size * usize::from(height);
+    // Coverage note: `packed` is allocated to exactly `buf_size`
+    // (`vec![0u8; buf_size]` above), and with the default (identity)
+    // transformations this reader uses, `output_buffer_size` computes the
+    // same `raw_row_length(depth, width) * height` this function's
+    // `line_size * height` does — so `packed.len() < needed` cannot occur
+    // for any stream the `png` crate itself successfully decoded. Guards
+    // the slice explicitly (defense in depth, ADR-0016) rather than
+    // trusting that invariant to hold across `png` crate versions.
     if packed.len() < needed {
         return Err(GfxError::PngDecode {
             detail: "short output buffer".to_owned(),
@@ -326,6 +345,11 @@ fn resolve_grab(
 }
 
 /// Stable names for the error message (no dependency types in our API).
+///
+/// Coverage note: the `Indexed` arm is unreachable at the sole call site
+/// (`decode` only calls this after checking `color_type != Indexed`); kept
+/// for exhaustive matching over the upstream enum rather than an
+/// unreachable `_` catch-all, per ADR-0016.
 fn color_type_name(ct: png::ColorType) -> &'static str {
     match ct {
         png::ColorType::Grayscale => "grayscale",
@@ -366,6 +390,12 @@ pub(super) fn find_grab(bytes: &[u8]) -> Result<Option<(i32, i32)>, usize> {
             return Ok(None);
         }
         // length + type + data + CRC
+        //
+        // Coverage note: `len` is a `u32` (max ~4.3e9) and `pos` is bounded
+        // by the input slice's length, so this addition cannot overflow
+        // `usize` on any 64-bit target (the whole matrix this crate is
+        // tested on). Guards the arithmetic explicitly (defense in depth,
+        // ADR-0016) rather than relying on that platform assumption.
         let Some(next) = pos.checked_add(12).and_then(|p| p.checked_add(len)) else {
             return Ok(None);
         };
@@ -452,6 +482,18 @@ mod tests {
         let mut trunc = stream(&[chunk(b"IHDR", &[0; 13])]);
         trunc.truncate(trunc.len() - 3);
         assert_eq!(find_grab(&trunc), Ok(None));
+    }
+
+    #[test]
+    fn grab_header_present_but_data_truncated_is_none() {
+        // The chunk header declares the well-formed 8-byte length, but the
+        // stream is cut off partway through the data — nothing to salvage.
+        let mut data = Vec::new();
+        data.extend_from_slice(&1i32.to_be_bytes());
+        data.extend_from_slice(&2i32.to_be_bytes());
+        let mut png = stream(&[chunk(b"IHDR", &[0; 13]), chunk(b"grAb", &data)]);
+        png.truncate(png.len() - 8); // leaves the 8-byte header, drops all data + CRC
+        assert_eq!(find_grab(&png), Ok(None));
     }
 
     #[test]

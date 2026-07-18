@@ -135,6 +135,32 @@ fn non_palette_png_is_a_clean_error_in_both_modes_even_with_trns() {
 }
 
 #[test]
+fn non_palette_color_types_report_their_own_name() {
+    // Covers the remaining `color_type_name` arms beyond RGB (above):
+    // grayscale, grayscale+alpha, and RGBA.
+    let cases: [(png::ColorType, &[u8], &str); 3] = [
+        (png::ColorType::Grayscale, &[7], "grayscale"),
+        (png::ColorType::GrayscaleAlpha, &[7, 255], "grayscale+alpha"),
+        (png::ColorType::Rgba, &[1, 2, 3, 255], "RGBA"),
+    ];
+    for (color_type, pixel, name) in cases {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(std::io::Cursor::new(&mut out), 1, 1);
+            enc.set_color(color_type);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut w = enc.write_header().unwrap();
+            w.write_image_data(pixel).unwrap();
+        }
+        let err = Doom64Png::decode(&out, &ParseOptions::strict()).unwrap_err();
+        assert!(
+            matches!(err, GfxError::NotPaletteIndexed { color_type } if color_type == name),
+            "{name}: got {err:?}"
+        );
+    }
+}
+
+#[test]
 fn garbage_and_truncation_bridge_as_png_decode() {
     for opts in [ParseOptions::strict(), ParseOptions::lenient()] {
         assert!(matches!(
@@ -274,3 +300,92 @@ fn views_apply_the_mask_rule() {
 // brief, the spec's 0-dim row holds vacuously for crate-rejected streams;
 // any zero/degenerate-dimension byte stream is instead covered by the
 // `doom64-gfx` fuzz target's no-panic oracle over arbitrary input.
+
+/// Retail decode gate (#282, ADR-0016's "living pin" pattern — see
+/// `retail_classic_graphics_decode_strict_clean` and
+/// `retail_texture_sets_compose_strict_clean` in `tests/gfx.rs` for the
+/// sibling gates): every non-empty lump in each Doom 64 WAD's `Textures`
+/// (`T_START`..`T_END`)
+/// and `Sprites` (`S_START`..`S_END`) sections must decode strict-clean,
+/// pinning the spike's empirical 503/503 claim (ADR-0022 §5). Gated on
+/// `sweep-tests` + `CRUSTYWAD_SWEEP_DIR` (an absolute path to a local WAD
+/// collection; never committed — see `tests/fixtures/README.md`).
+///
+/// Deliberate limit: this sweep only walks the `T_`/`S_` marker sections,
+/// per the sections idiom used by the rest of the sweep suite. Doom 64 PNG
+/// gfx lumps that live outside those two sections (e.g. HUD/menu/patch
+/// graphics referenced individually rather than through a marker range)
+/// are NOT covered here — that is a scope choice, not a soundness gap: the
+/// fuzz target (`fuzz_doom64_png`) covers `Doom64Png::decode` against
+/// arbitrary bytes regardless of section membership.
+#[cfg(feature = "sweep-tests")]
+#[test]
+fn retail_doom64_pngs_decode_strict_clean() {
+    use crustywad::SectionKind;
+
+    let Some(dir) = std::env::var_os("CRUSTYWAD_SWEEP_DIR") else {
+        eprintln!("skipping: CRUSTYWAD_SWEEP_DIR not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_absolute() || !dir.is_dir() {
+        eprintln!(
+            "skipping: CRUSTYWAD_SWEEP_DIR is not an absolute path to a directory: {}",
+            dir.display()
+        );
+        return;
+    }
+
+    let mut wads = 0usize;
+    let mut textures = 0usize;
+    let mut sprites = 0usize;
+    let mut sprites_with_grab = 0usize;
+    for entry in std::fs::read_dir(&dir).expect("sweep dir reads") {
+        let path = entry.expect("dir entry").path();
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("wad"))
+        {
+            continue;
+        }
+        let wad = crustywad::Wad::from_path(&path).expect("retail WAD reads");
+        let sections = wad
+            .sections_with_options(ParseOptions::lenient())
+            .expect("lenient scan never fails");
+        // Doom 64 signature: only these WADs carry PNG graphics.
+        if sections.of_kind(SectionKind::Textures).next().is_none() {
+            continue;
+        }
+        wads += 1;
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+
+        for (kind, counter, count_grab) in [
+            (SectionKind::Textures, &mut textures, false),
+            (SectionKind::Sprites, &mut sprites, true),
+        ] {
+            for section in sections.of_kind(kind) {
+                for i in section.lumps.clone() {
+                    let bytes = wad.lump_bytes(i).unwrap();
+                    if bytes.is_empty() {
+                        continue; // markers
+                    }
+                    let lump_name = wad.lump(i).unwrap().name().to_owned();
+                    let img =
+                        Doom64Png::decode(bytes, &ParseOptions::strict()).unwrap_or_else(|e| {
+                            panic!("{name}: {kind:?} lump {lump_name} strict: {e}")
+                        });
+                    assert!(img.warnings().is_empty());
+                    *counter += 1;
+                    if count_grab && img.offsets.is_some() {
+                        sprites_with_grab += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(wads > 0, "sweep found no Doom 64 WADs");
+    assert!(textures > 0 && sprites > 0, "sweep decoded nothing");
+    eprintln!(
+        "doom64 png sweep: {wads} WAD(s), {textures} texture(s), {sprites} sprite(s) ({sprites_with_grab} with grAb), all strict-clean"
+    );
+}
