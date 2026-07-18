@@ -251,7 +251,7 @@ impl Picture {
 
 /// Validates a header dimension: strict errors on negative; lenient clamps
 /// to 0 and warns.
-fn clamp_dimension(
+pub(super) fn clamp_dimension(
     value: i16,
     field: &'static str,
     strictness: Strictness,

@@ -809,7 +809,7 @@ mod tests {
         // A run of `{` must be rejected (either Syntax at depth 1 or DepthExceeded),
         // never a stack overflow.
         let text = format!("namespace=\"doom\"; x {}", "{".repeat(500));
-        let err = parse_udmf(&text, Limits { max_depth: 8 }).unwrap_err();
+        let err = parse_udmf(&text, Limits::new().with_max_depth(8)).unwrap_err();
         assert!(matches!(
             err,
             UdmfParseError::Syntax { .. } | UdmfParseError::DepthExceeded { .. }
@@ -955,8 +955,11 @@ mod tests {
     fn max_depth_zero_yields_depth_exceeded() {
         // With `max_depth == 0`, the first `{` (new depth 1 > 0) is rejected by
         // the depth guard itself, deterministically exercising `DepthExceeded`.
-        let err =
-            parse_udmf("namespace=\"doom\"; x {", crate::Limits { max_depth: 0 }).unwrap_err();
+        let err = parse_udmf(
+            "namespace=\"doom\"; x {",
+            crate::Limits::new().with_max_depth(0),
+        )
+        .unwrap_err();
         assert!(
             matches!(
                 err,

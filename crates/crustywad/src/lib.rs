@@ -165,20 +165,48 @@ pub enum Strictness {
     Lenient,
 }
 
-/// Resource limits applied during parsing.
+/// Resource limits applied by parsers that would otherwise trust on-disk
+/// counts and dimensions.
 ///
-/// Currently bounds UDMF text nesting depth; ignored by all binary-format paths.
+/// Bounds UDMF text nesting depth (`max_depth`) and the pixel allocation
+/// of a single texture composition (`max_composite_pixels`); ignored by
+/// the other binary-format paths. Construct via [`Limits::new`] and the
+/// `with_*` setters — the struct is `#[non_exhaustive]` so future limits
+/// can be added without a breaking change.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// Maximum block-nesting depth accepted by the UDMF text parser.
     pub max_depth: usize,
+    /// Maximum `width × height` in pixels a single texture composition may
+    /// allocate, enforced in BOTH strictness modes — a `TEXTUREx` header
+    /// can declare 32767 × 32767 (≈ 1 GiB) from a 30-byte lump
+    /// (ADR-0022 §3/§6).
+    pub max_composite_pixels: usize,
 }
 
 impl Limits {
-    /// The default limits (`max_depth = 64`).
+    /// The default limits (`max_depth = 64`, `max_composite_pixels = 1 << 24`).
     #[must_use]
     pub const fn new() -> Self {
-        Self { max_depth: 64 }
+        Self {
+            max_depth: 64,
+            max_composite_pixels: 1 << 24,
+        }
+    }
+
+    /// Returns these limits with `max_depth` replaced.
+    #[must_use]
+    pub const fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    /// Returns these limits with `max_composite_pixels` replaced.
+    #[must_use]
+    pub const fn with_max_composite_pixels(mut self, max_composite_pixels: usize) -> Self {
+        self.max_composite_pixels = max_composite_pixels;
+        self
     }
 }
 
@@ -787,6 +815,35 @@ impl Wad {
         self.lump_by_name("COLORMAP")
             .map(|lump| gfx::Colormap::parse(self.lump_data(lump), &options))
             .transpose()
+    }
+
+    /// Builds the WAD's [`gfx::TextureSet`] strictly from its `TEXTURE1`
+    /// and/or `TEXTURE2` lumps (plus `PNAMES` and the patch lumps they
+    /// reference), or `Ok(None)` when neither `TEXTUREx` lump is present.
+    ///
+    /// # Errors
+    ///
+    /// Strict mode: [`gfx::GfxError::MissingPnames`],
+    /// [`gfx::GfxError::PatchIndexOutOfBounds`],
+    /// [`gfx::GfxError::UnresolvedPatchName`],
+    /// [`gfx::GfxError::PatchPictureFailed`], or any [`gfx::GfxError`] from
+    /// parsing `TEXTUREx`/`PNAMES`/a patch picture. For best-effort
+    /// recovery of each case (with warnings on the returned set), use
+    /// [`Wad::texture_set_with_options`] with [`ParseOptions::lenient`].
+    pub fn texture_set(&self) -> Result<Option<gfx::TextureSet>, gfx::GfxError> {
+        self.texture_set_with_options(ParseOptions::strict())
+    }
+
+    /// [`Wad::texture_set`] honoring the given strictness.
+    ///
+    /// # Errors
+    ///
+    /// Strict mode only: the rows listed on [`Wad::texture_set`].
+    pub fn texture_set_with_options(
+        &self,
+        options: ParseOptions,
+    ) -> Result<Option<gfx::TextureSet>, gfx::GfxError> {
+        gfx::TextureSet::from_wad(self, &options)
     }
 
     /// Returns the raw bytes for the lump at the given zero-based index, or

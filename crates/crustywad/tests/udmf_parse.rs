@@ -63,7 +63,11 @@ fn depth_exceeded_on_configured_limit() {
     // depth guard deterministically, before the "blocks don't nest" `Syntax`
     // catch-all ever gets a chance to fire (that would require a *second*
     // `{`, which this input never reaches).
-    let err = parse_udmf("namespace=\"doom\"; vertex {", Limits { max_depth: 0 }).unwrap_err();
+    let err = parse_udmf(
+        "namespace=\"doom\"; vertex {",
+        Limits::new().with_max_depth(0),
+    )
+    .unwrap_err();
     assert!(
         matches!(err, UdmfParseError::DepthExceeded { max_depth: 0, .. }),
         "got {err:?}"

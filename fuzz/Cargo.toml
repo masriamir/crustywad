@@ -72,6 +72,12 @@ path = "fuzz_targets/fuzz_gfx.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_texturex"
+path = "fuzz_targets/fuzz_texturex.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 crustywad = { path = "../crates/crustywad", features = ["write"] }
