@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a345198b.js";
+            window.path_to_searchindex_js = "searchindex-22c9058b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2918eee.js"></script>
@@ -1427,8 +1427,9 @@ with a <code>Palette</code> in one step. <code>Flat</code> has the same <code>to
 fully covered since a flat has no post gaps.</p>
 <h2 id="doom-64-graphics"><a class="header" href="#doom-64-graphics">Doom 64 graphics</a></h2>
 <p>Doom 64’s texture, sprite, and gfx lumps are complete PNG files, not this format
-(ADR-0022 §3/§5). They are decoded separately behind the <code>doom64-gfx</code> feature
-(<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>) once that feature lands.</p>
+(ADR-0022 §3/§5). They are decoded separately, behind the optional
+<a href="#doom64-gfx"><code>doom64-gfx</code></a> feature — see that page for <code>Doom64Png</code>’s usage,
+the <code>png</code> dependency, and the <code>Limits::max_decoded_pixels</code> cap.</p>
 <h2 id="texture-composition"><a class="header" href="#texture-composition">Texture composition</a></h2>
 <p><code>crustywad::gfx::TextureSet</code> is “tier 2” of ADR-0022 §3’s three-tier plan: assembling
 <code>TEXTURE1</code>/<code>TEXTURE2</code> texture definitions plus the <code>PNAMES</code> patch-name table and their
@@ -1520,8 +1521,8 @@ vanilla’s own column-contributor count includes them regardless of lookup fail
 <em>live</em>, resolved patches count here, which is what the explicit-holes model requires.</p>
 <h2 id="whats-next-1"><a class="header" href="#whats-next-1">What’s next</a></h2>
 <p>Doom 64’s graphics are a different family entirely — see the <a href="#doom-64-graphics">Doom 64
-graphics</a> note above; PNG decoding lands behind the
-<code>doom64-gfx</code> feature (<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>).</p>
+graphics</a> note above; PNG decoding lives behind the
+<a href="#doom64-gfx"><code>doom64-gfx</code></a> feature.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cli-usage"><a class="header" href="#cli-usage">CLI Usage</a></h1>
 <p>The <code>cwad</code> binary ships with the <code>crustywad-cli</code> crate and provides quick WAD
@@ -1785,6 +1786,7 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#doom64-tests"><code>doom64-tests</code></a></td><td>no</td><td>Integration tests against a local Doom 64 IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
+<tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -1957,6 +1959,54 @@ truncates and emits <code>WriteWarning::NameTruncated</code>.</li>
 mode writes the raw 4-byte magic.</li>
 </ul>
 <hr>
+<h2 id="doom64-gfx"><a class="header" href="#doom64-gfx"><code>doom64-gfx</code></a></h2>
+<p><strong>Enables:</strong> <code>Doom64Png</code> decoding of Doom 64’s PNG texture/sprite lumps via the <code>png</code> crate
+(indexed pixels + palette rows + <code>grAb</code> offsets, capped by <code>Limits::max_decoded_pixels</code>)</p>
+<p><strong>Adds dependency:</strong> <a href="https://crates.io/crates/png"><code>png</code></a></p>
+<p>Doom 64’s PC port stores its texture and sprite lumps as standard palette-indexed PNG files
+rather than the classic picture format (ADR-0022 §5) — a different lump family from the rest
+of <code>crustywad::gfx</code>, decoded separately behind this feature rather than unconditionally in
+the core crate. <code>Doom64Png::decode</code> parses the indexed pixel data, the embedded <code>PLTE</code> (up to
+16 rows of 16 colors serving runtime palette variants), optional per-index <code>tRNS</code> alpha, and
+sprite draw offsets from a private <code>grAb</code> chunk (a big-endian <code>i32</code> pair, the <code>ZDoom</code>
+convention). The declared <code>width × height</code> is checked against
+<a href="https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_decoded_pixels"><code>Limits::max_decoded_pixels</code></a>
+— and a 65535-per-side cap — before any pixel buffer is allocated, fired in <strong>both</strong>
+strictness modes (the same DoS-cap exception <code>TextureSet::compose</code>’s composite limit uses).</p>
+<h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
+<pre><code class="language-toml"># Cargo.toml
+crustywad = { version = "0.5.0", features = ["doom64-gfx"] }
+</code></pre>
+<p>Or with <code>cargo add</code>:</p>
+<pre><code class="language-sh">cargo add crustywad --features doom64-gfx
+</code></pre>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::gfx::Doom64Png;
+use crustywad::ParseOptions;
+
+<span class="boring">fn run(png_bytes: &amp;[u8]) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let img = Doom64Png::decode(png_bytes, &amp;ParseOptions::strict())?;
+
+// Tier-2 view: palette indices plus a coverage mask.
+let indexed = img.to_indexed();
+
+// Full-color view: the PNG's own PLTE/tRNS, not `indexed`'s palette + boolean
+// mask — Doom 64 PNGs carry per-index alpha that a boolean mask can't represent.
+let rgba = img.to_rgba();
+let _ = (indexed, rgba);
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h3 id="strictness-and-limits"><a class="header" href="#strictness-and-limits">Strictness and limits</a></h3>
+<p><code>Doom64Png::decode</code> follows the same <code>ParseOptions::strict()</code>/<code>ParseOptions::lenient()</code>
+contract as the rest of <code>crustywad::gfx</code>: strict mode returns the first <code>GfxError</code>
+encountered; lenient mode recovers with a best-effort value and records the matching
+<code>GfxWarning</code>. <code>Limits::max_decoded_pixels</code> (default <code>1 &lt;&lt; 24</code>) bounds the pixel buffer a
+single <code>decode</code> call allocates and is enforced in both modes, ahead of any allocation — see
+the <a href="#doom-64-graphics">Graphics</a> guide page for how this fits alongside the rest
+of <code>crustywad::gfx</code>.</p>
+<hr>
 <h2 id="common-cargo-invocations"><a class="header" href="#common-cargo-invocations">Common <code>cargo</code> invocations</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1974,6 +2024,8 @@ mode writes the raw 4-byte magic.</li>
 <tr><td>Sweep a local WAD collection</td><td><code>CRUSTYWAD_SWEEP_DIR=… cargo test -p crustywad --features sweep-tests</code></td></tr>
 <tr><td>Build with <code>write</code></td><td><code>cargo build -p crustywad --features write</code></td></tr>
 <tr><td>Test with <code>write</code></td><td><code>cargo test -p crustywad --features write</code></td></tr>
+<tr><td>Build with <code>doom64-gfx</code></td><td><code>cargo build -p crustywad --features doom64-gfx</code></td></tr>
+<tr><td>Test with <code>doom64-gfx</code></td><td><code>cargo test -p crustywad --features doom64-gfx</code></td></tr>
 <tr><td>Full CI check</td><td><code>just ci</code></td></tr>
 </tbody>
 </table>

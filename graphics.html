@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a345198b.js";
+            window.path_to_searchindex_js = "searchindex-22c9058b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2918eee.js"></script>
@@ -272,8 +272,9 @@ with a <code>Palette</code> in one step. <code>Flat</code> has the same <code>to
 fully covered since a flat has no post gaps.</p>
 <h2 id="doom-64-graphics"><a class="header" href="#doom-64-graphics">Doom 64 graphics</a></h2>
 <p>Doom 64’s texture, sprite, and gfx lumps are complete PNG files, not this format
-(ADR-0022 §3/§5). They are decoded separately behind the <code>doom64-gfx</code> feature
-(<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>) once that feature lands.</p>
+(ADR-0022 §3/§5). They are decoded separately, behind the optional
+<a href="features.html#doom64-gfx"><code>doom64-gfx</code></a> feature — see that page for <code>Doom64Png</code>’s usage,
+the <code>png</code> dependency, and the <code>Limits::max_decoded_pixels</code> cap.</p>
 <h2 id="texture-composition"><a class="header" href="#texture-composition">Texture composition</a></h2>
 <p><code>crustywad::gfx::TextureSet</code> is “tier 2” of ADR-0022 §3’s three-tier plan: assembling
 <code>TEXTURE1</code>/<code>TEXTURE2</code> texture definitions plus the <code>PNAMES</code> patch-name table and their
@@ -365,8 +366,8 @@ vanilla’s own column-contributor count includes them regardless of lookup fail
 <em>live</em>, resolved patches count here, which is what the explicit-holes model requires.</p>
 <h2 id="whats-next"><a class="header" href="#whats-next">What’s next</a></h2>
 <p>Doom 64’s graphics are a different family entirely — see the <a href="#doom-64-graphics">Doom 64
-graphics</a> note above; PNG decoding lands behind the
-<code>doom64-gfx</code> feature (<a href="https://github.com/masriamir/crustywad/issues/282">#282</a>).</p>
+graphics</a> note above; PNG decoding lives behind the
+<a href="features.html#doom64-gfx"><code>doom64-gfx</code></a> feature.</p>
 
                     </main>
 
