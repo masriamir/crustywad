@@ -244,6 +244,28 @@ fn malformed_grab_strict_errors_lenient_ignores() {
     ));
 }
 
+#[test]
+fn views_apply_the_mask_rule() {
+    // PLTE 2 entries; tRNS [0]: index 0 transparent, index 1 opaque.
+    let plte = [10u8, 20, 30, 40, 50, 60];
+    let bytes = build_png(2, 1, png::BitDepth::Eight, &plte, Some(&[0]), &[0, 1]);
+    let img = Doom64Png::decode(&bytes, &ParseOptions::strict()).unwrap();
+    let indexed = img.to_indexed();
+    assert_eq!((indexed.width, indexed.height), (2, 1));
+    assert_eq!(indexed.mask, vec![false, true]); // trns 0 -> hole
+    assert_eq!(indexed.pixels[1], 1);
+    let rgba = img.to_rgba();
+    assert_eq!(&rgba.pixels[0..4], &[0, 0, 0, 0]); // transparent black
+    assert_eq!(&rgba.pixels[4..8], &[40, 50, 60, 255]);
+
+    // Lenient out-of-range index renders as a hole.
+    let bytes = build_png(2, 1, png::BitDepth::Eight, &plte, None, &[0, 5]);
+    let img = Doom64Png::decode(&bytes, &ParseOptions::lenient()).unwrap();
+    let indexed = img.to_indexed();
+    assert_eq!(indexed.mask, vec![true, false]);
+    assert_eq!(&img.to_rgba().pixels[4..8], &[0, 0, 0, 0]);
+}
+
 // `zero_dimension_is_a_valid_empty_image` intentionally omitted: the `png`
 // crate's `Encoder::write_header` rejects zero-dimension images at encode
 // time ("Zero width not allowed" for `build_png(0, 1, ...)`), so there is

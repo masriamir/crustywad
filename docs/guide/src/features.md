@@ -13,6 +13,7 @@ allowing callers to opt in to additional capabilities.
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
+| [`doom64-gfx`](#doom64-gfx) | no | Enables `Doom64Png` decoding of Doom 64's PNG texture/sprite lumps via the `png` crate (indexed pixels + palette rows + `grAb` offsets, capped by `Limits::max_decoded_pixels`) |
 
 ---
 
@@ -256,6 +257,67 @@ let rebuilt = wad.to_builder().build().unwrap();
 
 ---
 
+## `doom64-gfx`
+
+**Enables:** `Doom64Png` decoding of Doom 64's PNG texture/sprite lumps via the `png` crate
+(indexed pixels + palette rows + `grAb` offsets, capped by `Limits::max_decoded_pixels`)
+
+**Adds dependency:** [`png`](https://crates.io/crates/png)
+
+Doom 64's PC port stores its texture and sprite lumps as standard palette-indexed PNG files
+rather than the classic picture format (ADR-0022 §5) — a different lump family from the rest
+of `crustywad::gfx`, decoded separately behind this feature rather than unconditionally in
+the core crate. `Doom64Png::decode` parses the indexed pixel data, the embedded `PLTE` (up to
+16 rows of 16 colors serving runtime palette variants), optional per-index `tRNS` alpha, and
+sprite draw offsets from a private `grAb` chunk (a big-endian `i32` pair, the `ZDoom`
+convention). The declared `width × height` is checked against
+[`Limits::max_decoded_pixels`](https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_decoded_pixels)
+— and a 65535-per-side cap — before any pixel buffer is allocated, fired in **both**
+strictness modes (the same DoS-cap exception `TextureSet::compose`'s composite limit uses).
+
+### Usage
+
+```toml
+# Cargo.toml
+crustywad = { version = "0.5.0", features = ["doom64-gfx"] }
+```
+
+Or with `cargo add`:
+
+```sh
+cargo add crustywad --features doom64-gfx
+```
+
+```rust
+use crustywad::gfx::Doom64Png;
+use crustywad::ParseOptions;
+
+# fn run(png_bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+let img = Doom64Png::decode(png_bytes, &ParseOptions::strict())?;
+
+// Tier-2 view: palette indices plus a coverage mask.
+let indexed = img.to_indexed();
+
+// Full-color view: the PNG's own PLTE/tRNS, not `indexed`'s palette + boolean
+// mask — Doom 64 PNGs carry per-index alpha that a boolean mask can't represent.
+let rgba = img.to_rgba();
+let _ = (indexed, rgba);
+# Ok(())
+# }
+```
+
+### Strictness and limits
+
+`Doom64Png::decode` follows the same `ParseOptions::strict()`/`ParseOptions::lenient()`
+contract as the rest of `crustywad::gfx`: strict mode returns the first `GfxError`
+encountered; lenient mode recovers with a best-effort value and records the matching
+`GfxWarning`. `Limits::max_decoded_pixels` (default `1 << 24`) bounds the pixel buffer a
+single `decode` call allocates and is enforced in both modes, ahead of any allocation — see
+the [Graphics](graphics.md#doom-64-graphics) guide page for how this fits alongside the rest
+of `crustywad::gfx`.
+
+---
+
 ## Common `cargo` invocations
 
 | Goal | Command |
@@ -270,6 +332,8 @@ let rebuilt = wad.to_builder().build().unwrap();
 | Sweep a local WAD collection | `CRUSTYWAD_SWEEP_DIR=… cargo test -p crustywad --features sweep-tests` |
 | Build with `write` | `cargo build -p crustywad --features write` |
 | Test with `write` | `cargo test -p crustywad --features write` |
+| Build with `doom64-gfx` | `cargo build -p crustywad --features doom64-gfx` |
+| Test with `doom64-gfx` | `cargo test -p crustywad --features doom64-gfx` |
 | Full CI check | `just ci` |
 
 See the [`justfile`](https://github.com/masriamir/crustywad/blob/main/justfile) for

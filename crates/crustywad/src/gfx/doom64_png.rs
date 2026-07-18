@@ -128,6 +128,61 @@ impl Doom64Png {
     pub fn warnings(&self) -> &[GfxWarning] {
         &self.warnings
     }
+
+    /// The tier-2 view (ADR-0022 §3's shared contract). Mask is `false`
+    /// where the pixel's `tRNS` alpha is exactly 0 OR the index has no
+    /// `PLTE` entry (a lenient-kept out-of-range index has no resolvable
+    /// color); covered everywhere else (missing `tRNS` entries are
+    /// opaque).
+    #[must_use]
+    pub fn to_indexed(&self) -> super::IndexedImage {
+        let mask = self
+            .pixels
+            .iter()
+            .map(|&i| {
+                let idx = usize::from(i);
+                idx < self.plte.len() && self.trns.get(idx).copied().unwrap_or(255) != 0
+            })
+            .collect();
+        super::IndexedImage {
+            width: self.width,
+            height: self.height,
+            pixels: self.pixels.clone(),
+            mask,
+        }
+    }
+
+    /// RGBA over the full embedded `PLTE`: `rgb = plte[index]`,
+    /// `alpha = trns[index]` (255 where absent); pixels the mask rule
+    /// marks uncovered render transparent black. This is deliberately NOT
+    /// `to_indexed().to_rgba(palette)` — the PNG carries per-index alpha
+    /// that [`IndexedImage`](super::IndexedImage)'s boolean mask cannot
+    /// represent, so this method reads `trns` directly instead of routing
+    /// through the tier-2 view. Row/`PAL`-variant rendering is the
+    /// recorded follow-up (ADR-0022 §5).
+    #[must_use]
+    pub fn to_rgba(&self) -> super::RgbaImage {
+        let mut out = Vec::with_capacity(self.pixels.len() * 4);
+        for &i in &self.pixels {
+            let idx = usize::from(i);
+            match self.plte.get(idx) {
+                Some(&[r, g, b]) => {
+                    let alpha = self.trns.get(idx).copied().unwrap_or(255);
+                    if alpha == 0 {
+                        out.extend_from_slice(&[0, 0, 0, 0]);
+                    } else {
+                        out.extend_from_slice(&[r, g, b, alpha]);
+                    }
+                }
+                None => out.extend_from_slice(&[0, 0, 0, 0]),
+            }
+        }
+        super::RgbaImage {
+            width: self.width,
+            height: self.height,
+            pixels: out,
+        }
+    }
 }
 
 /// Validates the declared PNG dimensions BEFORE any pixel allocation

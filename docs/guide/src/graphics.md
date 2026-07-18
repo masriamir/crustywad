@@ -96,8 +96,9 @@ fully covered since a flat has no post gaps.
 ## Doom 64 graphics
 
 Doom 64's texture, sprite, and gfx lumps are complete PNG files, not this format
-(ADR-0022 §3/§5). They are decoded separately behind the `doom64-gfx` feature
-([#282](https://github.com/masriamir/crustywad/issues/282)) once that feature lands.
+(ADR-0022 §3/§5). They are decoded separately, behind the optional
+[`doom64-gfx`](features.md#doom64-gfx) feature — see that page for `Doom64Png`'s usage,
+the `png` dependency, and the `Limits::max_decoded_pixels` cap.
 
 ## Texture composition
 
@@ -190,8 +191,8 @@ vanilla's own column-contributor count includes them regardless of lookup failur
 ## What's next
 
 Doom 64's graphics are a different family entirely — see the [Doom 64
-graphics](#doom-64-graphics) note above; PNG decoding lands behind the
-`doom64-gfx` feature ([#282](https://github.com/masriamir/crustywad/issues/282)).
+graphics](#doom-64-graphics) note above; PNG decoding lives behind the
+[`doom64-gfx`](features.md#doom64-gfx) feature.
 
 [`Wad::lump_by_name`]: https://docs.rs/crustywad/latest/crustywad/struct.Wad.html#method.lump_by_name
 [`Limits::max_composite_pixels`]: https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_composite_pixels
