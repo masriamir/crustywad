@@ -53,5 +53,6 @@ implementation begins.**
 | [0020](0020-optional-front-sidedef.md) | Optional front sidedef (the 0xffff sentinel applies to both sides) | Accepted |
 | [0021](0021-doom64-graph-normalization.md) | Doom 64 graph normalization | Accepted |
 | [0022](0022-graphics-texture-layer.md) | The graphics & texture layer — formats, staging, and the Doom 64 name-hash | Accepted |
+| [0023](0023-audio-layer.md) | The audio layer — DMX sound, MUS music, instrument banks, Raven scripts, and Doom 64 containers | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->
