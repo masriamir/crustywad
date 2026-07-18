@@ -2,14 +2,20 @@
 //! patches and sprites, raw 64×64 flats, the `PLAYPAL` palette collection,
 //! and the `COLORMAP` light-diminishing tables. Decoding is dependency-free
 //! and lives in the core crate (the map-parsing precedent — no feature
-//! flag). Doom 64 graphics are a different family (PNG lumps) and are not
-//! handled here.
+//! flag). Doom 64 graphics are a different family (standard PNG lumps,
+//! ADR-0022 §5) handled behind the optional `doom64-gfx` feature; the
+//! [`GfxError`]/[`GfxWarning`] variants below are shared across both
+//! families.
 
+#[cfg(feature = "doom64-gfx")]
+mod doom64_png;
 mod flat;
 mod palette;
 mod picture;
 mod texture;
 
+#[cfg(feature = "doom64-gfx")]
+pub use doom64_png::Doom64Png;
 pub use flat::Flat;
 pub use palette::{Colormap, Palette, Playpal};
 pub use picture::{Column, IndexedImage, Picture, Post, RgbaImage};
@@ -256,6 +262,69 @@ pub enum GfxError {
     MedusaColumn {
         /// 0-based column index of the first uncovered column.
         column: usize,
+    },
+    /// The PNG stream could not be decoded (produced by the `doom64-gfx`
+    /// feature; unrecoverable in both modes) — either the underlying `png`
+    /// crate rejected it, or a crustywad-side structural guard did (a
+    /// palette PNG with no `PLTE`, a 16-bit indexed depth, an output-size
+    /// anomaly).
+    #[error("PNG decode failed: {detail}")]
+    PngDecode {
+        /// Human-readable cause: the `png` crate's error rendered via its
+        /// `Display`, or a crustywad guard's own message (e.g. `"missing
+        /// PLTE"`).
+        detail: String,
+    },
+    /// A Doom 64 PNG's color type is not palette-indexed (produced by the
+    /// `doom64-gfx` feature; unrecoverable in both modes — there is no
+    /// palette to remap against).
+    #[error("PNG color type {color_type} is not palette-indexed")]
+    NotPaletteIndexed {
+        /// The `png` crate's color type name.
+        color_type: &'static str,
+    },
+    /// A Doom 64 PNG's `width × height` exceeds
+    /// [`Limits::max_decoded_pixels`](crate::Limits::max_decoded_pixels)
+    /// (produced by the `doom64-gfx` feature). Fires in **both** strictness
+    /// modes — the DoS-cap exception to ADR-0003, matching
+    /// [`CompositeTooLarge`](GfxError::CompositeTooLarge)'s policy.
+    #[error(
+        "PNG dimensions {width}\u{d7}{height} exceed the decode limit of {max_pixels} pixels or the 65535 per-side cap"
+    )]
+    DecodedImageTooLarge {
+        /// The PNG's declared width.
+        width: u32,
+        /// The PNG's declared height.
+        height: u32,
+        /// The active [`Limits::max_decoded_pixels`](crate::Limits::max_decoded_pixels) cap.
+        max_pixels: usize,
+    },
+    /// A Doom 64 PNG's `tRNS` chunk carries more entries than the `PLTE`
+    /// (produced by the `doom64-gfx` feature; lenient truncates to the
+    /// `PLTE` length).
+    #[error("tRNS carries {trns_len} entries but the PLTE has only {plte_len}")]
+    OversizedTrns {
+        /// The `tRNS` chunk's entry count.
+        trns_len: usize,
+        /// The `PLTE` chunk's entry count.
+        plte_len: usize,
+    },
+    /// A Doom 64 PNG pixel index has no matching `PLTE` entry (produced by
+    /// the `doom64-gfx` feature; lenient keeps the pixel and renders it as
+    /// a hole).
+    #[error("pixel index {index} has no PLTE entry (palette has {plte_len})")]
+    PixelIndexOutOfRange {
+        /// The out-of-range pixel index.
+        index: u8,
+        /// The `PLTE` chunk's entry count.
+        plte_len: usize,
+    },
+    /// A Doom 64 PNG's private `grAb` chunk has the wrong data length
+    /// (produced by the `doom64-gfx` feature; lenient ignores the chunk).
+    #[error("grAb chunk is {len} bytes; exactly 8 required")]
+    MalformedGrab {
+        /// The chunk's actual data length.
+        len: usize,
     },
 }
 
@@ -508,5 +577,43 @@ pub enum GfxWarning {
         first_column: usize,
         /// How many columns (not necessarily contiguous) had no contributor.
         count: usize,
+    },
+    /// A Doom 64 PNG's `tRNS` chunk carried more entries than the `PLTE`;
+    /// truncated to the `PLTE` length during lenient decoding (produced by
+    /// the `doom64-gfx` feature).
+    #[error(
+        "tRNS carried {trns_len} entries but the PLTE has only {plte_len}; truncated during lenient decoding"
+    )]
+    OversizedTrns {
+        /// The `tRNS` chunk's entry count.
+        trns_len: usize,
+        /// The `PLTE` chunk's entry count.
+        plte_len: usize,
+    },
+    /// One or more Doom 64 PNG pixel indices had no matching `PLTE` entry;
+    /// kept and rendered as holes during lenient decoding (produced by the
+    /// `doom64-gfx` feature). Aggregated: strict mode fails on the first
+    /// such pixel ([`GfxError::PixelIndexOutOfRange`]), lenient mode
+    /// records this single warning describing the run.
+    #[error(
+        "{count} pixel(s), first index {first_index}, have no PLTE entry (palette has {plte_len}); kept during lenient decoding and rendered as holes"
+    )]
+    PixelIndexOutOfRange {
+        /// The first out-of-range pixel index encountered.
+        first_index: u8,
+        /// How many pixels had no matching `PLTE` entry.
+        count: usize,
+        /// The `PLTE` chunk's entry count.
+        plte_len: usize,
+    },
+    /// A Doom 64 PNG's private `grAb` chunk had the wrong data length; the
+    /// chunk was ignored during lenient decoding (produced by the
+    /// `doom64-gfx` feature).
+    #[error(
+        "grAb chunk is {len} bytes; exactly 8 required — chunk ignored during lenient decoding"
+    )]
+    MalformedGrab {
+        /// The chunk's actual data length.
+        len: usize,
     },
 }
