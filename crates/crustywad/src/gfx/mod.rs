@@ -14,6 +14,8 @@ mod palette;
 mod picture;
 mod texture;
 
+#[cfg(feature = "doom64-gfx")]
+pub use doom64_png::Doom64Png;
 pub use flat::Flat;
 pub use palette::{Colormap, Palette, Playpal};
 pub use picture::{Column, IndexedImage, Picture, Post, RgbaImage};

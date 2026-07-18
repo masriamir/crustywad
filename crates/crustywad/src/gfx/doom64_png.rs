@@ -7,6 +7,280 @@
 //! crate exposes none) and sub-8-bit index unpacking (the crate's
 //! `PACKING` transformation is declared but not implemented in 0.18).
 
+use std::io::Cursor;
+
+use crate::{ParseOptions, Strictness};
+
+use super::{GfxError, GfxWarning};
+
+/// A decoded Doom 64 PNG lump (`doom64-gfx`): indexed pixels, the embedded
+/// `PLTE` (up to 16 rows of 16 colors serving runtime variants —
+/// ADR-0022 §5), optional per-index `tRNS` alpha, and `grAb` sprite
+/// offsets. Row/`PAL`-variant SELECTION is deliberately not interpreted
+/// here (follow-up; the rows are exposed raw).
+#[derive(Debug, Clone)]
+pub struct Doom64Png {
+    /// Width in pixels (the per-side cap guarantees `u16`).
+    pub width: u16,
+    /// Height in pixels.
+    pub height: u16,
+    /// Sprite draw offsets from the private `grAb` chunk (big-endian
+    /// `i32` pair, the `ZDoom` convention); `None` when absent (textures).
+    pub offsets: Option<(i32, i32)>,
+    pixels: Vec<u8>,
+    plte: Vec<[u8; 3]>,
+    trns: Vec<u8>,
+    warnings: Vec<GfxWarning>,
+}
+
+impl Doom64Png {
+    /// Decodes a Doom 64 PNG lump.
+    ///
+    /// # Errors
+    ///
+    /// Both modes: [`GfxError::PngDecode`] (undecodable),
+    /// [`GfxError::NotPaletteIndexed`] (no index data to recover — never
+    /// the engine's abort, ADR-0022 §5), [`GfxError::DecodedImageTooLarge`]
+    /// (the [`Limits::max_decoded_pixels`](crate::Limits::max_decoded_pixels)
+    /// and 65535-per-side caps, checked before any pixel allocation).
+    /// Strict mode additionally: [`GfxError::OversizedTrns`],
+    /// [`GfxError::PixelIndexOutOfRange`], [`GfxError::MalformedGrab`].
+    pub fn decode(bytes: &[u8], options: &ParseOptions) -> Result<Self, GfxError> {
+        let strictness = options.strictness;
+        let mut warnings = Vec::new();
+
+        let decoder = png::Decoder::new(Cursor::new(bytes));
+        let mut reader = decoder.read_info().map_err(|e| GfxError::PngDecode {
+            detail: e.to_string(),
+        })?;
+
+        let info = reader.info();
+        let (width32, height32) = (info.width, info.height);
+        if info.color_type != png::ColorType::Indexed {
+            return Err(GfxError::NotPaletteIndexed {
+                color_type: color_type_name(info.color_type),
+            });
+        }
+        let (width, height) =
+            check_dimensions(width32, height32, options.limits.max_decoded_pixels)?;
+
+        let plte: Vec<[u8; 3]> = info
+            .palette
+            .as_ref()
+            .map(|p| p.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
+            .unwrap_or_default();
+        if plte.is_empty() {
+            // The crate normally rejects palette PNGs without PLTE; guard
+            // defensively rather than indexing into nothing.
+            return Err(GfxError::PngDecode {
+                detail: "missing PLTE".to_owned(),
+            });
+        }
+        let trns = resolve_trns(info, plte.len(), strictness, &mut warnings)?;
+        let bit_depth = info.bit_depth as u8;
+        let pixels = decode_pixels(&mut reader, width, height, bit_depth)?;
+        check_pixel_range(&pixels, plte.len(), strictness, &mut warnings)?;
+        let offsets = resolve_grab(bytes, strictness, &mut warnings)?;
+
+        Ok(Self {
+            width,
+            height,
+            offsets,
+            pixels,
+            plte,
+            trns,
+            warnings,
+        })
+    }
+
+    /// One index byte per pixel, row-major; `len == width × height`.
+    #[must_use]
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    /// The embedded `PLTE`, as stored (1..=256 RGB entries).
+    #[must_use]
+    pub fn plte(&self) -> &[[u8; 3]] {
+        &self.plte
+    }
+
+    /// Per-index `tRNS` alpha (may be shorter than the `PLTE`; empty when
+    /// the chunk is absent — treat missing entries as opaque).
+    #[must_use]
+    pub fn trns(&self) -> &[u8] {
+        &self.trns
+    }
+
+    /// One 16-color Doom 64 palette row (`PLTE` rows serve runtime
+    /// variants — ADR-0022 §5); `None` when the row is not fully present.
+    #[must_use]
+    pub fn palette_row(&self, row: usize) -> Option<[[u8; 3]; 16]> {
+        let start = row.checked_mul(16)?;
+        let slice = self.plte.get(start..start + 16)?;
+        let mut out = [[0u8; 3]; 16];
+        out.copy_from_slice(slice);
+        Some(out)
+    }
+
+    /// Non-fatal issues recovered during lenient decoding.
+    #[must_use]
+    pub fn warnings(&self) -> &[GfxWarning] {
+        &self.warnings
+    }
+}
+
+/// Validates the declared PNG dimensions BEFORE any pixel allocation
+/// (ADR-0022 §5's uncapped-`Z_Calloc` defect is the anti-pattern): both the
+/// 65535-per-side cap (so `width`/`height` narrow losslessly to `u16`) and
+/// [`Limits::max_decoded_pixels`](crate::Limits::max_decoded_pixels). Fires
+/// in both strictness modes — the DoS-cap exception to ADR-0003.
+fn check_dimensions(
+    width32: u32,
+    height32: u32,
+    max_pixels: usize,
+) -> Result<(u16, u16), GfxError> {
+    let per_side_ok = u16::try_from(width32).is_ok() && u16::try_from(height32).is_ok();
+    let area = (width32 as usize).saturating_mul(height32 as usize);
+    if !per_side_ok || area > max_pixels {
+        return Err(GfxError::DecodedImageTooLarge {
+            width: width32,
+            height: height32,
+            max_pixels,
+        });
+    }
+    #[allow(clippy::cast_possible_truncation)] // per-side cap above
+    Ok((width32 as u16, height32 as u16))
+}
+
+/// Applies the `tRNS`-oversize policy row: strict mode errors, lenient
+/// mode truncates to the `PLTE` length and records a warning.
+fn resolve_trns(
+    info: &png::Info<'_>,
+    plte_len: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<GfxWarning>,
+) -> Result<Vec<u8>, GfxError> {
+    let mut trns: Vec<u8> = info.trns.as_ref().map(|t| t.to_vec()).unwrap_or_default();
+    if trns.len() > plte_len {
+        match strictness {
+            Strictness::Strict => {
+                return Err(GfxError::OversizedTrns {
+                    trns_len: trns.len(),
+                    plte_len,
+                });
+            }
+            Strictness::Lenient => {
+                warnings.push(GfxWarning::OversizedTrns {
+                    trns_len: trns.len(),
+                    plte_len,
+                });
+                trns.truncate(plte_len);
+            }
+        }
+    }
+    Ok(trns)
+}
+
+/// Decodes the packed frame and unpacks it to one index byte per pixel.
+/// Computes `line_size` from PNG-spec math (`ceil(width×depth/8)`) rather
+/// than relying on `OutputInfo` accessors (unverified against 0.18.1), and
+/// guards the slice explicitly rather than trusting the buffer size.
+fn decode_pixels(
+    reader: &mut png::Reader<Cursor<&[u8]>>,
+    width: u16,
+    height: u16,
+    bit_depth: u8,
+) -> Result<Vec<u8>, GfxError> {
+    let line_size = (usize::from(width) * usize::from(bit_depth)).div_ceil(8);
+    let Some(buf_size) = reader.output_buffer_size() else {
+        return Err(GfxError::PngDecode {
+            detail: "output size overflow".to_owned(),
+        });
+    };
+    // Packed output is at most one byte per pixel for indexed depths, so
+    // this allocation is within the caps `check_dimensions` already
+    // enforced.
+    let mut packed = vec![0u8; buf_size];
+    reader
+        .next_frame(&mut packed)
+        .map_err(|e| GfxError::PngDecode {
+            detail: e.to_string(),
+        })?;
+    let needed = line_size * usize::from(height);
+    if packed.len() < needed {
+        return Err(GfxError::PngDecode {
+            detail: "short output buffer".to_owned(),
+        });
+    }
+    Ok(unpack_indices(
+        &packed[..needed],
+        usize::from(width),
+        usize::from(height),
+        line_size,
+        bit_depth,
+    ))
+}
+
+/// Applies the out-of-range-pixel-index policy row: strict mode errors on
+/// the first offending pixel, lenient mode aggregates a single warning
+/// describing the run and keeps the pixels (rendered as holes downstream).
+fn check_pixel_range(
+    pixels: &[u8],
+    plte_len: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<GfxWarning>,
+) -> Result<(), GfxError> {
+    let mut oob = pixels.iter().filter(|&&i| usize::from(i) >= plte_len);
+    if let Some(&first_index) = oob.next() {
+        let count = 1 + oob.count();
+        match strictness {
+            Strictness::Strict => {
+                return Err(GfxError::PixelIndexOutOfRange {
+                    index: first_index,
+                    plte_len,
+                });
+            }
+            Strictness::Lenient => warnings.push(GfxWarning::PixelIndexOutOfRange {
+                first_index,
+                count,
+                plte_len,
+            }),
+        }
+    }
+    Ok(())
+}
+
+/// Applies the malformed-`grAb`-chunk policy row: strict mode errors,
+/// lenient mode ignores the chunk and records a warning.
+fn resolve_grab(
+    bytes: &[u8],
+    strictness: Strictness,
+    warnings: &mut Vec<GfxWarning>,
+) -> Result<Option<(i32, i32)>, GfxError> {
+    match find_grab(bytes) {
+        Ok(offsets) => Ok(offsets),
+        Err(len) => match strictness {
+            Strictness::Strict => Err(GfxError::MalformedGrab { len }),
+            Strictness::Lenient => {
+                warnings.push(GfxWarning::MalformedGrab { len });
+                Ok(None)
+            }
+        },
+    }
+}
+
+/// Stable names for the error message (no dependency types in our API).
+fn color_type_name(ct: png::ColorType) -> &'static str {
+    match ct {
+        png::ColorType::Grayscale => "grayscale",
+        png::ColorType::Rgb => "RGB",
+        png::ColorType::Indexed => "indexed",
+        png::ColorType::GrayscaleAlpha => "grayscale+alpha",
+        png::ColorType::Rgba => "RGBA",
+    }
+}
+
 /// Walks the PNG chunk stream for a `grAb` chunk. `Ok(Some((x, y)))` for a
 /// well-formed 8-byte chunk (two big-endian `i32`s), `Ok(None)` when
 /// absent or the stream ends/degenerates first (the `png` crate has
@@ -14,8 +288,6 @@
 /// with the wrong data length. Bounded: each iteration advances at least
 /// 12 bytes; CRCs are not validated here (the decoder validates the
 /// chunks it consumes).
-// Not yet called outside tests: `Doom64Png` (Task 2, #282) wires this in.
-#[allow(dead_code)]
 pub(super) fn find_grab(bytes: &[u8]) -> Result<Option<(i32, i32)>, usize> {
     let mut pos = 8usize; // past the PNG signature
     loop {
@@ -50,8 +322,6 @@ pub(super) fn find_grab(bytes: &[u8]) -> Result<Option<(i32, i32)>, usize> {
 /// pixel, MSB-first within each byte, rows independently padded to a byte
 /// boundary (the PNG spec's packing). Depth 8 copies rows respecting
 /// `line_size`. `packed` must hold `height` rows of `line_size` bytes.
-// Not yet called outside tests: `Doom64Png` (Task 2, #282) wires this in.
-#[allow(dead_code)]
 pub(super) fn unpack_indices(
     packed: &[u8],
     width: usize,
