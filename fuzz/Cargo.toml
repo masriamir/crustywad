@@ -80,7 +80,7 @@ doc = false
 
 [dependencies]
 libfuzzer-sys = "0.4"
-crustywad = { path = "../crates/crustywad", features = ["write"] }
+crustywad = { path = "../crates/crustywad", features = ["write", "doom64-gfx"] }
 
 [profile.release]
 debug = 1

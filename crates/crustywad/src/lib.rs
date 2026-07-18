@@ -168,11 +168,12 @@ pub enum Strictness {
 /// Resource limits applied by parsers that would otherwise trust on-disk
 /// counts and dimensions.
 ///
-/// Bounds UDMF text nesting depth (`max_depth`) and the pixel allocation
-/// of a single texture composition (`max_composite_pixels`); ignored by
-/// the other binary-format paths. Construct via [`Limits::new`] and the
-/// `with_*` setters — the struct is `#[non_exhaustive]` so future limits
-/// can be added without a breaking change.
+/// Bounds UDMF text nesting depth (`max_depth`), the pixel allocation of a
+/// single texture composition (`max_composite_pixels`), and the pixel
+/// allocation of a single `doom64-gfx` PNG decode (`max_decoded_pixels`);
+/// ignored by the other binary-format paths. Construct via [`Limits::new`]
+/// and the `with_*` setters — the struct is `#[non_exhaustive]` so future
+/// limits can be added without a breaking change.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -183,15 +184,22 @@ pub struct Limits {
     /// can declare 32767 × 32767 (≈ 1 GiB) from a 30-byte lump
     /// (ADR-0022 §3/§6).
     pub max_composite_pixels: usize,
+    /// Maximum `width × height` in pixels a single `doom64-gfx` PNG decode
+    /// may allocate, enforced in BOTH strictness modes — Doom64 EX sizes
+    /// an uncapped allocation from library-reported dimensions
+    /// (ADR-0022 §5). Independent of the `png` crate's internal limits.
+    pub max_decoded_pixels: usize,
 }
 
 impl Limits {
-    /// The default limits (`max_depth = 64`, `max_composite_pixels = 1 << 24`).
+    /// The default limits (`max_depth = 64`, `max_composite_pixels = 1 <<
+    /// 24`, `max_decoded_pixels = 1 << 24`).
     #[must_use]
     pub const fn new() -> Self {
         Self {
             max_depth: 64,
             max_composite_pixels: 1 << 24,
+            max_decoded_pixels: 1 << 24,
         }
     }
 
@@ -206,6 +214,13 @@ impl Limits {
     #[must_use]
     pub const fn with_max_composite_pixels(mut self, max_composite_pixels: usize) -> Self {
         self.max_composite_pixels = max_composite_pixels;
+        self
+    }
+
+    /// Returns these limits with `max_decoded_pixels` replaced.
+    #[must_use]
+    pub const fn with_max_decoded_pixels(mut self, max_decoded_pixels: usize) -> Self {
+        self.max_decoded_pixels = max_decoded_pixels;
         self
     }
 }

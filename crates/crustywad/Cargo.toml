@@ -31,10 +31,12 @@ hexen-tests = []
 doom64-tests = []
 sweep-tests = []
 write = []
+doom64-gfx = ["dep:png"]
 
 [dependencies]
 binrw.workspace = true
 memmap2 = { version = "0.9.5", optional = true }
+png = { version = "0.18.1", optional = true, default-features = false }
 thiserror.workspace = true
 
 [dev-dependencies]
