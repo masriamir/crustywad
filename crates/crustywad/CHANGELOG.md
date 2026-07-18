@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.5.0...crustywad-v0.6.0) - 2026-07-18
+
+### Added
+
+- *(gfx)* Doom 64 PNG decode behind the doom64-gfx feature ([#298](https://github.com/masriamir/crustywad/pull/298))
+- *(gfx)* [**breaking**] texture composition — PNAMES, TEXTUREx, and the R_GenerateComposite contract ([#295](https://github.com/masriamir/crustywad/pull/295))
+- *(gfx)* classic graphics decode — pictures, flats, PLAYPAL/COLORMAP ([#293](https://github.com/masriamir/crustywad/pull/293))
+- *(map)* Doom 64 texture-name resolution and convert-gate lift ([#287](https://github.com/masriamir/crustywad/pull/287))
+- *(wad)* marker-delimited directory section API ([#284](https://github.com/masriamir/crustywad/pull/284))
+
 ## [0.5.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.4.0...crustywad-v0.5.0) - 2026-07-16
 
 ### Added
