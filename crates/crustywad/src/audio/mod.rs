@@ -43,10 +43,13 @@
 //!
 //! The instrument banks [`Genmidi`] (the fixed-layout `GENMIDI` OPL bank) and
 //! [`Dmxgus`] (the line-oriented `DMXGUS`/`DMXGUSC` patch map) round out the
-//! layer (ADR-0023 §2). Unlike the sound formats these have no content magic
-//! [`AudioKind::detect`] keys on — they are identified by their reserved lump
-//! names — so callers dispatch to [`Genmidi::parse`] / [`Dmxgus::parse`] by
-//! name rather than through the classifier.
+//! layer (ADR-0023 §2), and are the **documented exception** to the
+//! content-first rule above: neither has a content magic the engine sniffs
+//! (`GENMIDI`'s `#OPL_II#` is present but unchecked in-engine, and `DMXGUS`
+//! is free-form text), and both live under reserved, fixed lump names that
+//! never collide the way sound/music names do. Callers therefore dispatch to
+//! [`Genmidi::parse`] / [`Dmxgus::parse`] by lump name rather than through
+//! [`AudioKind::detect`], which deliberately does not classify them.
 
 mod banks;
 mod containers;
