@@ -47,9 +47,13 @@
 //! content-first rule above: neither has a content magic the engine sniffs
 //! (`GENMIDI`'s `#OPL_II#` is present but unchecked in-engine, and `DMXGUS`
 //! is free-form text), and both live under reserved, fixed lump names that
-//! never collide the way sound/music names do. Callers therefore dispatch to
-//! [`Genmidi::parse`] / [`Dmxgus::parse`] by lump name rather than through
-//! [`AudioKind::detect`], which deliberately does not classify them.
+//! never collide the way sound/music names do. The Raven script lumps
+//! ([`SndInfo`], [`SndSeq`], [`SndCurve`] — ADR-0023 §3) belong to the same
+//! exception family: free-form text (or a raw table) under reserved names.
+//! Callers therefore dispatch to [`Genmidi::parse`] / [`Dmxgus::parse`] /
+//! [`SndInfo::parse`] / [`SndSeq::parse`] / [`SndCurve::parse`] by lump name
+//! rather than through [`AudioKind::detect`], which deliberately classifies
+//! none of them.
 
 mod banks;
 mod containers;

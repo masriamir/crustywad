@@ -15,15 +15,15 @@ fuzz_target!(|data: &[u8]| {
             // Oracles (ADR-0016): output and warnings bounded by the input.
             // Each entry consumes two tokens and each map song three, so both
             // are bounded by the token count, which is bounded by the length.
-            assert!(info.entries().len() <= data.len() + 8);
-            assert!(info.map_songs().len() <= data.len() + 8);
-            assert!(info.warnings().len() <= data.len() + 8);
+            assert!(info.entries().len() <= data.len().saturating_add(8));
+            assert!(info.map_songs().len() <= data.len().saturating_add(8));
+            assert!(info.warnings().len() <= data.len().saturating_add(8));
         }
         if let Ok(seq) = SndSeq::parse(data, &opts) {
             let commands: usize = seq.sequences().iter().map(|s| s.commands.len()).sum();
-            assert!(seq.sequences().len() <= data.len() + 8);
-            assert!(commands <= data.len() + 8);
-            assert!(seq.warnings().len() <= data.len() + 8);
+            assert!(seq.sequences().len() <= data.len().saturating_add(8));
+            assert!(commands <= data.len().saturating_add(8));
+            assert!(seq.warnings().len() <= data.len().saturating_add(8));
         }
     }
 });
