@@ -100,6 +100,60 @@ fn graphics_pair_when_present_is_a_section() {
     assert_eq!(table.sections()[0].kind, SectionKind::Graphics);
 }
 
+// --- Doom 64 music markers (DM_START..DM_END; ADR-0023 §4, #303) ---
+
+#[test]
+fn dm_pair_yields_a_music_section() {
+    // The KEX-remaster shape: a DM_ music section alongside the DS_ sounds
+    // section, holding standard-MIDI lumps.
+    let wad = wad_of(&[
+        "DS_START", "DSPISTOL", "DS_END", "DM_START", "MUSINTRO", "MUSTITLE", "DM_END",
+    ]);
+    let table = wad.sections().unwrap();
+    assert!(table.warnings().is_empty());
+    let music = table.of_kind(SectionKind::Music).next().unwrap();
+    assert_eq!((music.start_marker, music.end_marker), (3, 6));
+    assert_eq!(music.lumps, 4..6);
+    assert!(music.sub_sections.is_empty());
+    assert_eq!(table.of_kind(SectionKind::Sounds).count(), 1);
+}
+
+#[test]
+fn dm_start_without_end_is_unpaired() {
+    // Mirrors row 1 (unpaired START): strict errors, lenient closes the
+    // section at end-of-directory and warns.
+    let wad = wad_of(&["DM_START", "MUSINTRO", "MUSTITLE"]);
+    assert!(matches!(
+        wad.sections().unwrap_err(),
+        SectionError::UnpairedStart {
+            kind: SectionKind::Music,
+            index: 0
+        }
+    ));
+    let table = lenient(&wad);
+    let s = &table.sections()[0];
+    assert_eq!(s.kind, SectionKind::Music);
+    assert_eq!((s.start_marker, s.end_marker), (0, 3));
+    assert_eq!(s.lumps, 1..3);
+    assert!(matches!(
+        table.warnings()[0],
+        SectionWarning::UnpairedStart {
+            kind: SectionKind::Music,
+            index: 0
+        }
+    ));
+}
+
+#[test]
+fn dm_numbered_and_doubled_prefixes_are_content_not_markers() {
+    // Only the exact `DM` two-letter prefix is a marker: DM never takes a
+    // numbered sub-pair (DM3_) or a doubled alias (DMDM_).
+    let wad = wad_of(&["DM3_START", "DMDM_START", "DM3_END", "DMDM_END"]);
+    let table = wad.sections().unwrap();
+    assert!(table.sections().is_empty());
+    assert!(table.warnings().is_empty());
+}
+
 // --- alias grammar (Boom IsMarker; research §7b) ---
 
 #[test]
