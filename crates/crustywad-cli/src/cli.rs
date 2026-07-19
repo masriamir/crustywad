@@ -148,7 +148,7 @@ pub(crate) enum SubCommand {
         #[arg(short, long, value_name = "NAME")]
         lump: Option<String>,
         /// Also write a converted `.mid` file alongside each extracted MUS
-        /// lump. The conversion is a faithful port of the DMX `mus2mid`
+        /// lump. The conversion follows Chocolate Doom's `mus2mid`
         /// converter (a format-0 standard MIDI file). Without this flag a MUS
         /// lump is extracted only as raw `.mus` bytes.
         #[arg(long)]

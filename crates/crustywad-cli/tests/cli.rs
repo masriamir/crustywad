@@ -3327,7 +3327,7 @@ fn convert_retail_doom64_map01_lenient_smoke() {
 // `cwad extract` audio-aware export (#304)
 // ---------------------------------------------------------------------------
 
-/// Fixture D1 (mirrors `crustywad/tests/audio.rs`): a valid DMX lump — format
+/// Fixture D1 (mirrors `crates/crustywad/tests/audio.rs`): a valid DMX lump — format
 /// 3, rate 11025, length 52, the 20 PCM samples `0..=19` between two 16-byte
 /// pads. 60 bytes total.
 fn dmx_d1() -> Vec<u8> {
@@ -3341,7 +3341,7 @@ fn dmx_d1() -> Vec<u8> {
     v
 }
 
-/// Fixture M1 (mirrors `crustywad/tests/audio.rs`): a valid 23-byte MUS lump —
+/// Fixture M1 (mirrors `crates/crustywad/tests/audio.rs`): a valid 23-byte MUS lump —
 /// score length 7, score start 16, one instrument `[1]`, three events
 /// (press key ch0 note 60 vel 100; release key ch0 note 60, delta 70;
 /// score-end).
