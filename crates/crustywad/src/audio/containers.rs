@@ -152,17 +152,16 @@ impl MidiInfo {
         // as `UnexpectedChunkSize` above.
         let mut pos = if chunk_size > Self::MTHD_CHUNK_SIZE {
             let declared = usize::try_from(chunk_size).unwrap_or(usize::MAX);
-            match declared.checked_add(8).filter(|&start| start <= len) {
-                Some(start) => start,
-                None => {
-                    warnings.push(AudioWarning::ChunkOverrun {
-                        offset: 0,
-                        declared,
-                        available: len - Self::CHUNK_HEADER,
-                    });
-                    stopped = true;
-                    len
-                }
+            if let Some(start) = declared.checked_add(8).filter(|&start| start <= len) {
+                start
+            } else {
+                warnings.push(AudioWarning::ChunkOverrun {
+                    offset: 0,
+                    declared,
+                    available: len - Self::CHUNK_HEADER,
+                });
+                stopped = true;
+                len
             }
         } else {
             Self::HEADER
