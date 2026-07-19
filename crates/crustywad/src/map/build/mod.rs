@@ -36,10 +36,19 @@ use crate::map::DoomWriteError;
 use crate::map::doom::DoomWriteWarning;
 
 mod blockmap;
+mod nodes;
 mod reject;
 
 pub use blockmap::build_blockmap;
+pub use nodes::{BuiltNodeLumps, BuiltNodes};
 pub use reject::build_reject;
+
+/// Default [`NodeBuildOptions::split_cost`] (ADR-0024 §B.3): the observed
+/// nodebuilder-standard weight of one straddling split.
+const DEFAULT_SPLIT_COST: u32 = 8;
+/// Default [`NodeBuildOptions::aa_preference`] (ADR-0024 §B.3): the observed
+/// nodebuilder-standard axis-aligned preference divisor.
+const DEFAULT_AA_PREFERENCE: u32 = 16;
 
 /// Options controlling node-lump building (ADR-0024 §5).
 ///
@@ -61,6 +70,21 @@ pub struct NodeBuildOptions {
     /// Whether to build strictly (errors on any format/vanilla overflow) or
     /// leniently (recovers where the format allows, warning instead).
     pub strictness: Strictness,
+    /// Partition-heuristic weight per straddling seg a candidate would split
+    /// (ADR-0024 §B.3). A candidate's score is
+    /// `split_cost * n_split + |n_front - n_back|` (plus a diagonal penalty),
+    /// and lower scores win, so a higher `split_cost` favors partitions that
+    /// cut fewer segs — fewer split vertices and smaller `SEGS`/`VERTEXES`
+    /// lumps, at the cost of a less balanced tree. Defaults to `8`. `0` is
+    /// legal and turns scoring into balance-only (`|n_front - n_back|`).
+    pub split_cost: u32,
+    /// Partition-heuristic divisor rewarding axis-aligned partitions
+    /// (ADR-0024 §B.3). A diagonal candidate (`dx != 0 && dy != 0`) has
+    /// `(n_front + n_back + n_split) / aa_preference` added to its score, so a
+    /// *larger* value applies a *weaker* penalty (a larger divisor). Defaults
+    /// to `16`. `0` is treated as "no diagonal penalty" — the build path guards
+    /// the division and skips the term entirely rather than dividing by zero.
+    pub aa_preference: u32,
 }
 
 impl Default for NodeBuildOptions {
@@ -77,6 +101,8 @@ impl NodeBuildOptions {
     pub const fn strict() -> Self {
         Self {
             strictness: Strictness::Strict,
+            split_cost: DEFAULT_SPLIT_COST,
+            aa_preference: DEFAULT_AA_PREFERENCE,
         }
     }
 
@@ -86,6 +112,8 @@ impl NodeBuildOptions {
     pub const fn lenient() -> Self {
         Self {
             strictness: Strictness::Lenient,
+            split_cost: DEFAULT_SPLIT_COST,
+            aa_preference: DEFAULT_AA_PREFERENCE,
         }
     }
 }
@@ -119,6 +147,36 @@ pub enum NodeBuildError {
         /// The offending word offset, counted from the lump start.
         offset: usize,
     },
+    /// A BSP arena grew past what the on-disk format can index (ADR-0024 §5,
+    /// Global Constraint 6). Returned in **both** strictness modes when the
+    /// count is *structurally* unrepresentable: more than 65,536 vertices (map
+    /// plus split) or segs — the `u16` index ceiling — or more than 32,768
+    /// subsectors or nodes, because a BSP child reference reserves bit 15 as
+    /// the `NF_SUBSECTOR` leaf flag, so those indices must fit 15 bits. The
+    /// distinct vanilla-only 32,768 vertex/seg *soft* ceiling is instead a
+    /// strict-mode error paired with a lenient
+    /// [`NodeBuildWarning::VanillaCeilingExceeded`].
+    #[error("{kind} count {count} exceeds the node-build maximum of {max}")]
+    TooManyElements {
+        /// The arena name (e.g. `"subsectors"`).
+        kind: &'static str,
+        /// The actual element count.
+        count: usize,
+        /// The maximum the format can index.
+        max: usize,
+    },
+    /// A convex subsector spans multiple sectors and no partition line
+    /// separates them (ADR-0024 §C). The engine would render such a subsector
+    /// with the first seg's sector — the wrong flats — so strict mode rejects
+    /// it. Lenient mode instead accepts the subsector and emits
+    /// [`NodeBuildWarning::MixedSectorSubsector`] once per build.
+    #[error(
+        "a convex subsector of {subsector_segs} segs spans multiple sectors with no separating partition"
+    )]
+    MixedSectorSubsector {
+        /// The number of segs in the offending convex subsector.
+        subsector_segs: usize,
+    },
 }
 
 /// A non-fatal condition recovered while building a map's node lumps in lenient
@@ -148,4 +206,28 @@ pub enum NodeBuildWarning {
         /// start.
         offset: usize,
     },
+    /// Lenient mode: a BSP arena exceeded the vanilla-only 32,768 vertex/seg
+    /// *soft* ceiling but still fits the format's 16-bit indices (ADR-0024
+    /// §5). The lumps were emitted; a limit-removing port is needed to read
+    /// them. This is distinct from the structural
+    /// [`NodeBuildError::TooManyElements`] ceilings, which no engine can read.
+    #[error("{kind} count {count} exceeds the vanilla ceiling of {max}")]
+    VanillaCeilingExceeded {
+        /// The arena name (`"vertices"` or `"segs"`).
+        kind: &'static str,
+        /// The actual element count.
+        count: usize,
+        /// The vanilla ceiling (32,768).
+        max: usize,
+    },
+    /// Lenient mode: a convex subsector spans multiple sectors with no
+    /// partition line that separates them (ADR-0024 §C). It was accepted as a
+    /// single subsector; the engine renders it with the first seg's sector
+    /// (the wrong flats — a soft-contract defect). Emitted at most once per
+    /// build. The strict-mode counterpart is
+    /// [`NodeBuildError::MixedSectorSubsector`].
+    #[error(
+        "a convex subsector spans multiple sectors with no separating partition; rendered with the first seg's sector"
+    )]
+    MixedSectorSubsector,
 }
