@@ -4,7 +4,7 @@
 //! (`F_START..F_END`, ... — typically zero-size, though recognition here
 //! is by name only); Doom 64 WADs bracket sprites, world
 //! textures, sounds, and (in the 2020 KEX remaster) music
-//! (`S_`/`T_`/`DS_`/`DM_START..END`). Both reference
+//! (`S_`/`T_`/`DS_`/`DM_` + `START`/`END`). Both reference
 //! engines derive section extents by unguarded subtraction of two
 //! independently looked-up marker names; this module replaces that
 //! anti-pattern with a validated scan (strict errors / lenient warnings
