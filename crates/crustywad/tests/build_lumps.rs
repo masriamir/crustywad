@@ -436,3 +436,11 @@ fn sweep_builds_reject_and_blockmap_for_every_classic_map() {
         paths.len()
     );
 }
+
+#[test]
+fn default_options_are_strict() {
+    assert_eq!(
+        NodeBuildOptions::default().strictness,
+        crustywad::Strictness::Strict
+    );
+}
