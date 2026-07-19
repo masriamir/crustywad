@@ -141,7 +141,7 @@ zero-fill reject is trivial (~50 LOC).
 
 1. **Build natively: a clean-room, staged builder in the core crate** —
    BLOCKMAP + zero-fill REJECT first, then a classic (16-bit) BSP pass,
-   integrated behind the existing `write` feature.
+   integrated behind a new `nodebuild` feature flag that requires `write`.
 2. **Don't build; document external tools** — a guide recipe for running
    zdbsp/AJBSP over `add_doom_map` output, making "invoke an external
    nodebuilder" the permanent answer.
@@ -189,13 +189,21 @@ polyobject container subsectors intact) is deferred with the nonexistent Hexen
 binary write target (ADR-0019 scope): Doom-format output has no polyobjects,
 so the special-casing has no consumer yet.
 
-### 2. The public surface: `map::build`, behind the existing `write` feature
+### 2. The public surface: `map::build`, behind a new `nodebuild` feature
 
 A new directory module `map/build/` (`mod.rs`, `blockmap.rs`, `reject.rs`,
-`nodes.rs`), gated behind the existing `write` feature — the builder exists to
-make written maps playable, and it pulls **no new dependencies** (pure
-computation; `ZNOD`-style compression would need a zlib dependency, one more
-reason it stays out of scope). No new feature flag.
+`nodes.rs`), gated behind a **new `nodebuild` feature** (default off) that
+requires `write` — `nodebuild = ["write"]` in `Cargo.toml`. The builder pulls
+**no new dependencies** (pure computation; `ZNOD`-style compression would need
+a zlib dependency, one more reason it stays out of scope), so the flag is a
+capability gate, not a dependency gate: stage 2 is the largest algorithmic
+component in the crate, and a `write` consumer that only serializes WADs
+(editor pipelines, tools content with `add_doom_map`'s nodebuilder-ready
+output) should not compile a BSP builder it never calls. `write` alone set the
+precedent for a no-dependency capability feature; `nodebuild` follows it.
+Adding the flag triggers the CLAUDE.md feature-flag sync rule (guide
+`features.md`, CLAUDE.md, `copilot-instructions.md`, `README.md`) — stage 1
+carries that update.
 
 ```rust
 /// Options for the node/blockmap builders.
@@ -247,7 +255,7 @@ pub fn build_reject(map: &Map) -> MapReject;
 ```
 
 Serialization closes the loop through the existing typed readers rather than
-around them — each read-side type gains a `write`-gated serializer, so the
+around them — each read-side type gains a `nodebuild`-gated serializer, so the
 on-disk layout stays declared in one place per lump family:
 
 ```rust
@@ -414,9 +422,21 @@ containers on any output path.
   `Extended nodes` milestone, with #199's read side. The classic ceilings in
   §5 are the trigger: content that legitimately exceeds them needs XNOD
   output, and none exists in the retail corpus.
-- **External-tool wrapping.** `cwad` will not spawn zdbsp/AJBSP. The guide's
-  existing "run an external nodebuilder" note remains accurate for GL/extended
-  needs until that milestone.
+- **External-tool wrapping.** `cwad` will not spawn zdbsp/AJBSP in this
+  milestone, and the library never will: an environment variable that makes a
+  *library* call spawn an external process is action-at-a-distance —
+  environment-dependent behavior, a PATH/env-controlled process-execution
+  security smell at odds with the crate's hardening posture, and a second,
+  weaker output contract (external builder output varies by tool and version
+  and cannot satisfy §7's deterministic oracle). The core crate spawns no
+  processes today and that stays true. A **CLI-scoped, explicit** delegation
+  (`--nodebuilder <path>` on `cwad convert`/`build`, with an env var at most
+  as the CLI's fallback default, like the existing `CRUSTYWAD_*` fixture
+  vars) was considered on 2026-07-19 and **deferred** — it is a revisit
+  condition, not a commitment. Meanwhile the guide's existing "run an
+  external nodebuilder" recipe remains accurate for GL/extended needs, and a
+  user who prefers zdbsp simply leaves `nodebuild` disabled and keeps that
+  workflow.
 - **Hexen polyobject-aware splitting** (§1) and a Hexen binary write target
   (ADR-0019, unchanged).
 - **A `Map`-mutating rebuild API.** Assembly remains the only constructor of
@@ -475,7 +495,9 @@ containers on any output path.
 
 Filed after this ADR merges, all in milestone `Nodebuilder`, dependency-ordered:
 
-1. **Stage 1 — BLOCKMAP and REJECT builders.** `map/build/` module skeleton,
+1. **Stage 1 — BLOCKMAP and REJECT builders.** The `nodebuild` feature flag
+   (`nodebuild = ["write"]`, plus the four-place feature-flag doc sync per
+   CLAUDE.md), `map/build/` module skeleton,
    `NodeBuildOptions`/`NodeBuildError`/`NodeBuildWarning` (the §5 subset that
    applies), `build_blockmap` + `MapBlockmap::to_lump_bytes`, `build_reject` +
    `MapReject::to_lump_bytes`, round-trip and retail-sweep coverage for both,
@@ -496,11 +518,13 @@ Stage 1 has no dependency on stage 2; stage 3 depends on both.
 
 ## Consequences
 
-- **New public API** (all behind the existing `write` feature): `map::build`
+- **New public API** (all behind the new `nodebuild` feature, which requires
+  `write`): `map::build`
   — `NodeBuildOptions`, `BuiltNodes`, `BuiltNodeLumps`, `NodeBuildError`,
   `NodeBuildWarning`, `build_nodes`, `build_blockmap`, `build_reject`,
-  `add_doom_map_with_nodes` — plus `write`-gated `to_lump_bytes` serializers
-  on `MapBlockmap` and `MapReject`. No new feature flag, no new dependencies,
+  `add_doom_map_with_nodes` — plus `nodebuild`-gated `to_lump_bytes`
+  serializers on `MapBlockmap` and `MapReject`. One new no-dependency feature
+  flag (`nodebuild`, default off, requiring `write`), no new dependencies,
   no changes to any existing signature, error, or warning enum.
 - **crustywad's write story becomes end-to-end** for the classic tier: read →
   `Map` → write → *playable on vanilla*, with the strictness contract
@@ -582,6 +606,9 @@ Stage 1 has no dependency on stage 2; stage 3 depends on both.
 - **Revisit conditions:** reopen when (a) extended/GL *generation* gains a
   concrete consumer (UDMF-scale maps exceeding §5 ceilings, GL-node-consuming
   renderers) — that work lands in `Extended nodes` with this ADR's `BuiltNodes`
-  as input; (b) a real line-of-sight REJECT gains a consumer; or (c) a Hexen
+  as input; (b) a real line-of-sight REJECT gains a consumer; (c) a Hexen
   binary write target lands (ADR-0019's own revisit condition), which would
-  motivate polyobject-aware splitting.
+  motivate polyobject-aware splitting; or (d) users ask for CLI-level
+  external-builder delegation (`cwad … --nodebuilder <path>`, §6) — a
+  CLI-only decision that must not reach into the library, whose §6 rationale
+  against library-level process spawning stands regardless.
