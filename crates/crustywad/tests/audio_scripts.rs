@@ -428,3 +428,127 @@ fn retail_scripts_strict_clean() {
         anomalies.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Branch-coverage fixtures: tokenizer corners and argument-truncation paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cov_quoted_token_newline_and_oversized() {
+    // A quoted value spanning a newline stays one token (and keeps the line
+    // count accurate for the entry after it); a quoted token beyond the
+    // engine's 63-byte truncation limit aggregates into OversizedTokens.
+    let long = "x".repeat(70);
+    let text = format!("tagone \"two\nwords\"\ntagtwo \"{long}\"\n");
+    for opts in BOTH_MODES {
+        let info = SndInfo::parse(text.as_bytes(), &opts()).expect("parses");
+        assert_eq!(info.entries().len(), 2);
+        assert_eq!(info.entries()[0].lump, "two\nwords");
+        assert_eq!(info.entries()[1].lump, long);
+        assert_eq!(
+            info.warnings(),
+            &[AudioWarning::OversizedTokens { count: 1 }]
+        );
+    }
+}
+
+#[test]
+fn cov_sndinfo_directive_truncations() {
+    // Each of the three EOF-truncation spots: $ARCHIVEPATH with no value,
+    // $MAP with no number, $MAP with a number but no song lump.
+    for text in ["$ARCHIVEPATH", "$MAP", "$MAP 5"] {
+        let err = SndInfo::parse(text.as_bytes(), &ParseOptions::strict()).unwrap_err();
+        assert!(
+            matches!(err, AudioError::SndInfoMissingValue { .. }),
+            "{text:?} strict"
+        );
+
+        let info = SndInfo::parse(text.as_bytes(), &ParseOptions::lenient()).expect("recovers");
+        assert!(info.entries().is_empty());
+        assert!(info.map_songs().is_empty());
+        assert!(
+            matches!(info.warnings()[0], AudioWarning::SndInfoMissingValue { .. }),
+            "{text:?} lenient"
+        );
+    }
+}
+
+#[test]
+fn cov_sndseq_playuntildone() {
+    let text = ":Door\nplayuntildone DoorOpen\nend\n";
+    for opts in BOTH_MODES {
+        let seq = SndSeq::parse(text.as_bytes(), &opts()).expect("parses");
+        assert_eq!(seq.sequences().len(), 1);
+        assert_eq!(
+            seq.sequences()[0].commands,
+            [
+                SndSeqCommand::PlayUntilDone("DoorOpen".to_owned()),
+                SndSeqCommand::End,
+            ]
+        );
+        assert!(seq.warnings().is_empty());
+    }
+}
+
+#[test]
+fn cov_sndseq_missing_argument_per_command() {
+    // The `?` edge of every argument-taking arm: each command as the final
+    // token before EOF.
+    for cmd in [
+        "play",
+        "playuntildone",
+        "playrepeat",
+        "stopsound",
+        "playtime",
+        "delay",
+        "volume",
+        "delayrand",
+    ] {
+        let text = format!(":Door\n{cmd}");
+        let err = SndSeq::parse(text.as_bytes(), &ParseOptions::strict()).unwrap_err();
+        assert!(
+            matches!(err, AudioError::SndSeqMissingArgument { .. }),
+            "{cmd} strict"
+        );
+        let seq = SndSeq::parse(text.as_bytes(), &ParseOptions::lenient()).expect("recovers");
+        assert!(
+            seq.warnings()
+                .iter()
+                .any(|w| matches!(w, AudioWarning::SndSeqMissingArgument { .. })),
+            "{cmd} lenient"
+        );
+    }
+}
+
+#[test]
+fn cov_sndseq_missing_numeric_argument() {
+    let text = ":Door\ndelay";
+    let err = SndSeq::parse(text.as_bytes(), &ParseOptions::strict()).unwrap_err();
+    assert!(matches!(err, AudioError::SndSeqMissingArgument { .. }));
+
+    let seq = SndSeq::parse(text.as_bytes(), &ParseOptions::lenient()).expect("recovers");
+    assert_eq!(seq.sequences().len(), 1);
+    assert!(seq.sequences()[0].commands.is_empty());
+    assert!(
+        seq.warnings()
+            .iter()
+            .any(|w| matches!(w, AudioWarning::SndSeqMissingArgument { .. }))
+    );
+}
+
+#[test]
+fn cov_sndseq_oversized_token() {
+    let long = "y".repeat(70);
+    let text = format!(":Door\nplay {long}\nend\n");
+    for opts in BOTH_MODES {
+        let seq = SndSeq::parse(text.as_bytes(), &opts()).expect("parses");
+        assert_eq!(
+            seq.sequences()[0].commands[0],
+            SndSeqCommand::Play(long.clone())
+        );
+        assert_eq!(
+            seq.warnings(),
+            &[AudioWarning::OversizedTokens { count: 1 }]
+        );
+    }
+}
