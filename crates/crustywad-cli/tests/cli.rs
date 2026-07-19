@@ -2287,7 +2287,11 @@ fn hardening_list_csv_valid_wad_has_header_row() {
         .args(["-F", "csv", "list", wad.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::starts_with("index,filepos,size,name\n"))
+        // The trailing `audio` column carries the per-lump audio annotation
+        // (empty here — neither lump is a detected audio format).
+        .stdout(predicate::str::starts_with(
+            "index,filepos,size,name,audio\n",
+        ))
         .stdout(predicate::str::contains("PLAYPAL"))
         .stdout(predicate::str::contains("COLORMAP"));
 }
@@ -3317,4 +3321,340 @@ fn convert_retail_doom64_map01_lenient_smoke() {
     let bytes = std::fs::read(out.path()).unwrap();
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("texturefloor = \""));
+}
+
+// ---------------------------------------------------------------------------
+// `cwad extract` audio-aware export (#304)
+// ---------------------------------------------------------------------------
+
+/// Fixture D1 (mirrors `crustywad/tests/audio.rs`): a valid DMX lump — format
+/// 3, rate 11025, length 52, the 20 PCM samples `0..=19` between two 16-byte
+/// pads. 60 bytes total.
+fn dmx_d1() -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(&3u16.to_le_bytes()); // format 3 (DMX digital sound)
+    v.extend_from_slice(&11025u16.to_le_bytes()); // sample rate
+    v.extend_from_slice(&52u32.to_le_bytes()); // length (16 + 20 + 16)
+    v.extend_from_slice(&[0xAA; 16]); // leading pad
+    v.extend(0u8..=19); // 20 samples
+    v.extend_from_slice(&[0xBB; 16]); // trailing pad
+    v
+}
+
+/// Fixture M1 (mirrors `crustywad/tests/audio.rs`): a valid 23-byte MUS lump —
+/// score length 7, score start 16, one instrument `[1]`, three events
+/// (press key ch0 note 60 vel 100; release key ch0 note 60, delta 70;
+/// score-end).
+fn mus_m1() -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(&[0x4D, 0x55, 0x53, 0x1A]); // "MUS\x1a"
+    v.extend_from_slice(&7u16.to_le_bytes()); // score length
+    v.extend_from_slice(&16u16.to_le_bytes()); // score start
+    v.extend_from_slice(&1u16.to_le_bytes()); // primary channels
+    v.extend_from_slice(&0u16.to_le_bytes()); // secondary channels
+    v.extend_from_slice(&1u16.to_le_bytes()); // instrument count
+    v.extend_from_slice(&1u16.to_le_bytes()); // instrument [1]
+    // events: 0x10 press-key ch0, key 0xBC (note 60 + velocity flag), vel 0x64;
+    // 0x80 release-key ch0 with delta, note 0x3C, delta 0x46 (70); 0x60 end.
+    v.extend_from_slice(&[0x10, 0xBC, 0x64, 0x80, 0x3C, 0x46, 0x60]);
+    v
+}
+
+/// A minimal standard-MIDI lump: the `MThd` magic is all `AudioKind::detect`
+/// needs to classify it as MIDI. 14-byte header + a tiny empty `MTrk`.
+fn midi_mthd() -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(b"MThd");
+    v.extend_from_slice(&6u32.to_be_bytes()); // header size
+    v.extend_from_slice(&0u16.to_be_bytes()); // format 0
+    v.extend_from_slice(&1u16.to_be_bytes()); // one track
+    v.extend_from_slice(&0x0060u16.to_be_bytes()); // division
+    v.extend_from_slice(b"MTrk");
+    v.extend_from_slice(&4u32.to_be_bytes()); // track length
+    v.extend_from_slice(&[0x00, 0xFF, 0x2F, 0x00]); // end-of-track
+    v
+}
+
+/// A minimal RIFF/WAVE lump: `RIFF` + size + `WAVE` is all `AudioKind::detect`
+/// needs to classify it as WAV.
+fn wav_riff() -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&4u32.to_le_bytes()); // riff size (just covers "WAVE")
+    v.extend_from_slice(b"WAVE");
+    v
+}
+
+/// The canonical 44-byte WAV header the DMX wrapper writes for fixture D1,
+/// followed by the 20 samples. Every field hand-derived: mono, 8-bit, PCM,
+/// rate 11025, `data_len = 20`, `byte_rate = 11025`, `block_align = 1`,
+/// `riff_size = 36 + 20 = 56`.
+fn expected_d1_wav() -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&56u32.to_le_bytes()); // riff_size = 36 + 20
+    v.extend_from_slice(b"WAVE");
+    v.extend_from_slice(b"fmt ");
+    v.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    v.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    v.extend_from_slice(&1u16.to_le_bytes()); // mono
+    v.extend_from_slice(&11025u32.to_le_bytes()); // sample rate
+    v.extend_from_slice(&11025u32.to_le_bytes()); // byte rate = rate * 1 * 1
+    v.extend_from_slice(&1u16.to_le_bytes()); // block align
+    v.extend_from_slice(&8u16.to_le_bytes()); // bits per sample
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&20u32.to_le_bytes()); // data_len
+    v.extend(0u8..=19); // 20 samples
+    v
+}
+
+#[test]
+fn extract_audio_writes_containers() {
+    // DMX -> .wav (wrapped); MUS -> raw .mus; MThd -> .mid passthrough;
+    // RIFF/WAVE -> .wav passthrough. Content-detected, not name-driven.
+    let dmx = dmx_d1();
+    let mus = mus_m1();
+    let mthd = midi_mthd();
+    let riff = wav_riff();
+    let wad = write_wad(
+        *b"IWAD",
+        &[
+            ("DMXSND", &dmx),
+            ("MUSLMP", &mus),
+            ("MIDILMP", &mthd),
+            ("WAVLMP", &riff),
+        ],
+    );
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // DMX wrapped into a canonical 44-byte-header WAV + 20 samples (64 bytes).
+    let wav = std::fs::read(out_dir.path().join("DMXSND.wav")).unwrap();
+    assert_eq!(wav, expected_d1_wav());
+    assert_eq!(wav.len(), 64);
+
+    // MUS extracted raw as .mus (no .mid without --midi).
+    assert_eq!(
+        std::fs::read(out_dir.path().join("MUSLMP.mus")).unwrap(),
+        mus
+    );
+    assert!(!out_dir.path().join("MUSLMP.mid").exists());
+
+    // MThd / RIFF pass through unchanged under their container extensions.
+    assert_eq!(
+        std::fs::read(out_dir.path().join("MIDILMP.mid")).unwrap(),
+        mthd
+    );
+    assert_eq!(
+        std::fs::read(out_dir.path().join("WAVLMP.wav")).unwrap(),
+        riff
+    );
+
+    // No raw .bin fallbacks were written for the audio lumps.
+    assert!(!out_dir.path().join("DMXSND.bin").exists());
+    assert!(!out_dir.path().join("MUSLMP.bin").exists());
+}
+
+#[test]
+fn extract_midi_flag_converts_mus() {
+    // With --midi the MUS lump also yields a converted format-0 SMF. The
+    // expected bytes are hand-derived from the M1 event stream against the
+    // mus2mid semantics; see the derivation below.
+    let mus = mus_m1();
+    let wad = write_wad(*b"IWAD", &[("MUSLMP", &mus)]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+            "--midi",
+        ])
+        .assert()
+        .success();
+
+    // The raw .mus is still written.
+    assert_eq!(
+        std::fs::read(out_dir.path().join("MUSLMP.mus")).unwrap(),
+        mus
+    );
+
+    // Hand-derived expected MIDI for M1.
+    //
+    // Header (mus2mid.c:68-77), 22 bytes, with the track length (16)
+    // backfilled at offset 18 (mus2mid.c:676):
+    let mut expected = Vec::new();
+    expected.extend_from_slice(b"MThd");
+    expected.extend_from_slice(&6u32.to_be_bytes()); // header size
+    expected.extend_from_slice(&0u16.to_be_bytes()); // MIDI type 0
+    expected.extend_from_slice(&1u16.to_be_bytes()); // one track
+    expected.extend_from_slice(&0x0046u16.to_be_bytes()); // resolution 70
+    expected.extend_from_slice(b"MTrk");
+    expected.extend_from_slice(&16u32.to_be_bytes()); // track length
+    // Track events:
+    //  - MUS channel 0's first use allocates MIDI channel 0 and emits the
+    //    all-notes-off controller 0x7b, value 0 (mus2mid.c:405-409), prefixed
+    //    by delta 0.
+    expected.extend_from_slice(&[0x00, 0xB0, 0x7B, 0x00]);
+    //  - press key: note-on 0x90|0, note 60 (0x3C), velocity 100 (0x64),
+    //    delta 0 (mus2mid.c:158-191).
+    expected.extend_from_slice(&[0x00, 0x90, 0x3C, 0x64]);
+    //  - release key: note-off 0x80|0, note 60 (0x3C), velocity 0,
+    //    delta 0 (mus2mid.c:194-226).
+    expected.extend_from_slice(&[0x00, 0x80, 0x3C, 0x00]);
+    //  - end of track: the queued delta 70 (0x46) then FF 2F 00
+    //    (mus2mid.c:140-156).
+    expected.extend_from_slice(&[0x46, 0xFF, 0x2F, 0x00]);
+    assert_eq!(expected.len(), 38);
+
+    let mid = std::fs::read(out_dir.path().join("MUSLMP.mid")).unwrap();
+    assert_eq!(mid, expected);
+}
+
+#[test]
+fn extract_malformed_mus_falls_back_to_raw() {
+    // A lump that detects as MUS (the magic matches) but cannot be parsed even
+    // leniently is extracted raw as .bin with a stderr warning. This MUS lump
+    // is truncated to just the magic plus one byte, failing the 14-byte header
+    // check in both strictness modes.
+    let bad_mus = vec![0x4D, 0x55, 0x53, 0x1A, 0x00]; // "MUS\x1a" + one byte
+    let wad = write_wad(*b"IWAD", &[("BADMUS", &bad_mus)]);
+    let out_dir = TempDir::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"))
+        .stderr(predicate::str::contains("BADMUS"));
+
+    // Fell back to a raw .bin write of the original bytes.
+    assert_eq!(
+        std::fs::read(out_dir.path().join("BADMUS.bin")).unwrap(),
+        bad_mus
+    );
+    assert!(!out_dir.path().join("BADMUS.mus").exists());
+}
+
+// ---------------------------------------------------------------------------
+// `cwad list` / `cwad info` audio annotations (#304)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn list_annotates_detected_audio_lumps_human() {
+    let dmx = dmx_d1();
+    let mus = mus_m1();
+    let wad = write_wad(
+        *b"IWAD",
+        &[("DMXSND", &dmx), ("MUSLMP", &mus), ("PLAYPAL", &[1, 2, 3])],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        // DMX: rate + sample count (20 samples between the pads).
+        .stdout(predicate::str::contains(
+            "[audio: Dmx rate=11025 samples=20]",
+        ))
+        // MUS: event count (press, release, score-end = 3 typed events).
+        .stdout(predicate::str::contains("[audio: Mus events=3]"));
+}
+
+#[test]
+fn list_annotates_detected_audio_lumps_json() {
+    let dmx = dmx_d1();
+    let wad = write_wad(*b"IWAD", &[("DMXSND", &dmx)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""audio":{"kind":"Dmx","sample_rate":11025,"samples":20}"#,
+        ));
+}
+
+#[test]
+fn list_annotates_detected_audio_lumps_csv() {
+    let dmx = dmx_d1();
+    let wad = write_wad(*b"IWAD", &[("DMXSND", &dmx)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("index,filepos,size,name,audio"))
+        .stdout(predicate::str::contains("Dmx rate=11025 samples=20"));
+}
+
+#[test]
+fn list_leaves_non_audio_lumps_unannotated() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[audio:").not());
+}
+
+#[test]
+fn info_summarizes_detected_audio_human() {
+    let dmx = dmx_d1();
+    let mus = mus_m1();
+    let wad = write_wad(
+        *b"IWAD",
+        &[("DMXSND", &dmx), ("MUSLMP", &mus), ("PLAYPAL", &[1, 2, 3])],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("audio:"))
+        .stdout(predicate::str::contains("Dmx: 1"))
+        .stdout(predicate::str::contains("Mus: 1"));
+}
+
+#[test]
+fn info_summarizes_detected_audio_json() {
+    let dmx = dmx_d1();
+    let wad = write_wad(*b"IWAD", &[("DMXSND", &dmx)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""audio":{"Dmx":1}"#));
+}
+
+#[test]
+fn info_no_audio_lumps_empty_object_json() {
+    let wad = write_wad(*b"IWAD", &[("PLAYPAL", &[1, 2, 3])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""audio":{}"#));
 }

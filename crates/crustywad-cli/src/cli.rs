@@ -126,6 +126,15 @@ pub(crate) enum SubCommand {
     /// suffixed with an occurrence count (e.g. `PATCH.bin`, `PATCH_1.bin`,
     /// `PATCH_2.bin`). Exits 0 on success, 2 on I/O or parse error, 3 on
     /// argument error.
+    ///
+    /// Extraction is audio-aware (content-detected, never by lump name): a DMX
+    /// digital-sound lump is wrapped in a canonical 44-byte WAV header and
+    /// written as `.wav`; a MUS lump is written as raw `.mus` bytes (and, with
+    /// `--midi`, additionally converted to a `.mid`); standard-MIDI and
+    /// RIFF/WAVE lumps pass through as `.mid` and `.wav`. Everything else,
+    /// including PC-speaker effects (which have no container), is written raw
+    /// as `.bin`. A DMX or MUS lump that fails even a lenient parse falls back
+    /// to a raw `.bin` write with a warning on stderr.
     Extract {
         /// Path to the WAD file.
         path: PathBuf,
@@ -138,6 +147,12 @@ pub(crate) enum SubCommand {
         /// code 2.
         #[arg(short, long, value_name = "NAME")]
         lump: Option<String>,
+        /// Also write a converted `.mid` file alongside each extracted MUS
+        /// lump. The conversion is a faithful port of the DMX `mus2mid`
+        /// converter (a format-0 standard MIDI file). Without this flag a MUS
+        /// lump is extracted only as raw `.mus` bytes.
+        #[arg(long)]
+        midi: bool,
     },
     /// Build a new WAD file from lump data files.
     ///
