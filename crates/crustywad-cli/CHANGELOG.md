@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.3.0...crustywad-cli-v0.3.1) - 2026-07-19
+
+### Added
+
+- *(cli)* audio-aware extract with WAV wrapping and MUS-to-MIDI conversion ([#310](https://github.com/masriamir/crustywad/pull/310))
+- *(sections)* recognize the KEX remaster's DM_START..DM_END music section ([#308](https://github.com/masriamir/crustywad/pull/308))
+- *(audio)* AudioKind content detection plus DMX and PC-speaker sound decode ([#305](https://github.com/masriamir/crustywad/pull/305))
+
 ## [0.3.0](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.2.1...crustywad-cli-v0.3.0) - 2026-07-18
 
 ### Added
