@@ -357,9 +357,9 @@ pub enum NodeBuildError {
     EmptyGeometry,
     /// A built arena exceeds its output ceiling (table below).
     TooManyElements { kind: &'static str, count: usize, max: usize },
-    /// The packed `BLOCKMAP` exceeds the applicable word ceiling (table
-    /// below).
-    BlockmapOverflow { words: usize },
+    /// A blocklist offset in the packed `BLOCKMAP` exceeds the applicable
+    /// offset ceiling (table below).
+    BlockmapOverflow { offset: usize },
 }
 
 #[non_exhaustive]
@@ -373,7 +373,7 @@ pub enum NodeBuildWarning {
     /// Lenient mode: the packed `BLOCKMAP` exceeds the vanilla signed-offset
     /// ceiling but fits unsigned 16-bit offsets; emitted, needs a
     /// limit-removing port.
-    BlockmapVanillaOverflow { words: usize },
+    BlockmapVanillaOverflow { offset: usize },
 }
 ```
 
@@ -382,8 +382,8 @@ pub enum NodeBuildWarning {
 | built vertices (map + split) > 32,768 · segs > 32,768 | `TooManyElements` | emit, `VanillaCeilingExceeded` |
 | built vertices > 65,536 · segs > 65,536 | `TooManyElements` | `TooManyElements` (unencodable) |
 | subsectors > 32,768 · nodes > 32,768 | `TooManyElements` | `TooManyElements` (bit 15 is the leaf flag — structural) |
-| `BLOCKMAP` > 32,767 words | `BlockmapOverflow` | emit, `BlockmapVanillaOverflow` |
-| `BLOCKMAP` > 65,535 words | `BlockmapOverflow` | `BlockmapOverflow` (offsets are unsigned 16-bit at most) |
+| any `BLOCKMAP` blocklist offset > 32,767 | `BlockmapOverflow` | emit, `BlockmapVanillaOverflow` |
+| any `BLOCKMAP` blocklist offset > 65,535 | `BlockmapOverflow` | `BlockmapOverflow` (the offset word is unsigned 16-bit at most) |
 | zero linedefs/vertices/sidedefs/sectors | `EmptyGeometry` | `EmptyGeometry` |
 
 No retail classic map reaches a third of the tightest of these ceilings; the
