@@ -26,7 +26,7 @@ use crate::map::graph::{MapNode, MapSeg, MapSubsector, MapVertex, NodeChild};
 
 /// The BSP child-reference leaf flag (`NF_SUBSECTOR`): with bit 15 set the
 /// remaining 15 bits are a subsector index, otherwise a node index (Chocolate
-/// Doom `doomdata.h`).
+/// Doom `src/doom/doomdata.h:175`, `#define NF_SUBSECTOR 0x8000`).
 const NF_SUBSECTOR: u16 = 0x8000;
 
 /// The subsector/node count ceiling (ADR-0024 §5, Global Constraint 6). A BSP
@@ -130,10 +130,14 @@ impl BuiltNodes {
     ///   [`offset`](MapSeg::offset) into `i16` range before it reaches here — a
     ///   well-formed [`BuiltNodes`] never trips this.
     /// - A defensive [`NodeBuildError::TooManyElements`] /
-    ///   [`NodeBuildError::Write`] for a vertex/linedef/seg index or node
-    ///   coordinate that does not fit its `u16`/`i16` on-disk field. `build_nodes`
-    ///   narrows coordinates and bounds indices before constructing a
-    ///   [`BuiltNodes`], so these guard only hand-constructed values.
+    ///   [`NodeBuildError::Write`] for a vertex/linedef/seg index, a node
+    ///   coordinate, or a split-vertex coordinate (rounded half away from
+    ///   zero, then range-checked —
+    ///   [`DoomWriteError::ValueOutOfRange`] with `block: "vertex"` when the
+    ///   result does not fit `i16`) that does not fit its `u16`/`i16` on-disk
+    ///   field. `build_nodes` narrows coordinates and bounds indices before
+    ///   constructing a [`BuiltNodes`], so these guard only hand-constructed
+    ///   values.
     pub fn to_lump_bytes(&self) -> Result<BuiltNodeLumps, NodeBuildError> {
         // Structural count ceilings (both modes): the leaf flag occupies bit 15
         // of every child reference, so these indices must fit 15 bits.
@@ -152,14 +156,13 @@ impl BuiltNodes {
             });
         }
 
-        let vertexes: Vec<Vertex> = self
-            .split_vertices
-            .iter()
-            .map(|v| Vertex {
-                x: narrow_vertex_coord(v.x),
-                y: narrow_vertex_coord(v.y),
-            })
-            .collect();
+        let mut vertexes = Vec::with_capacity(self.split_vertices.len());
+        for (i, v) in self.split_vertices.iter().enumerate() {
+            vertexes.push(Vertex {
+                x: narrow_vertex_coord(v.x, "x", i)?,
+                y: narrow_vertex_coord(v.y, "y", i)?,
+            });
+        }
 
         let mut segs = Vec::with_capacity(self.segs.len());
         for (i, s) in self.segs.iter().enumerate() {
@@ -177,7 +180,7 @@ impl BuiltNodes {
         for ss in &self.subsectors {
             let count = ss.segs.end.saturating_sub(ss.segs.start);
             subsectors.push(Subsector {
-                seg_count: encode_index(count, "segs")?,
+                seg_count: encode_count(count, "subsector segs")?,
                 first_seg: encode_index(ss.segs.start, "segs")?,
             });
         }
@@ -205,27 +208,60 @@ impl BuiltNodes {
     }
 }
 
-/// Narrows a split-vertex `f64` coordinate to the on-disk `i16`. `build_nodes`
-/// stores whole, in-range map units, so this rounds (half away from zero) and
-/// clamps defensively — non-panicking on any hand-constructed value.
-fn narrow_vertex_coord(value: f64) -> i16 {
-    let clamped = value
-        .round()
-        .clamp(f64::from(i16::MIN), f64::from(i16::MAX));
-    // Finite and within `i16` range by the clamp above.
-    #[allow(clippy::cast_possible_truncation)]
-    {
-        clamped as i16
+/// Narrows a split-vertex `f64` coordinate to the on-disk `i16`, rounding half
+/// away from zero (the write path's rounding). A rounded value outside `i16`
+/// range — or a non-finite one — is a [`DoomWriteError::ValueOutOfRange`] via
+/// the [`Write`](NodeBuildError::Write) wrapper, the same shape as every
+/// sibling narrowing helper. Defensive only: `build_nodes` creates split
+/// vertices as whole, finite, in-`i16`-range map units, so this path is
+/// unreachable for kernel-produced values and guards hand-constructed ones.
+// Casts are guarded: the error path saturates deliberately, the success path is
+// range-checked.
+#[allow(clippy::cast_possible_truncation)]
+fn narrow_vertex_coord(
+    value: f64,
+    field: &'static str,
+    index: usize,
+) -> Result<i16, NodeBuildError> {
+    let rounded = value.round();
+    if !(f64::from(i16::MIN)..=f64::from(i16::MAX)).contains(&rounded) {
+        // Out of range or NaN (which fails the range test). The reported value
+        // saturates into i64 (NaN reports 0) — precise enough for a
+        // hand-constructed-only diagnostic.
+        return Err(NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+            block: "vertex",
+            field,
+            index,
+            value: rounded as i64,
+        }));
     }
+    // Finite and within `i16` range by the check above.
+    Ok(rounded as i16)
 }
 
 /// Converts an arena index to its `u16` on-disk form, or a defensive
-/// [`NodeBuildError::TooManyElements`] naming `kind` if it does not fit.
+/// [`NodeBuildError::TooManyElements`] naming `kind` if it does not fit. The
+/// reported `count` is `idx + 1` — the smallest arena that could hold the
+/// index. For a field that is itself a count (`Subsector::seg_count`), use
+/// [`encode_count`] instead, which reports the value verbatim.
 fn encode_index(idx: usize, kind: &'static str) -> Result<u16, NodeBuildError> {
     u16::try_from(idx).map_err(|_| NodeBuildError::TooManyElements {
         kind,
         count: idx.saturating_add(1),
         max: MAX_U16_INDEXED,
+    })
+}
+
+/// Converts an element *count* (`Subsector::seg_count`) to its `u16` on-disk
+/// form, or a defensive [`NodeBuildError::TooManyElements`] naming `kind` if
+/// it does not fit. Unlike [`encode_index`], the reported `count` is the value
+/// itself — no `+ 1` adjustment — and the ceiling is `u16::MAX` (the largest
+/// storable count), not the index-domain size.
+fn encode_count(count: usize, kind: &'static str) -> Result<u16, NodeBuildError> {
+    u16::try_from(count).map_err(|_| NodeBuildError::TooManyElements {
+        kind,
+        count,
+        max: usize::from(u16::MAX),
     })
 }
 
@@ -306,6 +342,13 @@ where
     cursor.into_inner()
 }
 
+// These are public-API tests that would ordinarily live in
+// `tests/build_lumps.rs` (the house unit-vs-integration convention), but
+// `BuiltNodes` is `#[non_exhaustive]`: an integration test is a separate
+// crate, where struct-literal construction is rejected (E0639), and no public
+// producer exists until stage 2's `build_nodes` lands. They are therefore
+// unit tests by necessity, not by preference — once `build_nodes` exists,
+// integration tests can exercise `to_lump_bytes` through its output.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +513,28 @@ mod tests {
                 field: "offset",
                 index: 0,
                 value: i64::from(i16::MAX) + 1,
+            }),
+        );
+    }
+
+    #[test]
+    fn split_vertex_out_of_i16_range_is_a_value_out_of_range_error() {
+        let built = BuiltNodes {
+            split_vertices: vec![MapVertex {
+                x: 40_000.0,
+                y: 0.0,
+            }],
+            segs: Vec::new(),
+            subsectors: Vec::new(),
+            nodes: Vec::new(),
+        };
+        assert_eq!(
+            built.to_lump_bytes().unwrap_err(),
+            NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+                block: "vertex",
+                field: "x",
+                index: 0,
+                value: 40_000,
             }),
         );
     }
