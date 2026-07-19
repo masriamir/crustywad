@@ -10,8 +10,10 @@
 //! (ADR-0023 §5). The GUS parser (`src/gusconf.c:64-153`) reads with `atoi`,
 //! which yields `0` on garbage and silently skips short lines; crustywad is
 //! deliberately stricter (a malformed data line is a strict error) and stores
-//! every well-formed entry, warning on the out-of-range ids the engine's
-//! range filter would otherwise drop.
+//! every well-formed entry — including the reserved-gap ids the engine's
+//! range filter drops, which every retail carrier ships (ADR-0023 §2
+//! amendment) and which are classified via [`DmxgusEntry::is_gm_mapped`]
+//! rather than warned.
 
 use crate::{ParseOptions, Strictness};
 
@@ -65,8 +67,10 @@ pub struct GenmidiInstrument {
     /// double-voice instrument; see [`is_fixed_pitch`](GenmidiInstrument::is_fixed_pitch)
     /// and [`is_double_voice`](GenmidiInstrument::is_double_voice).
     pub flags: u16,
-    /// The fine-tuning byte (a signed adjustment the engine applies to the
-    /// second voice).
+    /// The raw on-disk fine-tuning byte, stored unconverted. The engine
+    /// applies it to the second voice as `(value / 2) - 64` semitone-table
+    /// steps (`i_oplmusic.c:844`), making `128` the no-adjustment center —
+    /// interpretation is the caller's.
     pub fine_tuning: u8,
     /// The MIDI note number a fixed-pitch instrument always plays.
     pub fixed_note: u8,
@@ -434,7 +438,8 @@ impl Dmxgus {
                 }
             }
 
-            // Fields 0..5 must all be decimal u32 ids.
+            // The first five fields (instrument id + four RAM-tier mappings)
+            // must be decimal u32s; field 5 is the patch-name string.
             let mut ids = [0u32; 5];
             let mut malformed = false;
             for (slot, field) in ids.iter_mut().zip(fields.iter()) {

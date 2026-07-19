@@ -422,8 +422,14 @@ impl WavSound {
             }
 
             // Advance past the payload, honoring RIFF's even-alignment pad.
+            // A missing pad byte at end-of-lump is tolerated deliberately:
+            // real-world writers commonly omit the final pad, and the byte
+            // carries no data. An omitted *interior* pad desynchronizes any
+            // RIFF reader; the walk's bounds checks keep that failure mode
+            // safe (it surfaces as overrun/duplicate/missing-chunk
+            // diagnostics rather than an out-of-bounds read).
             pos = payload + size;
-            if size % 2 == 1 {
+            if size % 2 == 1 && pos < len {
                 pos += 1;
             }
         }
