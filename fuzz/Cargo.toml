@@ -90,6 +90,12 @@ path = "fuzz_targets/fuzz_audio_sfx.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_audio_music"
+path = "fuzz_targets/fuzz_audio_music.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 crustywad = { path = "../crates/crustywad", features = ["write", "doom64-gfx"] }

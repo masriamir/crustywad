@@ -36,21 +36,34 @@
 //! an all-zeros 8-byte lump satisfies it — so classification only proposes a
 //! format; the parsers do the validating.
 //!
-//! [`AudioKind::Mus`], [`AudioKind::Midi`], and [`AudioKind::Wav`] are
-//! recognized here so callers can route lumps today, but their typed parsers
-//! land with ADR-0023 stage 2 (#301).
+//! [`AudioKind::Mus`], [`AudioKind::Midi`], and [`AudioKind::Wav`] have typed
+//! parsers alongside the sound-effect formats: [`MusScore`] decodes the MUS
+//! event stream, [`MidiInfo`] indexes standard-MIDI chunks, and [`WavSound`]
+//! walks RIFF/WAVE containers (ADR-0023 §2, §4).
+//!
+//! The instrument banks [`Genmidi`] (the fixed-layout `GENMIDI` OPL bank) and
+//! [`Dmxgus`] (the line-oriented `DMXGUS`/`DMXGUSC` patch map) round out the
+//! layer (ADR-0023 §2). Unlike the sound formats these have no content magic
+//! [`AudioKind::detect`] keys on — they are identified by their reserved lump
+//! names — so callers dispatch to [`Genmidi::parse`] / [`Dmxgus::parse`] by
+//! name rather than through the classifier.
 
+mod banks;
+mod containers;
+mod music;
 mod sfx;
 
+pub use banks::{Dmxgus, DmxgusEntry, Genmidi, GenmidiInstrument, GenmidiOp, GenmidiVoice};
+pub use containers::{MidiInfo, MidiTrack, WavSound};
+pub use music::{MusEvent, MusEventKind, MusScore};
 pub use sfx::{DmxSound, PcSpeakerSound};
 
 /// The content-detected format of an audio lump (ADR-0023 §1).
 ///
 /// Returned by [`AudioKind::detect`], a pure classifier over lump bytes.
-/// Only [`Dmx`](AudioKind::Dmx) and [`PcSpeaker`](AudioKind::PcSpeaker) have
-/// typed parsers in this stage; the music/container variants are recognized
-/// so callers can route lumps, with their parsers arriving in ADR-0023
-/// stage 2 (#301).
+/// Each variant other than [`Unknown`](AudioKind::Unknown) has a typed parser:
+/// [`DmxSound`], [`PcSpeakerSound`], [`MusScore`], [`MidiInfo`], and
+/// [`WavSound`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AudioKind {
@@ -62,14 +75,11 @@ pub enum AudioKind {
     /// 4-byte header, used by `DP*` sound effects. Parsed by
     /// [`PcSpeakerSound`].
     PcSpeaker,
-    /// The MUS music format (`MUS\x1a` magic). Recognized here; typed parser
-    /// lands with ADR-0023 stage 2 (#301).
+    /// The MUS music format (`MUS\x1a` magic). Parsed by [`MusScore`].
     Mus,
-    /// A standard MIDI file (`MThd` magic). Recognized here; typed parser
-    /// lands with ADR-0023 stage 2 (#301).
+    /// A standard MIDI file (`MThd` magic). Indexed by [`MidiInfo`].
     Midi,
-    /// A RIFF/WAVE container (`RIFF....WAVE` magic). Recognized here; typed
-    /// parser lands with ADR-0023 stage 2 (#301).
+    /// A RIFF/WAVE container (`RIFF....WAVE` magic). Parsed by [`WavSound`].
     Wav,
     /// The bytes match no recognized audio format.
     Unknown,
@@ -161,6 +171,121 @@ pub enum AudioError {
         /// The bytes available after the header.
         available: usize,
     },
+    /// The lump's leading magic does not match the format this parser decodes
+    /// (MUS `MUS\x1a`, MIDI `MThd`, or WAV `RIFF`/`WAVE`). Unrecoverable in
+    /// **both** modes — the bytes are not that format at all.
+    #[error("bad magic: expected {expected:?}, found {found:?}")]
+    BadMagic {
+        /// The magic bytes this parser requires.
+        expected: &'static [u8],
+        /// The four leading bytes read from disk.
+        found: [u8; 4],
+    },
+    /// A MUS `score_start` offset points past the end of the lump. Strict only
+    /// — lenient recovers by yielding an empty event list and records
+    /// [`AudioWarning::OffsetOutOfBounds`].
+    #[error("offset {offset} is out of bounds for a {lump_len}-byte lump")]
+    OffsetOutOfBounds {
+        /// The out-of-bounds byte offset.
+        offset: usize,
+        /// The lump's actual length.
+        lump_len: usize,
+    },
+    /// A MUS event's payload (or its trailing delta-time varint) ran past the
+    /// end of the lump. Strict only — lenient keeps the events decoded so far
+    /// and records [`AudioWarning::TruncatedEvent`].
+    #[error("MUS event stream truncated at offset {offset}")]
+    TruncatedEvent {
+        /// The byte offset at which the read ran out of bytes.
+        offset: usize,
+    },
+    /// A MUS system event carries a controller outside the valid `10..=14`
+    /// range. Strict only — lenient stops at the event and records
+    /// [`AudioWarning::InvalidSystemController`].
+    #[error("MUS system event controller {controller} is outside 10..=14 (offset {offset})")]
+    InvalidSystemController {
+        /// The out-of-range controller number.
+        controller: u8,
+        /// The byte offset of the offending event's descriptor.
+        offset: usize,
+    },
+    /// A MUS change-controller event carries a controller outside the valid
+    /// `0..=9` range (`0` is the patch change). Strict only — lenient stops at
+    /// the event and records [`AudioWarning::InvalidController`].
+    #[error("MUS change-controller {controller} is outside 0..=9 (offset {offset})")]
+    InvalidController {
+        /// The out-of-range controller number.
+        controller: u8,
+        /// The byte offset of the offending event's descriptor.
+        offset: usize,
+    },
+    /// A MUS descriptor byte selects an event type this format does not define
+    /// (the `0x50` and `0x70` type bits). Strict only — lenient stops at the
+    /// event and records [`AudioWarning::UnknownEventType`].
+    #[error("MUS unknown event type {event_type:#04x} (offset {offset})")]
+    UnknownEventType {
+        /// The unrecognized event-type bits (descriptor byte masked with
+        /// `0x70`).
+        event_type: u8,
+        /// The byte offset of the offending event's descriptor.
+        offset: usize,
+    },
+    /// The MUS event stream reached the end of the lump without a score-end
+    /// event (the engine reads EOF here and fails). Strict only — lenient
+    /// keeps the events decoded so far and records
+    /// [`AudioWarning::MissingScoreEnd`].
+    #[error("MUS event stream ended at offset {offset} without a score-end event")]
+    MissingScoreEnd {
+        /// The byte offset at which the stream ended.
+        offset: usize,
+    },
+    /// A MIDI `MThd` header declares a chunk size other than the required `6`.
+    /// Strict only — lenient reads the standard six bytes and records
+    /// [`AudioWarning::UnexpectedChunkSize`].
+    #[error("MIDI header chunk size is {found}; expected {expected}")]
+    UnexpectedChunkSize {
+        /// The chunk size the format requires (`6`).
+        expected: u32,
+        /// The raw on-disk chunk size.
+        found: u32,
+    },
+    /// A declared MIDI or WAV chunk length overruns the bytes remaining in the
+    /// lump. Strict only — lenient stops the walk and records
+    /// [`AudioWarning::ChunkOverrun`].
+    #[error("chunk at offset {offset} declares {declared} bytes but only {available} remain")]
+    ChunkOverrun {
+        /// The byte offset of the offending chunk header.
+        offset: usize,
+        /// The chunk's declared payload length.
+        declared: usize,
+        /// The bytes available after the chunk header.
+        available: usize,
+    },
+    /// A WAV `fmt ` chunk is smaller than the 16-byte canonical PCM format
+    /// body. Strict only — lenient skips the chunk and records
+    /// [`AudioWarning::FmtChunkTooSmall`].
+    #[error("WAV fmt chunk is {size} bytes; at least 16 are required")]
+    FmtChunkTooSmall {
+        /// The declared `fmt ` chunk size.
+        size: usize,
+    },
+    /// A WAV lump ended without a required `fmt ` or `data` chunk. Strict only
+    /// — lenient defaults the missing fields to `0` / empty data and records
+    /// [`AudioWarning::MissingChunk`].
+    #[error("WAV lump is missing the {} chunk", String::from_utf8_lossy(id))]
+    MissingChunk {
+        /// The identifier of the missing chunk (`fmt ` or `data`).
+        id: [u8; 4],
+    },
+    /// A `DMXGUS` data line has fewer than six comma-separated fields, or an id
+    /// field is not a decimal `u32`. Strict only — lenient skips the line and
+    /// records [`AudioWarning::MalformedGusLine`]. Deliberately stricter than
+    /// the engine's `atoi`, which yields `0` on garbage (`gusconf.c:64-153`).
+    #[error("malformed DMXGUS data line {line}")]
+    MalformedGusLine {
+        /// The 1-based line number of the offending line.
+        line: usize,
+    },
 }
 
 /// A non-fatal issue recovered while decoding a classic audio lump; the
@@ -225,5 +350,203 @@ pub enum AudioWarning {
     OutOfRangeTones {
         /// How many tone bytes were `>= 128`.
         count: usize,
+    },
+    /// A MUS instrument list could not be read because it does not fit ahead of
+    /// `score_start` or inside the lump; an empty instrument list is used
+    /// instead. Recorded in **both** modes (ADR-0023 §2 — the engine never
+    /// reads the list).
+    #[error("MUS instrument list is unreadable; using an empty list")]
+    InstrumentListUnreadable,
+    /// A MUS `score_start + score_length` extends past the lump end. Recorded
+    /// in **both** modes as a warning only — the engine never uses
+    /// `score_length` for bounds (ADR-0023 §2).
+    #[error("MUS declared score end {declared_end} exceeds the {lump_len}-byte lump")]
+    ScoreLengthOverrun {
+        /// The byte offset `score_start + score_length` points at.
+        declared_end: usize,
+        /// The lump's actual length.
+        lump_len: usize,
+    },
+    /// A MUS `score_start` offset out of bounds was recovered during lenient
+    /// parsing: an empty event list is used. Mirrors
+    /// [`AudioError::OffsetOutOfBounds`].
+    #[error("offset {offset} is out of bounds for a {lump_len}-byte lump; no events decoded")]
+    OffsetOutOfBounds {
+        /// The out-of-bounds byte offset.
+        offset: usize,
+        /// The lump's actual length.
+        lump_len: usize,
+    },
+    /// A truncated MUS event was recovered during lenient parsing: decoding
+    /// stops, keeping the events read so far. Mirrors
+    /// [`AudioError::TruncatedEvent`].
+    #[error("MUS event stream truncated at offset {offset}; kept the events decoded so far")]
+    TruncatedEvent {
+        /// The byte offset at which the read ran out of bytes.
+        offset: usize,
+    },
+    /// A MUS system-event controller outside `10..=14` was recovered during
+    /// lenient parsing: decoding stops at the event. Mirrors
+    /// [`AudioError::InvalidSystemController`].
+    #[error(
+        "MUS system event controller {controller} is outside 10..=14 (offset {offset}); stopped decoding"
+    )]
+    InvalidSystemController {
+        /// The out-of-range controller number.
+        controller: u8,
+        /// The byte offset of the offending event's descriptor.
+        offset: usize,
+    },
+    /// A MUS change-controller outside `0..=9` was recovered during lenient
+    /// parsing: decoding stops at the event. Mirrors
+    /// [`AudioError::InvalidController`].
+    #[error(
+        "MUS change-controller {controller} is outside 0..=9 (offset {offset}); stopped decoding"
+    )]
+    InvalidController {
+        /// The out-of-range controller number.
+        controller: u8,
+        /// The byte offset of the offending event's descriptor.
+        offset: usize,
+    },
+    /// A MUS unknown event type was recovered during lenient parsing: decoding
+    /// stops at the event. Mirrors [`AudioError::UnknownEventType`].
+    #[error("MUS unknown event type {event_type:#04x} (offset {offset}); stopped decoding")]
+    UnknownEventType {
+        /// The unrecognized event-type bits (descriptor byte masked with
+        /// `0x70`).
+        event_type: u8,
+        /// The byte offset of the offending event's descriptor.
+        offset: usize,
+    },
+    /// A MUS event stream that ended without a score-end event was recovered
+    /// during lenient parsing: the events decoded so far are kept. Mirrors
+    /// [`AudioError::MissingScoreEnd`].
+    #[error(
+        "MUS event stream ended at offset {offset} without a score-end event; kept the events decoded so far"
+    )]
+    MissingScoreEnd {
+        /// The byte offset at which the stream ended.
+        offset: usize,
+    },
+    /// A MIDI `MThd` chunk size other than `6` was recovered during lenient
+    /// parsing: the standard six bytes are read. Mirrors
+    /// [`AudioError::UnexpectedChunkSize`].
+    #[error("MIDI header chunk size is {found}; expected {expected}; read the standard six bytes")]
+    UnexpectedChunkSize {
+        /// The chunk size the format requires (`6`).
+        expected: u32,
+        /// The raw on-disk chunk size.
+        found: u32,
+    },
+    /// A declared MIDI or WAV chunk length overrunning the lump was recovered
+    /// during lenient parsing: the walk stops. Mirrors
+    /// [`AudioError::ChunkOverrun`].
+    #[error(
+        "chunk at offset {offset} declares {declared} bytes but only {available} remain; stopped the walk"
+    )]
+    ChunkOverrun {
+        /// The byte offset of the offending chunk header.
+        offset: usize,
+        /// The chunk's declared payload length.
+        declared: usize,
+        /// The bytes available after the chunk header.
+        available: usize,
+    },
+    /// A non-`MTrk` MIDI chunk was skipped by its declared length. The SMF
+    /// specification permits alien chunks, so this is a warning in **both**
+    /// modes.
+    #[error("skipped a non-MTrk MIDI chunk ({})", String::from_utf8_lossy(id))]
+    AlienChunk {
+        /// The identifier of the skipped chunk.
+        id: [u8; 4],
+    },
+    /// The number of `MTrk` chunks recorded disagrees with the `MThd` header's
+    /// declared track count. Recorded in **both** modes.
+    #[error("MIDI header declares {declared} track(s) but {found} MTrk chunk(s) were found")]
+    TrackCountMismatch {
+        /// The header's declared track count.
+        declared: u16,
+        /// The number of `MTrk` chunks actually recorded.
+        found: usize,
+    },
+    /// Trailing bytes too short to form a chunk header (fewer than 8) remain at
+    /// the end of a MIDI or WAV lump. Recorded in **both** modes.
+    #[error("{len} trailing byte(s) too short to form a chunk header")]
+    TrailingBytes {
+        /// The number of trailing bytes.
+        len: usize,
+    },
+    /// A WAV `RIFF` size field disagrees with the lump length (`8 + riff_size
+    /// != lump_len`). Recorded in **both** modes.
+    #[error("WAV riff size implies an end of {declared_end} but the lump is {lump_len} bytes")]
+    RiffSizeMismatch {
+        /// The byte offset `8 + riff_size` points at.
+        declared_end: usize,
+        /// The lump's actual length.
+        lump_len: usize,
+    },
+    /// A WAV `fmt ` chunk smaller than 16 bytes was skipped during lenient
+    /// parsing. Mirrors [`AudioError::FmtChunkTooSmall`].
+    #[error("WAV fmt chunk is {size} bytes; at least 16 are required; skipped it")]
+    FmtChunkTooSmall {
+        /// The declared `fmt ` chunk size.
+        size: usize,
+    },
+    /// A second `fmt ` or `data` chunk was found in a WAV lump; the first wins
+    /// and the duplicate is ignored. Recorded in **both** modes.
+    #[error("ignored a duplicate WAV {} chunk", String::from_utf8_lossy(id))]
+    DuplicateChunk {
+        /// The identifier of the duplicated chunk (`fmt ` or `data`).
+        id: [u8; 4],
+    },
+    /// A required WAV `fmt ` or `data` chunk was missing and defaulted during
+    /// lenient parsing (fields `0` / empty data). Mirrors
+    /// [`AudioError::MissingChunk`].
+    #[error(
+        "WAV lump is missing the {} chunk; defaulted it",
+        String::from_utf8_lossy(id)
+    )]
+    MissingChunk {
+        /// The identifier of the missing chunk (`fmt ` or `data`).
+        id: [u8; 4],
+    },
+    /// A `GENMIDI` lump's leading bytes are not `#OPL_II#`; lenient parsing
+    /// proceeds anyway, as the engine never checks the magic
+    /// (`i_oplmusic.c:369`). Recorded only in lenient mode — strict fails with
+    /// [`AudioError::BadMagic`].
+    #[error("bad magic: expected {expected:?}, found {found:?}; parsed anyway")]
+    BadMagic {
+        /// The magic bytes the format requires.
+        expected: &'static [u8],
+        /// The four leading bytes read from disk.
+        found: [u8; 4],
+    },
+    /// A `GENMIDI` lump is shorter than the fixed 11908-byte extent; lenient
+    /// parsing decoded every complete record and name field that fits. Recorded
+    /// only in lenient mode — strict fails with [`AudioError::TruncatedHeader`].
+    #[error("GENMIDI lump is {len} bytes; {needed} needed for the full bank; decoded what fit")]
+    TruncatedBank {
+        /// The lump's actual length.
+        len: usize,
+        /// Bytes required for the complete bank (`11908`).
+        needed: usize,
+    },
+    /// A `DMXGUS` data line was malformed (fewer than six fields, or a
+    /// non-numeric id) and skipped during lenient parsing. Mirrors
+    /// [`AudioError::MalformedGusLine`].
+    #[error("malformed DMXGUS data line {line}; skipped it")]
+    MalformedGusLine {
+        /// The 1-based line number of the skipped line.
+        line: usize,
+    },
+    /// A `DMXGUS` data line carried more than the six fields the format defines;
+    /// the extras were ignored. Recorded in **both** modes.
+    #[error("DMXGUS data line {line} has {extra} field(s) beyond the six defined; ignored them")]
+    ExtraGusFields {
+        /// The 1-based line number of the line.
+        line: usize,
+        /// How many fields beyond the sixth were present.
+        extra: usize,
     },
 }
