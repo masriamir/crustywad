@@ -368,6 +368,7 @@ impl WavSound {
         let mut bits_per_sample = 0u16;
         let mut data = Vec::new();
         let mut fmt_parsed = false;
+        let mut fmt_seen = false;
         let mut data_seen = false;
 
         let mut pos = Self::HEADER;
@@ -405,6 +406,7 @@ impl WavSound {
 
             let payload = pos + Self::CHUNK_HEADER;
             if id == Self::FMT {
+                fmt_seen = true;
                 if fmt_parsed {
                     warnings.push(AudioWarning::DuplicateChunk { id });
                 } else if size < Self::FMT_MIN {
@@ -465,7 +467,10 @@ impl WavSound {
             }
         }
 
-        if !fmt_parsed {
+        // `MissingChunk` means no `fmt ` chunk existed at all; a present-but-
+        // malformed one is already surfaced as `FmtChunkTooSmall`, and doubling
+        // it with a "missing" warning would misdescribe the lump.
+        if !fmt_seen {
             match options.strictness {
                 Strictness::Strict => return Err(AudioError::MissingChunk { id: Self::FMT }),
                 Strictness::Lenient => warnings.push(AudioWarning::MissingChunk { id: Self::FMT }),
