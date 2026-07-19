@@ -326,6 +326,9 @@ fn extract_outputs<'a>(
     match AudioKind::detect(data) {
         AudioKind::Dmx => match DmxSound::parse(data, &opts) {
             Ok(sound) => vec![("wav", Cow::Owned(dmx_to_wav(&sound)))],
+            // Unreachable in practice: a Dmx detection guarantees the strict
+            // (and so the lenient) parse succeeds. Kept as a defensive
+            // fallback rather than an unwrap.
             Err(e) => {
                 warnings.push(format!(
                     "{raw_name}: could not decode DMX sound ({e}); extracted raw bytes"
@@ -423,6 +426,8 @@ fn audio_annotation(data: &[u8]) -> Option<AudioAnnotation> {
                     s.samples().len()
                 ),
             },
+            // Unreachable in practice (detect guarantees the parse); a
+            // defensive fallback rather than an unwrap.
             Err(_) => AudioAnnotation::bare("Dmx"),
         },
         AudioKind::Mus => match MusScore::parse(data, &opts) {
@@ -457,6 +462,8 @@ fn audio_annotation(data: &[u8]) -> Option<AudioAnnotation> {
                     s.bits_per_sample()
                 ),
             },
+            // Unreachable leniently (a 12-byte detection always parses with
+            // warnings at worst); a defensive fallback rather than an unwrap.
             Err(_) => AudioAnnotation::bare("Wav"),
         },
         AudioKind::PcSpeaker => AudioAnnotation::bare("PcSpeaker"),

@@ -3658,3 +3658,107 @@ fn info_no_audio_lumps_empty_object_json() {
         .success()
         .stdout(predicate::str::contains(r#""audio":{}"#));
 }
+
+#[test]
+fn list_annotates_midi_wav_pcspeaker_and_bare_mus() {
+    // Covers the remaining annotation arms: Midi and Wav with details,
+    // PcSpeaker (kind-only), and a MUS whose 4 magic bytes detect but whose
+    // header is too short to parse even leniently (kind-only fallback).
+    let midi = midi_mthd();
+    // A full canonical 48-byte WAV (PCM, mono, 22050 Hz, 16-bit, 4 data
+    // bytes) so the annotation carries real fmt details.
+    let mut wav: Vec<u8> = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&40u32.to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&22050u32.to_le_bytes());
+    wav.extend_from_slice(&44100u32.to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&4u32.to_le_bytes());
+    wav.extend_from_slice(&[0x00, 0x01, 0xFF, 0x7F]);
+    let pcs: Vec<u8> = vec![0x00, 0x00, 0x02, 0x00, 10, 42];
+    let bare_mus: Vec<u8> = vec![0x4D, 0x55, 0x53, 0x1A];
+    // Detects as MIDI (4-byte magic) but fails even the lenient parse
+    // (`0 < len < 14`), exercising the kind-only Midi fallback.
+    let bare_midi: Vec<u8> = vec![b'M', b'T', b'h', b'd', 0, 0, 0, 6];
+    let wad = write_wad(
+        *b"IWAD",
+        &[
+            ("MIDILMP", &midi),
+            ("WAVLMP", &wav),
+            ("DPLMP", &pcs),
+            ("SHORTMUS", &bare_mus),
+            ("SHORTMID", &bare_midi),
+        ],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[audio: Midi tracks=1]"))
+        .stdout(predicate::str::contains(
+            "[audio: Wav rate=22050 channels=1 bits=16]",
+        ))
+        .stdout(predicate::str::contains("[audio: PcSpeaker]"))
+        .stdout(predicate::str::contains("[audio: Mus]"))
+        .stdout(predicate::str::contains("SHORTMID [audio: Midi]"));
+}
+
+#[test]
+fn list_json_and_csv_cover_detail_and_bare_arms() {
+    let midi = midi_mthd();
+    let pcs: Vec<u8> = vec![0x00, 0x00, 0x00, 0x00];
+    let wad = write_wad(*b"IWAD", &[("MIDILMP", &midi), ("DPLMP", &pcs)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""audio":{"kind":"Midi","tracks":1}"#,
+        ))
+        .stdout(predicate::str::contains(r#""audio":{"kind":"PcSpeaker"}"#));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "list", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Midi tracks=1"))
+        .stdout(predicate::str::contains("PcSpeaker"));
+}
+
+#[test]
+fn info_summarizes_all_audio_kinds() {
+    let dmx = dmx_d1();
+    let mus = mus_m1();
+    let midi = midi_mthd();
+    let wav = wav_riff();
+    let pcs: Vec<u8> = vec![0x00, 0x00, 0x01, 0x00, 7];
+    let wad = write_wad(
+        *b"IWAD",
+        &[
+            ("DMXSND", &dmx),
+            ("MUSLMP", &mus),
+            ("MIDILMP", &midi),
+            ("WAVLMP", &wav),
+            ("DPLMP", &pcs),
+        ],
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dmx: 1"))
+        .stdout(predicate::str::contains("PcSpeaker: 1"))
+        .stdout(predicate::str::contains("Mus: 1"))
+        .stdout(predicate::str::contains("Midi: 1"))
+        .stdout(predicate::str::contains("Wav: 1"));
+}

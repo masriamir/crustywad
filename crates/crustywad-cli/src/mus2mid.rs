@@ -299,7 +299,94 @@ pub fn convert(score: &MusScore) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::write_varlen;
+    use super::{convert, write_varlen};
+    use crustywad::ParseOptions;
+    use crustywad::audio::MusScore;
+
+    /// Exercises every event kind and both channel-mapping rules in one
+    /// score: melodic channel 2 (lazily allocated to MIDI 0, emitting the
+    /// first-use all-notes-off), percussion channel 15 (fixed MIDI 9, no
+    /// allocation), an explicit velocity updating the per-channel cache, a
+    /// velocity-less press reusing it, a patch change (controller 0), a
+    /// valued controller with bit 7 set (clamped to 0x7F), a valueless
+    /// system event, and a pitch wheel.
+    /// Ten melodic MUS channels allocate MIDI channels 0..=8 and then 10 —
+    /// the allocator must skip percussion channel 9
+    /// (`AllocateMIDIChannel`, `mus2mid.c:376-379`).
+    #[test]
+    fn tenth_melodic_channel_allocation_skips_percussion() {
+        let mut events = Vec::new();
+        for ch in 0u8..10 {
+            events.extend_from_slice(&[0x10 | ch, 0xBC, 0x64]);
+        }
+        events.push(0x60);
+        let mut mus = Vec::new();
+        mus.extend_from_slice(&[0x4D, 0x55, 0x53, 0x1A]);
+        mus.extend_from_slice(&u16::try_from(events.len()).unwrap().to_le_bytes());
+        mus.extend_from_slice(&14u16.to_le_bytes());
+        mus.extend_from_slice(&10u16.to_le_bytes());
+        mus.extend_from_slice(&0u16.to_le_bytes());
+        mus.extend_from_slice(&0u16.to_le_bytes());
+        mus.extend_from_slice(&events);
+        let score = MusScore::parse(&mus, &ParseOptions::strict()).expect("fixture parses");
+
+        let out = convert(&score);
+        let track = &out[super::MIDI_HEADER.len()..];
+        // The tenth press (MUS channel 9) lands on MIDI channel 10, not 9.
+        assert!(track.windows(4).any(|w| w == [0x00, 0x9A, 0x3C, 0x64]));
+        // Nothing melodic ever writes to MIDI channel 9's note-on status.
+        assert!(!track.windows(4).any(|w| w == [0x00, 0x99, 0x3C, 0x64]));
+    }
+
+    #[test]
+    fn converts_every_event_kind_and_channel_rule() {
+        let mut mus = Vec::new();
+        mus.extend_from_slice(&[0x4D, 0x55, 0x53, 0x1A]);
+        mus.extend_from_slice(&19u16.to_le_bytes()); // score_length
+        mus.extend_from_slice(&14u16.to_le_bytes()); // score_start
+        mus.extend_from_slice(&2u16.to_le_bytes()); // primary channels
+        mus.extend_from_slice(&0u16.to_le_bytes());
+        mus.extend_from_slice(&0u16.to_le_bytes()); // no instrument list
+        mus.extend_from_slice(&[
+            0x12, 0xBC, 0x64, // press ch2 note 60 velocity 100
+            0x2F, 0x40, // pitch wheel ch15 value 0x40
+            0x32, 0x0A, // system event ch2 controller 10
+            0x42, 0x00, 0x05, // patch change ch2 patch 5
+            0x42, 0x03, 0x90, // valued controller 3 value 0x90 (bit 7 set)
+            0x12, 0x3C, // press ch2 note 60, no velocity (cache reuse)
+            0x82, 0x3C, 0x46, // release ch2 note 60, delta 70
+            0x60, // score end
+        ]);
+        let score = MusScore::parse(&mus, &ParseOptions::strict()).expect("fixture parses");
+
+        let out = convert(&score);
+        let (header, track) = out.split_at(super::MIDI_HEADER.len());
+        assert_eq!(
+            &header[..super::TRACK_LENGTH_OFFSET],
+            &super::MIDI_HEADER[..super::TRACK_LENGTH_OFFSET]
+        );
+
+        // Each expected event, derived against mus2mid.c:
+        let expected: Vec<u8> = vec![
+            0x00, 0xB0, 0x7B, 0x00, // first use of MIDI ch 0: all notes off
+            0x00, 0x90, 0x3C, 0x64, // note on ch0 note 60 vel 100
+            0x00, 0xE9, 0x00, 0x20, // pitch wheel MIDI ch9: 0x40*64=4096 -> LSB 0, MSB 0x20
+            0x00, 0xB0, 0x78, 0x00, // system event 10 -> CC 0x78, value 0
+            0x00, 0xC0, 0x05, // patch change ch0 -> 5
+            0x00, 0xB0, 0x07, 0x7F, // controller 3 -> CC 0x07, 0x90 clamps to 0x7F
+            0x00, 0x90, 0x3C, 0x64, // velocity-less press reuses cached 100
+            0x00, 0x80, 0x3C, 0x00, // note off ch0 note 60 (velocity 0)
+            0x46, 0xFF, 0x2F, 0x00, // delta 70 then end-of-track
+        ];
+        assert_eq!(track, expected.as_slice());
+
+        // The backfilled track length matches the actual track bytes.
+        let len_bytes = &header[super::TRACK_LENGTH_OFFSET..super::TRACK_LENGTH_OFFSET + 4];
+        assert_eq!(
+            u32::from_be_bytes(len_bytes.try_into().unwrap()),
+            u32::try_from(track.len()).unwrap()
+        );
+    }
 
     /// Encodes a single value to its own buffer for assertion.
     fn vlq(value: u32) -> Vec<u8> {
