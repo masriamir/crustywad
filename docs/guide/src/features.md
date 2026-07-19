@@ -13,7 +13,7 @@ allowing callers to opt in to additional capabilities.
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
-| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_reject`, `MapReject::to_lump_bytes` |
+| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, and the `to_lump_bytes` serializers |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
 
 ---
@@ -261,8 +261,9 @@ let rebuilt = wad.to_builder().build().unwrap();
 ## `nodebuild`
 
 **Enables:** the `map::build` module — `NodeBuildOptions`, `NodeBuildError`, `NodeBuildWarning`,
-`build_reject`, and `nodebuild`-gated `to_lump_bytes` serializers on the read-side lump types
-(`MapReject` first; `MapBlockmap` and the classic BSP builders follow, ADR-0024 §9)
+`build_blockmap`, `build_reject`, and `nodebuild`-gated `to_lump_bytes` serializers on the
+read-side lump types (`MapBlockmap` and `MapReject`; the classic BSP builders follow —
+issue #315, ADR-0024 §9)
 
 **Adds dependency:** none — implies `write`
 
@@ -273,9 +274,12 @@ assembled `Map` into engine-playable node lumps (ADR-0024). It fulfills the revi
 `nodebuild` builders produce those lumps for real. Coordinate narrowing is shared with the
 write path (ADR-0024 §3), so a builder operates on exactly the `i16` geometry the engine reads.
 
-Stage 1 ships `build_reject`, which returns the correctly-sized all-zeros `REJECT`
-(`ceil(sectors² / 8)` bytes). An all-clear table pre-rejects no line of sight, which is always
-engine-correct — it is what `zdbsp` itself emits.
+Stage 1 ships both `build_reject` and `build_blockmap`. `build_reject` returns the
+correctly-sized all-zeros `REJECT` (`ceil(sectors² / 8)` bytes) — an all-clear table
+pre-rejects no line of sight, which is always engine-correct and is what `zdbsp` itself
+emits. `build_blockmap` builds the packed 128-unit-grid `BLOCKMAP` (deduplicated
+blocklists, strict/lenient offset-ceiling policy per ADR-0024 §5). BSP node building
+itself (`SEGS`/`SSECTORS`/`NODES`) is the later stage — issue #315.
 
 ### Usage
 
@@ -290,13 +294,20 @@ Or with `cargo add`:
 cargo add crustywad --features nodebuild
 ```
 
-```rust,ignore
-use crustywad::map::build::build_reject;
+```rust
+use crustywad::map::build::{NodeBuildOptions, build_blockmap, build_reject};
+use crustywad::{WadBuilder, WadKind};
 
-# fn run(map: &crustywad::map::Map) {
-let reject = build_reject(map);
-let bytes = reject.to_lump_bytes(); // ceil(sectors² / 8) all-zero bytes
-# let _ = bytes;
+# fn run(map: &crustywad::map::Map) -> Result<(), Box<dyn std::error::Error>> {
+let reject = build_reject(map); // infallible: ceil(sectors² / 8) all-zero bytes
+let (blockmap, _warnings) = build_blockmap(map, &NodeBuildOptions::strict())?;
+
+let mut builder = WadBuilder::new(WadKind::Pwad);
+builder
+    .add_lump("REJECT", reject.to_lump_bytes())
+    .add_lump("BLOCKMAP", blockmap.to_lump_bytes()?);
+# let _ = builder;
+# Ok(())
 # }
 ```
 
