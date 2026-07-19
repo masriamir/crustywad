@@ -31,8 +31,10 @@ use crate::Strictness;
 use crate::map::DoomWriteError;
 use crate::map::doom::DoomWriteWarning;
 
+mod blockmap;
 mod reject;
 
+pub use blockmap::build_blockmap;
 pub use reject::build_reject;
 
 /// Options controlling node-lump building (ADR-0024 §5).
