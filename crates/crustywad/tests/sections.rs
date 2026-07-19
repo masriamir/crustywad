@@ -145,6 +145,22 @@ fn dm_start_without_end_is_unpaired() {
 }
 
 #[test]
+fn dm_end_without_start_is_unpaired() {
+    // The inverse direction (unpaired END), mirroring row 3's contract.
+    let wad = wad_of(&["MUSINTRO", "DM_END"]);
+    assert!(matches!(
+        wad.sections().unwrap_err(),
+        SectionError::UnpairedEnd {
+            kind: SectionKind::Music,
+            index: 1
+        }
+    ));
+    let table = lenient(&wad);
+    assert!(table.sections().is_empty());
+    assert_eq!(table.warnings().len(), 1);
+}
+
+#[test]
 fn dm_numbered_and_doubled_prefixes_are_content_not_markers() {
     // Only the exact `DM` two-letter prefix is a marker: DM never takes a
     // numbered sub-pair (DM3_) or a doubled alias (DMDM_).
@@ -511,6 +527,7 @@ proptest! {
                     Just(("T_START", "T_END", SectionKind::Textures)),
                     Just(("DS_START", "DS_END", SectionKind::Sounds)),
                     Just(("G_START", "G_END", SectionKind::Graphics)),
+                    Just(("DM_START", "DM_END", SectionKind::Music)),
                 ],
                 0_usize..3, // content lumps inside
             ),

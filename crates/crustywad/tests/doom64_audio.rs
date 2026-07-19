@@ -19,6 +19,7 @@ mod common;
 /// a miscount — is an adjudication for the reviewer, not something to loosen.
 #[cfg(feature = "sweep-tests")]
 #[test]
+#[allow(clippy::too_many_lines)]
 fn retail_doom64_audio_containers_strict_clean() {
     use crustywad::audio::{AudioKind, MidiInfo, WavSound};
     use crustywad::{ParseOptions, SectionKind, Wad};
@@ -49,6 +50,15 @@ fn retail_doom64_audio_containers_strict_clean() {
             continue;
         }
         music_wads += 1;
+
+        // The scan is lenient only for the sake of OTHER WADs in the dir
+        // (SVE.wad); a Music-bearing WAD itself must scan clean.
+        assert!(
+            sections.warnings().is_empty(),
+            "{}: section scan warned on a Music-bearing WAD: {:?}",
+            path.display(),
+            sections.warnings()
+        );
 
         // 2 + 4. Every Music-section lump: content-detected MIDI, and a
         //        strict, zero-warning MidiInfo parse.
