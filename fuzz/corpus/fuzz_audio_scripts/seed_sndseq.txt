@@ -1,0 +1,9 @@
+:Platform
+play PlatformStart
+playrepeat PlatformLoop
+playtime DoorClose 10
+delay 5
+delayrand 3 9
+volume 50
+stopsound PlatformStop
+end

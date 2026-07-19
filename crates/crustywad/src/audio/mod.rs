@@ -54,11 +54,13 @@
 mod banks;
 mod containers;
 mod music;
+mod scripts;
 mod sfx;
 
 pub use banks::{Dmxgus, DmxgusEntry, Genmidi, GenmidiInstrument, GenmidiOp, GenmidiVoice};
 pub use containers::{MidiInfo, MidiTrack, WavSound};
 pub use music::{MusEvent, MusEventKind, MusScore};
+pub use scripts::{SndCurve, SndInfo, SndInfoEntry, SndSeq, SndSeqCommand, SndSeqSequence};
 pub use sfx::{DmxSound, PcSpeakerSound};
 
 /// The content-detected format of an audio lump (ADR-0023 §1).
@@ -294,6 +296,91 @@ pub enum AudioError {
     #[error("malformed DMXGUS data line {line}")]
     MalformedGusLine {
         /// The 1-based line number of the offending line.
+        line: usize,
+    },
+    /// A `SNDINFO` directive or bare tag expected a following value but the
+    /// token stream ended (Hexen's `$ARCHIVEPATH`/`$MAP` use
+    /// `SC_MustGetString`/`SC_MustGetNumber`, which abort in-engine). Strict
+    /// only — lenient drops the incomplete directive/tag and records
+    /// [`AudioWarning::SndInfoMissingValue`].
+    #[error("SNDINFO {keyword} (line {line}) is missing a required value")]
+    SndInfoMissingValue {
+        /// The directive keyword or bare tag that lacked its value.
+        keyword: String,
+        /// The 1-based line the keyword began on.
+        line: usize,
+    },
+    /// A `SNDINFO` `$MAP` number token is not a decimal `u32` (the engine's
+    /// `SC_MustGetNumber` aborts). Strict only — lenient skips the `$MAP` and
+    /// its song-lump token and records [`AudioWarning::SndInfoBadMapNumber`].
+    #[error("SNDINFO $MAP number {value:?} (line {line}) is not a decimal integer")]
+    SndInfoBadMapNumber {
+        /// The offending number token text.
+        value: String,
+        /// The 1-based line the number token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` sequence-start token (`:`) appeared while a sequence was
+    /// already open (the engine aborts). Strict only — lenient closes the open
+    /// sequence, starts the new one, and records
+    /// [`AudioWarning::SndSeqNestedSequence`].
+    #[error("SNDSEQ sequence ':{name}' (line {line}) opened inside an unterminated sequence")]
+    SndSeqNestedSequence {
+        /// The new sequence's name (the token text after the leading `:`).
+        name: String,
+        /// The 1-based line the sequence-start token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` command token appeared before any sequence was opened (the
+    /// engine aborts). Strict only — lenient skips the token and records
+    /// [`AudioWarning::SndSeqCommandOutsideSequence`].
+    #[error("SNDSEQ token {token:?} (line {line}) appears outside any sequence")]
+    SndSeqCommandOutsideSequence {
+        /// The offending token text.
+        token: String,
+        /// The 1-based line the token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` command token is not one of the nine recognized commands (the
+    /// engine aborts naming it). Strict only — lenient skips the token and
+    /// records [`AudioWarning::SndSeqUnknownCommand`].
+    #[error("SNDSEQ unknown command {command:?} (line {line})")]
+    SndSeqUnknownCommand {
+        /// The unrecognized command token.
+        command: String,
+        /// The 1-based line the command began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` command's numeric argument is not a decimal `u32` (the
+    /// engine's `SC_MustGetNumber` aborts). Strict only — lenient skips the
+    /// command and records [`AudioWarning::SndSeqBadNumber`].
+    #[error("SNDSEQ {command} argument {value:?} (line {line}) is not a decimal integer")]
+    SndSeqBadNumber {
+        /// The command whose argument was malformed.
+        command: String,
+        /// The offending argument token text.
+        value: String,
+        /// The 1-based line the argument token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` command reached the end of the lump before reading all its
+    /// arguments. Strict only — lenient drops the incomplete command and
+    /// records [`AudioWarning::SndSeqMissingArgument`].
+    #[error("SNDSEQ {command} (line {line}) is missing a required argument")]
+    SndSeqMissingArgument {
+        /// The command that lacked its argument.
+        command: String,
+        /// The 1-based line the command began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` sequence reached the end of the lump without an `end` command
+    /// (the engine aborts). Strict only — lenient keeps the partial sequence
+    /// and records [`AudioWarning::SndSeqUnterminatedSequence`].
+    #[error("SNDSEQ sequence ':{name}' (line {line}) reached end of lump without 'end'")]
+    SndSeqUnterminatedSequence {
+        /// The unterminated sequence's name.
+        name: String,
+        /// The 1-based line the sequence began on.
         line: usize,
     },
 }
@@ -559,5 +646,102 @@ pub enum AudioWarning {
         line: usize,
         /// How many fields beyond the sixth were present.
         extra: usize,
+    },
+    /// One or more `SNDINFO`/`SNDSEQ` tokens exceeded the engine's 63-byte
+    /// `MAX_STRING_SIZE - 1` buffer, which truncates them silently
+    /// (`sc_man.c:236-250`). This parser reads them in full but flags that the
+    /// engine would have seen a different string. Aggregated to one warning
+    /// carrying the total count so the output stays `O(1)`. Recorded in
+    /// **both** modes.
+    #[error("{count} script token(s) exceed the engine's 63-byte token buffer")]
+    OversizedTokens {
+        /// How many tokens were longer than 63 bytes.
+        count: usize,
+    },
+    /// A `SNDINFO` directive or bare tag missing its value was recovered during
+    /// lenient parsing: the incomplete directive/tag is dropped. Mirrors
+    /// [`AudioError::SndInfoMissingValue`].
+    #[error("SNDINFO {keyword} (line {line}) is missing a required value; dropped it")]
+    SndInfoMissingValue {
+        /// The directive keyword or bare tag that lacked its value.
+        keyword: String,
+        /// The 1-based line the keyword began on.
+        line: usize,
+    },
+    /// A `SNDINFO` `$MAP` non-numeric number was recovered during lenient
+    /// parsing: the `$MAP` and its song-lump token are skipped. Mirrors
+    /// [`AudioError::SndInfoBadMapNumber`].
+    #[error("SNDINFO $MAP number {value:?} (line {line}) is not a decimal integer; skipped it")]
+    SndInfoBadMapNumber {
+        /// The offending number token text.
+        value: String,
+        /// The 1-based line the number token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` nested `:` was recovered during lenient parsing: the open
+    /// sequence is closed and the new one started. Mirrors
+    /// [`AudioError::SndSeqNestedSequence`].
+    #[error(
+        "SNDSEQ sequence ':{name}' (line {line}) opened inside an unterminated sequence; closed the previous one"
+    )]
+    SndSeqNestedSequence {
+        /// The new sequence's name (the token text after the leading `:`).
+        name: String,
+        /// The 1-based line the sequence-start token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` command outside any sequence was recovered during lenient
+    /// parsing: the token is skipped. Mirrors
+    /// [`AudioError::SndSeqCommandOutsideSequence`].
+    #[error("SNDSEQ token {token:?} (line {line}) appears outside any sequence; skipped it")]
+    SndSeqCommandOutsideSequence {
+        /// The offending token text.
+        token: String,
+        /// The 1-based line the token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` unknown command was recovered during lenient parsing: the
+    /// token is skipped. Mirrors [`AudioError::SndSeqUnknownCommand`].
+    #[error("SNDSEQ unknown command {command:?} (line {line}); skipped it")]
+    SndSeqUnknownCommand {
+        /// The unrecognized command token.
+        command: String,
+        /// The 1-based line the command began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` non-numeric argument was recovered during lenient parsing:
+    /// the command is skipped. Mirrors [`AudioError::SndSeqBadNumber`].
+    #[error(
+        "SNDSEQ {command} argument {value:?} (line {line}) is not a decimal integer; skipped the command"
+    )]
+    SndSeqBadNumber {
+        /// The command whose argument was malformed.
+        command: String,
+        /// The offending argument token text.
+        value: String,
+        /// The 1-based line the argument token began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` command missing its argument(s) at end of lump was recovered
+    /// during lenient parsing: the partial command is dropped. Mirrors
+    /// [`AudioError::SndSeqMissingArgument`].
+    #[error("SNDSEQ {command} (line {line}) is missing a required argument; dropped it")]
+    SndSeqMissingArgument {
+        /// The command that lacked its argument.
+        command: String,
+        /// The 1-based line the command began on.
+        line: usize,
+    },
+    /// A `SNDSEQ` sequence left open at end of lump was recovered during lenient
+    /// parsing: the partial sequence is kept. Mirrors
+    /// [`AudioError::SndSeqUnterminatedSequence`].
+    #[error(
+        "SNDSEQ sequence ':{name}' (line {line}) reached end of lump without 'end'; kept the partial sequence"
+    )]
+    SndSeqUnterminatedSequence {
+        /// The unterminated sequence's name.
+        name: String,
+        /// The 1-based line the sequence began on.
+        line: usize,
     },
 }
