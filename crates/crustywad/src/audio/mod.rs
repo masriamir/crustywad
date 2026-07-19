@@ -175,8 +175,12 @@ pub enum AudioError {
         available: usize,
     },
     /// The lump's leading magic does not match the format this parser decodes
-    /// (MUS `MUS\x1a`, MIDI `MThd`, or WAV `RIFF`/`WAVE`). Unrecoverable in
-    /// **both** modes — the bytes are not that format at all.
+    /// (MUS `MUS\x1a`, MIDI `MThd`, WAV `RIFF`/`WAVE`, or GENMIDI
+    /// `#OPL_II#`). For the content-sniffed formats this is unrecoverable in
+    /// **both** modes — the bytes are not that format at all; for GENMIDI it
+    /// is strict-only, because the engine never checks that magic
+    /// (`i_oplmusic.c:369`) — lenient proceeds with
+    /// [`AudioWarning::BadMagic`].
     #[error("bad magic: expected {expected:?}, found {found:?}")]
     BadMagic {
         /// The magic bytes this parser requires.
