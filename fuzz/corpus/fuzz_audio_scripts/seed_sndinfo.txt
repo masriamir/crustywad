@@ -1,0 +1,5 @@
+$ARCHIVEPATH x
+$MAP 1 WINNOWR
+; comment
+PlayerFighterNormalDeath PLDTHFGT
+Ambush ?
