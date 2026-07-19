@@ -202,8 +202,8 @@ component in the crate, and a `write` consumer that only serializes WADs
 output) should not compile a BSP builder it never calls. `write` alone set the
 precedent for a no-dependency capability feature; `nodebuild` follows it.
 Adding the flag triggers the CLAUDE.md feature-flag sync rule (guide
-`features.md`, CLAUDE.md, `copilot-instructions.md`, `README.md`) — stage 1
-carries that update.
+`features.md`, CLAUDE.md, `.github/copilot-instructions.md`, `README.md`) —
+stage 1 carries that update.
 
 ```rust
 /// Options for the node/blockmap builders.
