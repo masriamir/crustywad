@@ -257,16 +257,15 @@ pub fn build_blockmap(
     let table_start = words.len();
     words.resize(table_start + block_count, 0);
 
+    // Keyed by the bare list: the emitted framing (leading `0`, trailing
+    // terminator) is a constant bijection of it, so equal lists imply equal
+    // emitted words. Hit-path lookups borrow and allocate nothing; only the
+    // first occurrence of a list clones it as the stored key.
     let mut dedup: HashMap<Vec<u16>, usize> = HashMap::new();
     let mut offsets: Vec<usize> = Vec::with_capacity(block_count);
     let mut vanilla_warned = false;
     for list in &lists {
-        let mut content: Vec<u16> = Vec::with_capacity(list.len() + 2);
-        content.push(0);
-        content.extend_from_slice(list);
-        content.push(TERMINATOR);
-
-        if let Some(&existing) = dedup.get(&content) {
+        if let Some(&existing) = dedup.get(list) {
             offsets.push(existing);
             continue;
         }
@@ -287,8 +286,10 @@ pub fn build_blockmap(
                 }
             }
         }
-        words.extend_from_slice(&content);
-        dedup.insert(content, offset);
+        words.push(0);
+        words.extend_from_slice(list);
+        words.push(TERMINATOR);
+        dedup.insert(list.clone(), offset);
         offsets.push(offset);
     }
 
