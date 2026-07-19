@@ -296,7 +296,8 @@ pub fn build_blockmap(
         words[table_start + block] = u16::try_from(offset).expect("offset within word ceiling");
     }
 
-    // Mirror the parser's arena layout (assemble.rs line 636): `entries` is the
+    // Mirror the parser's arena layout (`MapBlockmap::parse` stores the full
+    // word image): `entries` is the
     // full word image, one `LinedefIdx` per word; each block's range skips the
     // leading `0` delimiter and ends at its `0xFFFF` terminator.
     let entries: Vec<LinedefIdx> = words.iter().map(|&w| LinedefIdx(usize::from(w))).collect();
@@ -323,7 +324,8 @@ impl MapBlockmap {
     /// (`entries`) dumped verbatim as little-endian `u16`.
     ///
     /// The parser stores the complete word image — header, offset table,
-    /// delimiters, and terminators included (assemble.rs line 636) — so
+    /// delimiters, and terminators included ([`MapBlockmap::parse`] builds
+    /// its arena the same way) — so
     /// serialization is a straight word dump. Round-trips exactly through
     /// [`MapBlockmap::parse`] against the owning linedef count (ADR-0024 §7).
     ///

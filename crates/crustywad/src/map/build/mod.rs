@@ -107,14 +107,14 @@ pub enum NodeBuildError {
         "map has no geometry to build nodes from (needs vertices, linedefs, sidedefs, sectors)"
     )]
     EmptyGeometry,
-    /// A packed `BLOCKMAP` blocklist starts at a word offset the format cannot
-    /// encode (> 65,535), or — in strict mode — one past the vanilla
-    /// signed-offset ceiling (> 32,767). The offending word offset from the
-    /// lump start is reported (ADR-0024 §5).
-    #[error("blockmap blocklist offset {offset} exceeds the addressable range")]
+    /// A `BLOCKMAP` word offset exceeds what the format can encode: a
+    /// blocklist starting past 65,535 words (or — in strict mode — past the
+    /// vanilla signed-offset ceiling of 32,767; ADR-0024 §5), or a stored
+    /// word whose value cannot be serialized as `u16`. The offending word
+    /// offset from the lump start is reported.
+    #[error("blockmap word offset {offset} exceeds the addressable range")]
     BlockmapOverflow {
-        /// The offending blocklist-start word offset, counted from the lump
-        /// start.
+        /// The offending word offset, counted from the lump start.
         offset: usize,
     },
 }
