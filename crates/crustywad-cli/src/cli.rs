@@ -135,8 +135,9 @@ pub(crate) enum SubCommand {
     /// `--midi`, additionally converted to a `.mid`); standard-MIDI and
     /// RIFF/WAVE lumps pass through as `.mid` and `.wav`. Everything else,
     /// including PC-speaker effects (which have no container), is written raw
-    /// as `.bin`. A MUS lump that fails even a lenient parse (its detection
-    /// is magic-only) falls back
+    /// as `.bin`. A MUS or standard-MIDI lump that fails even a lenient
+    /// parse (both detections are magic-only, so a truncated lump can match)
+    /// falls back
     /// to a raw `.bin` write with a warning on stderr.
     Extract {
         /// Path to the WAD file.
