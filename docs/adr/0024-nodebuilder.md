@@ -33,7 +33,7 @@ AJBSP, ZenNode, ZokumBSP, ZDRay (each verified from its actual license file or
 doomwiki, per the survey's verdict table) — or worse (DeePBSP is closed
 freeware; the original id DoomBSP shipped under ambiguous 1994 terms that make
 it unsafe even to study). GPL code cannot be copied or line-by-line translated
-into this MIT-OR-Apache-2.0 crate. But the *algorithm* is documented
+into this crate (MIT OR Apache-2.0). But the *algorithm* is documented
 independently of any GPL code — doomwiki's Node/Node builder/Blockmap/Reject
 prose, the Unofficial Doom Specs, the textbook BSP literature (Fuchs–Kedem–
 Naylor 1980), and the on-disk formats themselves (facts and interfaces, not
