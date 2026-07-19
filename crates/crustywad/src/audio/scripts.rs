@@ -47,12 +47,30 @@ struct Token {
     line: usize,
 }
 
+/// Decodes one raw token slice into a [`Token`], counting it against the
+/// engine's 63-byte buffer by its **raw byte length** — the length the
+/// engine's `sc_man` buffer would have measured — before any lossy UTF-8
+/// decoding (a non-UTF-8 byte expands to a replacement character, which must
+/// not affect the oversized accounting).
+fn push_token(raw: &[u8], line: usize, tokens: &mut Vec<Token>, oversized: &mut usize) {
+    if raw.len() > MAX_TOKEN_LEN {
+        *oversized += 1;
+    }
+    tokens.push(Token {
+        text: String::from_utf8_lossy(raw).into_owned(),
+        line,
+    });
+}
+
 /// Tokenizes `bytes` per the `sc_man` scanner semantics, returning the tokens
-/// and the count of tokens that exceeded [`MAX_TOKEN_LEN`] bytes.
+/// and the count of tokens that exceeded [`MAX_TOKEN_LEN`] **raw bytes**.
+///
+/// The scan walks the original lump bytes — exactly what the engine reads —
+/// and each token slice is decoded (lossily) on its own, so token boundaries,
+/// line counting, and the oversized check are all independent of UTF-8
+/// validity.
 fn tokenize(bytes: &[u8]) -> (Vec<Token>, usize) {
-    let text = String::from_utf8_lossy(bytes);
-    let src = text.as_bytes();
-    let n = src.len();
+    let n = bytes.len();
 
     let mut tokens = Vec::new();
     let mut oversized = 0usize;
@@ -60,7 +78,7 @@ fn tokenize(bytes: &[u8]) -> (Vec<Token>, usize) {
     let mut i = 0usize;
 
     while i < n {
-        let b = src[i];
+        let b = bytes[i];
         if b == b'\n' {
             line += 1;
             i += 1;
@@ -72,7 +90,7 @@ fn tokenize(bytes: &[u8]) -> (Vec<Token>, usize) {
         }
         if b == b';' {
             // Comment: skip to (but not past) the end of the line.
-            while i < n && src[i] != b'\n' {
+            while i < n && bytes[i] != b'\n' {
                 i += 1;
             }
             continue;
@@ -85,40 +103,26 @@ fn tokenize(bytes: &[u8]) -> (Vec<Token>, usize) {
             // count accurate.
             i += 1;
             let start = i;
-            while i < n && src[i] != b'"' {
-                if src[i] == b'\n' {
+            while i < n && bytes[i] != b'"' {
+                if bytes[i] == b'\n' {
                     line += 1;
                 }
                 i += 1;
             }
-            let token = text[start..i].to_owned();
+            push_token(&bytes[start..i], start_line, &mut tokens, &mut oversized);
             if i < n {
                 i += 1; // consume the closing quote
             }
-            if token.len() > MAX_TOKEN_LEN {
-                oversized += 1;
-            }
-            tokens.push(Token {
-                text: token,
-                line: start_line,
-            });
             continue;
         }
 
         // Unquoted token: a run of bytes `> 32` up to the next whitespace or
         // comment marker.
         let start = i;
-        while i < n && src[i] > 32 && src[i] != b';' {
+        while i < n && bytes[i] > 32 && bytes[i] != b';' {
             i += 1;
         }
-        let token = text[start..i].to_owned();
-        if token.len() > MAX_TOKEN_LEN {
-            oversized += 1;
-        }
-        tokens.push(Token {
-            text: token,
-            line: start_line,
-        });
+        push_token(&bytes[start..i], start_line, &mut tokens, &mut oversized);
     }
 
     (tokens, oversized)
