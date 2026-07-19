@@ -221,3 +221,218 @@ fn build_reject_round_trips_through_parse_strict() {
         assert!(warnings.is_empty());
     }
 }
+
+/// Optional retail-WAD sweep for the node-lump builders (ADR-0024 §9.1): build
+/// REJECT and BLOCKMAP for every classic-format map in a local collection and
+/// assert the size, round-trip, and no-missing-listing contracts over real
+/// geometry.
+///
+/// Mirrors [`tests/sweep.rs`]: point `CRUSTYWAD_SWEEP_DIR` at a directory of WAD
+/// files. **Use an absolute path** — cargo runs the test binary with its CWD at
+/// the package root (`crates/crustywad`), so a relative path resolves against
+/// that directory, not the workspace root, and a missed directory only prints a
+/// stderr skip note rather than failing.
+///
+/// Doom 64 maps ship pre-built nodes and are not a build target, so they are
+/// skipped exactly as `tests/sweep.rs` detects them (`detect_map_format`). The
+/// retail collection must build strict-clean: any warning or failure here is a
+/// builder bug or a plan error, not an exception to allowlist.
+#[cfg(feature = "sweep-tests")]
+#[test]
+#[allow(clippy::too_many_lines)]
+fn sweep_builds_reject_and_blockmap_for_every_classic_map() {
+    use crustywad::ParseOptions;
+    use crustywad::map::{LinedefIdx, MapFormat, detect_map_format};
+
+    let paths = common::wad_files("CRUSTYWAD_SWEEP_DIR");
+    if paths.is_empty() {
+        return; // skip note already printed by the helper
+    }
+
+    let mut maps_built = 0usize;
+    let mut doom64_skipped = 0usize;
+    let mut total_blockmap_bytes = 0usize;
+
+    for path in &paths {
+        let wad = Wad::from_path_with_options(path, ParseOptions::strict())
+            .unwrap_or_else(|e| panic!("{}: container failed strict parse: {e}", path.display()));
+
+        for group in wad.map_groups() {
+            // Doom 64 nested-WAD maps carry pre-built nodes and are not a build
+            // target — skip them exactly as `tests/sweep.rs` detects them.
+            if detect_map_format(&wad, &group) == MapFormat::Doom64 {
+                doom64_skipped += 1;
+                continue;
+            }
+
+            // Assemble leniently so the sweep exercises the builders over every
+            // classic map, not only the strict-clean assembly subset.
+            let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: map {} failed lenient assembly: {e}",
+                        path.display(),
+                        group.name
+                    )
+                });
+
+            // --- REJECT: exact size, then strict round-trip, warning-free. ---
+            let sector_count = map.sectors().len();
+            let reject = build_reject(&map);
+            let reject_bytes = reject.to_lump_bytes();
+            let expected_len = sector_count.saturating_mul(sector_count).div_ceil(8);
+            assert_eq!(
+                reject_bytes.len(),
+                expected_len,
+                "{}: map {} REJECT size {} != ceil({sector_count}\u{b2}/8)={expected_len}",
+                path.display(),
+                group.name,
+                reject_bytes.len(),
+            );
+            let mut reject_warnings: Vec<MapWarning> = Vec::new();
+            let parsed_reject = MapReject::parse(
+                &reject_bytes,
+                sector_count,
+                Strictness::Strict,
+                &mut reject_warnings,
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{}: map {} built REJECT failed strict parse: {e}",
+                    path.display(),
+                    group.name
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: map {} built REJECT absent on parse",
+                    path.display(),
+                    group.name
+                )
+            });
+            assert_eq!(
+                parsed_reject,
+                reject,
+                "{}: map {} REJECT round-trip mismatch",
+                path.display(),
+                group.name
+            );
+            assert!(
+                reject_warnings.is_empty(),
+                "{}: map {} REJECT round-trip warned: {reject_warnings:?}",
+                path.display(),
+                group.name
+            );
+
+            // --- BLOCKMAP: strict build (retail must never trip a ceiling),
+            //     zero warnings, then strict round-trip (Global Constraint 4). ---
+            let (bm, build_warnings) = build_blockmap(&map, &NodeBuildOptions::strict())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: map {} strict BLOCKMAP build failed: {e:?}",
+                        path.display(),
+                        group.name
+                    )
+                });
+            assert!(
+                build_warnings.is_empty(),
+                "{}: map {} strict BLOCKMAP build warned: {build_warnings:?}",
+                path.display(),
+                group.name
+            );
+
+            let bm_bytes = bm.to_lump_bytes().unwrap_or_else(|e| {
+                panic!(
+                    "{}: map {} BLOCKMAP serialization failed: {e:?}",
+                    path.display(),
+                    group.name
+                )
+            });
+            total_blockmap_bytes += bm_bytes.len();
+
+            let linedef_count = map.linedefs().len();
+            let mut bm_warnings: Vec<MapWarning> = Vec::new();
+            let parsed_bm = MapBlockmap::parse(
+                &bm_bytes,
+                linedef_count,
+                Strictness::Strict,
+                &mut bm_warnings,
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{}: map {} built BLOCKMAP failed strict parse: {e}",
+                    path.display(),
+                    group.name
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: map {} built BLOCKMAP absent on parse",
+                    path.display(),
+                    group.name
+                )
+            });
+            assert_eq!(
+                parsed_bm,
+                bm,
+                "{}: map {} BLOCKMAP round-trip mismatch",
+                path.display(),
+                group.name
+            );
+            assert!(
+                bm_warnings.is_empty(),
+                "{}: map {} BLOCKMAP round-trip warned: {bm_warnings:?}",
+                path.display(),
+                group.name
+            );
+
+            // --- Independent no-missing oracle: every point sampled along a
+            //     linedef at <= 16-unit steps (endpoints included) must fall in
+            //     a block that lists that linedef. Same oracle as the Task 2
+            //     proptest, over real geometry. Retail vertex coordinates are
+            //     already i16, so narrowing is identity and `bm.origin()` is the
+            //     minimum endpoint coordinate. ---
+            let verts = map.vertices();
+            let (ox, oy) = bm.origin();
+            let last_col = f64::from(u32::try_from(bm.columns() - 1).unwrap());
+            let last_row = f64::from(u32::try_from(bm.rows() - 1).unwrap());
+            for (li, ld) in map.linedefs().iter().enumerate() {
+                let (x1, y1) = (verts[ld.start.0].x, verts[ld.start.0].y);
+                let (x2, y2) = (verts[ld.end.0].x, verts[ld.end.0].y);
+                let span = (x2 - x1).abs().max((y2 - y1).abs());
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let steps = (span / 16.0).ceil().max(1.0) as u32;
+                for step in 0..=steps {
+                    let t = f64::from(step) / f64::from(steps);
+                    let px = x1 + (x2 - x1) * t;
+                    let py = y1 + (y2 - y1) * t;
+                    let col_f = ((px - ox) / 128.0).floor().clamp(0.0, last_col);
+                    let row_f = ((py - oy) / 128.0).floor().clamp(0.0, last_row);
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let (col, row) = (col_f as usize, row_f as usize);
+                    let listed = bm.block(col, row).unwrap().contains(&LinedefIdx(li));
+                    assert!(
+                        listed,
+                        "{}: map {} linedef {li} sample ({px},{py}) missing from block ({col},{row})",
+                        path.display(),
+                        group.name
+                    );
+                }
+            }
+
+            maps_built += 1;
+        }
+    }
+
+    // The env var was set on purpose: WADs but no classic maps means the
+    // collection (or the sweep) is broken, not clean.
+    assert!(
+        maps_built > 0,
+        "CRUSTYWAD_SWEEP_DIR contained {} WAD file(s) but no classic maps were built",
+        paths.len()
+    );
+    eprintln!(
+        "built node lumps for {} WAD(s): {maps_built} classic map(s), {doom64_skipped} Doom 64 skipped, {total_blockmap_bytes} total BLOCKMAP bytes",
+        paths.len()
+    );
+}
