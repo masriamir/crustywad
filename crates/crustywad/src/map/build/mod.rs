@@ -1,5 +1,6 @@
-//! Clean-room node-lump builders: BLOCKMAP, REJECT, and (later) the classic
-//! BSP, generating engine-playable Doom map lumps from an assembled [`Map`].
+//! Clean-room node-lump builders: BLOCKMAP and REJECT today, the classic
+//! BSP pass later (#315), generated from an assembled [`Map`]. A map is
+//! engine-playable on vanilla only once the BSP stage also lands.
 //!
 //! This module is gated behind the `nodebuild` feature (which enables `write`).
 //! It fulfills ADR-0019 §4's revisit condition — `add_doom_map` emits
@@ -25,7 +26,8 @@
 //! — the write path's decision table (ADR-0019 §3), reused rather than
 //! restated.
 //! [`DoomWriteWarning::NodesNotBuilt`](crate::map::DoomWriteWarning::NodesNotBuilt)
-//! never appears among build warnings: these builders *do* build the nodes.
+//! never appears among build warnings: it describes the write path's
+//! empty-lump output, not a property of what these builders produce.
 //!
 //! [`Map`]: crate::map::Map
 

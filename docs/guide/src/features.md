@@ -267,8 +267,9 @@ issue #315, ADR-0024 §9)
 
 **Adds dependency:** none — implies `write`
 
-Clean-room BLOCKMAP, REJECT, and (in later stages) classic BSP generation, turning an
-assembled `Map` into engine-playable node lumps (ADR-0024). It fulfills the revisit condition
+Clean-room BLOCKMAP, REJECT, and (in later stages) classic BSP generation from an
+assembled `Map` (ADR-0024) — stage 1 covers the collision and sight lumps; a map is not
+vanilla-playable until the BSP stage (#315) lands. It fulfills the revisit condition
 `add_doom_map` left open: that path deliberately emits zero-length `SEGS`/`SSECTORS`/`NODES`/
 `REJECT`/`BLOCKMAP` with an always-on `DoomWriteWarning::NodesNotBuilt`, whereas the
 `nodebuild` builders produce those lumps for real. Coordinate narrowing is shared with the

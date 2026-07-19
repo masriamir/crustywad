@@ -15,9 +15,9 @@ fuzz_target!(|data: &[u8]| {
         };
 
         // REJECT is infallible. Its byte length is exactly ceil(sectors^2 / 8)
-        // (ADR-0024 §7) — bounded by the sector count, hence O(input) (ADR-0016
-        // §1). No panic is the primary oracle; the size formula is the O(input)
-        // assertion.
+        // (ADR-0024 §7) — Θ(sectors²/8) by format definition, the documented
+        // deviation from a linear bound (ADR-0024 §8 item 1). No panic is the
+        // primary oracle; the size formula is the output-bound assertion.
         let reject = build_reject(&map);
         let sectors = map.sectors().len();
         let expected = sectors.saturating_mul(sectors).div_ceil(8);
