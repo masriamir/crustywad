@@ -552,3 +552,23 @@ fn cov_sndseq_oversized_token() {
         );
     }
 }
+
+#[test]
+fn cov_sndseq_delayrand_bad_first_number_skips_whole_command() {
+    // A bad FIRST numeric argument must consume the second too — lenient
+    // recovery skips the whole command, with no cascading unknown-command
+    // warning from the leftover `9`.
+    let text = ":X\ndelayrand abc 9\nend\n";
+
+    let err = SndSeq::parse(text.as_bytes(), &ParseOptions::strict()).unwrap_err();
+    assert!(matches!(err, AudioError::SndSeqBadNumber { .. }));
+
+    let seq = SndSeq::parse(text.as_bytes(), &ParseOptions::lenient()).expect("recovers");
+    assert_eq!(seq.sequences().len(), 1);
+    assert_eq!(seq.sequences()[0].commands, [SndSeqCommand::End]);
+    assert_eq!(seq.warnings().len(), 1);
+    assert!(matches!(
+        seq.warnings()[0],
+        AudioWarning::SndSeqBadNumber { .. }
+    ));
+}

@@ -606,9 +606,17 @@ fn parse_command(
             tokens, idx, &command, line,
         )?)),
         "delayrand" => {
-            let min = take_number(tokens, idx, &command, line)?;
-            let max = take_number(tokens, idx, &command, line)?;
-            Ok(SndSeqCommand::DelayRand { min, max })
+            // Consume BOTH argument tokens before failing: a bad first
+            // number must not leave the second token behind to cascade as a
+            // spurious unknown-command diagnostic (the "skip the command"
+            // recovery). `take_number` advances past a present token even
+            // when it fails to parse.
+            let min = take_number(tokens, idx, &command, line);
+            let max = take_number(tokens, idx, &command, line);
+            Ok(SndSeqCommand::DelayRand {
+                min: min?,
+                max: max?,
+            })
         }
         "end" => Ok(SndSeqCommand::End),
         _ => Err(SeqDiag::Unknown { command, line }),
