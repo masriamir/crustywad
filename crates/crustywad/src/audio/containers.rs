@@ -140,17 +140,33 @@ impl MidiInfo {
         let division = u16::from_be_bytes([bytes[12], bytes[13]]);
 
         let mut tracks = Vec::new();
+        let mut stopped = false;
         // The first chunk frame starts after the declared MThd chunk, not at
         // a fixed offset: a lenient-accepted extended header (chunk size > 6)
         // would otherwise misalign the walk and read header bytes as a frame.
         // A declaration below the 6 standard bytes keeps the standard layout
-        // (the fields above were read regardless, matching the engine).
+        // (the fields above were read regardless, matching the engine). A
+        // declared header size overrunning the lump gets the same diagnostic
+        // as any other overrunning chunk length rather than a silent clamp.
+        // Strict mode never reaches this arm — any non-6 size already failed
+        // as `UnexpectedChunkSize` above.
         let mut pos = if chunk_size > Self::MTHD_CHUNK_SIZE {
-            usize::try_from(chunk_size).map_or(len, |extended| extended.saturating_add(8).min(len))
+            let declared = usize::try_from(chunk_size).unwrap_or(usize::MAX);
+            match declared.checked_add(8).filter(|&start| start <= len) {
+                Some(start) => start,
+                None => {
+                    warnings.push(AudioWarning::ChunkOverrun {
+                        offset: 0,
+                        declared,
+                        available: len - Self::CHUNK_HEADER,
+                    });
+                    stopped = true;
+                    len
+                }
+            }
         } else {
             Self::HEADER
         };
-        let mut stopped = false;
 
         while pos + Self::CHUNK_HEADER <= len {
             let id = [bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]];

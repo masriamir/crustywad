@@ -758,6 +758,44 @@ fn mi5_extended_header_realigns_walk() {
     );
 }
 
+#[test]
+fn mi6_extended_header_overrun_diagnosed() {
+    // A declared MThd size that overruns the lump must surface as a
+    // ChunkOverrun diagnostic, not a silent clamp.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"MThd");
+    bytes.extend_from_slice(&1000u32.to_be_bytes());
+    bytes.extend_from_slice(&0u16.to_be_bytes());
+    bytes.extend_from_slice(&1u16.to_be_bytes());
+    bytes.extend_from_slice(&96u16.to_be_bytes());
+    bytes.extend_from_slice(&[0xEE, 0xEE]);
+    bytes.extend_from_slice(b"MTrk");
+    bytes.extend_from_slice(&4u32.to_be_bytes());
+    bytes.extend_from_slice(&[0x00, 0xFF, 0x2F, 0x00]);
+    assert_eq!(bytes.len(), 28);
+
+    let midi = MidiInfo::parse(&bytes, &ParseOptions::lenient()).expect("MI6 recovers");
+    assert!(midi.tracks().is_empty());
+    assert_eq!(
+        midi.warnings(),
+        &[
+            AudioWarning::UnexpectedChunkSize {
+                expected: 6,
+                found: 1000,
+            },
+            AudioWarning::ChunkOverrun {
+                offset: 0,
+                declared: 1000,
+                available: 20,
+            },
+            AudioWarning::TrackCountMismatch {
+                declared: 1,
+                found: 0,
+            },
+        ]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // RIFF/WAVE walk (ADR-0023 §2, §4): WavSound
 // ---------------------------------------------------------------------------
