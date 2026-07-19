@@ -1400,3 +1400,265 @@ fn retail_music_banks_strict_clean() {
         anomalies.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Branch-coverage fixtures: error and warning paths not exercised above
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cov_mus_truncated_and_bad_magic() {
+    for opts in BOTH_MODES {
+        let err = MusScore::parse(&[0u8; 10], &opts()).unwrap_err();
+        assert!(matches!(
+            err,
+            AudioError::TruncatedHeader {
+                len: 10,
+                needed: 14
+            }
+        ));
+
+        let mut bad = vec![0u8; 14];
+        bad[..4].copy_from_slice(b"XUS\x1a");
+        let err = MusScore::parse(&bad, &opts()).unwrap_err();
+        assert!(matches!(err, AudioError::BadMagic { .. }));
+    }
+}
+
+#[test]
+fn cov_mus_instrument_list_unreadable() {
+    // instrument_count 200 cannot fit before score_start 16.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0x4D, 0x55, 0x53, 0x1A]);
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&200u16.to_le_bytes());
+    bytes.extend_from_slice(&[0x00, 0x00]);
+    bytes.push(0x60);
+    for opts in BOTH_MODES {
+        let mus = MusScore::parse(&bytes, &opts()).expect("parses");
+        assert!(mus.instruments().is_empty());
+        assert!(
+            mus.warnings()
+                .contains(&AudioWarning::InstrumentListUnreadable)
+        );
+    }
+}
+
+#[test]
+fn cov_mus_remaining_event_kinds() {
+    // PressKey without velocity, PitchWheel, patch change (controller 0),
+    // valued controller 3, score end.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0x4D, 0x55, 0x53, 0x1A]);
+    bytes.extend_from_slice(&11u16.to_le_bytes());
+    bytes.extend_from_slice(&14u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&[
+        0x10, 0x3C, 0x20, 0x40, 0x40, 0x00, 0x05, 0x40, 0x03, 0x22, 0x60,
+    ]);
+    for opts in BOTH_MODES {
+        let mus = MusScore::parse(&bytes, &opts()).expect("parses");
+        let kinds: Vec<&MusEventKind> = mus.events().iter().map(|e| &e.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                &MusEventKind::PressKey {
+                    note: 60,
+                    velocity: None,
+                },
+                &MusEventKind::PitchWheel { value: 0x40 },
+                &MusEventKind::ChangeController {
+                    controller: 0,
+                    value: 5,
+                },
+                &MusEventKind::ChangeController {
+                    controller: 3,
+                    value: 0x22,
+                },
+                &MusEventKind::ScoreEnd,
+            ]
+        );
+        assert!(mus.warnings().is_empty());
+    }
+}
+
+#[test]
+fn cov_mus_invalid_change_controller() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0x4D, 0x55, 0x53, 0x1A]);
+    bytes.extend_from_slice(&4u16.to_le_bytes());
+    bytes.extend_from_slice(&14u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&[0x40, 0x0C, 0x22, 0x60]);
+
+    let err = MusScore::parse(&bytes, &ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        AudioError::InvalidController { controller: 12, .. }
+    ));
+
+    let mus = MusScore::parse(&bytes, &ParseOptions::lenient()).expect("recovers");
+    assert!(mus.events().is_empty());
+    assert!(matches!(
+        mus.warnings()[0],
+        AudioWarning::InvalidController { controller: 12, .. }
+    ));
+}
+
+#[test]
+fn cov_midi_truncated_bad_magic_trailing() {
+    for opts in BOTH_MODES {
+        let err = MidiInfo::parse(&[0u8; 10], &opts()).unwrap_err();
+        assert!(matches!(
+            err,
+            AudioError::TruncatedHeader {
+                len: 10,
+                needed: 14
+            }
+        ));
+
+        let mut bad = vec![0u8; 14];
+        bad[..4].copy_from_slice(b"XThd");
+        let err = MidiInfo::parse(&bad, &opts()).unwrap_err();
+        assert!(matches!(err, AudioError::BadMagic { .. }));
+
+        let mut trailing = mi1();
+        trailing.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+        let midi = MidiInfo::parse(&trailing, &opts()).expect("parses");
+        assert_eq!(midi.tracks().len(), 1);
+        assert_eq!(midi.warnings(), &[AudioWarning::TrailingBytes { len: 3 }]);
+    }
+}
+
+#[test]
+fn cov_wav_header_errors() {
+    for opts in BOTH_MODES {
+        let err = WavSound::parse(&[0u8; 8], &opts()).unwrap_err();
+        assert!(matches!(
+            err,
+            AudioError::TruncatedHeader { len: 8, needed: 12 }
+        ));
+
+        let mut bad_riff = w1();
+        bad_riff[0] = b'X';
+        let err = WavSound::parse(&bad_riff, &opts()).unwrap_err();
+        assert!(matches!(err, AudioError::BadMagic { .. }));
+
+        let mut bad_wave = w1();
+        bad_wave[8] = b'X';
+        let err = WavSound::parse(&bad_wave, &opts()).unwrap_err();
+        assert!(matches!(err, AudioError::BadMagic { .. }));
+    }
+}
+
+/// A RIFF/WAVE skeleton with the given chunks appended and the riff size
+/// field computed.
+fn wav_with_chunks(chunks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.extend_from_slice(b"WAVE");
+    for (id, payload) in chunks {
+        v.extend_from_slice(*id);
+        v.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_le_bytes());
+        v.extend_from_slice(payload);
+        if payload.len() % 2 == 1 {
+            v.push(0);
+        }
+    }
+    let riff_size = u32::try_from(v.len() - 8).unwrap();
+    v[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    v
+}
+
+#[test]
+fn cov_wav_fmt_too_small() {
+    let bytes = wav_with_chunks(&[(b"fmt ", &[0u8; 8]), (b"data", &[])]);
+
+    let err = WavSound::parse(&bytes, &ParseOptions::strict()).unwrap_err();
+    assert!(matches!(err, AudioError::FmtChunkTooSmall { size: 8 }));
+
+    let wav = WavSound::parse(&bytes, &ParseOptions::lenient()).expect("recovers");
+    assert_eq!(
+        wav.warnings(),
+        &[AudioWarning::FmtChunkTooSmall { size: 8 }]
+    );
+    assert_eq!(wav.sample_rate(), 0);
+    assert!(wav.data().is_empty());
+}
+
+#[test]
+fn cov_wav_missing_fmt() {
+    let bytes = wav_with_chunks(&[(b"data", &[1, 2])]);
+
+    let err = WavSound::parse(&bytes, &ParseOptions::strict()).unwrap_err();
+    assert!(matches!(err, AudioError::MissingChunk { id } if &id == b"fmt "));
+
+    let wav = WavSound::parse(&bytes, &ParseOptions::lenient()).expect("recovers");
+    assert_eq!(wav.data(), &[1, 2]);
+    assert!(
+        wav.warnings()
+            .contains(&AudioWarning::MissingChunk { id: *b"fmt " })
+    );
+}
+
+#[test]
+fn cov_wav_duplicates_and_odd_pad() {
+    let fmt_payload: Vec<u8> = {
+        let mut f = Vec::new();
+        f.extend_from_slice(&1u16.to_le_bytes());
+        f.extend_from_slice(&1u16.to_le_bytes());
+        f.extend_from_slice(&22050u32.to_le_bytes());
+        f.extend_from_slice(&44100u32.to_le_bytes());
+        f.extend_from_slice(&2u16.to_le_bytes());
+        f.extend_from_slice(&16u16.to_le_bytes());
+        f
+    };
+    let bytes = wav_with_chunks(&[
+        (b"fmt ", &fmt_payload),
+        (b"data", &[0x7F]),
+        (b"fmt ", &fmt_payload),
+        (b"data", &[1, 2]),
+    ]);
+    for opts in BOTH_MODES {
+        let wav = WavSound::parse(&bytes, &opts()).expect("parses");
+        assert_eq!(wav.data(), &[0x7F]);
+        assert_eq!(
+            wav.warnings(),
+            &[
+                AudioWarning::DuplicateChunk { id: *b"fmt " },
+                AudioWarning::DuplicateChunk { id: *b"data" },
+            ]
+        );
+    }
+}
+
+#[test]
+fn cov_genmidi_truncated_magic() {
+    for opts in BOTH_MODES {
+        let err = Genmidi::parse(&[0u8; 5], &opts()).unwrap_err();
+        assert!(matches!(
+            err,
+            AudioError::TruncatedHeader { len: 5, needed: 8 }
+        ));
+    }
+}
+
+#[test]
+fn cov_dmxgus_extra_fields() {
+    let text = "0, 1, 2, 3, 4, x.pat, extra\n";
+    for opts in BOTH_MODES {
+        let gus = Dmxgus::parse(text.as_bytes(), &opts()).expect("parses");
+        assert_eq!(gus.entries().len(), 1);
+        assert_eq!(
+            gus.warnings(),
+            &[AudioWarning::ExtraGusFields { line: 1, extra: 1 }]
+        );
+    }
+}
