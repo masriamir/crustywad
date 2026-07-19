@@ -54,5 +54,6 @@ implementation begins.**
 | [0021](0021-doom64-graph-normalization.md) | Doom 64 graph normalization | Accepted |
 | [0022](0022-graphics-texture-layer.md) | The graphics & texture layer — formats, staging, and the Doom 64 name-hash | Accepted |
 | [0023](0023-audio-layer.md) | The audio layer — DMX sound, MUS music, instrument banks, Raven scripts, and Doom 64 containers | Accepted |
+| [0024](0024-nodebuilder.md) | The nodebuilder — clean-room BLOCKMAP, REJECT, and classic BSP generation | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->
