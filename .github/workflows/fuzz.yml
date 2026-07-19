@@ -42,6 +42,9 @@ jobs:
       - name: Fuzz fuzz_parse_reject_blockmap
         run: cargo fuzz run fuzz_parse_reject_blockmap -- -max_total_time=60
         working-directory: fuzz
+      - name: Fuzz fuzz_build_lumps
+        run: cargo fuzz run fuzz_build_lumps -- -max_total_time=60
+        working-directory: fuzz
       - name: Fuzz fuzz_sections
         run: cargo fuzz run fuzz_sections -- -max_total_time=60
         working-directory: fuzz
