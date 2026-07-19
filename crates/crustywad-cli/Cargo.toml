@@ -1,6 +1,6 @@
 [package]
 name = "crustywad-cli"
-version = "0.3.0"
+version = "0.3.1"
 description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -26,7 +26,7 @@ clap.workspace = true
 # outside the allowed range (e.g. 0.1.z -> 0.2.0), per ADR-0011 §3 (crates are
 # versioned independently) — cargo-deny enforces wildcards = "deny"
 # write feature required for WadBuilder
-crustywad = { path = "../crustywad", version = "0.6.0", features = ["write"] }
+crustywad = { path = "../crustywad", version = "0.6.1", features = ["write"] }
 
 [build-dependencies]
 clap.workspace = true
