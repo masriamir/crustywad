@@ -120,7 +120,9 @@ pub(crate) enum SubCommand {
     /// `PATCH.bin`); an empty name becomes `UNNAMED`; Windows-reserved device
     /// names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) are
     /// prefixed with `_` (e.g. `CON` → `_CON.bin`) so extraction succeeds on
-    /// all platforms. Each lump is written as `<SAFE_NAME>.bin`. When two or
+    /// all platforms. Each lump is written as `<SAFE_NAME>` plus an
+    /// extension — `.bin` by default, or a content-derived audio extension
+    /// (see the audio-aware paragraph below). When two or
     /// more lumps produce the same safe filename (whether from duplicate lump
     /// names or distinct names that sanitize identically), subsequent files are
     /// suffixed with an occurrence count (e.g. `PATCH.bin`, `PATCH_1.bin`,

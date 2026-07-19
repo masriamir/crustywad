@@ -469,7 +469,8 @@ fn audio_annotation(data: &[u8]) -> Option<AudioAnnotation> {
 
 /// Tallies detected audio lumps by kind for the `cwad info` summary, in a
 /// stable display order. Only [`AudioKind::detect`] runs (no per-lump parse),
-/// so this stays `O(total lump bytes)` and never allocates per lump.
+/// and detect inspects at most a few header bytes, so the summary is
+/// `O(number of lumps)` and never allocates per lump.
 fn audio_summary(wad: &Wad) -> Vec<(&'static str, usize)> {
     let (mut dmx, mut pc, mut mus, mut midi, mut wav) = (0usize, 0, 0, 0, 0);
     for lump in wad.lumps() {
