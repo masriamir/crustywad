@@ -608,7 +608,12 @@ Stage 1 has no dependency on stage 2; stage 3 depends on both.
   renderers) — that work lands in `Extended nodes` with this ADR's `BuiltNodes`
   as input; (b) a real line-of-sight REJECT gains a consumer; (c) a Hexen
   binary write target lands (ADR-0019's own revisit condition), which would
-  motivate polyobject-aware splitting; or (d) users ask for CLI-level
+  motivate polyobject-aware splitting; (d) users ask for CLI-level
   external-builder delegation (`cwad … --nodebuilder <path>`, §6) — a
   CLI-only decision that must not reach into the library, whose §6 rationale
-  against library-level process spawning stands regardless.
+  against library-level process spawning stands regardless; or (e) the three
+  stages complete, unblocking the **planned** SLADE / Ultimate Doom Builder
+  integration (#313): a standalone zdbsp-style binary (working name
+  `crustybsp`) — a second `[[bin]]` in `crustywad-cli` wrapping the same
+  `nodebuild` feature behind a zdbsp-compatible option surface, so editors'
+  external-nodebuilder config slots accept it as a drop-in.
