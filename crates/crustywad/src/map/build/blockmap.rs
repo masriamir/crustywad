@@ -481,8 +481,9 @@ mod tests {
 
     #[test]
     fn empty_geometry_is_rejected_in_both_modes() {
-        // A directly-built Map with empty arenas (assembly cannot produce one:
-        // an empty required arena is a fatal assembly error, ADR-0015).
+        // A directly-built Map with empty arenas. Assembly can produce one
+        // too — `decode_required` accepts present-but-empty required lumps —
+        // which is exactly why the EmptyGeometry gate exists.
         let mut map = map_from(&[(0.0, 0.0), (64.0, 0.0)], &[(0, 1)]);
         map.linedefs.clear();
         for opts in [NodeBuildOptions::strict(), NodeBuildOptions::lenient()] {
