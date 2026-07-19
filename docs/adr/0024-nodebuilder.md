@@ -201,9 +201,9 @@ component in the crate, and a `write` consumer that only serializes WADs
 (editor pipelines, tools content with `add_doom_map`'s nodebuilder-ready
 output) should not compile a BSP builder it never calls. `write` alone set the
 precedent for a no-dependency capability feature; `nodebuild` follows it.
-Adding the flag triggers the CLAUDE.md feature-flag sync rule (guide
-`features.md`, CLAUDE.md, `.github/copilot-instructions.md`, `README.md`) —
-stage 1 carries that update.
+Adding the flag triggers the `.claude/CLAUDE.md` feature-flag sync rule
+(guide `features.md`, `.claude/CLAUDE.md`, `.github/copilot-instructions.md`,
+`README.md`) — stage 1 carries that update.
 
 ```rust
 /// Options for the node/blockmap builders.
@@ -446,10 +446,15 @@ containers on any output path.
 ### 7. Testing story
 
 - **Round-trip through the readers (the ADR-0015 contract).** Unit level:
-  `MapBlockmap::parse(built.to_lump_bytes()) == built` and likewise for
-  `MapReject`. WAD level: `add_doom_map_with_nodes` → `WadBuilder::build` →
-  `Wad::parse` → `Map::assemble` in **strict** mode with zero warnings, and
-  the assembled BSP arenas equal the built ones.
+  serialize a built table and re-parse it against the owning map's element
+  count in strict mode, expecting an exact reconstruction — for the blockmap,
+  `MapBlockmap::parse(&built.to_lump_bytes()?, linedef_count,
+  Strictness::Strict, &mut warnings)` must return `Ok(Some(parsed))` with
+  `parsed == built` and `warnings` empty; likewise for `MapReject` with
+  `sector_count` (its `to_lump_bytes` is infallible). WAD level:
+  `add_doom_map_with_nodes` → `WadBuilder::build` → `Wad::parse` →
+  `Map::assemble` in **strict** mode with zero warnings, and the assembled
+  BSP arenas equal the built ones.
 - **Self-validating retail sweep.** For every classic map in the local retail
   collection (gated like the existing sweep, `CRUSTYWAD_SWEEP_DIR`): rebuild
   nodes/blockmap/reject from the assembled graph, then assert the engine
@@ -497,7 +502,7 @@ Filed after this ADR merges, all in milestone `Nodebuilder`, dependency-ordered:
 
 1. **Stage 1 — BLOCKMAP and REJECT builders.** The `nodebuild` feature flag
    (`nodebuild = ["write"]`, plus the four-place feature-flag doc sync per
-   CLAUDE.md), `map/build/` module skeleton,
+   `.claude/CLAUDE.md`), `map/build/` module skeleton,
    `NodeBuildOptions`/`NodeBuildError`/`NodeBuildWarning` (the §5 subset that
    applies), `build_blockmap` + `MapBlockmap::to_lump_bytes`, `build_reject` +
    `MapReject::to_lump_bytes`, round-trip and retail-sweep coverage for both,
