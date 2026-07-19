@@ -263,7 +263,7 @@ Work is tracked on the **[Crustywad](https://github.com/users/masriamir/projects
 
 - **Status** (workflow stage): `Backlog` → `Ready` → `In progress` → `In review` → `Done`. Pull work from the `Ready` column. Most transitions are **agent-driven** — see [Issue status transitions](#issue-status-transitions-agent-driven) below; only `Done` is set automatically by the board on merge/close.
 - **Horizon** (priority bucket): `Now` / `Next` / `Later`. This carries planning intent for issues that have no milestone yet (e.g. the editor epic #18 and its long-horizon spikes); it replaces the former `Short Term` / `Future` milestones.
-- **Milestone** (release scope): milestones are **release-scoped** (`v0.2.0`, `v0.3.0`, …), each the set of epics/issues intended to ship together. `release-plz` derives the actual version tags from Conventional Commits on `main`; the milestone only groups scope.
+- **Milestone** (release scope): milestones are **release-scoped and scope-named** (`Audio layer`, `Nodebuilder`, …) — each the set of epics/issues intended to ship together. Names deliberately do **not** encode version numbers: crates version independently (ADR-0011 §3) and `release-plz` derives the actual versions from Conventional Commits **at ship time**, so a version-shaped milestone name is a prediction that cannot reliably be kept (the `v0.7.0` milestone shipped as crustywad 0.6.1 / cli 0.3.1 on 2026-07-19, prompting this policy). At closeout, record the shipped crate versions in the milestone description. Historical milestones `v0.1.0`–`v0.6.0` keep their version-shaped names.
 
 **Epics** (the `epic` label, e.g. #17, #18) use GitHub **native sub-issues**, so they show automatic progress rollup — attach each new format/feature issue as a sub-issue of its epic.
 
@@ -289,7 +289,7 @@ I move the board myself as work progresses and **announce each change** in my re
 A milestone is **complete** when BOTH conditions hold:
 
 1. **All milestone items closed** — the milestone reports `open_issues == 0`. That is GitHub's milestone counter, which covers every assigned item (issues *and* any pull requests), not just issues, and is distinct from the board's `Done` Status field — closing an item typically sets both, but the milestone counter is the signal here.
-2. **Shipped** — a `release-plz` PR (`chore: release`) has merged at or after the last milestone item closed. This is tag-agnostic: because crates version independently (ADR-0011 §3), a milestone titled `vX.Y.Z` need not map to a `crustywad-vX.Y.Z` tag — any release PR merged on/after that final close is the ship signal.
+2. **Shipped** — a `release-plz` PR (`chore: release`) has merged at or after the last milestone item closed. This is tag-agnostic: milestones are scope-named, so no version correspondence is expected — any release PR merged on/after that final close is the ship signal. When closing, add the shipped crate versions to the milestone description.
 
 GitHub never auto-closes milestones. Unlike the agent-driven board Status transitions above, milestone closeout is **propose-and-confirm**: when I notice both conditions hold for an open milestone, I surface it and **ask before closing**. On your approval:
 
