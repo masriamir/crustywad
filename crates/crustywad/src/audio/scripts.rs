@@ -171,8 +171,7 @@ impl SndCurve {
     /// or structural invariant to violate, and any length is valid in both
     /// modes. The [`Result`] return keeps the signature uniform with the other
     /// audio parsers.
-    pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<Self, AudioError> {
-        let _ = options;
+    pub fn parse(bytes: &[u8], _options: &ParseOptions) -> Result<Self, AudioError> {
         Ok(Self {
             bytes: bytes.to_vec(),
             warnings: Vec::new(),
