@@ -178,8 +178,11 @@ pub enum AudioError {
     BadMagic {
         /// The magic bytes this parser requires.
         expected: &'static [u8],
-        /// The four leading bytes read from disk.
-        found: [u8; 4],
+        /// The leading bytes read from disk — as many as the expected magic
+        /// has, clamped to the lump length, so a mismatch anywhere in the
+        /// magic (including past byte 4 of GENMIDI's 8-byte `#OPL_II#`) is
+        /// visible in the diagnostics.
+        found: Vec<u8>,
     },
     /// A MUS `score_start` offset points past the end of the lump. Strict only
     /// — lenient recovers by yielding an empty event list and records
@@ -519,8 +522,9 @@ pub enum AudioWarning {
     BadMagic {
         /// The magic bytes the format requires.
         expected: &'static [u8],
-        /// The four leading bytes read from disk.
-        found: [u8; 4],
+        /// The leading bytes read from disk — as many as the expected magic
+        /// has, clamped to the lump length.
+        found: Vec<u8>,
     },
     /// A `GENMIDI` lump is shorter than the fixed 11908-byte extent; lenient
     /// parsing decoded every complete record and name field that fits. Recorded

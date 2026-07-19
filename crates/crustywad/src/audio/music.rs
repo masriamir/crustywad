@@ -148,7 +148,7 @@ impl MusScore {
         if bytes[..4] != Self::MAGIC {
             return Err(AudioError::BadMagic {
                 expected: &Self::MAGIC,
-                found: [bytes[0], bytes[1], bytes[2], bytes[3]],
+                found: bytes[..4].to_vec(),
             });
         }
 

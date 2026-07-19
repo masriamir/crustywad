@@ -113,7 +113,7 @@ impl MidiInfo {
         if bytes[..4] != Self::MAGIC {
             return Err(AudioError::BadMagic {
                 expected: &Self::MAGIC,
-                found: [bytes[0], bytes[1], bytes[2], bytes[3]],
+                found: bytes[..4].to_vec(),
             });
         }
 
@@ -140,7 +140,16 @@ impl MidiInfo {
         let division = u16::from_be_bytes([bytes[12], bytes[13]]);
 
         let mut tracks = Vec::new();
-        let mut pos = Self::HEADER;
+        // The first chunk frame starts after the declared MThd chunk, not at
+        // a fixed offset: a lenient-accepted extended header (chunk size > 6)
+        // would otherwise misalign the walk and read header bytes as a frame.
+        // A declaration below the 6 standard bytes keeps the standard layout
+        // (the fields above were read regardless, matching the engine).
+        let mut pos = if chunk_size > Self::MTHD_CHUNK_SIZE {
+            usize::try_from(chunk_size).map_or(len, |extended| extended.saturating_add(8).min(len))
+        } else {
+            Self::HEADER
+        };
         let mut stopped = false;
 
         while pos + Self::CHUNK_HEADER <= len {
@@ -315,13 +324,13 @@ impl WavSound {
         if bytes[..4] != *b"RIFF" {
             return Err(AudioError::BadMagic {
                 expected: b"RIFF",
-                found: [bytes[0], bytes[1], bytes[2], bytes[3]],
+                found: bytes[..4].to_vec(),
             });
         }
         if bytes[8..12] != *b"WAVE" {
             return Err(AudioError::BadMagic {
                 expected: b"WAVE",
-                found: [bytes[8], bytes[9], bytes[10], bytes[11]],
+                found: bytes[8..12].to_vec(),
             });
         }
 

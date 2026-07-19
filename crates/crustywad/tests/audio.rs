@@ -715,6 +715,49 @@ fn mi4_alien_chunk() {
     }
 }
 
+#[test]
+fn mi5_extended_header_realigns_walk() {
+    // An MThd declaring 8 header bytes (2 beyond the standard 6): the chunk
+    // walk must start at 8 + 8 = 16, not the fixed offset 14 — otherwise the
+    // two extra header bytes would be misread as the start of a chunk frame.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"MThd");
+    bytes.extend_from_slice(&8u32.to_be_bytes());
+    bytes.extend_from_slice(&0u16.to_be_bytes());
+    bytes.extend_from_slice(&1u16.to_be_bytes());
+    bytes.extend_from_slice(&96u16.to_be_bytes());
+    bytes.extend_from_slice(&[0xEE, 0xEE]);
+    bytes.extend_from_slice(b"MTrk");
+    bytes.extend_from_slice(&4u32.to_be_bytes());
+    bytes.extend_from_slice(&[0x00, 0xFF, 0x2F, 0x00]);
+    assert_eq!(bytes.len(), 28);
+
+    let err = MidiInfo::parse(&bytes, &ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        AudioError::UnexpectedChunkSize {
+            expected: 6,
+            found: 8,
+        }
+    ));
+
+    let midi = MidiInfo::parse(&bytes, &ParseOptions::lenient()).expect("MI5 recovers");
+    assert_eq!(
+        midi.tracks(),
+        &[MidiTrack {
+            offset: 24,
+            length: 4,
+        }]
+    );
+    assert_eq!(
+        midi.warnings(),
+        &[AudioWarning::UnexpectedChunkSize {
+            expected: 6,
+            found: 8,
+        }]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // RIFF/WAVE walk (ADR-0023 §2, §4): WavSound
 // ---------------------------------------------------------------------------

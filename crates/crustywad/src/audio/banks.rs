@@ -173,7 +173,7 @@ impl Genmidi {
         let mut warnings = Vec::new();
 
         if bytes[..Self::MAGIC.len()] != Self::MAGIC {
-            let found = [bytes[0], bytes[1], bytes[2], bytes[3]];
+            let found = bytes[..Self::MAGIC.len()].to_vec();
             match options.strictness {
                 Strictness::Strict => {
                     return Err(AudioError::BadMagic {
@@ -183,7 +183,7 @@ impl Genmidi {
                 }
                 Strictness::Lenient => warnings.push(AudioWarning::BadMagic {
                     expected: &Self::MAGIC,
-                    found,
+                    found: found.clone(),
                 }),
             }
         }
