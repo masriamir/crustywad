@@ -493,3 +493,28 @@ impl SndInfo {
   Doom 64 legacy `DOOMSND`/`DOOMSEQ` blobs (§4); Strife's out-of-WAD
   `voices.wad` speech (Strife remains `Later` per epic #241); external
   SoundFont/DLS files (`doomsnd.sf2`, `DOOMSND.DLS`) — not WAD lumps.
+
+## Amendment (2026-07-18, #301): DMXGUS reserved-gap ids are data, not warnings
+
+The first retail music/banks sweep falsified §2's DMXGUS claim that the
+parser "warns on out-of-range ids": **every** retail `DMXGUS`/`DMXGUSC`
+carrier — 11 of 11, across id, Raven, Rogue, and Freedoom — ships
+instrument ids in the reserved gaps the engine's range filter skips
+(`128`, `155..=162`, `210..=215` in the standard 190-line DMX file;
+Freedoom's variant carries `128` alone). A property universal to retail
+data is not an anomaly — the same reasoning as ADR-0022's COLORMAP
+amendment. Corrected policy: reserved-gap entries parse as ordinary data
+with no warning; the engine's mapped/skipped classification is exposed as
+`DmxgusEntry::is_gm_mapped` (melodic `0..=127`, percussion `163..=209`,
+per `gusconf.c:127-131`) so callers can reproduce the engine's filter
+without the parser editorializing. The sweep's zero-warning contract for
+DMXGUS holds under the corrected policy.
+
+Also aligned by #301: §2's "strict requires exactly 11908 bytes" wording for
+GENMIDI is corrected to the module-wide slack policy the implementation
+ships — strict requires the **full** extent (short is an error), while a
+**longer** lump parses its first 11908 bytes with a trailing-slack warning
+in **both** modes, exactly as `DmxSound`/`PcSpeakerSound` treat slack. A
+strict-mode hard rejection of slack would have made GENMIDI the module's one
+slack-rejecting parser for no engine-grounded reason (the engine reads the
+lump with no size check at all).
