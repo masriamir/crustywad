@@ -120,12 +120,25 @@ pub(crate) enum SubCommand {
     /// `PATCH.bin`); an empty name becomes `UNNAMED`; Windows-reserved device
     /// names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`) are
     /// prefixed with `_` (e.g. `CON` → `_CON.bin`) so extraction succeeds on
-    /// all platforms. Each lump is written as `<SAFE_NAME>.bin`. When two or
+    /// all platforms. Each lump is written as `<SAFE_NAME>` plus an
+    /// extension — `.bin` by default, or a content-derived audio extension
+    /// (see the audio-aware paragraph below). When two or
     /// more lumps produce the same safe filename (whether from duplicate lump
     /// names or distinct names that sanitize identically), subsequent files are
     /// suffixed with an occurrence count (e.g. `PATCH.bin`, `PATCH_1.bin`,
     /// `PATCH_2.bin`). Exits 0 on success, 2 on I/O or parse error, 3 on
     /// argument error.
+    ///
+    /// Extraction is audio-aware (content-detected, never by lump name): a DMX
+    /// digital-sound lump is wrapped in a canonical 44-byte WAV header and
+    /// written as `.wav`; a MUS lump is written as raw `.mus` bytes (and, with
+    /// `--midi`, additionally converted to a `.mid`); standard-MIDI and
+    /// RIFF/WAVE lumps pass through as `.mid` and `.wav`. Everything else,
+    /// including PC-speaker effects (which have no container), is written raw
+    /// as `.bin`. A MUS or standard-MIDI lump that fails even a lenient
+    /// parse (both detections are magic-only, so a truncated lump can match)
+    /// falls back
+    /// to a raw `.bin` write with a warning on stderr.
     Extract {
         /// Path to the WAD file.
         path: PathBuf,
@@ -138,6 +151,12 @@ pub(crate) enum SubCommand {
         /// code 2.
         #[arg(short, long, value_name = "NAME")]
         lump: Option<String>,
+        /// Also write a converted `.mid` file alongside each extracted MUS
+        /// lump. The conversion follows Chocolate Doom's `mus2mid`
+        /// converter (a format-0 standard MIDI file). Without this flag a MUS
+        /// lump is extracted only as raw `.mus` bytes.
+        #[arg(long)]
+        midi: bool,
     },
     /// Build a new WAD file from lump data files.
     ///

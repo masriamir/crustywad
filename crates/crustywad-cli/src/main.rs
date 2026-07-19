@@ -1,7 +1,9 @@
 //! Command-line tool for inspecting Doom WAD files.
 
 mod cli;
+mod mus2mid;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::process;
@@ -10,6 +12,7 @@ use std::fmt::Write as _;
 
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
+use crustywad::audio::{AudioKind, DmxSound, MidiInfo, MusScore, WavSound};
 use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
 
 use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
@@ -272,6 +275,248 @@ fn csv_field(s: &str) -> String {
     }
 }
 
+/// Wraps a parsed DMX sound's PCM samples in a canonical 44-byte RIFF/WAVE
+/// header (ADR-0023 §2 / issue #304).
+///
+/// DMX samples are unsigned 8-bit mono PCM, so the container is fixed at
+/// `bits_per_sample = 8`, `channels = 1`, `block_align = 1`, and
+/// `byte_rate = sample_rate`. Every size is derived from the pad-stripped
+/// sample span: `data_len = samples.len()` and `riff_size = 36 + data_len`.
+fn dmx_to_wav(sound: &DmxSound) -> Vec<u8> {
+    let samples = sound.samples();
+    let data_len = u32::try_from(samples.len()).unwrap_or(u32::MAX);
+    let sample_rate = u32::from(sound.sample_rate());
+    let riff_size = 36u32.saturating_add(data_len);
+
+    let mut wav = Vec::with_capacity(44 + samples.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&riff_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    wav.extend_from_slice(&1u16.to_le_bytes()); // audio format: PCM
+    wav.extend_from_slice(&1u16.to_le_bytes()); // channels: mono
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes()); // byte_rate = rate * 1 * 1
+    wav.extend_from_slice(&1u16.to_le_bytes()); // block_align: 1 byte/frame
+    wav.extend_from_slice(&8u16.to_le_bytes()); // bits_per_sample: 8
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.extend_from_slice(samples);
+    wav
+}
+
+/// The default filename extension for a lump with no audio-aware container.
+const DEFAULT_EXTENSION: &str = "bin";
+
+/// Chooses the extraction output(s) for one lump: a list of
+/// `(extension, bytes)` pairs to write. Classification is by content
+/// ([`AudioKind::detect`]), never by lump name; audio parses are lenient (an
+/// extract tool should extract). A MUS lump that fails even a lenient parse
+/// (its detection is magic-only, unlike DMX, whose detection guarantees a
+/// successful parse — the DMX fallback arm below is purely defensive) falls
+/// back to a raw `.bin` write and pushes a warning onto `warnings`.
+///
+/// `raw_name` is the lump's on-disk name, used only for warning messages.
+fn extract_outputs<'a>(
+    data: &'a [u8],
+    raw_name: &str,
+    midi: bool,
+    warnings: &mut Vec<String>,
+) -> Vec<(&'static str, Cow<'a, [u8]>)> {
+    let opts = ParseOptions::lenient();
+    match AudioKind::detect(data) {
+        AudioKind::Dmx => match DmxSound::parse(data, &opts) {
+            Ok(sound) => vec![("wav", Cow::Owned(dmx_to_wav(&sound)))],
+            // Unreachable in practice: a Dmx detection guarantees the strict
+            // (and so the lenient) parse succeeds. Kept as a defensive
+            // fallback rather than an unwrap.
+            Err(e) => {
+                warnings.push(format!(
+                    "{raw_name}: could not decode DMX sound ({e}); extracted raw bytes"
+                ));
+                vec![(DEFAULT_EXTENSION, Cow::Borrowed(data))]
+            }
+        },
+        AudioKind::Mus => match MusScore::parse(data, &opts) {
+            Ok(score) => {
+                // The raw MUS bytes are always emitted; --midi adds the
+                // converted format-0 SMF from the typed event stream.
+                let mut outputs: Vec<(&'static str, Cow<'a, [u8]>)> =
+                    vec![("mus", Cow::Borrowed(data))];
+                if midi {
+                    outputs.push(("mid", Cow::Owned(mus2mid::convert(&score))));
+                }
+                outputs
+            }
+            Err(e) => {
+                warnings.push(format!(
+                    "{raw_name}: could not decode MUS score ({e}); extracted raw bytes"
+                ));
+                vec![(DEFAULT_EXTENSION, Cow::Borrowed(data))]
+            }
+        },
+        // Standard MIDI and RIFF/WAVE already are their own containers, but
+        // MIDI detection is magic-only (4 bytes), so a truncated lump must
+        // take the same warned raw fallback as MUS rather than masquerade as
+        // a playable `.mid`.
+        AudioKind::Midi => match MidiInfo::parse(data, &opts) {
+            Ok(_) => vec![("mid", Cow::Borrowed(data))],
+            Err(e) => {
+                warnings.push(format!(
+                    "{raw_name}: could not index MIDI chunks ({e}); extracted raw bytes"
+                ));
+                vec![(DEFAULT_EXTENSION, Cow::Borrowed(data))]
+            }
+        },
+        // A 12-byte WAV detection always parses leniently (warnings at
+        // worst), so the passthrough needs no fallback arm.
+        AudioKind::Wav => vec![("wav", Cow::Borrowed(data))],
+        // PC-speaker data has no standard container, `Unknown` is not audio,
+        // and (`AudioKind` being `#[non_exhaustive]`) any future variant is
+        // unhandled: all extract raw under the default extension.
+        _ => vec![(DEFAULT_EXTENSION, Cow::Borrowed(data))],
+    }
+}
+
+/// A per-lump audio classification for `cwad list`/`info`, produced by a
+/// lenient parse of a detected audio lump.
+struct AudioAnnotation {
+    /// The detected kind name (`Dmx`, `Mus`, `Midi`, `Wav`, `PcSpeaker`).
+    kind: &'static str,
+    /// Human-readable cheap details (e.g. `rate=11025 samples=20`), empty when
+    /// the lump is only a kind (parse failed, or `PcSpeaker`).
+    detail_human: String,
+    /// The same details as JSON object fields, each prefixed with a comma
+    /// (e.g. `,"sample_rate":11025,"samples":20`); empty when there are none.
+    detail_json: String,
+}
+
+impl AudioAnnotation {
+    /// An annotation carrying only the kind name (no cheap details).
+    fn bare(kind: &'static str) -> Self {
+        Self {
+            kind,
+            detail_human: String::new(),
+            detail_json: String::new(),
+        }
+    }
+
+    /// The `list` human-format suffix, e.g. ` [audio: Dmx rate=11025 samples=20]`.
+    fn human_suffix(&self) -> String {
+        if self.detail_human.is_empty() {
+            format!(" [audio: {}]", self.kind)
+        } else {
+            format!(" [audio: {} {}]", self.kind, self.detail_human)
+        }
+    }
+
+    /// The `list` CSV cell, e.g. `Dmx rate=11025 samples=20`.
+    fn csv_cell(&self) -> String {
+        if self.detail_human.is_empty() {
+            self.kind.to_owned()
+        } else {
+            format!("{} {}", self.kind, self.detail_human)
+        }
+    }
+}
+
+/// Classifies a lump for `cwad list` annotation, or `None` when the bytes are
+/// not a recognized audio format.
+///
+/// Detection ([`AudioKind::detect`]) is cheap and never allocates; a typed
+/// parse (always lenient — a display path should never reject) runs only for a
+/// detected audio lump, never for [`AudioKind::Unknown`], so the common
+/// non-audio path is untouched. A failed parse degrades to the bare kind.
+fn audio_annotation(data: &[u8]) -> Option<AudioAnnotation> {
+    let opts = ParseOptions::lenient();
+    let annotation = match AudioKind::detect(data) {
+        AudioKind::Dmx => match DmxSound::parse(data, &opts) {
+            Ok(s) => AudioAnnotation {
+                kind: "Dmx",
+                detail_human: format!("rate={} samples={}", s.sample_rate(), s.samples().len()),
+                detail_json: format!(
+                    r#","sample_rate":{},"samples":{}"#,
+                    s.sample_rate(),
+                    s.samples().len()
+                ),
+            },
+            // Unreachable in practice (detect guarantees the parse); a
+            // defensive fallback rather than an unwrap.
+            Err(_) => AudioAnnotation::bare("Dmx"),
+        },
+        AudioKind::Mus => match MusScore::parse(data, &opts) {
+            Ok(s) => AudioAnnotation {
+                kind: "Mus",
+                detail_human: format!("events={}", s.events().len()),
+                detail_json: format!(r#","events":{}"#, s.events().len()),
+            },
+            Err(_) => AudioAnnotation::bare("Mus"),
+        },
+        AudioKind::Midi => match MidiInfo::parse(data, &opts) {
+            Ok(s) => AudioAnnotation {
+                kind: "Midi",
+                detail_human: format!("tracks={}", s.tracks().len()),
+                detail_json: format!(r#","tracks":{}"#, s.tracks().len()),
+            },
+            Err(_) => AudioAnnotation::bare("Midi"),
+        },
+        AudioKind::Wav => match WavSound::parse(data, &opts) {
+            Ok(s) => AudioAnnotation {
+                kind: "Wav",
+                detail_human: format!(
+                    "rate={} channels={} bits={}",
+                    s.sample_rate(),
+                    s.channels(),
+                    s.bits_per_sample()
+                ),
+                detail_json: format!(
+                    r#","sample_rate":{},"channels":{},"bits":{}"#,
+                    s.sample_rate(),
+                    s.channels(),
+                    s.bits_per_sample()
+                ),
+            },
+            // Unreachable leniently (a 12-byte detection always parses with
+            // warnings at worst); a defensive fallback rather than an unwrap.
+            Err(_) => AudioAnnotation::bare("Wav"),
+        },
+        AudioKind::PcSpeaker => AudioAnnotation::bare("PcSpeaker"),
+        // `AudioKind::Unknown` and (it being `#[non_exhaustive]`) any unmapped
+        // future variant are not annotated rather than mislabelled.
+        _ => return None,
+    };
+    Some(annotation)
+}
+
+/// Tallies detected audio lumps by kind for the `cwad info` summary, in a
+/// stable display order. Only [`AudioKind::detect`] runs (no per-lump parse),
+/// and detect inspects at most a few header bytes, so the summary is
+/// `O(number of lumps)` and never allocates per lump.
+fn audio_summary(wad: &Wad) -> Vec<(&'static str, usize)> {
+    let (mut dmx, mut pc, mut mus, mut midi, mut wav) = (0usize, 0, 0, 0, 0);
+    for lump in wad.lumps() {
+        match AudioKind::detect(wad.lump_data(lump)) {
+            AudioKind::Dmx => dmx += 1,
+            AudioKind::PcSpeaker => pc += 1,
+            AudioKind::Mus => mus += 1,
+            AudioKind::Midi => midi += 1,
+            AudioKind::Wav => wav += 1,
+            _ => {}
+        }
+    }
+    [
+        ("Dmx", dmx),
+        ("PcSpeaker", pc),
+        ("Mus", mus),
+        ("Midi", midi),
+        ("Wav", wav),
+    ]
+    .into_iter()
+    .filter(|&(_, count)| count > 0)
+    .collect()
+}
+
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(c) => c,
@@ -308,6 +553,8 @@ fn run(cli: Cli) -> Result<i32> {
                 .with_context(|| format!("failed to load {}", path.display()))?;
             let data_size: u64 = wad.lumps().iter().map(|l| l.size() as u64).sum();
             let maps = detect_maps(&wad);
+            // Per-kind tally of detected audio lumps (detect-only, no parse).
+            let audio = audio_summary(&wad);
             match cli.format {
                 Format::Human => {
                     println!("kind:      {:?}", wad.kind());
@@ -317,6 +564,14 @@ fn run(cli: Cli) -> Result<i32> {
                     if !maps.is_empty() {
                         println!("maps:      {}", maps.join(", "));
                     }
+                    if !audio.is_empty() {
+                        let rendered = audio
+                            .iter()
+                            .map(|(kind, count)| format!("{kind}: {count}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        println!("audio:     {rendered}");
+                    }
                 }
                 Format::Json => {
                     let maps_json: String = maps
@@ -324,12 +579,18 @@ fn run(cli: Cli) -> Result<i32> {
                         .map(|m| json_string(m))
                         .collect::<Vec<_>>()
                         .join(",");
+                    let audio_json: String = audio
+                        .iter()
+                        .map(|(kind, count)| format!(r#""{kind}":{count}"#))
+                        .collect::<Vec<_>>()
+                        .join(",");
                     println!(
-                        r#"{{"kind":"{:?}","lumps":{},"data_size":{},"maps":[{}]}}"#,
+                        r#"{{"kind":"{:?}","lumps":{},"data_size":{},"maps":[{}],"audio":{{{}}}}}"#,
                         wad.kind(),
                         wad.lump_count(),
                         data_size,
-                        maps_json
+                        maps_json,
+                        audio_json
                     );
                 }
                 Format::Csv => {
@@ -352,11 +613,22 @@ fn run(cli: Cli) -> Result<i32> {
         SubCommand::List { path } => {
             let wad = Wad::from_path_with_options(&path, options)
                 .with_context(|| format!("failed to load {}", path.display()))?;
+            // Per-lump audio classification (content-detected, lenient parse);
+            // `None` for non-audio lumps, which stay unannotated.
+            let annotations: Vec<Option<AudioAnnotation>> = wad
+                .lumps()
+                .iter()
+                .map(|lump| audio_annotation(wad.lump_data(lump)))
+                .collect();
             match cli.format {
                 Format::Human => {
                     for (i, lump) in wad.lumps().iter().enumerate() {
+                        let suffix = annotations[i]
+                            .as_ref()
+                            .map(AudioAnnotation::human_suffix)
+                            .unwrap_or_default();
                         println!(
-                            "{i:04} {:>8} {:>8} {}",
+                            "{i:04} {:>8} {:>8} {}{suffix}",
                             lump.filepos(),
                             lump.size(),
                             lump.name()
@@ -365,8 +637,11 @@ fn run(cli: Cli) -> Result<i32> {
                 }
                 Format::Json => {
                     for (i, lump) in wad.lumps().iter().enumerate() {
+                        let audio = annotations[i].as_ref().map_or_else(String::new, |a| {
+                            format!(r#","audio":{{"kind":"{}"{}}}"#, a.kind, a.detail_json)
+                        });
                         println!(
-                            r#"{{"index":{i},"filepos":{},"size":{},"name":{}}}"#,
+                            r#"{{"index":{i},"filepos":{},"size":{},"name":{}{audio}}}"#,
                             lump.filepos(),
                             lump.size(),
                             json_string(lump.name())
@@ -374,13 +649,18 @@ fn run(cli: Cli) -> Result<i32> {
                     }
                 }
                 Format::Csv => {
-                    println!("index,filepos,size,name");
+                    println!("index,filepos,size,name,audio");
                     for (i, lump) in wad.lumps().iter().enumerate() {
+                        let audio = annotations[i]
+                            .as_ref()
+                            .map(AudioAnnotation::csv_cell)
+                            .unwrap_or_default();
                         println!(
-                            "{i},{},{},{}",
+                            "{i},{},{},{},{}",
                             lump.filepos(),
                             lump.size(),
-                            csv_field(lump.name())
+                            csv_field(lump.name()),
+                            csv_field(&audio)
                         );
                     }
                 }
@@ -567,7 +847,12 @@ fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
-        SubCommand::Extract { path, output, lump } => {
+        SubCommand::Extract {
+            path,
+            output,
+            lump,
+            midi,
+        } => {
             if !output.is_dir() {
                 anyhow::bail!(
                     "output path does not exist or is not a directory: {}",
@@ -612,28 +897,42 @@ fn run(cli: Cli) -> Result<i32> {
                 let lump_meta = wad
                     .lump(index)
                     .ok_or_else(|| anyhow::anyhow!("lump index {index} out of range"))?;
-                let lump_name = sanitize_lump_name(lump_meta.name());
+                let raw_name = lump_meta.name().to_owned();
+                let lump_name = sanitize_lump_name(&raw_name);
                 let data = wad
                     .lump_bytes(index)
                     .ok_or_else(|| anyhow::anyhow!("lump index {index} out of range"))?;
 
+                // One base name per lump; duplicate safe names get an
+                // occurrence suffix. Every output for this lump (e.g. a MUS's
+                // `.mus` and `.mid`) shares the base and differs only by
+                // extension.
                 let count = name_count.entry(lump_name.clone()).or_insert(0);
-                let filename = if *count == 0 {
-                    format!("{lump_name}.bin")
+                let base = if *count == 0 {
+                    lump_name.clone()
                 } else {
-                    format!("{lump_name}_{count}.bin")
+                    format!("{lump_name}_{count}")
                 };
                 *count += 1;
 
-                let dest = output.join(&filename);
-                fs::write(&dest, data)
-                    .with_context(|| format!("failed to write {}", dest.display()))?;
-                match cli.format {
-                    Format::Human => println!("{filename}"),
-                    Format::Json => {
-                        println!(r#"{{"filename":{}}}"#, json_string(&filename));
+                let mut extract_warnings = Vec::new();
+                let outputs = extract_outputs(data, &raw_name, midi, &mut extract_warnings);
+                for w in &extract_warnings {
+                    eprintln!("warning: {w}");
+                }
+
+                for (extension, bytes) in outputs {
+                    let filename = format!("{base}.{extension}");
+                    let dest = output.join(&filename);
+                    fs::write(&dest, bytes.as_ref())
+                        .with_context(|| format!("failed to write {}", dest.display()))?;
+                    match cli.format {
+                        Format::Human => println!("{filename}"),
+                        Format::Json => {
+                            println!(r#"{{"filename":{}}}"#, json_string(&filename));
+                        }
+                        Format::Csv => println!("{}", csv_field(&filename)),
                     }
-                    Format::Csv => println!("{}", csv_field(&filename)),
                 }
             }
 
