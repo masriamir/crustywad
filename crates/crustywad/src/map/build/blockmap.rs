@@ -53,10 +53,14 @@ use crate::map::graph::{LinedefIdx, Map, MapBlockmap};
 const BLOCK_SHIFT: u32 = 7;
 /// Grid cell size in map units (Chocolate Doom `MAPBLOCKUNITS`).
 const BLOCK_UNITS: i32 = 1 << BLOCK_SHIFT;
-/// A blocklist entry references a linedef by `u16` index, so at most 65,536
-/// linedefs are addressable. Mirrors the write path's `MAX_INDEXED` ceiling for
-/// its other `u16`-indexed arenas (`map/doom/write.rs`).
-const MAX_LINEDEFS: usize = 65_536;
+/// A blocklist entry references a linedef by `u16` index, but `0xFFFF` is the
+/// blocklist terminator word, so the maximum *encodable* linedef index is
+/// 65,534 — at most 65,535 linedefs. This deliberately differs from the write
+/// path's generic 65,536-element ceiling (`MAX_INDEXED` in
+/// `map/doom/write.rs`): index 65,535 would serialize as the terminator and
+/// corrupt every list containing it, so the blockmap encoding domain is one
+/// element stricter.
+const MAX_LINEDEFS: usize = 65_535;
 /// The blocklist terminator word (`-1` in `P_BlockLinesIterator`).
 const TERMINATOR: u16 = 0xFFFF;
 /// Vanilla's signed blocklist-offset ceiling (`i16::MAX`).
@@ -132,9 +136,9 @@ fn crosses_block(x1: i32, y1: i32, x2: i32, y2: i32, bx: i32, by: i32) -> bool {
 ///   vertices, linedefs, sidedefs, or sectors — there is no geometry to index.
 /// - [`NodeBuildError::Write`] wrapping a [`DoomWriteError`] from the shared
 ///   narrowing pass: in strict mode a non-finite/fractional/out-of-range
-///   coordinate; in both modes more than 65,536 linedefs (their `u16` blocklist
-///   index would overflow — [`DoomWriteError::TooManyElements`],
-///   `kind: "linedefs"`).
+///   coordinate; in both modes more than 65,535 linedefs (a blocklist index of
+///   65,535 would collide with the `0xFFFF` terminator word —
+///   [`DoomWriteError::TooManyElements`], `kind: "linedefs"`, `max: 65_535`).
 /// - [`NodeBuildError::BlockmapOverflow`] when a blocklist starts past the
 ///   16-bit word ceiling (> 65,535, both modes) or — in strict mode only — past
 ///   the vanilla signed ceiling (> 32,767). Lenient mode instead recovers the
@@ -145,7 +149,7 @@ fn crosses_block(x1: i32, y1: i32, x2: i32, y2: i32, bx: i32, by: i32) -> bool {
 /// Does not panic. The internal `expect` calls are guarded by construction:
 /// origin components come from narrowed `i16` coordinates, grid spans are
 /// non-negative and at most `u16::MAX` (so `columns`/`rows` fit `u16`), linedef
-/// indices are bounded by the 65,536-linedef check above, block coordinates
+/// indices are bounded by the 65,535-linedef check above, block coordinates
 /// are non-negative, and every stored offset passes the ceiling checks before
 /// the offset table is filled.
 #[allow(clippy::too_many_lines)]
@@ -175,6 +179,12 @@ pub fn build_blockmap(
         .collect();
 
     let linedefs = map.linedefs();
+    // Both modes: `0xFFFF` is the blocklist terminator word, so the maximum
+    // encodable linedef index is 65,534 — a 65,536th linedef (index 65,535)
+    // would serialize as the terminator itself and corrupt every list carrying
+    // it. This ceiling is therefore deliberately one element stricter than the
+    // write path's generic 65,536-element `MAX_INDEXED`; not a strictness
+    // question, the index is simply unrepresentable.
     if linedefs.len() > MAX_LINEDEFS {
         return Err(NodeBuildError::Write(DoomWriteError::TooManyElements {
             kind: "linedefs",
@@ -445,6 +455,26 @@ mod tests {
         let (bm, _) = build_blockmap(&map, &NodeBuildOptions::strict()).unwrap();
         assert_eq!((bm.columns(), bm.rows()), (1, 1));
         assert_eq!(bm.block(0, 0), Some(&[LinedefIdx(0)][..]));
+    }
+
+    #[test]
+    fn too_many_linedefs_errors_in_both_modes() {
+        // 65,536 linedefs over two shared vertices: index 65,535 would collide
+        // with the 0xFFFF blocklist terminator word, so the ceiling is 65,535 —
+        // one element stricter than the write path's generic 65,536 — and the
+        // rejection is unconditional (not a strictness question).
+        let mut map = map_from(&[(0.0, 0.0), (64.0, 0.0)], &[(0, 1)]);
+        map.linedefs = vec![map.linedefs[0].clone(); 65_536];
+        for opts in [NodeBuildOptions::strict(), NodeBuildOptions::lenient()] {
+            assert_eq!(
+                build_blockmap(&map, &opts).unwrap_err(),
+                NodeBuildError::Write(DoomWriteError::TooManyElements {
+                    kind: "linedefs",
+                    count: 65_536,
+                    max: 65_535,
+                })
+            );
+        }
     }
 
     #[test]
