@@ -13,6 +13,7 @@ allowing callers to opt in to additional capabilities.
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
+| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, and the `to_lump_bytes` serializers |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
 
 ---
@@ -257,6 +258,62 @@ let rebuilt = wad.to_builder().build().unwrap();
 
 ---
 
+## `nodebuild`
+
+**Enables:** the `map::build` module — `NodeBuildOptions`, `NodeBuildError`, `NodeBuildWarning`,
+`build_blockmap`, `build_reject`, and `nodebuild`-gated `to_lump_bytes` serializers on the
+read-side lump types (`MapBlockmap` and `MapReject`; the classic BSP builders follow —
+issue #315, ADR-0024 §9)
+
+**Adds dependency:** none — implies `write`
+
+Clean-room BLOCKMAP, REJECT, and (in later stages) classic BSP generation from an
+assembled `Map` (ADR-0024) — stage 1 covers the collision and sight lumps; a map is not
+vanilla-playable until the BSP stage (#315) lands. It fulfills the revisit condition
+`add_doom_map` left open: that path deliberately emits zero-length `SEGS`/`SSECTORS`/`NODES`/
+`REJECT`/`BLOCKMAP` with an always-on `DoomWriteWarning::NodesNotBuilt`, whereas the
+`nodebuild` builders produce those lumps for real. Coordinate narrowing is shared with the
+write path (ADR-0024 §3), so a builder operates on exactly the `i16` geometry the engine reads.
+
+Stage 1 ships both `build_reject` and `build_blockmap`. `build_reject` returns the
+correctly-sized all-zeros `REJECT` (`ceil(sectors² / 8)` bytes) — an all-clear table
+pre-rejects no line of sight, which is always engine-correct and is what `zdbsp` itself
+emits. `build_blockmap` builds the packed 128-unit-grid `BLOCKMAP` (deduplicated
+blocklists, strict/lenient offset-ceiling policy per ADR-0024 §5). BSP node building
+itself (`SEGS`/`SSECTORS`/`NODES`) is the later stage — issue #315.
+
+### Usage
+
+```toml
+# Cargo.toml
+crustywad = { version = "0.6.0", features = ["nodebuild"] }
+```
+
+Or with `cargo add`:
+
+```sh
+cargo add crustywad --features nodebuild
+```
+
+```rust
+use crustywad::map::build::{NodeBuildOptions, build_blockmap, build_reject};
+use crustywad::{WadBuilder, WadKind};
+
+# fn run(map: &crustywad::map::Map) -> Result<(), Box<dyn std::error::Error>> {
+let reject = build_reject(map); // infallible: ceil(sectors² / 8) all-zero bytes
+let (blockmap, _warnings) = build_blockmap(map, &NodeBuildOptions::strict())?;
+
+let mut builder = WadBuilder::new(WadKind::Pwad);
+builder
+    .add_lump("REJECT", reject.to_lump_bytes())
+    .add_lump("BLOCKMAP", blockmap.to_lump_bytes()?);
+# let _ = builder;
+# Ok(())
+# }
+```
+
+---
+
 ## `doom64-gfx`
 
 **Enables:** `Doom64Png` decoding of Doom 64's PNG texture/sprite lumps via the `png` crate
@@ -332,6 +389,8 @@ of `crustywad::gfx`.
 | Sweep a local WAD collection | `CRUSTYWAD_SWEEP_DIR=… cargo test -p crustywad --features sweep-tests` |
 | Build with `write` | `cargo build -p crustywad --features write` |
 | Test with `write` | `cargo test -p crustywad --features write` |
+| Build with `nodebuild` | `cargo build -p crustywad --features nodebuild` |
+| Test with `nodebuild` | `cargo test -p crustywad --features nodebuild` |
 | Build with `doom64-gfx` | `cargo build -p crustywad --features doom64-gfx` |
 | Test with `doom64-gfx` | `cargo test -p crustywad --features doom64-gfx` |
 | Full CI check | `just ci` |

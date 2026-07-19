@@ -31,6 +31,7 @@ hexen-tests = []
 doom64-tests = []
 sweep-tests = []
 write = []
+nodebuild = ["write"]
 doom64-gfx = ["dep:png"]
 
 [dependencies]

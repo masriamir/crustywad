@@ -320,16 +320,26 @@ pub struct DoomMapLumps {
 }
 
 /// Narrows a `Map` into Doom records, accumulating lenient-mode warnings.
-struct Narrower {
-    warnings: Vec<DoomWriteWarning>,
+///
+/// `pub(crate)` so the `nodebuild` feature's builders can reuse the exact same
+/// coordinate/index narrowing pass (ADR-0024 §3) rather than restating the
+/// write path's three-tier decision table. Callers construct one with
+/// [`Narrower::new`], run the `narrow_*` passes, and read back the accumulated
+/// [`warnings`](Self::warnings) field.
+pub(crate) struct Narrower {
+    /// The lenient-mode warnings accumulated so far. Starts empty:
+    /// [`write_doom_map`] pushes [`DoomWriteWarning::NodesNotBuilt`] as its
+    /// first warning (the node lumps it emits are empty), whereas the
+    /// `nodebuild` builders — which *do* build those lumps — must not carry
+    /// that warning (ADR-0024 §3, §9 Global Constraint 9).
+    pub(crate) warnings: Vec<DoomWriteWarning>,
     strictness: Strictness,
 }
 
 impl Narrower {
-    fn new(strictness: Strictness) -> Self {
+    pub(crate) fn new(strictness: Strictness) -> Self {
         Self {
-            // Nodes are never built, in either mode — say so up front.
-            warnings: vec![DoomWriteWarning::NodesNotBuilt],
+            warnings: Vec::new(),
             strictness,
         }
     }
@@ -612,7 +622,14 @@ where
 }
 
 /// Narrows the vertex arena. Doom stores `i16` coordinates.
-fn narrow_vertices(n: &mut Narrower, raw: &[MapVertex]) -> Result<Vec<Vertex>, DoomWriteError> {
+///
+/// `pub(crate)` so the `nodebuild` feature's blockmap/node builders can narrow
+/// vertices through the identical pass (ADR-0024 §3) before rasterizing or
+/// partitioning on the `i16` geometry the engine will actually read.
+pub(crate) fn narrow_vertices(
+    n: &mut Narrower,
+    raw: &[MapVertex],
+) -> Result<Vec<Vertex>, DoomWriteError> {
     let mut out = Vec::with_capacity(raw.len());
     for (i, v) in raw.iter().enumerate() {
         out.push(Vertex {
@@ -806,6 +823,11 @@ pub fn write_doom_map(
     }
 
     let mut n = Narrower::new(opts.strictness);
+    // Nodes are never built by this path, in either mode — say so up front, as
+    // the first warning every call returns (this seeding moved out of
+    // `Narrower::new` so the `nodebuild` builders, which reuse the narrower but
+    // *do* build nodes, never inherit it; ADR-0024 §3).
+    n.warnings.push(DoomWriteWarning::NodesNotBuilt);
     if map.format() == MapFormat::Doom64 {
         n.warnings.push(DoomWriteWarning::ColoredLightingDropped);
     }

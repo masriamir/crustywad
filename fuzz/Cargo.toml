@@ -61,6 +61,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_build_lumps"
+path = "fuzz_targets/fuzz_build_lumps.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_sections"
 path = "fuzz_targets/fuzz_sections.rs"
 test = false
@@ -104,7 +110,7 @@ doc = false
 
 [dependencies]
 libfuzzer-sys = "0.4"
-crustywad = { path = "../crates/crustywad", features = ["write", "doom64-gfx"] }
+crustywad = { path = "../crates/crustywad", features = ["nodebuild", "doom64-gfx"] }
 
 [profile.release]
 debug = 1

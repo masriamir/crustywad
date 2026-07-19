@@ -10,6 +10,13 @@ mod write;
 #[cfg(feature = "write")]
 pub use write::{DoomMapLumps, DoomWriteError, DoomWriteWarning, add_doom_map, write_doom_map};
 
+// The `write` module is private to `map::doom`, so the `nodebuild` builders
+// (in `map::build`) cannot reach its `pub(crate)` coordinate narrower by path.
+// Re-export the two items they share (ADR-0024 §3), gated so nothing is unused
+// when the feature is off.
+#[cfg(feature = "nodebuild")]
+pub(crate) use write::{Narrower, narrow_vertices};
+
 /// A single record from the `THINGS` lump, describing one map object.
 ///
 /// Things include player start positions, monsters, items, decorations, and
