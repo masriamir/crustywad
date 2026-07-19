@@ -20,10 +20,13 @@ use crate::map::graph::MapReject;
 /// §6): the reject early-out never fires and sight checks fall through to the
 /// full trace.
 ///
-/// Infallible. An assembled [`Map`] always has at least one sector (an empty
-/// required arena is a fatal assembly error, ADR-0015); a hypothetical
-/// zero-sector input simply yields an empty table (`ceil(0 / 8) == 0` bytes),
-/// which round-trips as an absent REJECT.
+/// Infallible. A zero-sector [`Map`] is reachable — both lenient and strict
+/// assembly can produce one from an empty `SECTORS` lump, since
+/// `decode_required` only checks lump presence, not record count — and for
+/// that input the expected size is `ceil(0² / 8) == 0` bytes, so this simply
+/// returns an empty table. [`MapReject::parse`] reads an empty lump as
+/// `Ok(None)` ("not built"), so the round-trip property (ADR-0024 §7) applies
+/// to maps with at least one sector.
 #[must_use]
 pub fn build_reject(map: &Map) -> MapReject {
     let sector_count = map.sectors().len();

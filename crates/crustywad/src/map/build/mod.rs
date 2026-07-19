@@ -9,9 +9,11 @@
 //!
 //! # Staging
 //!
-//! Per ADR-0024 §9 this arrives in stages. Stage 1 (this commit) ships the
-//! REJECT builder ([`build_reject`](crate::map::build::build_reject)); the
-//! BLOCKMAP builder and the classic BSP pass follow. Every builder narrows
+//! Per ADR-0024 §9 this arrives in stages. Stage 1 (this module, ADR-0024
+//! §9.1) ships both the BLOCKMAP builder
+//! ([`build_blockmap`](crate::map::build::build_blockmap)) and the REJECT
+//! builder ([`build_reject`](crate::map::build::build_reject)); the classic
+//! BSP pass follows in stage 2 (issue #315). Every builder narrows
 //! coordinates through the same pass as the write path (ADR-0024 §3) so the
 //! geometry it operates on is exactly the `i16` values the engine reads.
 //!

@@ -1,4 +1,4 @@
-//! The BLOCKMAP builder (ADR-0024 §5, staging §9.2).
+//! The BLOCKMAP builder (ADR-0024 §5, staging §9.1).
 //!
 //! A `BLOCKMAP` lump is the engine's coarse spatial index: the map is covered by
 //! a grid of 128×128-map-unit blocks and, for each block, the lump lists every
