@@ -3762,3 +3762,26 @@ fn info_summarizes_all_audio_kinds() {
         .stdout(predicate::str::contains("Midi: 1"))
         .stdout(predicate::str::contains("Wav: 1"));
 }
+
+#[test]
+fn extract_malformed_midi_falls_back_to_raw() {
+    // Detects as MIDI (4-byte magic) but fails even the lenient parse
+    // (`0 < len < 14`): the extract must warn and fall back to raw `.bin`,
+    // matching the MUS fallback contract.
+    let bare_midi: Vec<u8> = vec![b'M', b'T', b'h', b'd', 0, 0, 0, 6];
+    let wad = write_wad(*b"IWAD", &[("SHORTMID", &bare_midi)]);
+    let dir = tempfile::tempdir().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            wad.path().to_str().unwrap(),
+            "--output",
+            dir.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("could not index MIDI chunks"));
+    assert!(dir.path().join("SHORTMID.bin").exists());
+    assert!(!dir.path().join("SHORTMID.mid").exists());
+}

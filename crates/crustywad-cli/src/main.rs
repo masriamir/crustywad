@@ -356,8 +356,21 @@ fn extract_outputs<'a>(
                 vec![(DEFAULT_EXTENSION, Cow::Borrowed(data))]
             }
         },
-        // Standard MIDI and RIFF/WAVE already are their own containers.
-        AudioKind::Midi => vec![("mid", Cow::Borrowed(data))],
+        // Standard MIDI and RIFF/WAVE already are their own containers, but
+        // MIDI detection is magic-only (4 bytes), so a truncated lump must
+        // take the same warned raw fallback as MUS rather than masquerade as
+        // a playable `.mid`.
+        AudioKind::Midi => match MidiInfo::parse(data, &opts) {
+            Ok(_) => vec![("mid", Cow::Borrowed(data))],
+            Err(e) => {
+                warnings.push(format!(
+                    "{raw_name}: could not index MIDI chunks ({e}); extracted raw bytes"
+                ));
+                vec![(DEFAULT_EXTENSION, Cow::Borrowed(data))]
+            }
+        },
+        // A 12-byte WAV detection always parses leniently (warnings at
+        // worst), so the passthrough needs no fallback arm.
         AudioKind::Wav => vec![("wav", Cow::Borrowed(data))],
         // PC-speaker data has no standard container, `Unknown` is not audio,
         // and (`AudioKind` being `#[non_exhaustive]`) any future variant is
