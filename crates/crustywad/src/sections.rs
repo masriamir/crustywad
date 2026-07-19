@@ -3,14 +3,15 @@
 //! Classic WADs bracket flats/sprites/patches between marker lumps
 //! (`F_START..F_END`, ... — typically zero-size, though recognition here
 //! is by name only); Doom 64 WADs bracket sprites, world
-//! textures, and sounds (`S_`/`T_`/`DS_START..END`). Both reference
+//! textures, sounds, and (in the 2020 KEX remaster) music
+//! (`S_`/`T_`/`DS_`/`DM_` + `START`/`END`). Both reference
 //! engines derive section extents by unguarded subtraction of two
 //! independently looked-up marker names; this module replaces that
 //! anti-pattern with a validated scan (strict errors / lenient warnings
 //! per the ADR).
 //!
 //! Grammar (recognition is by NAME only — no engine checks marker sizes):
-//! base pairs `S_`/`F_`/`P_`/`T_`/`G_`/`DS_` + `START`/`END`; Boom's
+//! base pairs `S_`/`F_`/`P_`/`T_`/`G_`/`DS_`/`DM_` + `START`/`END`; Boom's
 //! doubled-first-letter aliases for single-character prefixes only
 //! (`FF_`/`PP_`/`SS_` — per `PrBoom+` `w_wad.c` `IsMarker`: "FF_* is valid
 //! alias for F_*, but HI_* should not allow HHI_*"); numbered sub-pairs
@@ -40,6 +41,14 @@ pub enum SectionKind {
     /// `G_START..G_END` (Doom 64 generic graphics; absent from the retail
     /// KEX IWAD and therefore optional).
     Graphics,
+    /// `DM_START..DM_END` (Doom 64 music). This marker pair was introduced
+    /// by the 2020 KEX remaster's `DOOM64.WAD` (24 standard-MIDI lumps:
+    /// `MUSAMB01`-`MUSAMB20`, `MUSFINAL`, `MUSDONE`, `MUSINTRO`, `MUSTITLE`).
+    /// The `Doom64EX` sources never emit it — legacy music lived inside
+    /// `DS_START..DS_END` — so before this variant the remaster's music
+    /// markers parsed as ordinary zero-size lumps; recognizing them makes
+    /// the section first-class.
+    Music,
 }
 
 /// One marker-delimited section of a WAD directory.
@@ -278,7 +287,8 @@ fn classify(name: &str) -> Option<Marker> {
     let (kind, sub) = match prefix.as_bytes() {
         [b] => (single(*b)?, false),
         b"DS" => (SectionKind::Sounds, false),
-        // Boom doubled aliases: F/P/S only (never T/G/DS).
+        b"DM" => (SectionKind::Music, false),
+        // Boom doubled aliases: F/P/S only (never T/G/DS/DM).
         [a, b] if a == b && matches!(a, b'F' | b'P' | b'S') => (single(*a)?, false),
         // Numbered sub-pairs: F/P/S + one digit 1-9.
         [a, d] if d.is_ascii_digit() && *d != b'0' && matches!(a, b'F' | b'P' | b'S') => {
