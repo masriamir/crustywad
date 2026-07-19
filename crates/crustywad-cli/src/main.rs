@@ -312,8 +312,10 @@ const DEFAULT_EXTENSION: &str = "bin";
 /// Chooses the extraction output(s) for one lump: a list of
 /// `(extension, bytes)` pairs to write. Classification is by content
 /// ([`AudioKind::detect`]), never by lump name; audio parses are lenient (an
-/// extract tool should extract). A DMX or MUS lump that fails even a lenient
-/// parse falls back to a raw `.bin` write and pushes a warning onto `warnings`.
+/// extract tool should extract). A MUS lump that fails even a lenient parse
+/// (its detection is magic-only, unlike DMX, whose detection guarantees a
+/// successful parse — the DMX fallback arm below is purely defensive) falls
+/// back to a raw `.bin` write and pushes a warning onto `warnings`.
 ///
 /// `raw_name` is the lump's on-disk name, used only for warning messages.
 fn extract_outputs<'a>(
