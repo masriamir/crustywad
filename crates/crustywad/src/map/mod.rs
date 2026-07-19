@@ -23,6 +23,12 @@ use binrw::{BinRead, BinReaderExt};
 use thiserror::Error;
 
 pub mod assemble;
+/// Clean-room BLOCKMAP/REJECT/BSP builders (ADR-0024). Requires the
+/// `nodebuild` feature (which enables `write`); produces engine-playable node
+/// lumps from an assembled [`Map`], reusing the write path's coordinate
+/// narrowing (ADR-0024 §3).
+#[cfg(feature = "nodebuild")]
+pub mod build;
 pub mod common;
 pub mod doom;
 pub mod doom64;
