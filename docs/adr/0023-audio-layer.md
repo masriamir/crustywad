@@ -509,3 +509,12 @@ with no warning; the engine's mapped/skipped classification is exposed as
 per `gusconf.c:127-131`) so callers can reproduce the engine's filter
 without the parser editorializing. The sweep's zero-warning contract for
 DMXGUS holds under the corrected policy.
+
+Also aligned by #301: §2's "strict requires exactly 11908 bytes" wording for
+GENMIDI is corrected to the module-wide slack policy the implementation
+ships — strict requires the **full** extent (short is an error), while a
+**longer** lump parses its first 11908 bytes with a trailing-slack warning
+in **both** modes, exactly as `DmxSound`/`PcSpeakerSound` treat slack. A
+strict-mode hard rejection of slack would have made GENMIDI the module's one
+slack-rejecting parser for no engine-grounded reason (the engine reads the
+lump with no size check at all).

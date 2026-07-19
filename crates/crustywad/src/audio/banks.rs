@@ -110,11 +110,13 @@ impl GenmidiInstrument {
 /// performs **no** validation — it pointer-casts the lump — so this parser
 /// supplies the checks the engine omits (ADR-0023 §5).
 ///
-/// Strict mode requires the exact 11908-byte extent and the magic. A longer
-/// lump is trailing slack (a warning in both modes); a wrong magic or a short
-/// lump is a strict error, recovered leniently with a warning. Lenient
-/// recovery never reads past the bytes present: it decodes every complete
-/// record, then every complete name field, that fits.
+/// Strict mode requires the **full** 11908-byte extent and the magic: a
+/// short lump or a wrong magic is a strict error, recovered leniently with a
+/// warning. A **longer** lump parses its first 11908 bytes in **both** modes
+/// with a [`AudioWarning::TrailingSlack`] — the module-wide slack policy
+/// (`DmxSound`/`PcSpeakerSound` behave the same; ADR-0023 §2 amendment).
+/// Lenient recovery never reads past the bytes present: it decodes every
+/// complete record, then every complete name field, that fits.
 ///
 /// Names are stored as owned [`String`]s, trimmed at the first NUL and
 /// converted with [`String::from_utf8_lossy`] (a non-UTF-8 name field yields
