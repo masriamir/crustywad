@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a27261e8.js";
+            window.path_to_searchindex_js = "searchindex-18e81e76.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c2918eee.js"></script>
+        <script src="toc-eed51aa7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -284,22 +284,21 @@ let bytes = builder.build()?;
 </span><span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
 </span><span class="boring">}</span></code></pre>
 <blockquote>
-<p><strong>Converted output is not engine-playable.</strong> <code>add_doom_map</code> writes
-<strong>zero-length <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code>, <code>REJECT</code>, and <code>BLOCKMAP</code></strong>
-lumps — the canonical Doom lump run editors and nodebuilders expect to
-find, but with no node data in them. Every call returns
-<code>DoomWriteWarning::NodesNotBuilt</code>, in <strong>both</strong> strictness modes: it is
-a property of the output, not a defect strictness can fix. The result is
-<strong>editor- and nodebuilder-ready, not engine-playable</strong> — either run an
-external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over it, or build the node lumps
-in-crate with the <a href="./features.html#nodebuild"><code>nodebuild</code></a> feature’s
-<code>build_nodes</code> (the classic BSP <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), <code>build_blockmap</code>,
-and <code>build_reject</code> (ADR-0024) and add them to the WAD yourself before loading
-it in a source port. When <code>build_nodes</code> splits segs it creates new vertices;
-append <code>to_lump_bytes()</code>‘s <code>split_vertexes</code> to the map’s <code>VERTEXES</code> lump (see
-the <a href="./features.html#nodebuild"><code>nodebuild</code> example</a>) or the segs’ vertex
-indices will point past the vertex table. (Extended/GL node <em>generation</em>
-remains tracked separately, issue #199.)</p>
+<p><strong><code>add_doom_map</code> output is not engine-playable on vanilla ports.</strong>
+<code>add_doom_map</code> writes <strong>zero-length <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code>, <code>REJECT</code>,
+and <code>BLOCKMAP</code></strong> lumps — the canonical Doom lump run editors and
+nodebuilders expect to find, but with no node data in them. Every call
+returns <code>DoomWriteWarning::NodesNotBuilt</code>, in <strong>both</strong> strictness modes: it
+is a property of the output, not a defect strictness can fix. The ZDoom
+family rebuilds those lumps at load, but vanilla and Chocolate Doom need
+real ones. To get an engine-playable map, either build the node lumps
+in-crate with the <a href="./features.html#nodebuild"><code>nodebuild</code></a> feature — the
+<code>add_doom_map_with_nodes</code> one-shot, or the <code>build_nodes</code> / <code>build_blockmap</code> /
+<code>build_reject</code> builders — or run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …)
+over the output. From the CLI, <code>cwad convert --to doom --nodes</code> is the
+turnkey path. See <a href="building-nodes.html">Building nodes</a> for the full picture,
+including the tolerated mixed-sector fan and when GL/extended nodes still
+need an external tool (issue #199).</p>
 </blockquote>
 <h2 id="round-tripping-not-symmetric"><a class="header" href="#round-tripping-not-symmetric">Round-tripping: not symmetric</a></h2>
 <blockquote>
@@ -483,7 +482,7 @@ and exit codes.</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="map-records.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="building-nodes.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -497,7 +496,7 @@ and exit codes.</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="map-records.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="building-nodes.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

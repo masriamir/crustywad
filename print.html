@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a27261e8.js";
+            window.path_to_searchindex_js = "searchindex-18e81e76.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c2918eee.js"></script>
+        <script src="toc-eed51aa7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -638,22 +638,21 @@ let bytes = builder.build()?;
 </span><span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
 </span><span class="boring">}</span></code></pre>
 <blockquote>
-<p><strong>Converted output is not engine-playable.</strong> <code>add_doom_map</code> writes
-<strong>zero-length <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code>, <code>REJECT</code>, and <code>BLOCKMAP</code></strong>
-lumps — the canonical Doom lump run editors and nodebuilders expect to
-find, but with no node data in them. Every call returns
-<code>DoomWriteWarning::NodesNotBuilt</code>, in <strong>both</strong> strictness modes: it is
-a property of the output, not a defect strictness can fix. The result is
-<strong>editor- and nodebuilder-ready, not engine-playable</strong> — either run an
-external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over it, or build the node lumps
-in-crate with the <a href="#nodebuild"><code>nodebuild</code></a> feature’s
-<code>build_nodes</code> (the classic BSP <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), <code>build_blockmap</code>,
-and <code>build_reject</code> (ADR-0024) and add them to the WAD yourself before loading
-it in a source port. When <code>build_nodes</code> splits segs it creates new vertices;
-append <code>to_lump_bytes()</code>‘s <code>split_vertexes</code> to the map’s <code>VERTEXES</code> lump (see
-the <a href="#nodebuild"><code>nodebuild</code> example</a>) or the segs’ vertex
-indices will point past the vertex table. (Extended/GL node <em>generation</em>
-remains tracked separately, issue #199.)</p>
+<p><strong><code>add_doom_map</code> output is not engine-playable on vanilla ports.</strong>
+<code>add_doom_map</code> writes <strong>zero-length <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code>, <code>REJECT</code>,
+and <code>BLOCKMAP</code></strong> lumps — the canonical Doom lump run editors and
+nodebuilders expect to find, but with no node data in them. Every call
+returns <code>DoomWriteWarning::NodesNotBuilt</code>, in <strong>both</strong> strictness modes: it
+is a property of the output, not a defect strictness can fix. The ZDoom
+family rebuilds those lumps at load, but vanilla and Chocolate Doom need
+real ones. To get an engine-playable map, either build the node lumps
+in-crate with the <a href="#nodebuild"><code>nodebuild</code></a> feature — the
+<code>add_doom_map_with_nodes</code> one-shot, or the <code>build_nodes</code> / <code>build_blockmap</code> /
+<code>build_reject</code> builders — or run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …)
+over the output. From the CLI, <code>cwad convert --to doom --nodes</code> is the
+turnkey path. See <a href="#building-nodes">Building nodes</a> for the full picture,
+including the tolerated mixed-sector fan and when GL/extended nodes still
+need an external tool (issue #199).</p>
 </blockquote>
 <h2 id="round-tripping-not-symmetric"><a class="header" href="#round-tripping-not-symmetric">Round-tripping: not symmetric</a></h2>
 <blockquote>
@@ -828,6 +827,102 @@ them and warns. A map already in the target format is not converted, so
 nothing in its group is dropped.</p>
 <p>See <a href="#convert">CLI Usage</a> for the full flag reference, example output,
 and exit codes.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="building-nodes"><a class="header" href="#building-nodes">Building nodes</a></h1>
+<p>A classic Doom map is not engine-playable from its editable lumps alone
+(<code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>VERTEXES</code>, <code>SECTORS</code>). The engine also
+reads a run of <em>derived</em> lumps — <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code> (the BSP tree),
+<code>REJECT</code> (sector-to-sector line-of-sight), and <code>BLOCKMAP</code> (the collision
+grid) — that a <strong>nodebuilder</strong> computes from the geometry. <code>crustywad</code>’s
+<a href="#nodebuild"><code>nodebuild</code></a> feature is a clean-room nodebuilder for the
+classic 16-bit tier (ADR-0024).</p>
+<p>This page explains when you need it, the pieces it provides, and the one-line
+turnkey path. For the full Rust worked example, see the
+<a href="#nodebuild"><code>nodebuild</code> feature reference</a>; this page links to it
+rather than duplicating the code.</p>
+<h2 id="why-the-empty-lumps-are-not-always-enough"><a class="header" href="#why-the-empty-lumps-are-not-always-enough">Why the empty lumps are not always enough</a></h2>
+<p><code>add_doom_map()</code> and <code>cwad convert --to doom</code> (see
+<a href="#converting-maps">Converting maps</a>) emit <strong>zero-length</strong> <code>SEGS</code>, <code>SSECTORS</code>,
+<code>NODES</code>, <code>REJECT</code>, and <code>BLOCKMAP</code> — the canonical lump run, present but empty —
+and always warn <code>NodesNotBuilt</code>. Whether that output plays depends on the
+engine tier (ADR-0024):</p>
+<ul>
+<li><strong>The ZDoom family (GZDoom, Zandronum, …) rebuilds missing nodes at load.</strong>
+It detects all-empty <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code> and runs its own internal
+nodebuilder, and likewise regenerates a missing or oversized <code>BLOCKMAP</code> and
+<code>REJECT</code>. On these ports the empty-lump output is already playable.</li>
+<li><strong>Vanilla and Chocolate Doom rebuild nothing.</strong> Their loaders copy the node
+indices with almost no validation and walk the tree directly. Empty node
+lumps send every point to subsector 0 or crash outright. These ports need
+<strong>real</strong> node lumps.</li>
+</ul>
+<p>The nodebuilder’s entire value is the vanilla tier: it produces the lumps a
+faithful port requires, so a freshly converted or generated map runs without an
+external tool.</p>
+<h2 id="the-builders-and-the-one-shot"><a class="header" href="#the-builders-and-the-one-shot">The builders and the one-shot</a></h2>
+<p>With <code>nodebuild</code> enabled, <code>crustywad::map::build</code> exposes three builders, each
+turning an assembled <a href="#map-record-parsing"><code>Map</code></a> into one part of the node run:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Builder</th><th>Produces</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>build_reject</code></td><td><code>REJECT</code></td><td>Infallible; the correctly-sized all-zeros table (<code>ceil(sectors² / 8)</code> bytes) — an all-clear table pre-rejects no line of sight, exactly what <code>zdbsp</code> emits.</td></tr>
+<tr><td><code>build_blockmap</code></td><td><code>BLOCKMAP</code></td><td>The packed 128-unit collision grid, deduplicated blocklists.</td></tr>
+<tr><td><code>build_nodes</code></td><td><code>SEGS</code> / <code>SSECTORS</code> / <code>NODES</code> (+ split vertices)</td><td>The classic BSP pass: partitions the map on seg lines into a deterministic tree.</td></tr>
+</tbody>
+</table>
+</div>
+<p>When <code>build_nodes</code> splits a seg it creates a new vertex; its
+<code>to_lump_bytes()</code> output carries those <code>split_vertexes</code>, which <strong>must</strong> be
+appended to the map’s <code>VERTEXES</code> lump or the segs’ vertex indices dangle. The
+<a href="#nodebuild"><code>nodebuild</code> worked example</a> shows the full manual
+assembly, including this append and the canonical lump order.</p>
+<h3 id="the-one-shot-add_doom_map_with_nodes"><a class="header" href="#the-one-shot-add_doom_map_with_nodes">The one-shot: <code>add_doom_map_with_nodes</code></a></h3>
+<p><code>add_doom_map_with_nodes(builder, name, map, write_opts, build_opts)</code> bundles
+all of the above — it serializes the five data lumps, runs the three builders,
+appends the split vertices, and adds the complete engine-playable map group to a
+<code>WadBuilder</code> in canonical lump order. Unlike <code>add_doom_map</code>, it <strong>never</strong> emits
+<code>NodesNotBuilt</code> (it built the nodes); every other write-path recovery still
+surfaces, wrapped as <code>NodeBuildWarning::Write</code>. Reach for it when you want a
+playable Doom map group in one call rather than orchestrating the builders by
+hand.</p>
+<h2 id="from-the-cli-cwad-convert---nodes"><a class="header" href="#from-the-cli-cwad-convert---nodes">From the CLI: <code>cwad convert --nodes</code></a></h2>
+<p><code>cwad convert --to doom --nodes</code> is the turnkey path — it runs the one-shot for
+every converted map, so the output WAD is engine-playable with no external step:</p>
+<pre><code class="language-bash">cwad convert udmf.wad -o doom.wad --to doom --nodes --lenient
+cwad validate --deep doom.wad
+</code></pre>
+<p><code>--nodes</code> only affects classic Doom output; it is ignored (with a note on
+stderr) for <code>--to udmf</code>, which has no binary node lumps. The global <code>--lenient</code>
+flag selects lenient mode for both the conversion and the node build. See
+<a href="#convert">CLI Usage</a> for the full flag reference.</p>
+<h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
+<p>Real geometry occasionally produces a convex leaf that spans more than one
+sector with no seg line able to separate them — the <strong>mixed-sector fan</strong> (two
+sectors meeting at a bare corner vertex). Across the full retail collection,
+551 classic maps build clean save for exactly this case:</p>
+<ul>
+<li><strong>Strict</strong> <code>build_nodes</code> / <code>add_doom_map_with_nodes</code> <strong>rejects</strong> such a map.</li>
+<li><strong>Lenient</strong> accepts the leaf and emits <code>NodeBuildWarning::MixedSectorSubsector</code>
+— the exact engine-tolerated output the retail masters themselves ship
+(ADR-0024 §7 amendment).</li>
+</ul>
+<p>This is why converting real maps with <code>--nodes</code> often needs <code>--lenient</code>: the
+warning names an inherent property of the source geometry, not a defect the
+builder could fix.</p>
+<h2 id="when-you-still-need-an-external-nodebuilder"><a class="header" href="#when-you-still-need-an-external-nodebuilder">When you still need an external nodebuilder</a></h2>
+<p>The clean-room builder targets the <strong>classic 16-bit tier only</strong> — vanilla-layout
+<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>, which covers every real classic map with wide margin
+(ADR-0024 §1). It does <strong>not</strong> generate GL nodes or the extended/compressed
+encodings (<code>XNOD</code>/<code>ZNOD</code>, GL variants). For those, the long-standing recipe
+still applies: run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output.</p>
+<p><code>crustywad</code> tracks GL/extended node <em>reading</em> separately under the
+<code>Extended nodes</code> milestone (issue #199); extended <em>generation</em> belongs there too
+if and when something needs it. A <code>cwad build --nodes</code> for authoring a WAD from
+loose lumps is deferred to issue #320 — today the node-building CLI surface is
+<code>cwad convert --nodes</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="map-record-parsing"><a class="header" href="#map-record-parsing">Map Record Parsing</a></h1>
 <p>Doom maps are stored as a group of sequentially named lumps. After the marker lump
@@ -1641,14 +1736,30 @@ only the named map (e.g. <code>--map MAP01</code>) and pass every other map thro
 unchanged; omit it to convert every map in the WAD. A <code>--map NAME</code> that
 matches no map in the WAD is an error (exit <code>3</code>), not a no-op. Use <code>--kind</code>
 to set the output WAD kind (<code>iwad</code> or <code>pwad</code>; default <code>pwad</code>).</p>
-<blockquote>
-<p><strong>Converting to <code>doom</code> is not engine-playable without a nodebuilder.</strong>
-<code>--to doom</code> emits empty <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/<code>REJECT</code>/<code>BLOCKMAP</code>
-lumps and always prints a <code>NodesNotBuilt</code> warning to stderr — run an
-external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output before loading
-it in a source port. See <a href="#converting-maps">Converting maps</a> for
-details.</p>
-</blockquote>
+<h4 id="building-nodes---nodes"><a class="header" href="#building-nodes---nodes">Building nodes: <code>--nodes</code></a></h4>
+<p>By default, <code>--to doom</code> emits empty <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/<code>REJECT</code>/<code>BLOCKMAP</code>
+lumps and always prints a <code>NodesNotBuilt</code> warning to stderr — playable on the
+ZDoom family (which rebuilds nodes at load) but not on vanilla ports. Pass
+<code>--nodes</code> to <strong>build</strong> those lumps for real, so the output is engine-playable
+everywhere with no external nodebuilder pass:</p>
+<pre><code class="language-text">$ cwad convert udmf.wad -o doom.wad --to doom --nodes --lenient
+wrote doom.wad: converted 1 map to doom
+</code></pre>
+<p><code>--nodes</code> builds the classic 16-bit node lumps via the
+<a href="#building-nodes"><code>nodebuild</code></a> pipeline (<code>add_doom_map_with_nodes</code>): the BSP
+tree, the collision <code>BLOCKMAP</code>, and the all-clear <code>REJECT</code>. The
+<code>NodesNotBuilt</code> warning is then gone (the nodes exist). The global <code>--lenient</code>
+flag applies to the build too — it is often needed for real maps, whose
+geometry can contain the engine-tolerated mixed-sector fan that strict mode
+rejects (see <a href="#the-tolerated-mixed-sector-fan">Building nodes</a>).</p>
+<p><code>--nodes</code> only affects classic Doom output; combined with <code>--to udmf</code> it has no
+effect (UDMF has no binary node lumps) and prints a note to stderr:</p>
+<pre><code class="language-text">$ cwad convert doom.wad -o out.wad --to udmf --nodes
+note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
+</code></pre>
+<p>GL nodes and extended/compressed node formats are out of scope for <code>--nodes</code> —
+for those, still run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the
+output. See <a href="#building-nodes">Building nodes</a> for the full picture.</p>
 <p><strong>Strict mode refuses data loss.</strong> Converting a typical ZDoom-namespace UDMF
 map (linedef <code>args</code>, thing <code>height</code>/<code>id</code>/<code>special</code>, …) to <code>doom</code> exits <code>3</code>,
 naming the offending field on stderr:</p>
@@ -1792,7 +1903,7 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#doom64-tests"><code>doom64-tests</code></a></td><td>no</td><td>Integration tests against a local Doom 64 IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
-<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), and the <code>to_lump_bytes</code> serializers</td></tr>
+<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; powers <code>cwad convert --nodes</code></td></tr>
 <tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
 </tbody>
 </table>
@@ -1968,7 +2079,8 @@ mode writes the raw 4-byte magic.</li>
 <hr>
 <h2 id="nodebuild"><a class="header" href="#nodebuild"><code>nodebuild</code></a></h2>
 <p><strong>Enables:</strong> the <code>map::build</code> module — <code>NodeBuildOptions</code>, <code>NodeBuildError</code>, <code>NodeBuildWarning</code>,
-<code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass), and the
+<code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass),
+<code>add_doom_map_with_nodes</code> (the engine-playable one-shot), and the
 <code>nodebuild</code>-gated <code>to_lump_bytes</code> serializers on the read-side lump types (<code>MapBlockmap</code>,
 <code>MapReject</code>, and <code>BuiltNodes</code>)</p>
 <p><strong>Adds dependency:</strong> none — implies <code>write</code></p>
@@ -1990,6 +2102,12 @@ clean, save for the mixed-sector fan (two sectors meeting at a bare corner verte
 seg line can separate): strict <code>build_nodes</code> rejects such a map, and lenient accepts the leaf
 with a <code>NodeBuildWarning::MixedSectorSubsector</code> — the exact engine-tolerated output the retail
 masters themselves ship (ADR-0024 §7 amendment, 2026-07-19).</p>
+<p>The <code>add_doom_map_with_nodes</code> one-shot bundles all three builders (plus the five
+data lumps) into a single call that adds a complete, engine-playable map group to
+a <code>WadBuilder</code> — the same path <code>cwad convert --to doom --nodes</code> runs. See the
+<a href="#building-nodes">Building nodes</a> guide page for when you need built nodes, the
+tolerated mixed-sector fan, and when GL/extended nodes still call for an external
+tool.</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.6.0", features = ["nodebuild"] }

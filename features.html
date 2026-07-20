@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a27261e8.js";
+            window.path_to_searchindex_js = "searchindex-18e81e76.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c2918eee.js"></script>
+        <script src="toc-eed51aa7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -193,7 +193,7 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#doom64-tests"><code>doom64-tests</code></a></td><td>no</td><td>Integration tests against a local Doom 64 IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
-<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), and the <code>to_lump_bytes</code> serializers</td></tr>
+<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; powers <code>cwad convert --nodes</code></td></tr>
 <tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
 </tbody>
 </table>
@@ -369,7 +369,8 @@ mode writes the raw 4-byte magic.</li>
 <hr>
 <h2 id="nodebuild"><a class="header" href="#nodebuild"><code>nodebuild</code></a></h2>
 <p><strong>Enables:</strong> the <code>map::build</code> module — <code>NodeBuildOptions</code>, <code>NodeBuildError</code>, <code>NodeBuildWarning</code>,
-<code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass), and the
+<code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass),
+<code>add_doom_map_with_nodes</code> (the engine-playable one-shot), and the
 <code>nodebuild</code>-gated <code>to_lump_bytes</code> serializers on the read-side lump types (<code>MapBlockmap</code>,
 <code>MapReject</code>, and <code>BuiltNodes</code>)</p>
 <p><strong>Adds dependency:</strong> none — implies <code>write</code></p>
@@ -391,6 +392,12 @@ clean, save for the mixed-sector fan (two sectors meeting at a bare corner verte
 seg line can separate): strict <code>build_nodes</code> rejects such a map, and lenient accepts the leaf
 with a <code>NodeBuildWarning::MixedSectorSubsector</code> — the exact engine-tolerated output the retail
 masters themselves ship (ADR-0024 §7 amendment, 2026-07-19).</p>
+<p>The <code>add_doom_map_with_nodes</code> one-shot bundles all three builders (plus the five
+data lumps) into a single call that adds a complete, engine-playable map group to
+a <code>WadBuilder</code> — the same path <code>cwad convert --to doom --nodes</code> runs. See the
+<a href="building-nodes.html">Building nodes</a> guide page for when you need built nodes, the
+tolerated mixed-sector fan, and when GL/extended nodes still call for an external
+tool.</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.6.0", features = ["nodebuild"] }

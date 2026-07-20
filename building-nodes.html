@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Reading WAD Files - crustywad</title>
+        <title>Building nodes - crustywad</title>
 
 
         <!-- Custom HTML head -->
@@ -177,135 +177,111 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="reading-wad-files"><a class="header" href="#reading-wad-files">Reading WAD Files</a></h1>
-<h2 id="constructors"><a class="header" href="#constructors">Constructors</a></h2>
-<p><code>Wad</code> provides several constructors depending on your input source:</p>
+                        <h1 id="building-nodes"><a class="header" href="#building-nodes">Building nodes</a></h1>
+<p>A classic Doom map is not engine-playable from its editable lumps alone
+(<code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>VERTEXES</code>, <code>SECTORS</code>). The engine also
+reads a run of <em>derived</em> lumps — <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code> (the BSP tree),
+<code>REJECT</code> (sector-to-sector line-of-sight), and <code>BLOCKMAP</code> (the collision
+grid) — that a <strong>nodebuilder</strong> computes from the geometry. <code>crustywad</code>’s
+<a href="features.html#nodebuild"><code>nodebuild</code></a> feature is a clean-room nodebuilder for the
+classic 16-bit tier (ADR-0024).</p>
+<p>This page explains when you need it, the pieces it provides, and the one-line
+turnkey path. For the full Rust worked example, see the
+<a href="features.html#nodebuild"><code>nodebuild</code> feature reference</a>; this page links to it
+rather than duplicating the code.</p>
+<h2 id="why-the-empty-lumps-are-not-always-enough"><a class="header" href="#why-the-empty-lumps-are-not-always-enough">Why the empty lumps are not always enough</a></h2>
+<p><code>add_doom_map()</code> and <code>cwad convert --to doom</code> (see
+<a href="converting-maps.html">Converting maps</a>) emit <strong>zero-length</strong> <code>SEGS</code>, <code>SSECTORS</code>,
+<code>NODES</code>, <code>REJECT</code>, and <code>BLOCKMAP</code> — the canonical lump run, present but empty —
+and always warn <code>NodesNotBuilt</code>. Whether that output plays depends on the
+engine tier (ADR-0024):</p>
+<ul>
+<li><strong>The ZDoom family (GZDoom, Zandronum, …) rebuilds missing nodes at load.</strong>
+It detects all-empty <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code> and runs its own internal
+nodebuilder, and likewise regenerates a missing or oversized <code>BLOCKMAP</code> and
+<code>REJECT</code>. On these ports the empty-lump output is already playable.</li>
+<li><strong>Vanilla and Chocolate Doom rebuild nothing.</strong> Their loaders copy the node
+indices with almost no validation and walk the tree directly. Empty node
+lumps send every point to subsector 0 or crash outright. These ports need
+<strong>real</strong> node lumps.</li>
+</ul>
+<p>The nodebuilder’s entire value is the vanilla tier: it produces the lumps a
+faithful port requires, so a freshly converted or generated map runs without an
+external tool.</p>
+<h2 id="the-builders-and-the-one-shot"><a class="header" href="#the-builders-and-the-one-shot">The builders and the one-shot</a></h2>
+<p>With <code>nodebuild</code> enabled, <code>crustywad::map::build</code> exposes three builders, each
+turning an assembled <a href="map-records.html"><code>Map</code></a> into one part of the node run:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Constructor</th><th>Source</th><th>Notes</th></tr>
+<tr><th>Builder</th><th>Produces</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>Wad::from_bytes(bytes)</code></td><td><code>Vec&lt;u8&gt;</code> / <code>&amp;[u8]</code> / byte array</td><td>No file I/O</td></tr>
-<tr><td><code>Wad::from_bytes_with_options(bytes, opts)</code></td><td>Same, with custom options</td><td></td></tr>
-<tr><td><code>Wad::from_path(path)</code></td><td>File path</td><td>Reads file into heap</td></tr>
-<tr><td><code>Wad::from_path_with_options(path, opts)</code></td><td>File path + options</td><td></td></tr>
-<tr><td><code>Wad::from_path_mapped(path)</code></td><td>File path</td><td>Memory-mapped; requires <code>mmap</code> feature</td></tr>
-<tr><td><code>Wad::from_path_mapped_with_options(path, opts)</code></td><td>File path + options</td><td>Requires <code>mmap</code> feature</td></tr>
+<tr><td><code>build_reject</code></td><td><code>REJECT</code></td><td>Infallible; the correctly-sized all-zeros table (<code>ceil(sectors² / 8)</code> bytes) — an all-clear table pre-rejects no line of sight, exactly what <code>zdbsp</code> emits.</td></tr>
+<tr><td><code>build_blockmap</code></td><td><code>BLOCKMAP</code></td><td>The packed 128-unit collision grid, deduplicated blocklists.</td></tr>
+<tr><td><code>build_nodes</code></td><td><code>SEGS</code> / <code>SSECTORS</code> / <code>NODES</code> (+ split vertices)</td><td>The classic BSP pass: partitions the map on seg lines into a deterministic tree.</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="accessing-lumps"><a class="header" href="#accessing-lumps">Accessing lumps</a></h2>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use crustywad::Wad;
-
-// Build a minimal IWAD with one lump for illustration.
-let mut bytes = Vec::new();
-bytes.extend_from_slice(b"IWAD");
-bytes.extend_from_slice(&amp;1_i32.to_le_bytes());   // numlumps = 1
-bytes.extend_from_slice(&amp;16_i32.to_le_bytes());  // infotableofs = 16
-bytes.extend_from_slice(&amp;[1, 2, 3, 4]);           // lump data at offset 12
-bytes.extend_from_slice(&amp;12_i32.to_le_bytes());  // directory: filepos = 12
-bytes.extend_from_slice(&amp;4_i32.to_le_bytes());   // directory: size = 4
-bytes.extend_from_slice(b"TEST\0\0\0\0");         // directory: name
-
-let wad = Wad::from_bytes(bytes)?;
-
-// By index.
-if let Some(lump) = wad.lump(0) {
-    println!("lump[0]: {} ({} bytes at {})", lump.name(), lump.size(), lump.filepos());
-}
-
-// By name.
-if let Some(lump) = wad.lump_by_name("TEST") {
-    let data: &amp;[u8] = wad.lump_data(lump);
-    println!("TEST lump is {} bytes", data.len());
-}
-
-// Iterate all lumps.
-for lump in wad.lumps() {
-    println!("{}: {} bytes", lump.name(), lump.size());
-}
-
-// Raw bytes by index (returns None if index is out of range).
-if let Some(bytes) = wad.lump_bytes(0) {
-    println!("raw bytes: {:?}", bytes);
-}
-<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
-</span><span class="boring">}</span></code></pre>
-<h2 id="strict-vs-lenient-parsing"><a class="header" href="#strict-vs-lenient-parsing">Strict vs. lenient parsing</a></h2>
-<p>By default <code>Wad::from_bytes</code> and <code>Wad::from_path</code> use <strong>strict</strong> mode: the first
-validation error stops parsing and returns a <code>ParseError</code>.</p>
-<p>Use <strong>lenient</strong> mode when you want best-effort recovery from malformed files:</p>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use crustywad::{ParseOptions, Wad};
-
-let options = ParseOptions::lenient();
-let result = Wad::from_path_with_options("questionable.wad", options)?;
-
-// Inspect any non-fatal issues collected during parsing.
-for warning in result.warnings() {
-    eprintln!("warning: {warning}");
-}
-<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
-</span><span class="boring">}</span></code></pre>
-<p>You can also use the shorthand constructors:</p>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use crustywad::ParseOptions;
-
-let strict  = ParseOptions::strict();   // same as default
-let lenient = ParseOptions::lenient();
-<span class="boring">}</span></code></pre>
-<h3 id="what-each-mode-does"><a class="header" href="#what-each-mode-does">What each mode does</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Condition</th><th>Strict</th><th>Lenient</th></tr>
-</thead>
-<tbody>
-<tr><td>Invalid magic bytes</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, <code>WadKind::Unknown</code></td></tr>
-<tr><td>Negative <code>numlumps</code> or <code>infotableofs</code></td><td><code>ParseError</code></td><td><code>ParseWarning</code>, value clamped to 0</td></tr>
-<tr><td>Directory extends past end-of-file</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, truncated to available entries</td></tr>
-<tr><td>Lump data out of bounds</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, range clamped</td></tr>
-<tr><td>Non-ASCII lump name</td><td><code>ParseError</code></td><td><code>ParseWarning</code>, lossy UTF-8 decoding</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="wad-kind"><a class="header" href="#wad-kind">WAD kind</a></h2>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>use crustywad::{Wad, WadKind};
-
-<span class="boring">let mut bytes = Vec::new();
-</span><span class="boring">bytes.extend_from_slice(b"IWAD");
-</span><span class="boring">bytes.extend_from_slice(&amp;1_i32.to_le_bytes());
-</span><span class="boring">bytes.extend_from_slice(&amp;16_i32.to_le_bytes());
-</span><span class="boring">bytes.extend_from_slice(&amp;[1, 2, 3, 4]);
-</span><span class="boring">bytes.extend_from_slice(&amp;12_i32.to_le_bytes());
-</span><span class="boring">bytes.extend_from_slice(&amp;4_i32.to_le_bytes());
-</span><span class="boring">bytes.extend_from_slice(b"TEST\0\0\0\0");
-</span>let wad = Wad::from_bytes(bytes)?;
-
-match wad.kind() {
-    WadKind::Iwad =&gt; println!("IWAD — base game data"),
-    WadKind::Pwad =&gt; println!("PWAD — patch or add-on"),
-    WadKind::Unknown(magic) =&gt; println!("Unknown magic: {:?}", magic),
-}
-<span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
-</span><span class="boring">}</span></code></pre>
+<p>When <code>build_nodes</code> splits a seg it creates a new vertex; its
+<code>to_lump_bytes()</code> output carries those <code>split_vertexes</code>, which <strong>must</strong> be
+appended to the map’s <code>VERTEXES</code> lump or the segs’ vertex indices dangle. The
+<a href="features.html#nodebuild"><code>nodebuild</code> worked example</a> shows the full manual
+assembly, including this append and the canonical lump order.</p>
+<h3 id="the-one-shot-add_doom_map_with_nodes"><a class="header" href="#the-one-shot-add_doom_map_with_nodes">The one-shot: <code>add_doom_map_with_nodes</code></a></h3>
+<p><code>add_doom_map_with_nodes(builder, name, map, write_opts, build_opts)</code> bundles
+all of the above — it serializes the five data lumps, runs the three builders,
+appends the split vertices, and adds the complete engine-playable map group to a
+<code>WadBuilder</code> in canonical lump order. Unlike <code>add_doom_map</code>, it <strong>never</strong> emits
+<code>NodesNotBuilt</code> (it built the nodes); every other write-path recovery still
+surfaces, wrapped as <code>NodeBuildWarning::Write</code>. Reach for it when you want a
+playable Doom map group in one call rather than orchestrating the builders by
+hand.</p>
+<h2 id="from-the-cli-cwad-convert---nodes"><a class="header" href="#from-the-cli-cwad-convert---nodes">From the CLI: <code>cwad convert --nodes</code></a></h2>
+<p><code>cwad convert --to doom --nodes</code> is the turnkey path — it runs the one-shot for
+every converted map, so the output WAD is engine-playable with no external step:</p>
+<pre><code class="language-bash">cwad convert udmf.wad -o doom.wad --to doom --nodes --lenient
+cwad validate --deep doom.wad
+</code></pre>
+<p><code>--nodes</code> only affects classic Doom output; it is ignored (with a note on
+stderr) for <code>--to udmf</code>, which has no binary node lumps. The global <code>--lenient</code>
+flag selects lenient mode for both the conversion and the node build. See
+<a href="cli.html#convert">CLI Usage</a> for the full flag reference.</p>
+<h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
+<p>Real geometry occasionally produces a convex leaf that spans more than one
+sector with no seg line able to separate them — the <strong>mixed-sector fan</strong> (two
+sectors meeting at a bare corner vertex). Across the full retail collection,
+551 classic maps build clean save for exactly this case:</p>
+<ul>
+<li><strong>Strict</strong> <code>build_nodes</code> / <code>add_doom_map_with_nodes</code> <strong>rejects</strong> such a map.</li>
+<li><strong>Lenient</strong> accepts the leaf and emits <code>NodeBuildWarning::MixedSectorSubsector</code>
+— the exact engine-tolerated output the retail masters themselves ship
+(ADR-0024 §7 amendment).</li>
+</ul>
+<p>This is why converting real maps with <code>--nodes</code> often needs <code>--lenient</code>: the
+warning names an inherent property of the source geometry, not a defect the
+builder could fix.</p>
+<h2 id="when-you-still-need-an-external-nodebuilder"><a class="header" href="#when-you-still-need-an-external-nodebuilder">When you still need an external nodebuilder</a></h2>
+<p>The clean-room builder targets the <strong>classic 16-bit tier only</strong> — vanilla-layout
+<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>, which covers every real classic map with wide margin
+(ADR-0024 §1). It does <strong>not</strong> generate GL nodes or the extended/compressed
+encodings (<code>XNOD</code>/<code>ZNOD</code>, GL variants). For those, the long-standing recipe
+still applies: run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output.</p>
+<p><code>crustywad</code> tracks GL/extended node <em>reading</em> separately under the
+<code>Extended nodes</code> milestone (issue #199); extended <em>generation</em> belongs there too
+if and when something needs it. A <code>cwad build --nodes</code> for authoring a WAD from
+loose lumps is deferred to issue #320 — today the node-building CLI surface is
+<code>cwad convert --nodes</code>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="getting-started.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="converting-maps.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="writing-wads.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="map-records.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -315,11 +291,11 @@ match wad.kind() {
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="getting-started.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="converting-maps.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="writing-wads.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="map-records.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

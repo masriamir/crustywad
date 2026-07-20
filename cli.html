@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a27261e8.js";
+            window.path_to_searchindex_js = "searchindex-18e81e76.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c2918eee.js"></script>
+        <script src="toc-eed51aa7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -288,14 +288,30 @@ only the named map (e.g. <code>--map MAP01</code>) and pass every other map thro
 unchanged; omit it to convert every map in the WAD. A <code>--map NAME</code> that
 matches no map in the WAD is an error (exit <code>3</code>), not a no-op. Use <code>--kind</code>
 to set the output WAD kind (<code>iwad</code> or <code>pwad</code>; default <code>pwad</code>).</p>
-<blockquote>
-<p><strong>Converting to <code>doom</code> is not engine-playable without a nodebuilder.</strong>
-<code>--to doom</code> emits empty <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/<code>REJECT</code>/<code>BLOCKMAP</code>
-lumps and always prints a <code>NodesNotBuilt</code> warning to stderr — run an
-external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output before loading
-it in a source port. See <a href="converting-maps.html">Converting maps</a> for
-details.</p>
-</blockquote>
+<h4 id="building-nodes---nodes"><a class="header" href="#building-nodes---nodes">Building nodes: <code>--nodes</code></a></h4>
+<p>By default, <code>--to doom</code> emits empty <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/<code>REJECT</code>/<code>BLOCKMAP</code>
+lumps and always prints a <code>NodesNotBuilt</code> warning to stderr — playable on the
+ZDoom family (which rebuilds nodes at load) but not on vanilla ports. Pass
+<code>--nodes</code> to <strong>build</strong> those lumps for real, so the output is engine-playable
+everywhere with no external nodebuilder pass:</p>
+<pre><code class="language-text">$ cwad convert udmf.wad -o doom.wad --to doom --nodes --lenient
+wrote doom.wad: converted 1 map to doom
+</code></pre>
+<p><code>--nodes</code> builds the classic 16-bit node lumps via the
+<a href="building-nodes.html"><code>nodebuild</code></a> pipeline (<code>add_doom_map_with_nodes</code>): the BSP
+tree, the collision <code>BLOCKMAP</code>, and the all-clear <code>REJECT</code>. The
+<code>NodesNotBuilt</code> warning is then gone (the nodes exist). The global <code>--lenient</code>
+flag applies to the build too — it is often needed for real maps, whose
+geometry can contain the engine-tolerated mixed-sector fan that strict mode
+rejects (see <a href="building-nodes.html#the-tolerated-mixed-sector-fan">Building nodes</a>).</p>
+<p><code>--nodes</code> only affects classic Doom output; combined with <code>--to udmf</code> it has no
+effect (UDMF has no binary node lumps) and prints a note to stderr:</p>
+<pre><code class="language-text">$ cwad convert doom.wad -o out.wad --to udmf --nodes
+note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
+</code></pre>
+<p>GL nodes and extended/compressed node formats are out of scope for <code>--nodes</code> —
+for those, still run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the
+output. See <a href="building-nodes.html">Building nodes</a> for the full picture.</p>
 <p><strong>Strict mode refuses data loss.</strong> Converting a typical ZDoom-namespace UDMF
 map (linedef <code>args</code>, thing <code>height</code>/<code>id</code>/<code>special</code>, …) to <code>doom</code> exits <code>3</code>,
 naming the offending field on stderr:</p>
