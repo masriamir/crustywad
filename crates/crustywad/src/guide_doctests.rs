@@ -13,10 +13,13 @@
 //! features (`write`, `nodebuild`, `doom64-gfx`). Compiling the pages as
 //! crate doctests under `--all-features` sidesteps both limitations.
 //!
-//! Because these are ordinary crate doctests, CI's existing
-//! `cargo test --workspace --all-features` (the `test` job) already compiles
-//! and runs them — no dedicated job is needed. `just guide-test` runs only
-//! these locally. Keep the crate's doctests enabled (do not set
+//! The module is gated `cfg(all(doctest, feature = "guide-doctests"))`. The
+//! feature is **off by default** because the `include_str!`s reach repo-level
+//! `docs/` files that are *not* shipped in the published crate — so a plain
+//! `cargo test --doc` on the packaged crate must not try to include them. CI's
+//! existing `cargo test --workspace --all-features` (the `test` job) enables
+//! the feature and runs these — no dedicated job is needed; `just guide-test`
+//! does the same locally. Keep the crate's doctests enabled (do not set
 //! `[lib] doctest = false`), or this check silently stops running.
 //!
 //! Blocks that cannot compile as-is are marked in the Markdown: struct-layout
