@@ -2696,6 +2696,118 @@ fn convert_udmf_to_doom_with_nodes_builds_playable_lumps() {
     assert_maps_assemble_strict_clean(out.path());
 }
 
+/// A PWAD holding a single **Doom-format** square-room map (`MAP01`) whose
+/// SEGS/SSECTORS/NODES/REJECT/BLOCKMAP lumps are present but zero-length — the
+/// output `add_doom_map` produces (an editor's "run a nodebuilder" map) — plus
+/// a trailing `COLORMAP` non-map lump. The geometry is the square room, so a
+/// real node build turns the empty node lumps into a populated BSP.
+fn write_doom_square_room_empty_nodes_wad() -> NamedTempFile {
+    // Assemble the square room from its UDMF form, then serialize to the Doom
+    // binary format with empty node lumps via the write path.
+    let textmap = udmf_square_room();
+    let src = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let src_bytes = std::fs::read(src.path()).expect("source WAD readable");
+    let src_wad = crustywad::Wad::from_bytes(src_bytes).expect("source WAD parses");
+    let groups = src_wad.map_groups();
+    let group = groups.first().expect("source has one map group");
+    let map = crustywad::map::Map::assemble(&src_wad, group).expect("square room assembles");
+
+    let mut builder = crustywad::WadBuilder::new(crustywad::WadKind::Pwad);
+    crustywad::map::add_doom_map(
+        &mut builder,
+        "MAP01",
+        &map,
+        &crustywad::WriteOptions::strict(),
+    )
+    .expect("writes empty-node Doom map");
+    builder.add_lump("COLORMAP", vec![4_u8, 5, 6]);
+    let bytes = builder.build().expect("builds Doom WAD");
+
+    let out = NamedTempFile::new().unwrap();
+    std::fs::write(out.path(), &bytes).expect("write Doom fixture");
+    out
+}
+
+#[test]
+fn convert_doom_to_doom_with_nodes_rebuilds_empty_node_lumps() {
+    // Baseline: the Doom-format input's node lumps are empty (editor output).
+    let wad = write_doom_square_room_empty_nodes_wad();
+    assert!(
+        lump_bytes(wad.path(), "SEGS").is_empty(),
+        "fixture precondition: input SEGS is empty"
+    );
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(0)
+        // The map is rebuilt (not passed through), so it is counted and the
+        // NodesNotBuilt warning is absent.
+        .stdout(predicate::str::contains("converted 1 map to doom"))
+        .stderr(predicate::str::contains("run a nodebuilder").not());
+
+    // Same-format Doom map is now rebuilt: node lumps populated, non-map lump
+    // still passed through in order.
+    assert_eq!(
+        lump_names(out.path()),
+        vec![
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP", "COLORMAP",
+        ]
+    );
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "SEGS should be non-empty after a Doom->Doom node build"
+    );
+    assert!(!lump_bytes(out.path(), "SSECTORS").is_empty());
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn convert_doom_to_doom_without_nodes_passes_through_empty_node_lumps() {
+    // Contrast with the --nodes case: without --nodes, a same-format Doom map
+    // passes through verbatim, keeping its empty node lumps.
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 0 maps to doom"));
+
+    // Passed through unchanged: SEGS stays empty.
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "without --nodes the empty SEGS should pass through unchanged"
+    );
+}
+
 #[test]
 fn convert_nodes_ignored_for_udmf_target_with_note() {
     let wad = write_udmf_square_room_wad();

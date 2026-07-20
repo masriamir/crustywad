@@ -1085,7 +1085,15 @@ fn run(cli: Cli) -> Result<i32> {
                 if map.as_deref().is_some_and(|n| n != group.name) {
                     continue;
                 }
-                if detect_map_format(&wad, &group) == target {
+                // A map already in the target format normally passes through
+                // untouched — except `--nodes` targeting Doom, which must
+                // (re)build the node lumps even for a Doom-format input (e.g. an
+                // editor's empty-node output, the canonical "make it playable"
+                // case). Routing it through `starts` sends it to
+                // `add_doom_map_with_nodes` below.
+                if detect_map_format(&wad, &group) == target
+                    && !(nodes && matches!(to, MapFormatArg::Doom))
+                {
                     continue; // already in the target format: pass through
                 }
                 let extra = dropped_group_lumps(&wad, &group);
