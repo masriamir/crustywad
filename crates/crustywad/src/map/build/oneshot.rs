@@ -26,9 +26,10 @@ use super::{
 /// write path and is filtered out here (Global Constraint 4). Every other
 /// write-path recovery still surfaces, wrapped as [`NodeBuildWarning::Write`].
 ///
-/// The `REJECT` table [`build_reject`] produces is all zeros — the engine-correct
-/// "no monster can see any target is impossible" default (every sector pair is
-/// visible), which is exactly what a freshly built map wants.
+/// The `REJECT` table [`build_reject`] produces is all zeros: it rejects no
+/// sector pair, so every pair is treated as potentially visible. That is the
+/// engine-correct default (a set bit only ever *suppresses* a line-of-sight
+/// check) and exactly what a freshly built map wants.
 ///
 /// The lumps are added in the canonical order (Global Constraint 5): the `name`
 /// marker, `THINGS`, `LINEDEFS`, `SIDEDEFS`, `VERTEXES` (the map's vertices with
@@ -70,19 +71,21 @@ pub fn add_doom_map_with_nodes(
     write_opts: &WriteOptions,
     build_opts: &NodeBuildOptions,
 ) -> Result<Vec<NodeBuildWarning>, NodeBuildError> {
-    // 1. REJECT — infallible, all-zeros (engine-correct: every sector pair visible).
+    // 1. The five data lumps and the write-path warnings, first: strict-mode
+    //    narrowing of any field (THINGS, LINEDEFS, …) errors here, before the
+    //    expensive BSP/blockmap builds, so a doomed conversion fails fast.
+    let (mut data, write_ws) = write_doom_map(map, write_opts)?;
+
+    // 2. REJECT — infallible, all-zeros (engine-correct: every sector pair visible).
     let reject = build_reject(map).to_lump_bytes();
 
-    // 2. BLOCKMAP — collect its build warnings.
+    // 3. BLOCKMAP — collect its build warnings.
     let (blockmap, blockmap_ws) = build_blockmap(map, build_opts)?;
     let blockmap = blockmap.to_lump_bytes()?;
 
-    // 3. SEGS/SSECTORS/NODES — collect its build warnings.
+    // 4. SEGS/SSECTORS/NODES — collect its build warnings.
     let (nodes, node_ws) = build_nodes(map, build_opts)?;
     let node_lumps = nodes.to_lump_bytes()?;
-
-    // 4. The five data lumps and the write-path warnings.
-    let (mut data, write_ws) = write_doom_map(map, write_opts)?;
 
     // Deterministic warning order: write (minus NodesNotBuilt), blockmap, nodes.
     // `NodesNotBuilt` describes the empty-lump write path and is a lie here — we
@@ -112,6 +115,5 @@ pub fn add_doom_map_with_nodes(
     builder.add_lump("REJECT", reject);
     builder.add_lump("BLOCKMAP", blockmap);
 
-    // 7.
     Ok(warnings)
 }
