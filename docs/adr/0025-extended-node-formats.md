@@ -30,8 +30,8 @@ path. This ADR decides that path.
 
 The design is grounded in three source-verified research passes recorded on
 #199 (2026-07-20): a format taxonomy from the zdbsp writers and gzdoom
-loaders, an engine-consumption/de-facto-usage survey across the modern ports,
-and a crustywad-state audit of the read model and its seams.
+loaders, a survey of engine consumption and de facto usage across the modern
+ports, and a crustywad-state audit of the read model and its seams.
 
 ### What the research established
 
