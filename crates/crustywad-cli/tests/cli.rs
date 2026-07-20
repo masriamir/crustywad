@@ -2630,6 +2630,40 @@ fn write_udmf_square_room_wad() -> NamedTempFile {
     )
 }
 
+/// A UDMF `TEXTMAP` for a mixed-sector fan: two coincident one-sided walls
+/// facing *different* sectors, which no seg line can separate. The classic BSP
+/// pass rejects this in strict mode (`NodeBuildError::MixedSectorSubsector`) and
+/// tolerates it in lenient mode (ADR-0024 §7 amendment) — the geometry the
+/// retail masters themselves ship.
+fn udmf_mixed_sector_fan() -> String {
+    concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 64; y = 0; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 1; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; blocking = true; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 1; blocking = true; }\n",
+        "thing { x = 32; y = 0; type = 1; skill1 = true; skill2 = true; skill3 = true; }\n",
+    )
+    .to_owned()
+}
+
+/// A PWAD holding the mixed-sector-fan map (`MAP01`).
+fn write_udmf_mixed_sector_fan_wad() -> NamedTempFile {
+    let textmap = udmf_mixed_sector_fan();
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    )
+}
+
 /// Re-reads a WAD file and asserts every map group assembles strict-clean (no
 /// assembly warnings), the engine-playable acceptance criterion.
 fn assert_maps_assemble_strict_clean(path: &std::path::Path) {
@@ -2694,6 +2728,53 @@ fn convert_udmf_to_doom_with_nodes_builds_playable_lumps() {
 
     // The output is engine-playable: its maps re-read and assemble strict-clean.
     assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn convert_to_doom_with_nodes_refuses_mixed_sector_fan_and_hints_lenient() {
+    let wad = write_udmf_mixed_sector_fan_wad();
+
+    // Strict: `add_doom_map_with_nodes` fails with `MixedSectorSubsector`; the
+    // convert refuses (exit 3), names the map, and — because the error IS
+    // lenient-recoverable (#264) — suggests `--lenient`.
+    let strict_out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            strict_out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "cannot convert map MAP01 to doom: a convex subsector",
+        ))
+        .stderr(predicate::str::contains("spans multiple sectors"))
+        .stderr(predicate::str::contains("re-run with --lenient"));
+
+    // Lenient: the fan is tolerated (ADR-0024 §7), so the same conversion
+    // succeeds and produces a playable map.
+    let lenient_out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            lenient_out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(0);
+    assert!(!lump_bytes(lenient_out.path(), "SEGS").is_empty());
 }
 
 /// A PWAD holding a single **Doom-format** square-room map (`MAP01`) whose
