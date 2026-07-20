@@ -459,9 +459,12 @@ struct WorkSeg {
     direction: u16,
     /// The sector this seg's own side faces (for the single-sector rule, §C).
     side_sector: usize,
-    /// Distance along the linedef from the seg's start reference to `v1`, already
-    /// narrowed to `i16` range (§D; clamped/errored at creation, never here).
-    offset: i32,
+    /// The **raw** (un-narrowed) Euclidean distance along the linedef from the
+    /// seg's start reference to `v1`, in map units (§D). Kept as `f64` and
+    /// narrowed to `i16` range only at flatten time, where the seg's real final
+    /// index is known for the [`DoomWriteWarning::ValueClamped`] / `ValueOutOfRange`
+    /// diagnostic (Finding 2, PR #319).
+    offset: f64,
 }
 
 /// How a seg sits relative to a partition line (§B.2).
@@ -702,7 +705,7 @@ impl<'a> Bsp<'a> {
                     linedef: li,
                     direction: 0,
                     side_sector: sector,
-                    offset: 0,
+                    offset: 0.0,
                 });
             }
             if let Some(side) = ld.left {
@@ -713,7 +716,7 @@ impl<'a> Bsp<'a> {
                     linedef: li,
                     direction: 1,
                     side_sector: sector,
-                    offset: 0,
+                    offset: 0.0,
                 });
             }
         }
@@ -732,7 +735,9 @@ impl<'a> Bsp<'a> {
                 Task::Split(set) => self.process_split(set, &mut work, &mut done)?,
                 Task::Merge { px, py, dx, dy } => {
                     // Front was pushed last, so it completed first and sits
-                    // beneath back on the `done` stack.
+                    // beneath back on the `done` stack. unreachable panic: every
+                    // `Merge` is pushed together with its two child `Split`s, each
+                    // of which pushes exactly one `done` entry before this pops.
                     let back = done.pop().expect("merge back child present");
                     let front = done.pop().expect("merge front child present");
                     self.tree_nodes.push(TreeNode {
@@ -1086,8 +1091,10 @@ impl<'a> Bsp<'a> {
         let c1 = self.coord(s.v1);
         let mid = self.intern_vertex(mx, my);
 
-        let off_front = self.finalize_offset(distance(rx, ry, c1.0, c1.1), s.linedef)?;
-        let off_mid = self.finalize_offset(distance(rx, ry, mx, my), s.linedef)?;
+        // Raw distances; narrowing to i16 is deferred to flatten time, where the
+        // final seg index is known for the diagnostic (Finding 2, PR #319).
+        let off_front = distance(rx, ry, c1.0, c1.1);
+        let off_mid = distance(rx, ry, mx, my);
 
         // Fragment A spans s.v1 → mid; fragment B spans mid → s.v2. Each inherits
         // linedef/direction/sector (§C.4).
@@ -1144,37 +1151,6 @@ impl<'a> Bsp<'a> {
         idx
     }
 
-    /// Narrows a computed seg `offset` to `i16` range (§D, controller note 1):
-    /// strict errors via the write-path `ValueOutOfRange`; lenient clamps and
-    /// warns via `ValueClamped`, so a `build_nodes` product never trips
-    /// [`BuiltNodes::to_lump_bytes`]'s defensive offset check.
-    fn finalize_offset(&mut self, raw: f64, linedef: usize) -> Result<i32, NodeBuildError> {
-        let rounded = round_half_away(raw);
-        if let Ok(v) = i16::try_from(rounded) {
-            return Ok(i32::from(v));
-        }
-        match self.strictness {
-            Strictness::Strict => Err(NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
-                block: "seg",
-                field: "offset",
-                index: linedef,
-                value: i64::from(rounded),
-            })),
-            Strictness::Lenient => {
-                let clamped = rounded.clamp(i32::from(i16::MIN), i32::from(i16::MAX));
-                self.warnings
-                    .push(NodeBuildWarning::Write(DoomWriteWarning::ValueClamped {
-                        block: "seg",
-                        field: "offset",
-                        index: linedef,
-                        from: i64::from(rounded),
-                        to: i64::from(clamped),
-                    }));
-                Ok(clamped)
-            }
-        }
-    }
-
     /// Flattens the tree arena into [`BuiltNodes`]: final segs (contiguous per
     /// subsector), subsectors (creation order), nodes (post-order, root last),
     /// with child bboxes computed bottom-up (§C.4, §D). Enforces the arena
@@ -1198,26 +1174,38 @@ impl<'a> Bsp<'a> {
         // Final segs, subsectors owning contiguous runs (Global Constraint 5).
         let mut segs: Vec<MapSeg> = Vec::with_capacity(self.live_segs);
         let mut subsectors: Vec<MapSubsector> = Vec::with_capacity(self.leaves.len());
+        let mut offset_warnings: Vec<NodeBuildWarning> = Vec::new();
         for leaf in &self.leaves {
             let start = segs.len();
             for &sid in leaf {
                 let s = self.segs[sid];
                 let (x1, y1) = self.coord(s.v1);
                 let (x2, y2) = self.coord(s.v2);
+                // Narrow the raw offset now that the seg's real final index is
+                // known (Finding 2, PR #319): the diagnostic names *this* seg.
+                let (offset, warning) = finalize_offset(s.offset, segs.len(), self.strictness)?;
+                if let Some(warning) = warning {
+                    offset_warnings.push(warning);
+                }
                 segs.push(MapSeg {
                     start: VertexIdx(s.v1),
                     end: VertexIdx(s.v2),
                     angle: bam_angle(x2 - x1, y2 - y1),
                     linedef: LinedefIdx(s.linedef),
                     direction: s.direction,
-                    offset: s.offset,
+                    offset,
                 });
             }
+            // Finding 1 (PR #319): a subsector's `seg_count` is a `u16` on disk,
+            // so a convex leaf of > 65,535 segs is structurally unencodable —
+            // reject here (both modes), not only later in `to_lump_bytes`.
+            check_subsector_seg_count(segs.len() - start)?;
             subsectors.push(MapSubsector {
                 segs: start..segs.len(),
                 leafs: 0..0,
             });
         }
+        self.warnings.extend(offset_warnings);
 
         // Final nodes: front = child[0] = right; back = left (Global Constraint 7).
         let mut nodes: Vec<MapNode> = Vec::with_capacity(self.tree_nodes.len());
@@ -1385,6 +1373,60 @@ fn check_hard_index_ceiling(kind: &'static str, count: usize) -> Result<(), Node
         });
     }
     Ok(())
+}
+
+/// A subsector's on-disk `seg_count` is a `u16`, so a convex leaf of more than
+/// 65,535 segs is structurally unencodable — a [`NodeBuildError::TooManyElements`]
+/// (`kind: "subsector segs"`) in **both** modes (Finding 1, PR #319). Reachable
+/// only at the seg-ceiling boundary: up to 65,536 segs collapsed into a single
+/// convex leaf in lenient mode.
+fn check_subsector_seg_count(count: usize) -> Result<(), NodeBuildError> {
+    if count > usize::from(u16::MAX) {
+        return Err(NodeBuildError::TooManyElements {
+            kind: "subsector segs",
+            count,
+            max: usize::from(u16::MAX),
+        });
+    }
+    Ok(())
+}
+
+/// Narrows a computed seg `offset` to the on-disk `i16` at flatten time (§D,
+/// Finding 2 PR #319). `index` is the seg's **final** index (not its linedef),
+/// so the diagnostic names the exact seg. Strict returns a write-path
+/// [`DoomWriteError::ValueOutOfRange`]; lenient clamps and returns a
+/// [`DoomWriteWarning::ValueClamped`] warning for the caller to record — so a
+/// `build_nodes` product never trips [`BuiltNodes::to_lump_bytes`]'s defensive
+/// offset check. A well-formed offset (≤ the linedef length) overflows only on a
+/// linedef longer than 32,767 units.
+fn finalize_offset(
+    raw: f64,
+    index: usize,
+    strictness: Strictness,
+) -> Result<(i32, Option<NodeBuildWarning>), NodeBuildError> {
+    let rounded = round_half_away(raw);
+    if let Ok(v) = i16::try_from(rounded) {
+        return Ok((i32::from(v), None));
+    }
+    match strictness {
+        Strictness::Strict => Err(NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+            block: "seg",
+            field: "offset",
+            index,
+            value: i64::from(rounded),
+        })),
+        Strictness::Lenient => {
+            let clamped = rounded.clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+            let warning = NodeBuildWarning::Write(DoomWriteWarning::ValueClamped {
+                block: "seg",
+                field: "offset",
+                index,
+                from: i64::from(rounded),
+                to: i64::from(clamped),
+            });
+            Ok((clamped, Some(warning)))
+        }
+    }
 }
 
 // These are public-API tests that would ordinarily live in
@@ -1682,6 +1724,212 @@ mod tests {
                 count: MAX_BSP_INDEX + 1,
                 max: MAX_BSP_INDEX,
             })
+        );
+    }
+
+    #[test]
+    fn subsector_seg_count_ceiling_rejects_over_u16_max() {
+        // The exact boundary: 65,535 is encodable, 65,536 is not (Finding 1).
+        let max = usize::from(u16::MAX);
+        assert_eq!(check_subsector_seg_count(max), Ok(()));
+        assert_eq!(
+            check_subsector_seg_count(max + 1),
+            Err(NodeBuildError::TooManyElements {
+                kind: "subsector segs",
+                count: max + 1,
+                max,
+            })
+        );
+    }
+
+    #[test]
+    fn finalize_offset_narrows_at_the_i16_boundary() {
+        // In range: no warning, value passes through (rounded half away).
+        assert_eq!(
+            finalize_offset(100.5, 7, Strictness::Strict).unwrap(),
+            (101, None)
+        );
+
+        // Strict overflow: a write-path ValueOutOfRange naming the SEG index.
+        let over = f64::from(i16::MAX) + 1.0;
+        assert_eq!(
+            finalize_offset(over, 42, Strictness::Strict).unwrap_err(),
+            NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+                block: "seg",
+                field: "offset",
+                index: 42,
+                value: i64::from(i16::MAX) + 1,
+            })
+        );
+
+        // Lenient overflow: clamp to i16::MAX and a ValueClamped warning on the
+        // same seg index.
+        let (value, warning) = finalize_offset(over, 42, Strictness::Lenient).unwrap();
+        assert_eq!(value, i32::from(i16::MAX));
+        assert_eq!(
+            warning,
+            Some(NodeBuildWarning::Write(DoomWriteWarning::ValueClamped {
+                block: "seg",
+                field: "offset",
+                index: 42,
+                from: i64::from(i16::MAX) + 1,
+                to: i64::from(i16::MAX),
+            }))
+        );
+    }
+
+    #[test]
+    fn encode_index_rejects_over_u16() {
+        assert_eq!(encode_index(0, "vertices").unwrap(), 0);
+        assert_eq!(encode_index(0xFFFF, "vertices").unwrap(), 0xFFFF);
+        // 0x1_0000 does not fit u16; the reported count is idx + 1.
+        assert_eq!(
+            encode_index(0x1_0000, "vertices").unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "vertices",
+                count: 0x1_0001,
+                max: MAX_U16_INDEXED,
+            }
+        );
+    }
+
+    #[test]
+    fn encode_count_rejects_over_u16() {
+        assert_eq!(encode_count(0xFFFF, "subsector segs").unwrap(), 0xFFFF);
+        // A count (not an index) reports itself, ceiling u16::MAX.
+        assert_eq!(
+            encode_count(0x1_0000, "subsector segs").unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "subsector segs",
+                count: 0x1_0000,
+                max: usize::from(u16::MAX),
+            }
+        );
+    }
+
+    #[test]
+    fn to_lump_bytes_rejects_out_of_range_node_fields() {
+        // Defensive serializer guards for a hand-constructed BuiltNodes:
+        // `build_nodes` never produces these (its node coords/bboxes are narrowed
+        // and its child indices bounded), so they guard only in-crate callers.
+        let base = MapNode {
+            x: 0,
+            y: 0,
+            dx: 1,
+            dy: 0,
+            right_bbox: [0; 4],
+            left_bbox: [0; 4],
+            right: NodeChild::Subsector(SubsectorIdx(0)),
+            left: NodeChild::Subsector(SubsectorIdx(0)),
+        };
+        let one_sub = vec![MapSubsector {
+            segs: 0..0,
+            leafs: 0..0,
+        }];
+        let build = |node: MapNode| BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: Vec::new(),
+            subsectors: one_sub.clone(),
+            nodes: vec![node],
+        };
+
+        // A node partition coordinate out of i16 range.
+        let mut node = base;
+        node.x = 40_000;
+        assert_eq!(
+            build(node).to_lump_bytes().unwrap_err(),
+            NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+                block: "node",
+                field: "x",
+                index: 0,
+                value: 40_000,
+            })
+        );
+
+        // A child bounding-box component out of i16 range.
+        let mut node = base;
+        node.right_bbox = [40_000, 0, 0, 0];
+        assert_eq!(
+            build(node).to_lump_bytes().unwrap_err(),
+            NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+                block: "node",
+                field: "right_bbox",
+                index: 0,
+                value: 40_000,
+            })
+        );
+
+        // A child index that leaves no room for the NF_SUBSECTOR flag bit.
+        let mut node = base;
+        node.right = NodeChild::Subsector(SubsectorIdx(MAX_BSP_INDEX));
+        assert_eq!(
+            build(node).to_lump_bytes().unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "subsectors",
+                count: MAX_BSP_INDEX + 1,
+                max: MAX_BSP_INDEX,
+            }
+        );
+    }
+
+    #[test]
+    fn to_lump_bytes_rejects_seg_vertex_index_over_u16() {
+        // A seg whose start vertex index does not fit u16 — the defensive
+        // `encode_index` guard reached through the serializer.
+        let mut s = seg(0, 1, 0x0000, 0);
+        s.start = VertexIdx(0x1_0000);
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: vec![s],
+            subsectors: vec![MapSubsector {
+                segs: 0..1,
+                leafs: 0..0,
+            }],
+            nodes: Vec::new(),
+        };
+        assert_eq!(
+            built.to_lump_bytes().unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "vertices",
+                count: 0x1_0001,
+                max: MAX_U16_INDEXED,
+            }
+        );
+    }
+
+    #[test]
+    fn too_many_nodes_errors_in_both_modes() {
+        // 32,769 nodes exceed the 15-bit child-reference ceiling; the nodes arm
+        // of `to_lump_bytes` is reached only when subsectors are within bounds.
+        let over = MAX_BSP_INDEX + 1;
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: Vec::new(),
+            subsectors: vec![MapSubsector {
+                segs: 0..0,
+                leafs: 0..0,
+            }],
+            nodes: vec![
+                MapNode {
+                    x: 0,
+                    y: 0,
+                    dx: 1,
+                    dy: 0,
+                    right_bbox: [0; 4],
+                    left_bbox: [0; 4],
+                    right: NodeChild::Subsector(SubsectorIdx(0)),
+                    left: NodeChild::Subsector(SubsectorIdx(0)),
+                };
+                over
+            ],
+        };
+        assert_eq!(
+            built.to_lump_bytes().unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "nodes",
+                count: over,
+                max: MAX_BSP_INDEX,
+            }
         );
     }
 }
