@@ -46,7 +46,7 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
 
 ### Thing
 
-```rust
+```rust,ignore
 pub struct Thing {
     pub x: i16,        // X coordinate in map units
     pub y: i16,        // Y coordinate in map units
@@ -58,7 +58,7 @@ pub struct Thing {
 
 ### Linedef
 
-```rust
+```rust,ignore
 pub struct Linedef {
     pub start_vertex: u16,   // Start vertex index
     pub end_vertex: u16,     // End vertex index
@@ -72,7 +72,7 @@ pub struct Linedef {
 
 ### Sidedef
 
-```rust
+```rust,ignore
 pub struct Sidedef {
     pub x_offset: i16,
     pub y_offset: i16,
@@ -85,7 +85,7 @@ pub struct Sidedef {
 
 ### Vertex
 
-```rust
+```rust,ignore
 pub struct Vertex {
     pub x: i16,
     pub y: i16,
@@ -94,7 +94,7 @@ pub struct Vertex {
 
 ### Sector
 
-```rust
+```rust,ignore
 pub struct Sector {
     pub floor_height: i16,
     pub ceiling_height: i16,
@@ -144,7 +144,7 @@ A WAD stores maps as a marker lump (e.g. `E1M1`, `MAP01`) followed by a run of d
 (`THINGS`, `LINEDEFS`, `SIDEDEFS`, `VERTEXES`, `SECTORS`, and friends). `Wad::map_groups`
 and `Wad::map_group` locate these runs and return one `MapGroup` per map:
 
-```rust
+```rust,ignore
 pub struct MapGroup {
     pub marker_index: usize,   // directory index of the marker lump
     pub name: String,          // the map's name, e.g. "E1M1"
@@ -301,7 +301,7 @@ linedef's `special` still holds its classic action number and sector tag (the la
 ```rust
 use crustywad::map::{Map, MapFormat};
 
-# let wad = crustywad::Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec())?;
+# let wad = crustywad::Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
 if let Some(group) = wad.map_group("MAP01") {
     let map = Map::assemble(&wad, &group)?;
 

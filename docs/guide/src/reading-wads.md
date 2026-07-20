@@ -60,7 +60,7 @@ validation error stops parsing and returns a `ParseError`.
 
 Use **lenient** mode when you want best-effort recovery from malformed files:
 
-```rust
+```rust,no_run
 use crustywad::{ParseOptions, Wad};
 
 let options = ParseOptions::lenient();

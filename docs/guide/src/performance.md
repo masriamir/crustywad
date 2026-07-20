@@ -60,7 +60,7 @@ just bench-open
 
 The Criterion HTML report is written to:
 
-```
+```text
 target/criterion/report/index.html
 ```
 

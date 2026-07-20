@@ -38,7 +38,7 @@ println!("lumps: {}", wad.lump_count());
 
 ## Loading from a file
 
-```rust
+```rust,no_run
 use crustywad::Wad;
 
 let wad = Wad::from_path("doom.wad")?;

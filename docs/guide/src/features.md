@@ -39,7 +39,7 @@ of whether this feature is enabled.
 crustywad = { version = "0.6.0", features = ["mmap"] }
 ```
 
-```rust
+```rust,no_run
 use crustywad::{Wad, ParseOptions};
 
 // Zero-copy load from disk:
