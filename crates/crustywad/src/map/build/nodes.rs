@@ -410,8 +410,10 @@ const SAMPLE_BUDGET: usize = 512;
 ///   child-reference ceiling); the > 32,768 vertex/seg *soft* ceiling is a
 ///   strict error and a lenient [`NodeBuildWarning::VanillaCeilingExceeded`].
 /// - [`NodeBuildError::MixedSectorSubsector`] (strict) when a convex region
-///   spans multiple sectors with no separating partition; lenient accepts it and
-///   emits [`NodeBuildWarning::MixedSectorSubsector`] once.
+///   spans multiple sectors with no separating seg line; lenient accepts the
+///   leaf and emits one [`NodeBuildWarning::MixedSectorSubsector`] per such leaf
+///   — the engine-tolerated output the retail masters ship (ADR-0024 §7
+///   amendment 2026-07-19).
 /// - [`NodeBuildError::DegeneratePartition`] (both modes) — a hardening guard —
 ///   when a selected partition fails to separate its seg set into two non-empty
 ///   sides (only reachable for adversarial geometry via the §C.3 endpoint
@@ -621,8 +623,6 @@ struct Bsp<'a> {
     aa_preference: u32,
     /// Recovered lenient-mode warnings.
     warnings: Vec<NodeBuildWarning>,
-    /// Whether the once-per-build mixed-sector warning has fired (§C.2).
-    mixed_warned: bool,
     /// Convex leaves, in creation order = final subsector order. Each is a list
     /// of seg ids.
     leaves: Vec<Vec<usize>>,
@@ -672,7 +672,6 @@ impl<'a> Bsp<'a> {
             split_cost: opts.split_cost,
             aa_preference: opts.aa_preference,
             warnings,
-            mixed_warned: false,
             leaves: Vec::new(),
             tree_nodes: Vec::new(),
             root: None,
@@ -775,16 +774,18 @@ impl<'a> Bsp<'a> {
         if let Some(cand) = self.select(&set, true) {
             return self.branch(cand, &set, work);
         }
-        // Truly coincident mixed-sector geometry.
+        // A mixed-sector fan: convex, multi-sector, and no seg line separates
+        // the sectors (§C.2 relaxed retry above found none). Strict rejects it;
+        // lenient accepts the leaf and warns once for it — the engine-tolerated
+        // output the retail masters ship (ADR-0024 §7 amendment 2026-07-19).
         match self.strictness {
             Strictness::Strict => Err(NodeBuildError::MixedSectorSubsector {
                 subsector_segs: set.len(),
             }),
             Strictness::Lenient => {
-                if !self.mixed_warned {
-                    self.warnings.push(NodeBuildWarning::MixedSectorSubsector);
-                    self.mixed_warned = true;
-                }
+                self.warnings.push(NodeBuildWarning::MixedSectorSubsector {
+                    subsector_segs: set.len(),
+                });
                 self.push_leaf(set, done);
                 Ok(())
             }

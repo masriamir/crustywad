@@ -165,11 +165,15 @@ pub enum NodeBuildError {
         /// The maximum the format can index.
         max: usize,
     },
-    /// A convex subsector spans multiple sectors and no partition line
-    /// separates them (ADR-0024 §C). The engine would render such a subsector
-    /// with the first seg's sector — the wrong flats — so strict mode rejects
-    /// it. Lenient mode instead accepts the subsector and emits
-    /// [`NodeBuildWarning::MixedSectorSubsector`] once per build.
+    /// A convex subsector spans multiple sectors and no seg line separates them
+    /// (ADR-0024 §C, §7 amendment 2026-07-19). The engine would render such a
+    /// subsector with the first seg's sector — the wrong flats — so strict mode
+    /// rejects it, naming the map that cannot yield a single-sector tree.
+    /// Lenient mode instead accepts the subsector and emits
+    /// [`NodeBuildWarning::MixedSectorSubsector`] once per such leaf — the same
+    /// engine-tolerated output the retail masters ship (30 shipped maps carry 47
+    /// such subsectors; the fan cannot be split without synthesizing a non-seg
+    /// partition line, which the ADR rejects as gilding past parity).
     #[error(
         "a convex subsector of {subsector_segs} segs spans multiple sectors with no separating partition"
     )]
@@ -236,14 +240,17 @@ pub enum NodeBuildWarning {
         /// The vanilla ceiling (32,768).
         max: usize,
     },
-    /// Lenient mode: a convex subsector spans multiple sectors with no
-    /// partition line that separates them (ADR-0024 §C). It was accepted as a
-    /// single subsector; the engine renders it with the first seg's sector
-    /// (the wrong flats — a soft-contract defect). Emitted at most once per
-    /// build. The strict-mode counterpart is
-    /// [`NodeBuildError::MixedSectorSubsector`].
+    /// Lenient mode: a convex subsector spans multiple sectors with no seg line
+    /// that separates them (ADR-0024 §C, §7 amendment 2026-07-19). It was
+    /// accepted as a single subsector; the engine renders it with the first
+    /// seg's sector (the wrong flats on a micro-sliver — a soft-contract defect
+    /// the retail masters themselves ship). Emitted **once per such leaf**. The
+    /// strict-mode counterpart is [`NodeBuildError::MixedSectorSubsector`].
     #[error(
-        "a convex subsector spans multiple sectors with no separating partition; rendered with the first seg's sector"
+        "a convex subsector of {subsector_segs} segs spans multiple sectors with no separating partition; rendered with the first seg's sector"
     )]
-    MixedSectorSubsector,
+    MixedSectorSubsector {
+        /// The number of segs in the accepted mixed-sector subsector.
+        subsector_segs: usize,
+    },
 }
