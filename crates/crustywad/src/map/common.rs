@@ -101,6 +101,8 @@ pub struct Vertex {
 ///
 /// The `SEGS` lump contains `N` records of exactly 12 bytes each.  Use
 /// [`parse_records::<Seg>`](crate::map::parse_records) to decode the whole lump at once.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Seg {
@@ -140,6 +142,8 @@ pub struct Seg {
 ///
 /// The `SSECTORS` lump contains `N` records of exactly 4 bytes each.  Use
 /// [`parse_records::<Subsector>`](crate::map::parse_records) to decode the whole lump at once.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Subsector {
@@ -163,6 +167,8 @@ pub struct Subsector {
 ///
 /// The `NODES` lump contains `N` records of exactly 28 bytes each.  Use
 /// [`parse_records::<Node>`](crate::map::parse_records) to decode the whole lump at once.
+#[cfg_attr(feature = "write", derive(binrw::BinWrite))]
+#[cfg_attr(feature = "write", bw(little))]
 #[derive(Debug, Clone, PartialEq, Eq, BinRead)]
 #[br(little)]
 pub struct Node {

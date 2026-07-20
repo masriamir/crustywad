@@ -185,7 +185,7 @@ mdBook guide to GitHub Pages. That file is the single source of truth.
 | `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD (via `CRUSTYWAD_DOOM64_DIR`; not auto-fetchable) |
 | `sweep-tests` | no | Enables an optional sweep test assembling every map of every WAD in a local collection (via `CRUSTYWAD_SWEEP_DIR`; not auto-fetchable) |
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
-| `nodebuild` | no | Enables the `map::build` node-lump builders (implies `write`) — `build_blockmap`/`build_reject` and the `to_lump_bytes` serializers for clean-room BLOCKMAP/REJECT generation (ADR-0024 stage 1); BSP node building follows (#315) |
+| `nodebuild` | no | Enables the `map::build` node-lump builders (implies `write`) — `build_blockmap`/`build_reject`/`build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`) and their `to_lump_bytes` serializers, for clean-room BLOCKMAP/REJECT/BSP node generation (ADR-0024) |
 | `doom64-gfx` | no | Enables `Doom64Png` decoding of Doom 64's PNG texture/sprite lumps via the `png` crate (indexed pixels + palette rows + `grAb` offsets, capped by `Limits::max_decoded_pixels`) |
 
 ## Commit conventions

@@ -177,7 +177,7 @@ cargo run -p crustywad-cli -- list path/to/file.wad
 | --- | --- | --- |
 | `mmap` | no | Enables `Wad::from_path_mapped` and `Wad::from_path_mapped_with_options` for memory-mapped file loading via `memmap2` — no heap copy on load. `Wad::from_path` always reads into memory regardless of this flag. |
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization. |
-| `nodebuild` | no | Enables the `map::build` node-lump builders (implies `write`) — `build_blockmap`/`build_reject` and the `to_lump_bytes` serializers for clean-room BLOCKMAP/REJECT generation (ADR-0024 stage 1); BSP node building follows (#315). |
+| `nodebuild` | no | Enables the `map::build` node-lump builders (implies `write`) — `build_blockmap`/`build_reject`/`build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`) and their `to_lump_bytes` serializers, for clean-room BLOCKMAP/REJECT/BSP node generation (ADR-0024). |
 | `doom64-gfx` | no | Enables `Doom64Png` decoding of Doom 64's PNG texture/sprite lumps via the `png` crate (indexed pixels + palette rows + `grAb` offsets, capped by `Limits::max_decoded_pixels`). |
 | `freedoom-tests` | no | Enables optional integration tests against local Freedoom WADs, supplied via `CRUSTYWAD_FREEDOOM_DIR` (auto-fetchable via `just fetch-fixtures`). |
 | `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD, supplied via `CRUSTYWAD_HEXEN_DIR` (not auto-fetchable). |
