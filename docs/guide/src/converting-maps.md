@@ -119,10 +119,13 @@ let bytes = builder.build()?;
 > find, but with no node data in them. Every call returns
 > `DoomWriteWarning::NodesNotBuilt`, in **both** strictness modes: it is
 > a property of the output, not a defect strictness can fix. The result is
-> **editor- and nodebuilder-ready, not engine-playable** — run an external
-> nodebuilder (`zdbsp`, `bsp`, …) over it before loading it in a source
-> port. crustywad has no nodebuilder; building nodes is tracked separately
-> (issue #199).
+> **editor- and nodebuilder-ready, not engine-playable** — either run an
+> external nodebuilder (`zdbsp`, `bsp`, …) over it, or build the node lumps
+> in-crate with the [`nodebuild`](./features.md#nodebuild) feature's
+> `build_nodes` (the classic BSP `SEGS`/`SSECTORS`/`NODES`), `build_blockmap`,
+> and `build_reject` (ADR-0024) and add them to the WAD yourself before loading
+> it in a source port. (Extended/GL node *generation* remains tracked separately,
+> issue #199.)
 
 ## Round-tripping: not symmetric
 

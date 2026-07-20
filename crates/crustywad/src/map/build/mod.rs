@@ -1,6 +1,6 @@
-//! Clean-room node-lump builders: BLOCKMAP and REJECT today, the classic
-//! BSP pass later (#315), generated from an assembled [`Map`]. A map is
-//! engine-playable on vanilla only once the BSP stage also lands.
+//! Clean-room node-lump builders: BLOCKMAP, REJECT, and the classic BSP pass
+//! (`SEGS`/`SSECTORS`/`NODES`), generated from an assembled [`Map`] — together
+//! the full set of node lumps a vanilla engine needs to run a converted map.
 //!
 //! This module is gated behind the `nodebuild` feature (which enables `write`).
 //! It fulfills ADR-0019 §4's revisit condition — `add_doom_map` emits
@@ -8,15 +8,18 @@
 //! [`DoomWriteWarning::NodesNotBuilt`](crate::map::DoomWriteWarning::NodesNotBuilt)
 //! — by building those lumps for real (ADR-0024).
 //!
-//! # Staging
+//! # Builders
 //!
-//! Per ADR-0024 §9 this arrives in stages. Stage 1 (this module, ADR-0024
-//! §9.1) ships both the BLOCKMAP builder
-//! ([`build_blockmap`](crate::map::build::build_blockmap)) and the REJECT
-//! builder ([`build_reject`](crate::map::build::build_reject)); the classic
-//! BSP pass follows in stage 2 (issue #315). Every builder narrows
+//! The BLOCKMAP builder
+//! ([`build_blockmap`](crate::map::build::build_blockmap)), the REJECT builder
+//! ([`build_reject`](crate::map::build::build_reject)), and the classic BSP pass
+//! ([`build_nodes`](crate::map::build::build_nodes), ADR-0024 §9.2) all narrow
 //! coordinates through the same pass as the write path (ADR-0024 §3) so the
-//! geometry it operates on is exactly the `i16` values the engine reads.
+//! geometry each operates on is exactly the `i16` values the engine reads.
+//! `build_nodes` is validated against the full retail collection (551 classic
+//! maps); its one accepted soft defect — the mixed-sector fan — is a lenient
+//! [`NodeBuildWarning::MixedSectorSubsector`](crate::map::build::NodeBuildWarning::MixedSectorSubsector)
+//! the retail masters ship too (ADR-0024 §7 amendment).
 //!
 //! # Errors and warnings
 //!
