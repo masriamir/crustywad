@@ -40,7 +40,7 @@ mod nodes;
 mod reject;
 
 pub use blockmap::build_blockmap;
-pub use nodes::{BuiltNodeLumps, BuiltNodes};
+pub use nodes::{BuiltNodeLumps, BuiltNodes, build_nodes};
 pub use reject::build_reject;
 
 /// Default [`NodeBuildOptions::split_cost`] (ADR-0024 §B.3): the observed

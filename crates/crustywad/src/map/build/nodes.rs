@@ -15,14 +15,20 @@
 //!
 //! [`Map`]: crate::map::Map
 
+use std::collections::HashMap;
 use std::io::Cursor;
 
 use binrw::BinWriterExt;
 
+use crate::Strictness;
 use crate::map::DoomWriteError;
-use crate::map::build::NodeBuildError;
+use crate::map::build::{NodeBuildError, NodeBuildOptions, NodeBuildWarning};
 use crate::map::common::{Node, Seg, Subsector, Vertex};
-use crate::map::graph::{MapNode, MapSeg, MapSubsector, MapVertex, NodeChild};
+use crate::map::doom::{DoomWriteWarning, Narrower, narrow_vertices};
+use crate::map::graph::{
+    LinedefIdx, Map, MapNode, MapSeg, MapSubsector, MapVertex, NodeChild, NodeIdx, SubsectorIdx,
+    VertexIdx,
+};
 
 /// The BSP child-reference leaf flag (`NF_SUBSECTOR`): with bit 15 set the
 /// remaining 15 bits are a subsector index, otherwise a node index (Chocolate
@@ -342,6 +348,993 @@ where
     cursor.into_inner()
 }
 
+/// The vanilla vertex/seg *soft* ceiling (ADR-0024 §5, Global Constraint 6):
+/// counts above this exceed the vanilla engine's fixed arrays but still fit the
+/// format's 16-bit indices. Numerically equal to [`MAX_BSP_INDEX`], but a
+/// distinct concept — this one warns (lenient) rather than always erroring.
+const VANILLA_CEILING: usize = 0x8000;
+
+/// The on-disk partition-delta limit (§B.1): a node's `dx`/`dy` are `i16`, so a
+/// seg can serve as a splitter only if its `v2 - v1` fits `[-32_767, 32_767]`.
+const MAX_PARTITION_DELTA: i64 = 32_767;
+
+/// Above this working-set size the partition search evaluates every
+/// `ceil(n / SAMPLE_BUDGET)`-th candidate first, falling back to all candidates
+/// only if the sample finds none (§B.1). Correctness never depends on it.
+const SAMPLE_BUDGET: usize = 512;
+
+/// Builds the classic BSP tree for `map` (ADR-0024 §2, spec §A–D, issue #315).
+///
+/// Produces the [`BuiltNodes`] arenas — split vertices, `SEGS`, `SSECTORS`, and
+/// `NODES` — a clean-room classic nodebuilder: it narrows the vertex arena
+/// through the shared write-path pass (`opts.strictness` drives it, exactly as
+/// [`build_blockmap`](crate::map::build::build_blockmap)), forms one seg per
+/// present linedef side, then recursively partitions the seg set with an
+/// **explicit work stack** (no call recursion; Global Constraint 9) until every
+/// region is convex and single-sector.
+///
+/// # Engine conventions (Global Constraint 7)
+///
+/// Derived by reading Chocolate Doom (the permitted *consumer* source; ADR-0024
+/// §1) and cited where load-bearing:
+///
+/// - **Side of a partition.** `R_PointOnSide` (`src/doom/r_main.c:145`) returns
+///   side 0 (front) when `node_dx*(y - node_y) - node_dy*(x - node_x) < 0`. The
+///   spec's cross `(q.x - p.x)*dy - (q.y - p.y)*dx` is the negation of that, so
+///   **`cross > 0` is front, `cross < 0` is back**. `R_RenderBSPNode`
+///   (`src/doom/r_bsp.c`) recurses `children[side]` front-first, so the **front
+///   child is `child[0]` = the node's right child**.
+/// - **`NF_SUBSECTOR = 0x8000`** (`src/doom/doomdata.h:175`): a child reference
+///   with bit 15 set is a subsector leaf. Encoded in [`BuiltNodes::to_lump_bytes`].
+/// - **Node bbox order `[top, bottom, left, right]`** = `[max_y, min_y, min_x,
+///   max_x]` (`BOXTOP/BOXBOTTOM/BOXLEFT/BOXRIGHT` = 0/1/2/3,
+///   `src/m_bbox.h:31`; `mapnode_t.bbox[2][4]`, `src/doom/doomdata.h:187`).
+/// - **Seg `offset`** is consumed verbatim by the engine (`P_LoadSegs`,
+///   `src/doom/p_setup.c:198`; used for texture alignment in `R_StoreWallRange`,
+///   `src/doom/r_segs.c`), so this builder computes it as the distance along the
+///   linedef from the seg's own start reference — the linedef start vertex for a
+///   direction-0 seg, the linedef **end** vertex for a direction-1 seg.
+///
+/// # Errors
+///
+/// - [`NodeBuildError::EmptyGeometry`] (both modes) when the map has no
+///   vertices, linedefs, sidedefs, or sectors — or when no linedef yields a seg
+///   (every linedef is zero-length or sideless), leaving nothing to partition.
+/// - [`NodeBuildError::Write`] wrapping a [`DoomWriteError`] from the shared
+///   narrowing pass (strict-mode non-finite/fractional/out-of-range coordinate),
+///   or a seg `offset` that overflows `i16` on a linedef longer than 32,767
+///   units (strict `ValueOutOfRange`; lenient clamps and warns —
+///   [`DoomWriteWarning::ValueClamped`], `field: "offset"`).
+/// - [`NodeBuildError::TooManyElements`] (both modes) when vertices or segs
+///   exceed 65,536, or subsectors or nodes exceed 32,768 (the structural 15-bit
+///   child-reference ceiling); the > 32,768 vertex/seg *soft* ceiling is a
+///   strict error and a lenient [`NodeBuildWarning::VanillaCeilingExceeded`].
+/// - [`NodeBuildError::MixedSectorSubsector`] (strict) when a convex region
+///   spans multiple sectors with no separating partition; lenient accepts it and
+///   emits [`NodeBuildWarning::MixedSectorSubsector`] once.
+pub fn build_nodes(
+    map: &Map,
+    opts: &NodeBuildOptions,
+) -> Result<(BuiltNodes, Vec<NodeBuildWarning>), NodeBuildError> {
+    // §A.1 empty-geometry gate — identical to `build_blockmap` (Global
+    // Constraint 3 keeps the two in lockstep).
+    if map.vertices().is_empty()
+        || map.linedefs().is_empty()
+        || map.sidedefs().is_empty()
+        || map.sectors().is_empty()
+    {
+        return Err(NodeBuildError::EmptyGeometry);
+    }
+
+    let mut bsp = Bsp::new(map, opts)?;
+    bsp.build_initial_segs();
+    if bsp.segs.is_empty() {
+        // Every linedef was zero-length or sideless: no walls to partition and
+        // hence no subsector to emit. Vanilla needs at least one, so this is the
+        // same "nothing to build" condition as an empty arena (both modes).
+        return Err(NodeBuildError::EmptyGeometry);
+    }
+    bsp.partition()?;
+    bsp.finish()
+}
+
+/// A seg under construction. Endpoints index the *combined* vertex table
+/// (`Bsp::verts`): the map's narrowed vertices first, then the split vertices
+/// the pass creates, matching [`BuiltNodes`]'s index-domain contract.
+#[derive(Clone, Copy)]
+struct WorkSeg {
+    /// Start-vertex index into the combined vertex table.
+    v1: usize,
+    /// End-vertex index into the combined vertex table.
+    v2: usize,
+    /// The source linedef.
+    linedef: usize,
+    /// `0` if the seg runs with the linedef (right side), `1` if reversed (left).
+    direction: u16,
+    /// The sector this seg's own side faces (for the single-sector rule, §C).
+    side_sector: usize,
+    /// Distance along the linedef from the seg's start reference to `v1`, already
+    /// narrowed to `i16` range (§D; clamped/errored at creation, never here).
+    offset: i32,
+}
+
+/// How a seg sits relative to a partition line (§B.2).
+///
+/// Colinear segs (both endpoints on the line) are tracked separately from segs
+/// with genuine off-line extent: a candidate is *convex* — no valid splitter —
+/// when all **non-colinear** content lies on one side (the controller's
+/// square-room fixture: a splitter's own colinear seg does not, by itself, make
+/// its line a valid partition). The relaxed sector-separating rule (§C.2) does
+/// count colinear segs, which is how a two-sided shared line separates two
+/// sectors in an otherwise convex region.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// Genuine extent on the front (right) half-plane.
+    Front,
+    /// Genuine extent on the back (left) half-plane.
+    Back,
+    /// Both endpoints on the line, same direction as the partition → front side.
+    ColinearFront,
+    /// Both endpoints on the line, opposite direction → back side.
+    ColinearBack,
+    /// Strictly straddling: one endpoint each side — must be split.
+    Split,
+}
+
+impl Class {
+    /// Whether this seg routes to the front side when the set is partitioned.
+    fn is_front(self) -> bool {
+        matches!(self, Class::Front | Class::ColinearFront)
+    }
+}
+
+/// A child slot in the internal tree arena, resolved to final indices at the
+/// flatten step.
+#[derive(Clone, Copy)]
+enum TreeRef {
+    /// A finished convex leaf: index into [`Bsp::leaves`] (= final subsector index).
+    Leaf(usize),
+    /// An internal node: index into [`Bsp::tree_nodes`] (= final node index).
+    Node(usize),
+}
+
+/// One internal BSP node in the tree arena, built in post-order (children first,
+/// root last), so its arena index *is* its final `NODES` index.
+struct TreeNode {
+    /// Partition-line start `x` (the splitter seg's `v1`), map units.
+    px: i32,
+    /// Partition-line start `y`.
+    py: i32,
+    /// Partition-line `dx` = splitter `v2.x - v1.x` (fits `i16` by §B.1).
+    dx: i32,
+    /// Partition-line `dy`.
+    dy: i32,
+    /// The front (right) child.
+    front: TreeRef,
+    /// The back (left) child.
+    back: TreeRef,
+}
+
+/// One step on the explicit build stack (Global Constraint 9: no call recursion).
+enum Task {
+    /// Partition (or make a leaf of) this set of seg ids.
+    Split(Vec<usize>),
+    /// Combine the two child results on the `done` stack into a node.
+    Merge {
+        /// Partition-line start `x`.
+        px: i32,
+        /// Partition-line start `y`.
+        py: i32,
+        /// Partition-line `dx`.
+        dx: i32,
+        /// Partition-line `dy`.
+        dy: i32,
+    },
+}
+
+/// Outcome of splitting one straddling seg.
+enum SplitOutcome {
+    /// Two fragments: `(front_seg_id, back_seg_id)`.
+    Two(usize, usize),
+    /// The rounded intersection coincided with an endpoint, so the seg was not
+    /// split; classify it whole to this side (§C.3).
+    Whole(Class, usize),
+}
+
+/// The classic BSP builder's working state (spec §A–D).
+struct Bsp<'a> {
+    /// The source map (linedef/sidedef references resolve against it).
+    map: &'a Map,
+    /// Combined vertex coordinates: map vertices (narrowed `i16`, widened to
+    /// `i32`) first, then split vertices — all whole map units.
+    verts: Vec<(i32, i32)>,
+    /// Count of leading map vertices in [`verts`](Self::verts); split-vertex
+    /// indices start here (the [`BuiltNodes`] index-domain offset).
+    map_vertex_count: usize,
+    /// The split vertices created, in creation order (the output arena).
+    split_vertices: Vec<MapVertex>,
+    /// Exact-coordinate dedup over map *and* split vertices, seeded with the map
+    /// vertices so a split landing on existing geometry reuses it (§C.3). Used
+    /// for lookup only; never iterated, so it never touches an output ordering.
+    dedup: HashMap<(i32, i32), usize>,
+    /// The seg arena. Fragments are appended; abandoned split parents stay but
+    /// are unreferenced.
+    segs: Vec<WorkSeg>,
+    /// Live seg count (segs reachable in some pending set or leaf). Each split
+    /// nets `+1`; doubles as the termination backstop (Global Constraint 9).
+    live_segs: usize,
+    /// Strict or lenient (drives narrowing, ceilings, and the mixed-sector rule).
+    strictness: Strictness,
+    /// Partition heuristic: weight per straddling split (§B.3).
+    split_cost: u32,
+    /// Partition heuristic: axis-aligned preference divisor (`0` = no penalty).
+    aa_preference: u32,
+    /// Recovered lenient-mode warnings.
+    warnings: Vec<NodeBuildWarning>,
+    /// Whether the once-per-build mixed-sector warning has fired (§C.2).
+    mixed_warned: bool,
+    /// Convex leaves, in creation order = final subsector order. Each is a list
+    /// of seg ids.
+    leaves: Vec<Vec<usize>>,
+    /// Internal nodes, in post-order (root last) = final `NODES` order.
+    tree_nodes: Vec<TreeNode>,
+    /// The tree root, set by [`partition`](Self::partition).
+    root: Option<TreeRef>,
+}
+
+impl<'a> Bsp<'a> {
+    /// Narrows the map's vertices through the shared write path (§A.2) and seeds
+    /// the combined vertex table and dedup index.
+    fn new(map: &'a Map, opts: &NodeBuildOptions) -> Result<Self, NodeBuildError> {
+        // ADR-0024 §3: the identical narrowing pass the write path and BLOCKMAP
+        // builder use. Strict failures surface as `Write(..)`; recoveries become
+        // `NodeBuildWarning::Write`, never `NodesNotBuilt` (this narrower is not
+        // seeded with it).
+        let mut narrower = Narrower::new(opts.strictness);
+        let arena = narrow_vertices(&mut narrower, map.vertices())?;
+        let warnings: Vec<NodeBuildWarning> = narrower
+            .warnings
+            .into_iter()
+            .map(NodeBuildWarning::Write)
+            .collect();
+
+        let mut verts = Vec::with_capacity(arena.len());
+        let mut dedup: HashMap<(i32, i32), usize> = HashMap::with_capacity(arena.len());
+        for (i, v) in arena.iter().enumerate() {
+            let coord = (i32::from(v.x), i32::from(v.y));
+            verts.push(coord);
+            // First writer wins; a later duplicate map vertex simply never
+            // becomes a dedup target. Deterministic (index order) and harmless:
+            // dedup only ever redirects a *new* split vertex.
+            dedup.entry(coord).or_insert(i);
+        }
+        let map_vertex_count = verts.len();
+
+        Ok(Self {
+            map,
+            verts,
+            map_vertex_count,
+            split_vertices: Vec::new(),
+            dedup,
+            segs: Vec::new(),
+            live_segs: 0,
+            strictness: opts.strictness,
+            split_cost: opts.split_cost,
+            aa_preference: opts.aa_preference,
+            warnings,
+            mixed_warned: false,
+            leaves: Vec::new(),
+            tree_nodes: Vec::new(),
+            root: None,
+        })
+    }
+
+    /// The combined-table coordinate of vertex `idx`.
+    fn coord(&self, idx: usize) -> (i32, i32) {
+        self.verts[idx]
+    }
+
+    /// §A.4: one seg per present linedef side. Right side → direction 0 (v1 =
+    /// linedef start), left side → direction 1 (v1 = linedef end). Zero-length
+    /// and fully-sideless linedefs contribute no segs (documented drop, not a
+    /// warning). Initial segs have `offset == 0` (v1 *is* the start reference).
+    fn build_initial_segs(&mut self) {
+        for (li, ld) in self.map.linedefs().iter().enumerate() {
+            let (a, b) = (ld.start.0, ld.end.0);
+            // Zero-length after narrowing: no direction, engine derives nothing.
+            if self.coord(a) == self.coord(b) {
+                continue;
+            }
+            if let Some(side) = ld.right {
+                let sector = self.map.sidedefs()[side.0].sector.0;
+                self.segs.push(WorkSeg {
+                    v1: a,
+                    v2: b,
+                    linedef: li,
+                    direction: 0,
+                    side_sector: sector,
+                    offset: 0,
+                });
+            }
+            if let Some(side) = ld.left {
+                let sector = self.map.sidedefs()[side.0].sector.0;
+                self.segs.push(WorkSeg {
+                    v1: b,
+                    v2: a,
+                    linedef: li,
+                    direction: 1,
+                    side_sector: sector,
+                    offset: 0,
+                });
+            }
+        }
+        self.live_segs = self.segs.len();
+    }
+
+    /// Drives the explicit work stack (§C.6): each pop either makes a convex leaf
+    /// or emits a node frame plus two child sets. No call recursion anywhere.
+    fn partition(&mut self) -> Result<(), NodeBuildError> {
+        let root_set: Vec<usize> = (0..self.segs.len()).collect();
+        let mut work: Vec<Task> = vec![Task::Split(root_set)];
+        let mut done: Vec<TreeRef> = Vec::new();
+
+        while let Some(task) = work.pop() {
+            match task {
+                Task::Split(set) => self.process_split(set, &mut work, &mut done)?,
+                Task::Merge { px, py, dx, dy } => {
+                    // Front was pushed last, so it completed first and sits
+                    // beneath back on the `done` stack.
+                    let back = done.pop().expect("merge back child present");
+                    let front = done.pop().expect("merge front child present");
+                    self.tree_nodes.push(TreeNode {
+                        px,
+                        py,
+                        dx,
+                        dy,
+                        front,
+                        back,
+                    });
+                    done.push(TreeRef::Node(self.tree_nodes.len() - 1));
+                }
+            }
+        }
+
+        self.root = done.pop();
+        debug_assert!(done.is_empty(), "the build stack resolves to one root");
+        Ok(())
+    }
+
+    /// Processes one `Split` task: select a partition (§B), else make a leaf,
+    /// honoring the single-sector / mixed-sector rule (§C.1–C.2).
+    fn process_split(
+        &mut self,
+        set: Vec<usize>,
+        work: &mut Vec<Task>,
+        done: &mut Vec<TreeRef>,
+    ) -> Result<(), NodeBuildError> {
+        if let Some(cand) = self.select(&set, false) {
+            return self.branch(cand, &set, work, done);
+        }
+        // Convex: no seg's line has content on both sides (§B.4).
+        if self.single_sector(&set) {
+            self.push_leaf(set, done);
+            return Ok(());
+        }
+        // §C.2: a multi-sector convex region. Retry with the sector-separating
+        // relaxation; a separating line is a normal branch.
+        if let Some(cand) = self.select(&set, true) {
+            return self.branch(cand, &set, work, done);
+        }
+        // Truly coincident mixed-sector geometry.
+        match self.strictness {
+            Strictness::Strict => Err(NodeBuildError::MixedSectorSubsector {
+                subsector_segs: set.len(),
+            }),
+            Strictness::Lenient => {
+                if !self.mixed_warned {
+                    self.warnings.push(NodeBuildWarning::MixedSectorSubsector);
+                    self.mixed_warned = true;
+                }
+                self.push_leaf(set, done);
+                Ok(())
+            }
+        }
+    }
+
+    /// Emits a node for splitter `cand`: partitions `set` and pushes a `Merge`
+    /// frame plus the two child `Split`s (front last, so it is processed first).
+    fn branch(
+        &mut self,
+        cand: usize,
+        set: &[usize],
+        work: &mut Vec<Task>,
+        done: &mut Vec<TreeRef>,
+    ) -> Result<(), NodeBuildError> {
+        let s = self.segs[cand];
+        let (px, py) = self.coord(s.v1);
+        let (x2, y2) = self.coord(s.v2);
+        let (dx, dy) = (x2 - px, y2 - py);
+
+        let (front, back) = self.split_set(set, px, py, dx, dy)?;
+        if front.is_empty() || back.is_empty() {
+            // A valid partition always yields two non-empty sides (§B.3); guard
+            // the impossible so a bug degrades to a leaf rather than looping.
+            debug_assert!(false, "valid partition must yield two non-empty sides");
+            self.push_leaf(set.to_vec(), done);
+            return Ok(());
+        }
+
+        work.push(Task::Merge { px, py, dx, dy });
+        work.push(Task::Split(back));
+        work.push(Task::Split(front));
+        Ok(())
+    }
+
+    /// Records `set` as the next convex subsector (leaf) and pushes its ref.
+    fn push_leaf(&mut self, set: Vec<usize>, done: &mut Vec<TreeRef>) {
+        self.leaves.push(set);
+        done.push(TreeRef::Leaf(self.leaves.len() - 1));
+    }
+
+    /// Whether every seg in `set` faces the same sector (§C.1).
+    fn single_sector(&self, set: &[usize]) -> bool {
+        let first = self.segs[set[0]].side_sector;
+        set.iter().all(|&id| self.segs[id].side_sector == first)
+    }
+
+    /// Classifies seg `s` against the partition line through `(px, py)` with
+    /// direction `(pdx, pdy)` and squared length `len2` (§B.2). All arithmetic is
+    /// exact: `i64` cross products, `i128` for the on-line threshold.
+    fn classify(&self, px: i64, py: i64, pdx: i64, pdy: i64, len2: i128, s: &WorkSeg) -> Class {
+        let mut front = 0u8;
+        let mut back = 0u8;
+        for &e in &[s.v1, s.v2] {
+            let (qx, qy) = self.coord(e);
+            let cross = (i64::from(qx) - px) * pdy - (i64::from(qy) - py) * pdx;
+            let c = i128::from(cross);
+            // Within 0.5 units of the line (distance² < 1/4 ⇔ cross² < len²/4 ⇔
+            // 4·cross² < len²). Exact in i128.
+            if c * c * 4 < len2 {
+                // on the line — contributes to neither tally
+            } else if cross > 0 {
+                front += 1;
+            } else {
+                back += 1;
+            }
+        }
+        if front > 0 && back > 0 {
+            Class::Split
+        } else if front > 0 {
+            Class::Front
+        } else if back > 0 {
+            Class::Back
+        } else {
+            // Colinear: assign by direction (§B.2) — same direction as the
+            // partition → front (the engine draws the front side first).
+            let (sx1, sy1) = self.coord(s.v1);
+            let (sx2, sy2) = self.coord(s.v2);
+            let dot =
+                pdx * (i64::from(sx2) - i64::from(sx1)) + pdy * (i64::from(sy2) - i64::from(sy1));
+            if dot > 0 {
+                Class::ColinearFront
+            } else {
+                Class::ColinearBack
+            }
+        }
+    }
+
+    /// Selects the best splitter in `set` (§B), or `None` if the set is convex
+    /// (no valid partition). `relaxed` switches to the sector-separating validity
+    /// rule (§C.2). Ties break toward the lowest seg id (determinism).
+    fn select(&self, set: &[usize], relaxed: bool) -> Option<usize> {
+        let n = set.len();
+        let stride = if n > SAMPLE_BUDGET {
+            n.div_ceil(SAMPLE_BUDGET)
+        } else {
+            1
+        };
+        let mut best: Option<(u64, usize)> = None;
+        self.eval_candidates(set, relaxed, (0..n).step_by(stride), &mut best);
+        if best.is_none() && stride > 1 {
+            // The sample found nothing; correctness requires the full pass.
+            self.eval_candidates(set, relaxed, 0..n, &mut best);
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// Scores the candidates at `positions` in `set`, updating `best`.
+    fn eval_candidates<I: IntoIterator<Item = usize>>(
+        &self,
+        set: &[usize],
+        relaxed: bool,
+        positions: I,
+        best: &mut Option<(u64, usize)>,
+    ) {
+        for pos in positions {
+            let cand = set[pos];
+            let s = self.segs[cand];
+            let (px, py) = self.coord(s.v1);
+            let (x2, y2) = self.coord(s.v2);
+            let pdx = i64::from(x2) - i64::from(px);
+            let pdy = i64::from(y2) - i64::from(py);
+            // §B.1: only a seg whose deltas fit the on-disk `i16` node field can
+            // be a splitter (it still participates as content).
+            if pdx.abs() > MAX_PARTITION_DELTA || pdy.abs() > MAX_PARTITION_DELTA {
+                continue;
+            }
+            let len2 = i128::from(pdx) * i128::from(pdx) + i128::from(pdy) * i128::from(pdy);
+            if len2 == 0 {
+                continue; // a degenerate zero-length fragment cannot partition
+            }
+            // Full front/back counts (colinear included) drive scoring; the
+            // non-colinear counts (`front_solid`/`back_solid`) drive the normal
+            // convexity test (see `Class`).
+            let (mut nf, mut nb, mut nsp) = (0usize, 0usize, 0usize);
+            let (mut front_solid, mut back_solid) = (0usize, 0usize);
+            for &sid in set {
+                match self.classify(
+                    i64::from(px),
+                    i64::from(py),
+                    pdx,
+                    pdy,
+                    len2,
+                    &self.segs[sid],
+                ) {
+                    Class::Front => {
+                        nf += 1;
+                        front_solid += 1;
+                    }
+                    Class::Back => {
+                        nb += 1;
+                        back_solid += 1;
+                    }
+                    Class::ColinearFront => nf += 1,
+                    Class::ColinearBack => nb += 1,
+                    Class::Split => nsp += 1,
+                }
+            }
+            let valid = if relaxed {
+                // §C.2: a line that separates segs of different sectors — both
+                // resulting sides non-empty, colinear segs counted (a two-sided
+                // shared line's opposite colinear segs are what separate the
+                // sectors).
+                (nf + nsp) > 0 && (nb + nsp) > 0
+            } else {
+                // §B.3 (reconciled with the square-room fixture): a line that
+                // genuinely partitions the set — a split, or NON-colinear content
+                // on both sides. A splitter's own colinear seg does not, alone,
+                // make its line a valid partition.
+                nsp > 0 || (front_solid > 0 && back_solid > 0)
+            };
+            if !valid {
+                continue;
+            }
+            let mut score = u64::from(self.split_cost) * nsp as u64 + nf.abs_diff(nb) as u64;
+            if pdx != 0 && pdy != 0 && self.aa_preference > 0 {
+                // Diagonal penalty (§B.3): a larger `aa_preference` is a weaker
+                // penalty. Guarded against divide-by-zero.
+                score += (nf + nb + nsp) as u64 / u64::from(self.aa_preference);
+            }
+            let better = match *best {
+                None => true,
+                Some((bscore, bid)) => score < bscore || (score == bscore && cand < bid),
+            };
+            if better {
+                *best = Some((score, cand));
+            }
+        }
+    }
+
+    /// Partitions `set` by the line through `(px, py)` with direction
+    /// `(dx, dy)`, splitting straddling segs (§C.3–C.4). Returns `(front, back)`.
+    fn split_set(
+        &mut self,
+        set: &[usize],
+        px: i32,
+        py: i32,
+        dx: i32,
+        dy: i32,
+    ) -> Result<(Vec<usize>, Vec<usize>), NodeBuildError> {
+        let (pxi, pyi) = (i64::from(px), i64::from(py));
+        let (pdx, pdy) = (i64::from(dx), i64::from(dy));
+        let len2 = i128::from(pdx) * i128::from(pdx) + i128::from(pdy) * i128::from(pdy);
+        let mut front = Vec::new();
+        let mut back = Vec::new();
+        for &sid in set {
+            let s = self.segs[sid];
+            let class = self.classify(pxi, pyi, pdx, pdy, len2, &s);
+            if class == Class::Split {
+                match self.split_seg(sid, px, py, dx, dy)? {
+                    SplitOutcome::Two(f, b) => {
+                        front.push(f);
+                        back.push(b);
+                    }
+                    SplitOutcome::Whole(side, id) => {
+                        if side.is_front() {
+                            front.push(id);
+                        } else {
+                            back.push(id);
+                        }
+                    }
+                }
+            } else if class.is_front() {
+                front.push(sid);
+            } else {
+                back.push(sid);
+            }
+        }
+        Ok((front, back))
+    }
+
+    /// Splits straddling seg `sid` at its intersection with the partition line,
+    /// computed on the seg's own linedef's canonical geometry so a two-sided
+    /// linedef's front and back segs split at the identical vertex (§C.3).
+    // The `f64` component names (`pdxf`/`pdyf`/`lsxf`/`lsyf`/`pxf`/`pyf`) are the
+    // conventional per-axis pairs; renaming would only obscure the geometry.
+    #[allow(clippy::similar_names)]
+    fn split_seg(
+        &mut self,
+        sid: usize,
+        px: i32,
+        py: i32,
+        dx: i32,
+        dy: i32,
+    ) -> Result<SplitOutcome, NodeBuildError> {
+        let s = self.segs[sid];
+        let ld = &self.map.linedefs()[s.linedef];
+        let (lsx, lsy) = self.coord(ld.start.0);
+        let (lex, ley) = self.coord(ld.end.0);
+        let (ldx, ldy) = (f64::from(lex - lsx), f64::from(ley - lsy));
+
+        let (pdxf, pdyf) = (f64::from(dx), f64::from(dy));
+        let (lsxf, lsyf) = (f64::from(lsx), f64::from(lsy));
+        let (pxf, pyf) = (f64::from(px), f64::from(py));
+
+        // t = cross(part_dir, line_start - part_point) / -cross(part_dir, line_dir).
+        let num = pdxf * (lsyf - pyf) - pdyf * (lsxf - pxf);
+        let denom = -(pdxf * ldy - pdyf * ldx);
+        if denom.abs() < 1e-9 {
+            // Colinear — unreachable for a genuine straddler. Degrade to "front"
+            // rather than divide by zero (Global Constraint 9: never panic).
+            debug_assert!(
+                false,
+                "a straddling seg cannot be colinear with the partition"
+            );
+            return Ok(SplitOutcome::Whole(Class::Front, sid));
+        }
+        let t = num / denom;
+        let mx = round_half_away(lsxf + t * ldx);
+        let my = round_half_away(lsyf + t * ldy);
+
+        // §C.3: if the rounded split lands on an endpoint, do not split —
+        // classify the whole seg to the side of its farther endpoint.
+        let c1 = self.coord(s.v1);
+        let c2 = self.coord(s.v2);
+        if (mx, my) == c1 || (mx, my) == c2 {
+            let (pxi, pyi, pdx, pdy) = (i64::from(px), i64::from(py), i64::from(dx), i64::from(dy));
+            let cross1 = (i64::from(c1.0) - pxi) * pdy - (i64::from(c1.1) - pyi) * pdx;
+            let cross2 = (i64::from(c2.0) - pxi) * pdy - (i64::from(c2.1) - pyi) * pdx;
+            let far = if cross1.abs() >= cross2.abs() {
+                cross1
+            } else {
+                cross2
+            };
+            let side = if far > 0 { Class::Front } else { Class::Back };
+            return Ok(SplitOutcome::Whole(side, sid));
+        }
+
+        let mid = self.intern_vertex(mx, my);
+
+        // Offsets on the ORIGINAL narrowed linedef geometry (§D): from the seg's
+        // own start reference — linedef start (dir 0) or end (dir 1).
+        let (rx, ry) = if s.direction == 0 {
+            self.coord(ld.start.0)
+        } else {
+            self.coord(ld.end.0)
+        };
+        let off_front = self.finalize_offset(distance(rx, ry, c1.0, c1.1), s.linedef)?;
+        let off_mid = self.finalize_offset(distance(rx, ry, mx, my), s.linedef)?;
+
+        // Fragment A spans s.v1 → mid; fragment B spans mid → s.v2. Each inherits
+        // linedef/direction/sector (§C.4).
+        let frag_a = WorkSeg {
+            v1: s.v1,
+            v2: mid,
+            offset: off_front,
+            ..s
+        };
+        let frag_b = WorkSeg {
+            v1: mid,
+            v2: s.v2,
+            offset: off_mid,
+            ..s
+        };
+        let id_a = self.segs.len();
+        self.segs.push(frag_a);
+        let id_b = self.segs.len();
+        self.segs.push(frag_b);
+
+        // Each split nets one live seg (parent replaced by two fragments); this
+        // is the runaway backstop (Global Constraint 9).
+        self.live_segs += 1;
+        if self.live_segs > MAX_U16_INDEXED {
+            return Err(NodeBuildError::TooManyElements {
+                kind: "segs",
+                count: self.live_segs,
+                max: MAX_U16_INDEXED,
+            });
+        }
+
+        // Fragment A takes the side of s.v1; B takes the side of s.v2. As a
+        // straddler they are on opposite sides.
+        let (pxi, pyi, pdx, pdy) = (i64::from(px), i64::from(py), i64::from(dx), i64::from(dy));
+        let cross_v1 = (i64::from(c1.0) - pxi) * pdy - (i64::from(c1.1) - pyi) * pdx;
+        if cross_v1 > 0 {
+            Ok(SplitOutcome::Two(id_a, id_b))
+        } else {
+            Ok(SplitOutcome::Two(id_b, id_a))
+        }
+    }
+
+    /// Interns a split vertex, reusing an existing map or split vertex with the
+    /// same exact integer coordinate (§C.3). Returns its combined-table index.
+    fn intern_vertex(&mut self, x: i32, y: i32) -> usize {
+        if let Some(&idx) = self.dedup.get(&(x, y)) {
+            return idx;
+        }
+        let idx = self.verts.len();
+        self.verts.push((x, y));
+        self.split_vertices.push(MapVertex {
+            x: f64::from(x),
+            y: f64::from(y),
+        });
+        self.dedup.insert((x, y), idx);
+        idx
+    }
+
+    /// Narrows a computed seg `offset` to `i16` range (§D, controller note 1):
+    /// strict errors via the write-path `ValueOutOfRange`; lenient clamps and
+    /// warns via `ValueClamped`, so a `build_nodes` product never trips
+    /// [`BuiltNodes::to_lump_bytes`]'s defensive offset check.
+    fn finalize_offset(&mut self, raw: f64, linedef: usize) -> Result<i32, NodeBuildError> {
+        let rounded = round_half_away(raw);
+        if let Ok(v) = i16::try_from(rounded) {
+            return Ok(i32::from(v));
+        }
+        match self.strictness {
+            Strictness::Strict => Err(NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+                block: "seg",
+                field: "offset",
+                index: linedef,
+                value: i64::from(rounded),
+            })),
+            Strictness::Lenient => {
+                let clamped = rounded.clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+                self.warnings
+                    .push(NodeBuildWarning::Write(DoomWriteWarning::ValueClamped {
+                        block: "seg",
+                        field: "offset",
+                        index: linedef,
+                        from: i64::from(rounded),
+                        to: i64::from(clamped),
+                    }));
+                Ok(clamped)
+            }
+        }
+    }
+
+    /// Flattens the tree arena into [`BuiltNodes`]: final segs (contiguous per
+    /// subsector), subsectors (creation order), nodes (post-order, root last),
+    /// with child bboxes computed bottom-up (§C.4, §D). Enforces the arena
+    /// ceilings (Global Constraint 6).
+    fn finish(mut self) -> Result<(BuiltNodes, Vec<NodeBuildWarning>), NodeBuildError> {
+        // Per-leaf bboxes [top, bottom, left, right] = [max_y, min_y, min_x, max_x].
+        let leaf_bboxes: Vec<[i32; 4]> = self
+            .leaves
+            .iter()
+            .map(|leaf| self.bbox_of_segs(leaf))
+            .collect();
+
+        // Node bboxes bottom-up: post-order guarantees children precede parents.
+        let mut node_bboxes: Vec<[i32; 4]> = Vec::with_capacity(self.tree_nodes.len());
+        for tn in &self.tree_nodes {
+            let fb = bbox_of_ref(tn.front, &leaf_bboxes, &node_bboxes);
+            let bb = bbox_of_ref(tn.back, &leaf_bboxes, &node_bboxes);
+            node_bboxes.push(bbox_union(fb, bb));
+        }
+
+        // Final segs, subsectors owning contiguous runs (Global Constraint 5).
+        let mut segs: Vec<MapSeg> = Vec::with_capacity(self.live_segs);
+        let mut subsectors: Vec<MapSubsector> = Vec::with_capacity(self.leaves.len());
+        for leaf in &self.leaves {
+            let start = segs.len();
+            for &sid in leaf {
+                let s = self.segs[sid];
+                let (x1, y1) = self.coord(s.v1);
+                let (x2, y2) = self.coord(s.v2);
+                segs.push(MapSeg {
+                    start: VertexIdx(s.v1),
+                    end: VertexIdx(s.v2),
+                    angle: bam_angle(x2 - x1, y2 - y1),
+                    linedef: LinedefIdx(s.linedef),
+                    direction: s.direction,
+                    offset: s.offset,
+                });
+            }
+            subsectors.push(MapSubsector {
+                segs: start..segs.len(),
+                leafs: 0..0,
+            });
+        }
+
+        // Final nodes: front = child[0] = right; back = left (Global Constraint 7).
+        let mut nodes: Vec<MapNode> = Vec::with_capacity(self.tree_nodes.len());
+        for (j, tn) in self.tree_nodes.iter().enumerate() {
+            nodes.push(MapNode {
+                x: tn.px,
+                y: tn.py,
+                dx: tn.dx,
+                dy: tn.dy,
+                right_bbox: bbox_of_ref(tn.front, &leaf_bboxes, &node_bboxes),
+                left_bbox: bbox_of_ref(tn.back, &leaf_bboxes, &node_bboxes),
+                right: child_of_ref(tn.front),
+                left: child_of_ref(tn.back),
+            });
+            debug_assert!(j < self.tree_nodes.len());
+        }
+
+        // Global Constraint 6 ceilings, enforced in `build_nodes` too (not only
+        // the serializer). Vertex/seg soft ceiling warns in lenient mode.
+        let vertex_count = self.map_vertex_count + self.split_vertices.len();
+        self.check_soft_ceiling("vertices", vertex_count)?;
+        self.check_soft_ceiling("segs", segs.len())?;
+        check_hard_index_ceiling("subsectors", subsectors.len())?;
+        check_hard_index_ceiling("nodes", nodes.len())?;
+
+        let built = BuiltNodes {
+            split_vertices: self.split_vertices,
+            segs,
+            subsectors,
+            nodes,
+        };
+        // The post-order flatten must place the root last (or, for a single
+        // convex subsector, leave `nodes` empty).
+        debug_assert!(match self.root {
+            Some(TreeRef::Node(k)) => k + 1 == built.nodes.len(),
+            Some(TreeRef::Leaf(_)) => built.nodes.is_empty(),
+            None => built.subsectors.is_empty(),
+        });
+        Ok((built, self.warnings))
+    }
+
+    /// The bbox `[top, bottom, left, right]` enclosing every endpoint of `seg_ids`.
+    fn bbox_of_segs(&self, seg_ids: &[usize]) -> [i32; 4] {
+        let mut bbox = [i32::MIN, i32::MAX, i32::MAX, i32::MIN];
+        for &sid in seg_ids {
+            let s = self.segs[sid];
+            for &e in &[s.v1, s.v2] {
+                let (x, y) = self.coord(e);
+                bbox[0] = bbox[0].max(y); // top    = max_y
+                bbox[1] = bbox[1].min(y); // bottom = min_y
+                bbox[2] = bbox[2].min(x); // left   = min_x
+                bbox[3] = bbox[3].max(x); // right  = max_x
+            }
+        }
+        bbox
+    }
+
+    /// Vertex/seg soft ceiling (Global Constraint 6), pushing the lenient warning
+    /// if any; see [`soft_ceiling`] for the rule.
+    fn check_soft_ceiling(
+        &mut self,
+        kind: &'static str,
+        count: usize,
+    ) -> Result<(), NodeBuildError> {
+        if let Some(warning) = soft_ceiling(kind, count, self.strictness)? {
+            self.warnings.push(warning);
+        }
+        Ok(())
+    }
+}
+
+/// The vertex/seg soft ceiling rule (Global Constraint 6): a count above 65,536
+/// is a structural [`NodeBuildError::TooManyElements`] in **both** modes; above
+/// 32,768 (the vanilla array limit) is a strict [`NodeBuildError::TooManyElements`]
+/// and a lenient [`NodeBuildWarning::VanillaCeilingExceeded`] (returned for the
+/// caller to record). Below both, `Ok(None)`.
+fn soft_ceiling(
+    kind: &'static str,
+    count: usize,
+    strictness: Strictness,
+) -> Result<Option<NodeBuildWarning>, NodeBuildError> {
+    if count > MAX_U16_INDEXED {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count,
+            max: MAX_U16_INDEXED,
+        });
+    }
+    if count > VANILLA_CEILING {
+        return match strictness {
+            Strictness::Strict => Err(NodeBuildError::TooManyElements {
+                kind,
+                count,
+                max: VANILLA_CEILING,
+            }),
+            Strictness::Lenient => Ok(Some(NodeBuildWarning::VanillaCeilingExceeded {
+                kind,
+                count,
+                max: VANILLA_CEILING,
+            })),
+        };
+    }
+    Ok(None)
+}
+
+/// Rounds half away from zero to the nearest whole map unit (the write path's
+/// rounding), returning `i32`. Inputs are bounded map coordinates, so the cast
+/// cannot overflow.
+#[allow(clippy::cast_possible_truncation)]
+fn round_half_away(value: f64) -> i32 {
+    value.round() as i32
+}
+
+/// Euclidean distance between two integer points as `f64` (IEEE `sqrt` is
+/// correctly rounded and deterministic — Global Constraint 8).
+fn distance(ax: i32, ay: i32, bx: i32, by: i32) -> f64 {
+    f64::from(ax - bx).hypot(f64::from(ay - by))
+}
+
+/// The BAM angle of the vector `(dx, dy)` (§D): `atan2(dy, dx) / TAU * 65536`,
+/// rounded and wrapped into `u16`. Axis-aligned and 45° directions are exact.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn bam_angle(dx: i32, dy: i32) -> u16 {
+    let radians = f64::from(dy).atan2(f64::from(dx));
+    let scaled = radians / std::f64::consts::TAU * 65536.0;
+    // `scaled` is within (-32768, 32768]; round then wrap into 0..65536.
+    (scaled.round() as i64).rem_euclid(65536) as u16
+}
+
+/// The bbox of a child ref, from the already-computed leaf/node bbox tables.
+fn bbox_of_ref(child: TreeRef, leaf_bboxes: &[[i32; 4]], node_bboxes: &[[i32; 4]]) -> [i32; 4] {
+    match child {
+        TreeRef::Leaf(i) => leaf_bboxes[i],
+        TreeRef::Node(k) => node_bboxes[k],
+    }
+}
+
+/// The `[top, bottom, left, right]` union of two bboxes.
+fn bbox_union(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
+    [
+        a[0].max(b[0]),
+        a[1].min(b[1]),
+        a[2].min(b[2]),
+        a[3].max(b[3]),
+    ]
+}
+
+/// The [`NodeChild`] a tree ref resolves to.
+fn child_of_ref(child: TreeRef) -> NodeChild {
+    match child {
+        TreeRef::Leaf(i) => NodeChild::Subsector(SubsectorIdx(i)),
+        TreeRef::Node(k) => NodeChild::Node(NodeIdx(k)),
+    }
+}
+
+/// The structural subsector/node index ceiling (Global Constraint 6): a BSP
+/// child reference reserves bit 15, so at most 32,768 elements are addressable —
+/// a hard [`NodeBuildError::TooManyElements`] in **both** modes.
+fn check_hard_index_ceiling(kind: &'static str, count: usize) -> Result<(), NodeBuildError> {
+    if count > MAX_BSP_INDEX {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count,
+            max: MAX_BSP_INDEX,
+        });
+    }
+    Ok(())
+}
+
 // These are public-API tests that would ordinarily live in
 // `tests/build_lumps.rs` (the house unit-vs-integration convention), but
 // `BuiltNodes` is `#[non_exhaustive]`: an integration test is a separate
@@ -554,5 +1547,89 @@ mod tests {
         let verts: Vec<VertexRecord> =
             parse_records(&lumps.split_vertexes).expect("vertexes parse");
         assert_eq!(verts, vec![VertexRecord { x: 64, y: -32 }]);
+    }
+
+    #[test]
+    fn round_half_away_matches_the_write_path() {
+        assert_eq!(round_half_away(0.5), 1);
+        assert_eq!(round_half_away(-0.5), -1);
+        assert_eq!(round_half_away(2.4), 2);
+        assert_eq!(round_half_away(-2.6), -3);
+        assert_eq!(round_half_away(0.0), 0);
+    }
+
+    #[test]
+    fn distance_is_euclidean() {
+        assert!((distance(0, 0, 3, 4) - 5.0).abs() < 1e-9);
+        assert!(distance(10, 10, 10, 10).abs() < 1e-9);
+        // 64 units straight east: exact.
+        assert!((distance(0, 0, 64, 0) - 64.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bam_angle_is_exact_for_axis_aligned_and_45() {
+        // The controller square-room angles.
+        assert_eq!(bam_angle(1, 0), 0x0000); // east
+        assert_eq!(bam_angle(0, 1), 0x4000); // north
+        assert_eq!(bam_angle(-1, 0), 0x8000); // west
+        assert_eq!(bam_angle(0, -1), 0xC000); // south
+        // 45° diagonals are exact too (Global Constraint 8).
+        assert_eq!(bam_angle(1, 1), 0x2000);
+        assert_eq!(bam_angle(-1, 1), 0x6000);
+        assert_eq!(bam_angle(-1, -1), 0xA000);
+        assert_eq!(bam_angle(1, -1), 0xE000);
+    }
+
+    /// The vertex/seg soft ceiling is the sanctioned unit seam for the
+    /// over-32,768 / over-65,536 tests: a live 33k-seg *convex* map would make
+    /// the partition search O(n²) and blow the time budget (documented in the
+    /// Task 2 report), so the threshold logic is exercised here directly.
+    #[test]
+    fn soft_ceiling_thresholds() {
+        // Under both ceilings: clean.
+        assert_eq!(soft_ceiling("segs", 32_768, Strictness::Strict), Ok(None));
+
+        // Over the vanilla (32,768) ceiling: strict errors, lenient warns.
+        assert_eq!(
+            soft_ceiling("segs", 32_769, Strictness::Strict),
+            Err(NodeBuildError::TooManyElements {
+                kind: "segs",
+                count: 32_769,
+                max: VANILLA_CEILING,
+            })
+        );
+        assert_eq!(
+            soft_ceiling("vertices", 40_000, Strictness::Lenient),
+            Ok(Some(NodeBuildWarning::VanillaCeilingExceeded {
+                kind: "vertices",
+                count: 40_000,
+                max: VANILLA_CEILING,
+            }))
+        );
+
+        // Over the structural (65,536) ceiling: TooManyElements in BOTH modes.
+        for strictness in [Strictness::Strict, Strictness::Lenient] {
+            assert_eq!(
+                soft_ceiling("segs", 65_537, strictness),
+                Err(NodeBuildError::TooManyElements {
+                    kind: "segs",
+                    count: 65_537,
+                    max: MAX_U16_INDEXED,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn hard_index_ceiling_rejects_over_32768_in_both_conceptual_modes() {
+        assert_eq!(check_hard_index_ceiling("nodes", MAX_BSP_INDEX), Ok(()));
+        assert_eq!(
+            check_hard_index_ceiling("subsectors", MAX_BSP_INDEX + 1),
+            Err(NodeBuildError::TooManyElements {
+                kind: "subsectors",
+                count: MAX_BSP_INDEX + 1,
+                max: MAX_BSP_INDEX,
+            })
+        );
     }
 }
