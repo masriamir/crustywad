@@ -353,9 +353,14 @@ where
 /// distinct concept — this one warns (lenient) rather than always erroring.
 const VANILLA_CEILING: usize = 0x8000;
 
-/// The on-disk partition-delta limit (§B.1): a node's `dx`/`dy` are `i16`, so a
-/// seg can serve as a splitter only if its `v2 - v1` fits `[-32_767, 32_767]`.
-const MAX_PARTITION_DELTA: i64 = 32_767;
+/// Whether a partition delta fits the on-disk `i16` node `dx`/`dy` field
+/// (§B.1): a seg can serve as a splitter only if its `v2 - v1` fits the **full
+/// signed** `i16` range `[-32_768, 32_767]` on both axes. The range is
+/// asymmetric — `i16::MIN` is a valid delta, `+32_768` is not.
+fn partition_delta_fits(pdx: i64, pdy: i64) -> bool {
+    let fits = |v: i64| i64::from(i16::MIN) <= v && v <= i64::from(i16::MAX);
+    fits(pdx) && fits(pdy)
+}
 
 /// Above this working-set size the partition search evaluates every
 /// `ceil(n / SAMPLE_BUDGET)`-th candidate first, falling back to all candidates
@@ -983,7 +988,7 @@ impl<'a> Bsp<'a> {
             let pdy = i64::from(y2) - i64::from(py);
             // §B.1: only a seg whose deltas fit the on-disk `i16` node field can
             // be a splitter (it still participates as content).
-            if pdx.abs() > MAX_PARTITION_DELTA || pdy.abs() > MAX_PARTITION_DELTA {
+            if !partition_delta_fits(pdx, pdy) {
                 continue;
             }
             #[allow(clippy::cast_possible_truncation)]
@@ -1761,6 +1766,16 @@ mod tests {
                 max,
             })
         );
+    }
+
+    #[test]
+    fn partition_delta_fits_the_full_signed_i16_range() {
+        // i16::MIN (-32,768) is a valid on-disk delta; +32,768 is not.
+        assert!(partition_delta_fits(-32_768, 0));
+        assert!(partition_delta_fits(0, -32_768));
+        assert!(partition_delta_fits(32_767, -32_768));
+        assert!(!partition_delta_fits(-32_769, 0));
+        assert!(!partition_delta_fits(0, 32_768));
     }
 
     #[test]
