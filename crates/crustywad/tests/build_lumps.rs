@@ -11,7 +11,9 @@ use crustywad::map::build::{
     BuiltNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, build_blockmap, build_nodes,
     build_reject,
 };
-use crustywad::map::{Map, MapBlockmap, MapReject, MapWarning, NodeChild};
+use crustywad::map::{
+    DoomWriteError, DoomWriteWarning, Map, MapBlockmap, MapReject, MapWarning, NodeChild,
+};
 use crustywad::{Strictness, Wad};
 use proptest::prelude::*;
 
@@ -1267,6 +1269,102 @@ fn build_nodes_rejects_geometry_without_segs() {
             NodeBuildError::EmptyGeometry
         );
     }
+}
+
+/// A seg `offset` that overflows `i16` (Finding 2, PR #319): a linedef longer
+/// than 32,767 units, split so a fragment sits far from its start reference.
+/// A short vertical two-sided line at x=30000 (entirely above y=0) is the only
+/// valid partition — its line splits the long horizontal line at (30000, 0),
+/// and the far fragment's offset from the linedef start (-32000, 0) is 62,000.
+/// Strict errors; lenient clamps and warns, with the diagnostic naming the
+/// **seg** index (not the linedef) — which is the point of deferring
+/// finalization to flatten time.
+#[test]
+fn build_nodes_offset_overflow_errors_strict_warns_lenient() {
+    // linedef 0 = V (short vertical, x=30000, y 10..200); linedef 1 = H (long
+    // horizontal, x -32000..32000 at y=0). V has the lower seg ids, so its line
+    // is chosen as the partition and H is the seg that gets split.
+    let points = [(30000i16, 10i16), (30000, 200), (-32000, 0), (32000, 0)];
+    let lines = [
+        (0u16, 1u16, Some(0u16), Some(0u16)), // V (two-sided, sector 0/0)
+        (2, 3, Some(0), Some(0)),             // H (two-sided, sector 0/0)
+    ];
+    let map = assemble_general(&points, &lines);
+
+    // Strict: the far fragment's 62,000-unit offset is an error naming its seg.
+    match build_nodes(&map, &NodeBuildOptions::strict()).unwrap_err() {
+        NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+            block: "seg",
+            field: "offset",
+            value: 62_000,
+            ..
+        }) => {}
+        other => panic!("expected a seg offset ValueOutOfRange, got {other:?}"),
+    }
+
+    // Lenient: the offset clamps to i16::MAX, warned via ValueClamped. The
+    // warning's `index` is the SEG index — it points at the clamped seg.
+    let (built, warnings) =
+        build_nodes(&map, &NodeBuildOptions::lenient()).expect("builds lenient");
+    let (index, from, to) = warnings
+        .iter()
+        .find_map(|w| match w {
+            NodeBuildWarning::Write(DoomWriteWarning::ValueClamped {
+                block: "seg",
+                field: "offset",
+                index,
+                from,
+                to,
+            }) => Some((*index, *from, *to)),
+            _ => None,
+        })
+        .expect("an offset-clamp warning");
+    assert_eq!(from, 62_000);
+    assert_eq!(to, i64::from(i16::MAX));
+    // The index resolves to the seg whose offset was clamped (Finding 2).
+    assert_eq!(built.segs[index].offset, i32::from(i16::MAX));
+}
+
+/// A working set larger than `SAMPLE_BUDGET` (512 segs) drives `select`'s
+/// sampled-then-full candidate scan. A many-sided convex polygon is the cheap
+/// trigger: the root set exceeds 512 segs, no seg line partitions a convex ring,
+/// so the sampled pass finds nothing and the full pass confirms it — one convex
+/// subsector, no nodes.
+#[test]
+fn build_nodes_large_convex_ring_exercises_the_sampling_stride() {
+    // 560 vertices on a large circle: > SAMPLE_BUDGET, convex, integer coords.
+    let n: u32 = 560;
+    let radius = 20000.0f64;
+    let mut points: Vec<(i16, i16)> = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let theta = std::f64::consts::TAU * f64::from(i) / f64::from(n);
+        #[allow(clippy::cast_possible_truncation)]
+        let x = (radius * theta.cos()).round() as i16;
+        #[allow(clippy::cast_possible_truncation)]
+        let y = (radius * theta.sin()).round() as i16;
+        points.push((x, y));
+    }
+    // Dedup any coincident rounded points, keeping a strictly-simple polygon.
+    points.dedup();
+    if points.first() == points.last() {
+        points.pop();
+    }
+    assert!(points.len() > 512, "need > SAMPLE_BUDGET vertices");
+    let lines: Vec<(u16, u16, Option<u16>, Option<u16>)> = (0..points.len())
+        .map(|i| {
+            let a = u16::try_from(i).unwrap();
+            let b = u16::try_from((i + 1) % points.len()).unwrap();
+            (a, b, Some(0u16), None)
+        })
+        .collect();
+    let map = assemble_general(&points, &lines);
+
+    let (built, warnings) = build_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
+    assert!(warnings.is_empty(), "a convex ring builds strict-clean");
+    // A convex polygon is one convex region: a single subsector, no nodes.
+    assert_eq!(built.subsectors.len(), 1);
+    assert!(built.nodes.is_empty());
+    validate_bsp(&map, &built);
 }
 
 /// §C.2 separation (the accepted spec deviation): a multi-sector region whose
