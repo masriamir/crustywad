@@ -1,8 +1,10 @@
-//! Public-API tests for the `nodebuild` node-lump builders (ADR-0024 §9.1).
+//! Public-API tests for the `nodebuild` node-lump builders (ADR-0024 §9).
 //!
-//! Task 1 covers the zero-fill REJECT builder: assemble a real WAD through the
-//! public path, build its REJECT, and round-trip the bytes back through
-//! [`MapReject::parse`] (ADR-0024 §7 / Global Constraint 4).
+//! Covers the full pipeline: the zero-fill REJECT and 128-unit BLOCKMAP
+//! builders (§9.1), the classic BSP pass `build_nodes` (§9.2), and the
+//! engine-playable `add_doom_map_with_nodes` one-shot (§9.3) — each assembled
+//! through the public path and round-tripped back through the readers
+//! (ADR-0024 §7 / Global Constraint 4), plus the retail sweep.
 #![cfg(feature = "nodebuild")]
 
 mod common;

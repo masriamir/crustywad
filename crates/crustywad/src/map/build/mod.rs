@@ -21,6 +21,13 @@
 //! [`NodeBuildWarning::MixedSectorSubsector`](crate::map::build::NodeBuildWarning::MixedSectorSubsector)
 //! the retail masters ship too (ADR-0024 §7 amendment).
 //!
+//! [`add_doom_map_with_nodes`](crate::map::build::add_doom_map_with_nodes)
+//! bundles all three into one call (ADR-0024 §9.3): it writes the map's data
+//! lumps plus the built `SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP` into a
+//! [`WadBuilder`](crate::WadBuilder), producing **engine-playable** output —
+//! unlike [`add_doom_map`](crate::map::add_doom_map), it never emits
+//! [`DoomWriteWarning::NodesNotBuilt`](crate::map::DoomWriteWarning::NodesNotBuilt).
+//!
 //! # Errors and warnings
 //!
 //! Narrowing failures surface as
