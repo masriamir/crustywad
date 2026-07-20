@@ -13,6 +13,7 @@ use crustywad::map::build::{
 };
 use crustywad::map::{Map, MapBlockmap, MapReject, MapWarning, NodeChild};
 use crustywad::{Strictness, Wad};
+use proptest::prelude::*;
 
 /// Encodes a Doom 8-byte name field, NUL-padded on the right.
 fn name8(name: &str) -> [u8; 8] {
@@ -440,6 +441,280 @@ fn sweep_builds_reject_and_blockmap_for_every_classic_map() {
     );
 }
 
+/// The raw bytes of the group's data lump named `name`, if present.
+#[cfg(feature = "sweep-tests")]
+fn group_lump_bytes<'a>(wad: &'a Wad, group: &crustywad::map::MapGroup, name: &str) -> &'a [u8] {
+    group
+        .data_indices
+        .iter()
+        .find(|&&i| wad.lumps()[i].name() == name)
+        .and_then(|&i| wad.lump_bytes(i))
+        .unwrap_or(&[])
+}
+
+/// The number of initial segs the builder forms for `map` (one per present,
+/// non-zero-length linedef side) — the denominator for seg inflation. Mirrors
+/// `Bsp::build_initial_segs`; retail vertices are already `i16`, so the rounded
+/// comparison matches the builder's narrowed one.
+#[cfg(feature = "sweep-tests")]
+fn initial_seg_count(map: &Map) -> usize {
+    let verts = map.vertices();
+    let mut count = 0usize;
+    for ld in map.linedefs() {
+        let (a, b) = (verts[ld.start.0], verts[ld.end.0]);
+        if (a.x.round(), a.y.round()) == (b.x.round(), b.y.round()) {
+            continue; // zero-length after narrowing — no seg
+        }
+        count += usize::from(ld.right.is_some()) + usize::from(ld.left.is_some());
+    }
+    count
+}
+
+/// Optional retail-WAD sweep for the classic BSP pass (ADR-0024 §9.2): build
+/// `NODES`/`SSECTORS`/`SEGS` for every classic-format map in a local collection,
+/// run the full validation oracle, and round-trip the serialized lumps back
+/// through a real WAD assembly.
+///
+/// Same gating/skip pattern as [`sweep_builds_reject_and_blockmap_for_every_classic_map`]:
+/// point `CRUSTYWAD_SWEEP_DIR` at a directory of WAD files (**absolute path** —
+/// see that test's note). Doom 64 maps ship pre-built nodes and are skipped.
+///
+/// The sweep runs `build_nodes` in **lenient** mode and pins its warning set to
+/// the single [`NodeBuildWarning::MixedSectorSubsector`] class — the one soft
+/// defect inherent to seg-line node-building that the retail masters themselves
+/// ship (ADR-0024 §7 amendment 2026-07-19: 47 mixed-sector subsectors across 30
+/// shipped maps). This is a **known-condition pin, not an allowlist**: every
+/// other warning, and every error — including [`NodeBuildError::DegeneratePartition`],
+/// which the classify↔split unification made unreachable — still fails the sweep.
+/// The full oracle otherwise holds, via [`validate_bsp_allowing_mixed_sector`]
+/// (which relaxes only the single-sector check). A cheap per-map strict
+/// cross-check confirms every map builds strict-clean unless it has a
+/// mixed-sector fan, in which case strict errors with exactly
+/// `MixedSectorSubsector`.
+#[cfg(feature = "sweep-tests")]
+#[test]
+#[allow(clippy::too_many_lines)]
+fn sweep_builds_nodes_for_every_classic_map() {
+    use crustywad::ParseOptions;
+    use crustywad::map::{MapFormat, detect_map_format};
+
+    let paths = common::wad_files("CRUSTYWAD_SWEEP_DIR");
+    if paths.is_empty() {
+        return; // skip note already printed by the helper
+    }
+
+    let mut maps_built = 0usize;
+    let mut doom64_skipped = 0usize;
+    let mut total_segs = 0usize;
+    let mut mixed_sector_maps = 0usize;
+    let mut total_mixed_warnings = 0usize;
+    let mut inflations: Vec<u64> = Vec::new();
+
+    for path in &paths {
+        let wad = Wad::from_path_with_options(path, ParseOptions::strict())
+            .unwrap_or_else(|e| panic!("{}: container failed strict parse: {e}", path.display()));
+
+        for group in wad.map_groups() {
+            if detect_map_format(&wad, &group) == MapFormat::Doom64 {
+                doom64_skipped += 1;
+                continue;
+            }
+
+            // Assemble leniently so the sweep exercises the builder over every
+            // classic map, matching the stage-1 sweep.
+            let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: map {} failed lenient assembly: {e}",
+                        path.display(),
+                        group.name
+                    )
+                });
+
+            // --- build_nodes LENIENT, warning set pinned to the single
+            //     tolerated MixedSectorSubsector class (ADR-0024 §7 amendment).
+            //     Known-condition pin, NOT an allowlist. ---
+            let (built, warnings) =
+                build_nodes(&map, &NodeBuildOptions::lenient()).unwrap_or_else(|e| {
+                    panic!(
+                        "{}: map {} lenient build_nodes failed: {e:?}",
+                        path.display(),
+                        group.name
+                    )
+                });
+            for w in &warnings {
+                assert!(
+                    matches!(w, NodeBuildWarning::MixedSectorSubsector { .. }),
+                    "{}: map {} build_nodes emitted a non-mixed-sector warning: {w:?}",
+                    path.display(),
+                    group.name
+                );
+            }
+            if !warnings.is_empty() {
+                mixed_sector_maps += 1;
+                total_mixed_warnings += warnings.len();
+            }
+
+            // --- Cheap strict cross-check: a map builds strict-clean unless it
+            //     has a mixed-sector fan, in which case strict errors with
+            //     exactly MixedSectorSubsector — never DegeneratePartition (the
+            //     resolved classify↔split guard), never any other variant. ---
+            match build_nodes(&map, &NodeBuildOptions::strict()) {
+                Ok((_, strict_warnings)) => assert!(
+                    strict_warnings.is_empty() && warnings.is_empty(),
+                    "{}: map {} strict-Ok but lenient warned (inconsistent)",
+                    path.display(),
+                    group.name
+                ),
+                Err(NodeBuildError::MixedSectorSubsector { .. }) => assert!(
+                    !warnings.is_empty(),
+                    "{}: map {} strict MixedSector but lenient clean (inconsistent)",
+                    path.display(),
+                    group.name
+                ),
+                Err(e) => panic!(
+                    "{}: map {} strict build_nodes failed with a non-mixed error: {e:?}",
+                    path.display(),
+                    group.name
+                ),
+            }
+
+            // --- Full validation oracle over real geometry; mixed-sector leaves
+            //     are the one relaxed check (ADR-0024 §7 amendment). ---
+            validate_bsp_allowing_mixed_sector(&map, &built);
+
+            // --- Calibration corridor (a tripwire, not a quality bar). ---
+            let linedefs = map.linedefs().len();
+            assert!(
+                built.segs.len() <= 4 * linedefs,
+                "{}: map {} seg count {} exceeds 4 * {linedefs} linedefs",
+                path.display(),
+                group.name,
+                built.segs.len(),
+            );
+            assert!(
+                built.split_vertices.len() <= map.vertices().len(),
+                "{}: map {} split-vertex count {} exceeds map vertex count {}",
+                path.display(),
+                group.name,
+                built.split_vertices.len(),
+                map.vertices().len(),
+            );
+
+            // --- Serialize, then round-trip through a real strict WAD assembly:
+            //     the assembled BSP arenas must equal the built ones exactly. ---
+            let lumps = built.to_lump_bytes().unwrap_or_else(|e| {
+                panic!(
+                    "{}: map {} node-lump serialization failed: {e:?}",
+                    path.display(),
+                    group.name
+                )
+            });
+            let mut vertexes = group_lump_bytes(&wad, &group, "VERTEXES").to_vec();
+            vertexes.extend(lumps.split_vertexes.clone());
+            let mut rt_lumps: Vec<(&str, Vec<u8>)> = vec![
+                (group.name.as_str(), Vec::new()),
+                ("THINGS", group_lump_bytes(&wad, &group, "THINGS").to_vec()),
+                (
+                    "LINEDEFS",
+                    group_lump_bytes(&wad, &group, "LINEDEFS").to_vec(),
+                ),
+                (
+                    "SIDEDEFS",
+                    group_lump_bytes(&wad, &group, "SIDEDEFS").to_vec(),
+                ),
+                ("VERTEXES", vertexes),
+                ("SEGS", lumps.segs.clone()),
+                ("SSECTORS", lumps.ssectors.clone()),
+                ("NODES", lumps.nodes.clone()),
+                (
+                    "SECTORS",
+                    group_lump_bytes(&wad, &group, "SECTORS").to_vec(),
+                ),
+                ("REJECT", Vec::new()),
+                ("BLOCKMAP", Vec::new()),
+            ];
+            // A Hexen map's THINGS/LINEDEFS are the wider Hexen records; the
+            // round-trip WAD must carry a BEHAVIOR lump so re-assembly detects
+            // Hexen (not Doom) and parses them at the right stride.
+            if map.format() == MapFormat::Hexen {
+                rt_lumps.push((
+                    "BEHAVIOR",
+                    group_lump_bytes(&wad, &group, "BEHAVIOR").to_vec(),
+                ));
+            }
+            let wad_bytes = common::build_named_lumps(&rt_lumps);
+            let rt_wad = Wad::from_bytes(wad_bytes).unwrap_or_else(|e| {
+                panic!(
+                    "{}: map {} round-trip WAD failed to parse: {e}",
+                    path.display(),
+                    group.name
+                )
+            });
+            let rt_group = rt_wad.map_group(&group.name).unwrap_or_else(|| {
+                panic!(
+                    "{}: map {} round-trip group absent",
+                    path.display(),
+                    group.name
+                )
+            });
+            let assembled = Map::assemble(&rt_wad, &rt_group).unwrap_or_else(|e| {
+                panic!(
+                    "{}: map {} round-trip failed strict assembly: {e}",
+                    path.display(),
+                    group.name
+                )
+            });
+            assert!(
+                assembled.warnings().is_empty(),
+                "{}: map {} round-trip assembly warned: {:?}",
+                path.display(),
+                group.name,
+                assembled.warnings(),
+            );
+            assert_eq!(
+                assembled.segs(),
+                built.segs.as_slice(),
+                "{}: map {} round-trip SEGS mismatch",
+                path.display(),
+                group.name
+            );
+            assert_eq!(
+                assembled.subsectors(),
+                built.subsectors.as_slice(),
+                "{}: map {} round-trip SSECTORS mismatch",
+                path.display(),
+                group.name
+            );
+            assert_eq!(
+                assembled.nodes(),
+                built.nodes.as_slice(),
+                "{}: map {} round-trip NODES mismatch",
+                path.display(),
+                group.name
+            );
+
+            // --- Aggregates: total segs and per-map seg inflation (×1000). ---
+            total_segs += built.segs.len();
+            let initial = initial_seg_count(&map).max(1);
+            inflations.push((built.segs.len() as u64 * 1000) / initial as u64);
+            maps_built += 1;
+        }
+    }
+
+    assert!(
+        maps_built > 0,
+        "CRUSTYWAD_SWEEP_DIR contained {} WAD file(s) but no classic maps were built",
+        paths.len()
+    );
+    inflations.sort_unstable();
+    let median_inflation = inflations[inflations.len() / 2];
+    eprintln!(
+        "built BSP nodes for {} WAD(s): {maps_built} classic map(s), {doom64_skipped} Doom 64 skipped, {total_segs} total built segs, median seg-inflation x1000 = {median_inflation}; {mixed_sector_maps} map(s) carried a tolerated mixed-sector fan ({total_mixed_warnings} warning(s), ADR-0024 §7 amendment)",
+        paths.len()
+    );
+}
+
 #[test]
 fn default_options_are_strict() {
     assert_eq!(
@@ -552,13 +827,31 @@ fn subsector_of(built: &BuiltNodes, linedef: usize, direction: u16) -> Option<us
     })
 }
 
-/// The full Task 3 validation oracle (available early as a test-local copy):
+/// The full Task 3 validation oracle — the correctness instrument shared by
+/// every `build_nodes` fixture, the proptest, and the retail sweep. It checks:
 /// index ranges, acyclic single-visit reachability, root-last, a contiguous seg
 /// partition, single-sector subsectors, ancestor-side containment (every seg
 /// endpoint within 1.5 units of the correct side of every ancestor partition),
 /// exact child bboxes, and `nodes == subsectors - 1`.
-#[allow(clippy::too_many_lines)]
+///
+/// Mixed-sector subsectors are rejected — a well-formed strict build never
+/// produces one. Use [`validate_bsp_allowing_mixed_sector`] for the accepted
+/// lenient `MixedSectorSubsector` deviation (ADR-0024 §C.2), which relaxes only
+/// the single-sector check and leaves every structural invariant enforced.
 fn validate_bsp(map: &Map, built: &BuiltNodes) {
+    validate_bsp_inner(map, built, false);
+}
+
+/// [`validate_bsp`] with the single-sector-subsector check relaxed, for the
+/// lenient `MixedSectorSubsector` recovery (ADR-0024 §C.2): every other
+/// structural invariant still holds.
+fn validate_bsp_allowing_mixed_sector(map: &Map, built: &BuiltNodes) {
+    validate_bsp_inner(map, built, true);
+}
+
+/// The oracle body; `allow_mixed_sector` gates only the single-sector check.
+#[allow(clippy::too_many_lines)]
+fn validate_bsp_inner(map: &Map, built: &BuiltNodes, allow_mixed_sector: bool) {
     let total_verts = map.vertices().len() + built.split_vertices.len();
 
     // nodes == subsectors - 1 (a full binary tree of leaves).
@@ -599,15 +892,18 @@ fn validate_bsp(map: &Map, built: &BuiltNodes) {
         "subsectors partition every seg exactly once"
     );
 
-    // Single-sector subsectors.
-    for ss in &built.subsectors {
-        let segs = &built.segs[ss.segs.clone()];
-        if let Some(first) = segs.first() {
-            let sector = seg_sector(map, first);
-            assert!(
-                segs.iter().all(|s| seg_sector(map, s) == sector),
-                "every seg in a subsector shares one sector"
-            );
+    // Single-sector subsectors (relaxed only for the lenient mixed-sector
+    // deviation, ADR-0024 §C.2).
+    if !allow_mixed_sector {
+        for ss in &built.subsectors {
+            let segs = &built.segs[ss.segs.clone()];
+            if let Some(first) = segs.first() {
+                let sector = seg_sector(map, first);
+                assert!(
+                    segs.iter().all(|s| seg_sector(map, s) == sector),
+                    "every seg in a subsector shares one sector"
+                );
+            }
         }
     }
 
@@ -973,6 +1269,80 @@ fn build_nodes_rejects_geometry_without_segs() {
     }
 }
 
+/// §C.2 separation (the accepted spec deviation): a multi-sector region whose
+/// sectors share coincident geometry, separated by the sector-separating
+/// relaxation. A single two-sided linedef between sector 0 (front) and sector 1
+/// (back) is convex under the normal rule (its two colinear partner segs give no
+/// solid front/back content), so the builder falls through to §C.2's relaxed
+/// selection, which separates the opposite-direction colinear segs into one leaf
+/// each. Builds strict-clean and passes the full oracle.
+#[test]
+fn build_nodes_multi_sector_region_separates_via_relaxed_rule() {
+    let points = [(0i16, 0i16), (64, 0)];
+    // One two-sided line: right side faces sector 0, left side faces sector 1.
+    let map = assemble_general(&points, &[(0, 1, Some(0), Some(1))]);
+    let (built, warnings) = build_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
+    assert!(
+        warnings.is_empty(),
+        "a separable multi-sector region builds strict-clean"
+    );
+
+    // The relaxed rule split the two colinear partner segs into two leaves.
+    assert_eq!(built.segs.len(), 2, "one seg per side of the shared line");
+    assert_eq!(built.subsectors.len(), 2, "one subsector per sector");
+    assert_eq!(built.nodes.len(), 1, "the separating line is one node");
+    // Each subsector is single-sector, and the two face different sectors.
+    let sub_sectors: Vec<usize> = built
+        .subsectors
+        .iter()
+        .map(|ss| seg_sector(&map, &built.segs[ss.segs.start]))
+        .collect();
+    assert!(
+        sub_sectors.contains(&0) && sub_sectors.contains(&1),
+        "the two leaves face sectors 0 and 1, not merged"
+    );
+    validate_bsp(&map, &built);
+}
+
+/// A1 / §C.2 mixed-sector defect (strict error, lenient warn): truly coincident
+/// mixed-sector geometry that NO partition can separate. Two coincident,
+/// same-direction one-sided linedefs face different sectors — both segs are
+/// colinear-front against every candidate, so neither the normal nor the relaxed
+/// selection finds a separating line. Strict rejects with
+/// `MixedSectorSubsector`; lenient accepts the mixed subsector and warns once.
+#[test]
+fn build_nodes_coincident_mixed_sectors_error_strict_warn_lenient() {
+    let points = [(0i16, 0i16), (64, 0)];
+    // Two coincident one-sided lines, same direction, facing sectors 0 and 1.
+    let lines = [(0u16, 1u16, Some(0u16), None), (0, 1, Some(1), None)];
+
+    // Strict: the mixed convex region is an error naming its seg count.
+    let map = assemble_general(&points, &lines);
+    assert_eq!(
+        build_nodes(&map, &NodeBuildOptions::strict()).unwrap_err(),
+        NodeBuildError::MixedSectorSubsector { subsector_segs: 2 },
+    );
+
+    // Lenient: accepted as one (mixed) subsector, warned once for that leaf.
+    let (built, warnings) =
+        build_nodes(&map, &NodeBuildOptions::lenient()).expect("builds lenient");
+    assert_eq!(
+        warnings,
+        vec![NodeBuildWarning::MixedSectorSubsector { subsector_segs: 2 }]
+    );
+    assert_eq!(built.subsectors.len(), 1, "one accepted convex subsector");
+    assert!(built.nodes.is_empty(), "no separating node exists");
+    assert_eq!(built.segs.len(), 2, "both coincident segs kept");
+    // The subsector genuinely spans two sectors — the accepted defect.
+    let sectors: Vec<usize> = built.segs.iter().map(|s| seg_sector(&map, s)).collect();
+    assert!(
+        sectors.contains(&0) && sectors.contains(&1),
+        "the accepted subsector spans both sectors"
+    );
+    // Every structural invariant still holds; only the single-sector rule bends.
+    validate_bsp_allowing_mixed_sector(&map, &built);
+}
+
 /// The seg-count soft ceiling is unit-tested in `nodes.rs` (a live 33k-seg
 /// convex map would make partition selection O(n²); see the Task 2 report).
 /// Here we confirm the lenient warning *variant* is public and constructible on
@@ -986,4 +1356,57 @@ fn vanilla_ceiling_warning_is_a_public_node_build_warning() {
     };
     // Displayable and matchable — the lenient soft-ceiling recovery surface.
     assert!(format!("{warning}").contains("32768"));
+}
+
+/// Whether a `build_nodes` error is one the plan permits (never a panic): the
+/// shared narrowing/format errors plus the BSP-specific ones. The mixed-sector
+/// and degenerate-partition guards are included for completeness even though
+/// single-sector generated maps should not reach them.
+fn is_plan_known_error(err: &NodeBuildError) -> bool {
+    matches!(
+        err,
+        NodeBuildError::EmptyGeometry
+            | NodeBuildError::Write(_)
+            | NodeBuildError::TooManyElements { .. }
+            | NodeBuildError::MixedSectorSubsector { .. }
+            | NodeBuildError::DegeneratePartition { .. }
+    )
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(96))]
+
+    /// The oracle holds on every generated single-sector map that builds `Ok`,
+    /// and any build that errors does so with a plan-known variant — never a
+    /// panic — in both strictness modes. Reuses the stage-1 random-geometry
+    /// shape (small integer coordinates, index-wrapped linedefs) extended with
+    /// optional two-sided lines so straddling splits are exercised. Every side
+    /// faces sector 0, so a produced subsector is single-sector and the strict
+    /// oracle applies directly.
+    #[test]
+    fn build_nodes_random_single_sector_maps_hold_the_oracle(
+        coords in prop::collection::vec((-1024i16..=1024, -1024i16..=1024), 2..=10),
+        raw_lines in prop::collection::vec((0usize..10, 0usize..10, any::<bool>()), 1..=12),
+    ) {
+        let n = coords.len();
+        let lines: Vec<(u16, u16, Option<u16>, Option<u16>)> = raw_lines
+            .iter()
+            .map(|&(s, e, two_sided)| {
+                let start = u16::try_from(s % n).unwrap();
+                let end = u16::try_from(e % n).unwrap();
+                (start, end, Some(0u16), two_sided.then_some(0u16))
+            })
+            .collect();
+        let map = assemble_general(&coords, &lines);
+
+        for opts in [NodeBuildOptions::strict(), NodeBuildOptions::lenient()] {
+            match build_nodes(&map, &opts) {
+                Ok((built, _warnings)) => validate_bsp(&map, &built),
+                Err(e) => prop_assert!(
+                    is_plan_known_error(&e),
+                    "build_nodes returned an unexpected error variant: {e:?}"
+                ),
+            }
+        }
+    }
 }
