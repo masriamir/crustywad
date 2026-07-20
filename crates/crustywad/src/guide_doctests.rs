@@ -13,6 +13,12 @@
 //! features (`write`, `nodebuild`, `doom64-gfx`). Compiling the pages as
 //! crate doctests under `--all-features` sidesteps both limitations.
 //!
+//! Because these are ordinary crate doctests, CI's existing
+//! `cargo test --workspace --all-features` (the `test` job) already compiles
+//! and runs them — no dedicated job is needed. `just guide-test` runs only
+//! these locally. Keep the crate's doctests enabled (do not set
+//! `[lib] doctest = false`), or this check silently stops running.
+//!
 //! Blocks that cannot compile as-is are marked in the Markdown: struct-layout
 //! illustrations use ` ```rust,ignore `, and snippets that do real file I/O use
 //! ` ```rust,no_run ` (compiled, not executed).

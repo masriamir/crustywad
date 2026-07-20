@@ -57,18 +57,6 @@ jobs:
       - run: cargo build --workspace --all-features
       - run: cargo test --workspace --all-features
 
-  guide-doctests:
-    # Compile-check the mdBook guide's Rust code samples. The pages are pulled into the
-    # crate as doctests (crates/crustywad/src/guide_doctests.rs, cfg(doctest) only) and
-    # compiled with every feature enabled, so API drift in a snippet fails here.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Compile-check guide code samples
-        run: cargo test -p crustywad --doc --all-features
-
   docs:
     runs-on: ubuntu-latest
     env:
