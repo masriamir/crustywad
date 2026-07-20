@@ -45,6 +45,9 @@ jobs:
       - name: Fuzz fuzz_build_lumps
         run: cargo fuzz run fuzz_build_lumps -- -max_total_time=60
         working-directory: fuzz
+      - name: Fuzz fuzz_build_nodes
+        run: cargo fuzz run fuzz_build_nodes -- -max_total_time=60
+        working-directory: fuzz
       - name: Fuzz fuzz_sections
         run: cargo fuzz run fuzz_sections -- -max_total_time=60
         working-directory: fuzz
