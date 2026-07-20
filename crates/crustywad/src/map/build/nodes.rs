@@ -431,6 +431,10 @@ pub fn build_nodes(
     {
         return Err(NodeBuildError::EmptyGeometry);
     }
+    // A seg stores its source linedef in a `u16`; an arena too large to index
+    // cannot be serialized, so reject it up front (both modes) rather than
+    // succeed here and fail later in `to_lump_bytes` (PR #319).
+    check_linedef_count(map.linedefs().len())?;
 
     let mut bsp = Bsp::new(map, opts)?;
     bsp.build_initial_segs();
@@ -1391,6 +1395,23 @@ fn check_subsector_seg_count(count: usize) -> Result<(), NodeBuildError> {
     Ok(())
 }
 
+/// The map's linedef count must fit the `Seg.linedef` on-disk `u16`: a seg
+/// referencing a linedef index past `u16::MAX` (i.e. a `> MAX_U16_INDEXED`
+/// arena) is unencodable, so a successful `build_nodes` would otherwise fail
+/// only later in [`BuiltNodes::to_lump_bytes`]. Rejected up front in **both**
+/// modes (structural — no lenient recovery). No retail map approaches this
+/// (the maximum is ~7,245 linedefs); PR #319.
+fn check_linedef_count(count: usize) -> Result<(), NodeBuildError> {
+    if count > MAX_U16_INDEXED {
+        return Err(NodeBuildError::TooManyElements {
+            kind: "linedefs",
+            count,
+            max: MAX_U16_INDEXED,
+        });
+    }
+    Ok(())
+}
+
 /// Narrows a computed seg `offset` to the on-disk `i16` at flatten time (§D,
 /// Finding 2 PR #319). `index` is the seg's **final** index (not its linedef),
 /// so the diagnostic names the exact seg. Strict returns a write-path
@@ -1738,6 +1759,21 @@ mod tests {
                 kind: "subsector segs",
                 count: max + 1,
                 max,
+            })
+        );
+    }
+
+    #[test]
+    fn linedef_count_ceiling_rejects_over_u16_indexable() {
+        // 65,536 linedefs index 0..=65,535 (all fit the u16 seg field); 65,537
+        // would need index 65,536, which does not (PR #319).
+        assert_eq!(check_linedef_count(MAX_U16_INDEXED), Ok(()));
+        assert_eq!(
+            check_linedef_count(MAX_U16_INDEXED + 1),
+            Err(NodeBuildError::TooManyElements {
+                kind: "linedefs",
+                count: MAX_U16_INDEXED + 1,
+                max: MAX_U16_INDEXED,
             })
         );
     }
