@@ -19,10 +19,11 @@ nodes, tracked in #199) needs representation beyond the classic `NODES`
 encoding."*
 
 Today those formats are **detected and gated, not parsed**. The
-#204 amendment to ADR-0015 added `EXTENDED_NODE_SIGNATURES`
-(`assemble.rs:212-213`, exactly `XNOD ZNOD XGLN ZGLN XGL2 XGL3 ZGL2 ZGL3`) and
-a gate (`assemble.rs:1604-1639`): a `NODES`/`SSECTORS` lump whose first four
-bytes match a signature returns `MapAssembleError::UnsupportedNodeEncoding`
+#204 amendment to ADR-0015 added the `EXTENDED_NODE_SIGNATURES` table
+(`map/assemble.rs`, exactly `XNOD ZNOD XGLN ZGLN XGL2 XGL3 ZGL2 ZGL3`) and a
+gate (in `Map::assemble_with_options`, same file): a `NODES`/`SSECTORS` lump
+whose first four bytes match a signature returns
+`MapAssembleError::UnsupportedNodeEncoding`
 in strict mode, or (lenient) pushes `MapWarning::UnsupportedNodeEncoding` and
 empties the three BSP arenas. Both variants cite #199 as the future reading
 path. This ADR decides that path.
@@ -179,7 +180,8 @@ of how the nodebuilder's `split_vertices` extend `VERTEXES` on write.
 
 ### 3. Gate integration: narrow the seam per stage
 
-The gate at `assemble.rs:1604-1639` becomes a dispatch:
+The gate in `Map::assemble_with_options` (`map/assemble.rs`) becomes a
+dispatch:
 
 - A signature this build **can decode** is parsed into the BSP arenas.
 - A signature it **cannot yet decode** keeps the current contract — strict
@@ -197,7 +199,7 @@ for everything still gated: this is incremental narrowing, not a new policy.
 For UDMF maps the ZDoom-GL family lives in a lump literally named `ZNODES`
 (placed after `TEXTMAP`), not in `NODES`/`SSECTORS`. The current gate fires only
 on the binary path (`NODES`/`SSECTORS`), because UDMF and Doom 64 are routed
-away before it (`assemble.rs:1552-1554`). The UDMF read path therefore gains
+away before the gate (`map/assemble.rs`). The UDMF read path therefore gains
 `ZNODES` handling: detect and decode it with the same `type`-parameterized
 parser, feeding the same arenas the binary path produces. A UDMF map with a
 `ZNODES` lump this build cannot decode gates with the same strict/lenient
