@@ -854,9 +854,10 @@ impl<'a> Bsp<'a> {
         (i64::from(qx) - part.pxi) * part.pdy - (i64::from(qy) - part.pyi) * part.pdx
     }
 
-    /// Whether cross product `c` places its vertex within 0.5 map units of the
-    /// line (`distance² < 1/4 ⇔ cross² < len²/4 ⇔ 4·cross² < len²`; exact in
-    /// `i128`).
+    /// Whether cross product `c` places its vertex **less than** 0.5 map units
+    /// from the line (`distance² < 1/4 ⇔ cross² < len²/4 ⇔ 4·cross² < len²`;
+    /// exact in `i128`). The inequality is strict: a vertex exactly 0.5 units
+    /// off counts as front or back, not on the line.
     fn on_line(part: &Partition, c: i64) -> bool {
         i128::from(c) * i128::from(c) * 4 < part.len2
     }

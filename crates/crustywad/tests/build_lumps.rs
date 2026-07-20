@@ -757,7 +757,13 @@ fn assemble_general(points: &[(i16, i16)], lines: &[(u16, u16, Option<u16>, Opti
             }
             None => 0xffff,
         };
-        let flags: u16 = if ls.is_some() { 0x0004 } else { 0x0001 };
+        // Two-sided (0x0004) only when both sidedefs exist; otherwise a
+        // one-sided impassable wall (0x0001).
+        let flags: u16 = if rs.is_some() && ls.is_some() {
+            0x0004
+        } else {
+            0x0001
+        };
         linedefs.extend(linedef_bytes(s, e, flags, 0, 0, right, left));
     }
     let mut sectors = Vec::new();
