@@ -170,12 +170,38 @@ unchanged; omit it to convert every map in the WAD. A `--map NAME` that
 matches no map in the WAD is an error (exit `3`), not a no-op. Use `--kind`
 to set the output WAD kind (`iwad` or `pwad`; default `pwad`).
 
-> **Converting to `doom` is not engine-playable without a nodebuilder.**
-> `--to doom` emits empty `SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`
-> lumps and always prints a `NodesNotBuilt` warning to stderr — run an
-> external nodebuilder (`zdbsp`, `bsp`, ...) over the output before loading
-> it in a source port. See [Converting maps](converting-maps.md) for
-> details.
+#### Building nodes: `--nodes`
+
+By default, `--to doom` emits empty `SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`
+lumps and always prints a `NodesNotBuilt` warning to stderr — playable on the
+ZDoom family (which rebuilds nodes at load) but not on vanilla ports. Pass
+`--nodes` to **build** those lumps for real, so the output is engine-playable
+everywhere with no external nodebuilder pass:
+
+```text
+$ cwad convert udmf.wad -o doom.wad --to doom --nodes --lenient
+wrote doom.wad: converted 1 map to doom
+```
+
+`--nodes` builds the classic 16-bit node lumps via the
+[`nodebuild`](building-nodes.md) pipeline (`add_doom_map_with_nodes`): the BSP
+tree, the collision `BLOCKMAP`, and the all-clear `REJECT`. The
+`NodesNotBuilt` warning is then gone (the nodes exist). The global `--lenient`
+flag applies to the build too — it is often needed for real maps, whose
+geometry can contain the engine-tolerated mixed-sector fan that strict mode
+rejects (see [Building nodes](building-nodes.md#the-tolerated-mixed-sector-fan)).
+
+`--nodes` only affects classic Doom output; combined with `--to udmf` it has no
+effect (UDMF has no binary node lumps) and prints a note to stderr:
+
+```text
+$ cwad convert doom.wad -o out.wad --to udmf --nodes
+note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
+```
+
+GL nodes and extended/compressed node formats are out of scope for `--nodes` —
+for those, still run an external nodebuilder (`zdbsp`, `bsp`, ...) over the
+output. See [Building nodes](building-nodes.md) for the full picture.
 
 **Strict mode refuses data loss.** Converting a typical ZDoom-namespace UDMF
 map (linedef `args`, thing `height`/`id`/`special`, ...) to `doom` exits `3`,

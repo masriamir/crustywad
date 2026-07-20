@@ -8,6 +8,7 @@
 - [Reading WAD Files](reading-wads.md)
 - [Writing WAD Files](writing-wads.md)
 - [Converting maps](converting-maps.md)
+- [Building nodes](building-nodes.md)
 - [Map Record Parsing](map-records.md)
 - [Graphics](graphics.md)
 - [CLI Usage](cli.md)
