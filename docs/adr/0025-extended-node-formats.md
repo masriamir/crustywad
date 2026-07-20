@@ -136,11 +136,16 @@ crustywad will read, decoding into the classic BSP arenas:
   `ZGLN`, `ZGL2`, `ZGL3`.
 - **DeePBSP v4:** `xNd4` (Stage 3).
 
-**Classic GL nodes (`gNd2`…`gNd5`, the `GL_*` lumps) are explicitly out of
-scope** — deprecated, read only by the ZDoom line, and fully superseded by the
-XGL family. `gNd*`/`GL_*` are not even detected today; they remain undetected
-(a `GL_*` lump is an ordinary non-map lump). If a concrete old-WAD analysis
-need appears, this ADR is the place to revisit.
+**Classic GL nodes (`gNd2`…`gNd5`, the `GL_*` lumps) are out of scope for the
+staged #199 work** — deprecated, read only by the ZDoom line, and fully
+superseded by the XGL family. `gNd*`/`GL_*` are not even detected today; they
+remain undetected here (a `GL_*` lump is an ordinary non-map lump). They are
+**not, however, abandoned:** high compatibility with older WADs is a project
+value, so classic-GL reading is tracked as a backlog item, **#324**, to be
+implemented after the #199 read stages (it reuses this ADR's reader
+scaffolding — a classic-node reader parameterized on child width and leaf-flag
+bit already covers vanilla, GL v2/v3/v5, and DeeP v4 nodes). The `gNd*`
+detection and the v1/v4 read-or-reject policy are settled there, not here.
 
 ### 2. The reader: one `type`-parameterized ZDoom parser + a DeeP reader
 
@@ -221,9 +226,10 @@ lump length divided by the minimum record size.
 This ADR delivers **reading** only. ADR-0024 designed `BuiltNodes` to feed a
 future extended-node *writer* (its revisit condition); that writer — emitting
 `XGL3`/`ZGL3` from a `BuiltNodes` so `add_doom_map_with_nodes` output can be
-UDMF-scale or fractional — reuses these codecs in reverse and is filed as a
-separate issue after the read stages land. Keeping write out of #199 avoids
-coupling the read surface to a second, larger design.
+UDMF-scale or fractional — reuses these codecs in reverse. It is tracked as
+**#323** (depends on #199) and gets its own short ADR amendment before
+implementation. Keeping write out of #199 avoids coupling the read surface to a
+second, larger design.
 
 ## Staging — the implementation issues (filed from this ADR after merge)
 
@@ -258,14 +264,15 @@ Classic GL (`gNd*`) remains out of scope.
   positive-read fixture set (per its own design note), stage by stage.
 - **ADR-0015 is amended again** (its revisit condition discharged), and
   ADR-0016's checklist applies to the new parse surface. ADR-0024's
-  `BuiltNodes` becomes the shared type basis for the deferred writer.
+  `BuiltNodes` becomes the shared type basis for the deferred writer (#323).
 - **Default builds stay zlib-free**; only the compressed stage pulls a
   decompressor, behind a feature.
 - **Good** — the modern common case (UDMF + XGL3) becomes analyzable,
   round-trippable, and available to the future editor, with no external tool.
-- **Bad** — classic GL WADs remain unreadable-as-nodes (they assemble, but
-  their `GL_*` lumps are ignored). Judged acceptable: the format is deprecated
-  and unused by new content.
+- **Bad** — classic GL WADs remain unreadable-as-nodes for now (they assemble,
+  but their `GL_*` lumps are ignored). Deferred, not dropped: the format is
+  deprecated and unused by new content, so it sits behind the ZDoom family, but
+  it is tracked for eventual support (#324).
 - **Bad** — the GL variants' implicit-`v2` and partner-seg materialization is
   the subtle part; it gets the same oracle discipline the nodebuilder used
   (round-trip and, where a builder exists, cross-checks), plus fuzzing.
@@ -311,7 +318,10 @@ Classic GL (`gNd*`) remains out of scope.
   1552-1554), `map/graph.rs` (the `usize` index newtypes 27-57, `MapSeg`/
   `MapSubsector`/`MapNode`/`NodeChild` 285-382), `map/build/nodes.rs`
   (`BuiltNodes` 70-88), `tests/sweep.rs` (the `RETAIL-EXT` gate sweep 113-179).
-- **Revisit conditions:** reopen when (a) a concrete need for classic GL
-  (`gNd*`) reading appears; (b) the deferred extended-node *writer* is
-  scheduled (it reuses these codecs and `BuiltNodes`); or (c) a node format
-  beyond these (a future ZDoom `XGL4`, GL PVS data) needs representation.
+- **Related backlog issues:** classic-GL reading (#324) and the extended-node
+  writer (#323), both tracked and both depending on #199's read stages.
+- **Revisit conditions:** reopen when (a) classic-GL reading (#324) is
+  scheduled — it reuses this ADR's scaffolding and settles the `gNd*` detection
+  and v1/v4 policy; (b) the extended-node *writer* (#323) is scheduled (it
+  reuses these codecs and `BuiltNodes`); or (c) a node format beyond these (a
+  future ZDoom `XGL4`, GL PVS data) needs representation.
