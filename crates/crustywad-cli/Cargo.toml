@@ -25,8 +25,12 @@ clap.workspace = true
 # version is a caret requirement; update only when crustywad's version moves
 # outside the allowed range (e.g. 0.1.z -> 0.2.0), per ADR-0011 §3 (crates are
 # versioned independently) — cargo-deny enforces wildcards = "deny"
-# write feature required for WadBuilder
-crustywad = { path = "../crustywad", version = "0.6.1", features = ["write"] }
+# write feature required for WadBuilder; nodebuild (implies write) powers
+# `convert --nodes`
+crustywad = { path = "../crustywad", version = "0.6.1", features = [
+    "write",
+    "nodebuild",
+] }
 
 [build-dependencies]
 clap.workspace = true

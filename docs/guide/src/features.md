@@ -13,7 +13,7 @@ allowing callers to opt in to additional capabilities.
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
-| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), and the `to_lump_bytes` serializers |
+| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; powers `cwad convert --nodes` |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
 
 ---
@@ -261,7 +261,8 @@ let rebuilt = wad.to_builder().build().unwrap();
 ## `nodebuild`
 
 **Enables:** the `map::build` module — `NodeBuildOptions`, `NodeBuildError`, `NodeBuildWarning`,
-`build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass), and the
+`build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass),
+`add_doom_map_with_nodes` (the engine-playable one-shot), and the
 `nodebuild`-gated `to_lump_bytes` serializers on the read-side lump types (`MapBlockmap`,
 `MapReject`, and `BuiltNodes`)
 
@@ -286,6 +287,13 @@ clean, save for the mixed-sector fan (two sectors meeting at a bare corner verte
 seg line can separate): strict `build_nodes` rejects such a map, and lenient accepts the leaf
 with a `NodeBuildWarning::MixedSectorSubsector` — the exact engine-tolerated output the retail
 masters themselves ship (ADR-0024 §7 amendment, 2026-07-19).
+
+The `add_doom_map_with_nodes` one-shot bundles all three builders (plus the five
+data lumps) into a single call that adds a complete, engine-playable map group to
+a `WadBuilder` — the same path `cwad convert --to doom --nodes` runs. See the
+[Building nodes](building-nodes.md) guide page for when you need built nodes, the
+tolerated mixed-sector fan, and when GL/extended nodes still call for an external
+tool.
 
 ### Usage
 

@@ -113,22 +113,21 @@ let bytes = builder.build()?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-> **Converted output is not engine-playable.** `add_doom_map` writes
-> **zero-length `SEGS`, `SSECTORS`, `NODES`, `REJECT`, and `BLOCKMAP`**
-> lumps — the canonical Doom lump run editors and nodebuilders expect to
-> find, but with no node data in them. Every call returns
-> `DoomWriteWarning::NodesNotBuilt`, in **both** strictness modes: it is
-> a property of the output, not a defect strictness can fix. The result is
-> **editor- and nodebuilder-ready, not engine-playable** — either run an
-> external nodebuilder (`zdbsp`, `bsp`, …) over it, or build the node lumps
-> in-crate with the [`nodebuild`](./features.md#nodebuild) feature's
-> `build_nodes` (the classic BSP `SEGS`/`SSECTORS`/`NODES`), `build_blockmap`,
-> and `build_reject` (ADR-0024) and add them to the WAD yourself before loading
-> it in a source port. When `build_nodes` splits segs it creates new vertices;
-> append `to_lump_bytes()`'s `split_vertexes` to the map's `VERTEXES` lump (see
-> the [`nodebuild` example](./features.md#nodebuild)) or the segs' vertex
-> indices will point past the vertex table. (Extended/GL node *generation*
-> remains tracked separately, issue #199.)
+> **`add_doom_map` output is not engine-playable on vanilla ports.**
+> `add_doom_map` writes **zero-length `SEGS`, `SSECTORS`, `NODES`, `REJECT`,
+> and `BLOCKMAP`** lumps — the canonical Doom lump run editors and
+> nodebuilders expect to find, but with no node data in them. Every call
+> returns `DoomWriteWarning::NodesNotBuilt`, in **both** strictness modes: it
+> is a property of the output, not a defect strictness can fix. The ZDoom
+> family rebuilds those lumps at load, but vanilla and Chocolate Doom need
+> real ones. To get an engine-playable map, either build the node lumps
+> in-crate with the [`nodebuild`](./features.md#nodebuild) feature — the
+> `add_doom_map_with_nodes` one-shot, or the `build_nodes` / `build_blockmap` /
+> `build_reject` builders — or run an external nodebuilder (`zdbsp`, `bsp`, …)
+> over the output. From the CLI, `cwad convert --to doom --nodes` is the
+> turnkey path. See [Building nodes](building-nodes.md) for the full picture,
+> including the tolerated mixed-sector fan and when GL/extended nodes still
+> need an external tool (issue #199).
 
 ## Round-tripping: not symmetric
 

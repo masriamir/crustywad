@@ -1,20 +1,23 @@
-//! Public-API tests for the `nodebuild` node-lump builders (ADR-0024 §9.1).
+//! Public-API tests for the `nodebuild` node-lump builders (ADR-0024 §9).
 //!
-//! Task 1 covers the zero-fill REJECT builder: assemble a real WAD through the
-//! public path, build its REJECT, and round-trip the bytes back through
-//! [`MapReject::parse`] (ADR-0024 §7 / Global Constraint 4).
+//! Covers the full pipeline: the zero-fill REJECT and 128-unit BLOCKMAP
+//! builders (§9.1), the classic BSP pass `build_nodes` (§9.2), and the
+//! engine-playable `add_doom_map_with_nodes` one-shot (§9.3) — each assembled
+//! through the public path and round-tripped back through the readers
+//! (ADR-0024 §7 / Global Constraint 4), plus the retail sweep.
 #![cfg(feature = "nodebuild")]
 
 mod common;
 
 use crustywad::map::build::{
-    BuiltNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, build_blockmap, build_nodes,
-    build_reject,
+    BuiltNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, add_doom_map_with_nodes,
+    build_blockmap, build_nodes, build_reject,
 };
 use crustywad::map::{
     DoomWriteError, DoomWriteWarning, Map, MapBlockmap, MapReject, MapWarning, NodeChild,
+    add_doom_map,
 };
-use crustywad::{Strictness, Wad};
+use crustywad::{ParseOptions, Strictness, Wad, WadBuilder, WadKind, WriteOptions};
 use proptest::prelude::*;
 
 /// Encodes a Doom 8-byte name field, NUL-padded on the right.
@@ -1513,4 +1516,303 @@ proptest! {
             }
         }
     }
+}
+
+// --- Task 1: the engine-playable one-shot (`add_doom_map_with_nodes`) --------
+
+/// An L-shaped (concave) room, so the BSP yields at least one node and a
+/// non-empty `NODES` lump. Reused across the one-shot tests.
+fn l_room_map() -> Map {
+    let points = [
+        (0i16, 0i16),
+        (256, 0),
+        (256, 128),
+        (128, 128),
+        (128, 256),
+        (0, 256),
+    ];
+    let lines = [
+        (0u16, 1u16, Some(0u16), None),
+        (1, 2, Some(0), None),
+        (2, 3, Some(0), None),
+        (3, 4, Some(0), None),
+        (4, 5, Some(0), None),
+        (5, 0, Some(0), None),
+    ];
+    assemble_general(&points, &lines)
+}
+
+/// Assembles a UDMF (`TEXTMAP`) map through the public path. Used to introduce a
+/// fractional thing coordinate — a field `build_nodes` never touches — so the
+/// write path's `CoordinateRounded` recovery can be observed in isolation.
+fn assemble_udmf(text: &str) -> Map {
+    let bytes = common::build_named_lumps(&[
+        ("MAP01", Vec::new()),
+        ("TEXTMAP", text.as_bytes().to_vec()),
+        ("ENDMAP", Vec::new()),
+    ]);
+    let wad =
+        Wad::from_bytes_with_options(bytes, ParseOptions::default()).expect("UDMF fixture parses");
+    let group = wad.map_group("MAP01").expect("map group present");
+    Map::assemble_with_options(&wad, &group, ParseOptions::default()).expect("map assembles")
+}
+
+/// Playable round-trip: the one-shot's WAD assembles strict-clean, and its
+/// serialized `SEGS`/`SSECTORS`/`NODES` equal what `build_nodes` produces
+/// directly, with `REJECT`/`BLOCKMAP` present.
+#[test]
+fn add_doom_map_with_nodes_round_trips_playable() {
+    let map = l_room_map();
+    let (built, _) = build_nodes(&map, &NodeBuildOptions::strict()).expect("direct node build");
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings = add_doom_map_with_nodes(
+        &mut builder,
+        "MAP01",
+        &map,
+        &WriteOptions::strict(),
+        &NodeBuildOptions::strict(),
+    )
+    .expect("one-shot builds");
+    assert!(
+        warnings.is_empty(),
+        "a clean map builds warning-free: {warnings:?}"
+    );
+
+    let bytes = builder.build().expect("WAD serializes");
+    let wad = Wad::from_bytes(bytes).expect("built WAD parses");
+    let group = wad.map_group("MAP01").expect("map group present");
+    let assembled = Map::assemble(&wad, &group).expect("strict assembly");
+
+    assert!(
+        assembled.warnings().is_empty(),
+        "the playable WAD assembles strict-clean: {:?}",
+        assembled.warnings()
+    );
+    assert_eq!(
+        assembled.segs(),
+        built.segs.as_slice(),
+        "round-trip SEGS match the direct build"
+    );
+    assert_eq!(
+        assembled.subsectors(),
+        built.subsectors.as_slice(),
+        "round-trip SSECTORS match the direct build"
+    );
+    assert_eq!(
+        assembled.nodes(),
+        built.nodes.as_slice(),
+        "round-trip NODES match the direct build"
+    );
+    assert!(
+        !assembled.nodes().is_empty(),
+        "the L-room yields at least one node"
+    );
+    assert!(assembled.reject().is_some(), "REJECT assembles (non-None)");
+    assert!(
+        assembled.blockmap().is_some(),
+        "BLOCKMAP assembles (non-None)"
+    );
+}
+
+/// Headline contract: the one-shot never returns `NodesNotBuilt` (it built the
+/// nodes), whereas `add_doom_map` on the same map does.
+#[test]
+fn add_doom_map_with_nodes_never_warns_nodes_not_built() {
+    let map = l_room_map();
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings = add_doom_map_with_nodes(
+        &mut builder,
+        "MAP01",
+        &map,
+        &WriteOptions::lenient(),
+        &NodeBuildOptions::lenient(),
+    )
+    .expect("one-shot builds");
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| matches!(w, NodeBuildWarning::Write(DoomWriteWarning::NodesNotBuilt))),
+        "the one-shot filters out NodesNotBuilt: {warnings:?}"
+    );
+
+    // Contrast: the placeholder writer still seeds NodesNotBuilt.
+    let mut placeholder = WadBuilder::new(WadKind::Pwad);
+    let placeholder_ws =
+        add_doom_map(&mut placeholder, "MAP01", &map, &WriteOptions::lenient()).expect("writes");
+    assert!(
+        placeholder_ws.contains(&DoomWriteWarning::NodesNotBuilt),
+        "add_doom_map still emits NodesNotBuilt on the same map"
+    );
+}
+
+/// Write-path pass-through: a non-`NodesNotBuilt` write warning (a fractional
+/// thing coordinate, rounded in lenient mode — a field `build_nodes` never
+/// touches) surfaces as `NodeBuildWarning::Write`.
+#[test]
+fn add_doom_map_with_nodes_passes_write_warnings_through() {
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0.0; y = 0.0; }\n",
+        "vertex { x = 64.0; y = 0.0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "sidedef { sector = 0; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+        "thing { x = 16.5; y = 16.0; type = 1; }\n",
+    );
+    let map = assemble_udmf(text);
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings = add_doom_map_with_nodes(
+        &mut builder,
+        "MAP01",
+        &map,
+        &WriteOptions::lenient(),
+        &NodeBuildOptions::lenient(),
+    )
+    .expect("one-shot builds");
+
+    assert!(
+        warnings.iter().any(|w| matches!(
+            w,
+            NodeBuildWarning::Write(DoomWriteWarning::CoordinateRounded { block: "thing", .. })
+        )),
+        "the fractional thing coordinate surfaces as a wrapped write warning: {warnings:?}"
+    );
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| matches!(w, NodeBuildWarning::Write(DoomWriteWarning::NodesNotBuilt))),
+        "still no NodesNotBuilt among the warnings: {warnings:?}"
+    );
+}
+
+/// Lump order and content: the eleven lumps appear in the canonical order, with
+/// non-empty `SEGS`/`SSECTORS`/`NODES` (the L-room yields a real BSP tree).
+#[test]
+fn add_doom_map_with_nodes_writes_canonical_lump_order() {
+    let map = l_room_map();
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    add_doom_map_with_nodes(
+        &mut builder,
+        "MAP01",
+        &map,
+        &WriteOptions::strict(),
+        &NodeBuildOptions::strict(),
+    )
+    .expect("one-shot builds");
+    let bytes = builder.build().expect("WAD serializes");
+    let wad = Wad::from_bytes(bytes).expect("built WAD parses");
+
+    let names: Vec<&str> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(
+        names,
+        [
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP",
+        ],
+        "canonical lump order (Global Constraint 5)"
+    );
+
+    let lump_len = |name: &str| {
+        let idx = wad
+            .lumps()
+            .iter()
+            .position(|l| l.name() == name)
+            .expect("lump present");
+        wad.lump_bytes(idx).map_or(0, <[u8]>::len)
+    };
+    assert!(lump_len("SEGS") > 0, "SEGS is non-empty");
+    assert!(lump_len("SSECTORS") > 0, "SSECTORS is non-empty");
+    assert!(
+        lump_len("NODES") > 0,
+        "the L-room yields a non-empty NODES lump"
+    );
+}
+
+/// Strict rejection: a coincident mixed-sector fan (no partition can separate
+/// it) fails strict with `MixedSectorSubsector`; lenient succeeds and warns
+/// once.
+#[test]
+fn add_doom_map_with_nodes_rejects_mixed_sector_fan_strict() {
+    let points = [(0i16, 0i16), (64, 0)];
+    // Two coincident one-sided lines, same direction, facing sectors 0 and 1.
+    let lines = [(0u16, 1u16, Some(0u16), None), (0, 1, Some(1u16), None)];
+    let map = assemble_general(&points, &lines);
+
+    let mut strict_builder = WadBuilder::new(WadKind::Pwad);
+    assert_eq!(
+        add_doom_map_with_nodes(
+            &mut strict_builder,
+            "MAP01",
+            &map,
+            &WriteOptions::strict(),
+            &NodeBuildOptions::strict(),
+        )
+        .unwrap_err(),
+        NodeBuildError::MixedSectorSubsector { subsector_segs: 2 },
+    );
+
+    let mut lenient_builder = WadBuilder::new(WadKind::Pwad);
+    let warnings = add_doom_map_with_nodes(
+        &mut lenient_builder,
+        "MAP01",
+        &map,
+        &WriteOptions::lenient(),
+        &NodeBuildOptions::lenient(),
+    )
+    .expect("lenient one-shot builds");
+    assert_eq!(
+        warnings,
+        vec![NodeBuildWarning::MixedSectorSubsector { subsector_segs: 2 }],
+    );
+}
+
+/// Deterministic warning order (Global Constraint 6): write-path warnings (minus
+/// `NodesNotBuilt`) come first, then build warnings. A map carrying BOTH a
+/// fractional thing (write) and a coincident mixed-sector fan (build) pins it.
+#[test]
+fn add_doom_map_with_nodes_orders_write_before_build_warnings() {
+    let text = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0.0; y = 0.0; }\n",
+        "vertex { x = 64.0; y = 0.0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 1; }\n",
+        "sidedef { sector = 0; }\n",
+        "sidedef { sector = 1; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+        "sector { texturefloor = \"F\"; textureceiling = \"C\"; }\n",
+        "thing { x = 16.5; y = 16.0; type = 1; }\n",
+    );
+    let map = assemble_udmf(text);
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings = add_doom_map_with_nodes(
+        &mut builder,
+        "MAP01",
+        &map,
+        &WriteOptions::lenient(),
+        &NodeBuildOptions::lenient(),
+    )
+    .expect("lenient one-shot builds");
+
+    assert_eq!(
+        warnings.len(),
+        2,
+        "exactly one write and one build warning: {warnings:?}"
+    );
+    assert!(
+        matches!(
+            warnings[0],
+            NodeBuildWarning::Write(DoomWriteWarning::CoordinateRounded { block: "thing", .. })
+        ),
+        "the write warning comes first: {warnings:?}"
+    );
+    assert_eq!(
+        warnings[1],
+        NodeBuildWarning::MixedSectorSubsector { subsector_segs: 2 },
+        "the build warning comes second"
+    );
 }

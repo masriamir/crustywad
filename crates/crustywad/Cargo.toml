@@ -58,5 +58,10 @@ name = "write_ops"
 harness = false
 required-features = ["write"]
 
+[[bench]]
+name = "build_ops"
+harness = false
+required-features = ["nodebuild"]
+
 [lints]
 workspace = true

@@ -1,3 +1,8 @@
+// This module is shared by several bench targets (`read_ops`, `write_ops`,
+// `build_ops`); each uses only a subset of these helpers, so an item unused by
+// one target is not dead — silence the per-target `dead_code` warnings.
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 /// Encodes a `usize` as a little-endian `i32`, panicking if the value overflows.

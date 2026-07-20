@@ -2591,6 +2591,327 @@ fn convert_udmf_to_doom_emits_lump_run_and_nodes_warning() {
     );
 }
 
+/// A UDMF `TEXTMAP` body for a closed one-sector square room (four vertices,
+/// four one-sided walls) — real geometry a node build turns into a non-empty
+/// `SEGS`/`SSECTORS` run, unlike the single-linedef [`udmf_textmap`] fixture.
+fn udmf_square_room() -> String {
+    concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 128; y = 0; }\n",
+        "vertex { x = 128; y = 128; }\n",
+        "vertex { x = 0; y = 128; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; blocking = true; }\n",
+        "linedef { v1 = 1; v2 = 2; sidefront = 1; blocking = true; }\n",
+        "linedef { v1 = 2; v2 = 3; sidefront = 2; blocking = true; }\n",
+        "linedef { v1 = 3; v2 = 0; sidefront = 3; blocking = true; }\n",
+        "thing { x = 64; y = 64; type = 1; skill1 = true; skill2 = true; skill3 = true; }\n",
+    )
+    .to_owned()
+}
+
+/// A PWAD holding a single UDMF square-room map (`MAP01`) plus a trailing
+/// `COLORMAP`.
+fn write_udmf_square_room_wad() -> NamedTempFile {
+    let textmap = udmf_square_room();
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+            ("COLORMAP", &[4, 5, 6]),
+        ],
+    )
+}
+
+/// A UDMF `TEXTMAP` for a mixed-sector fan: two coincident one-sided walls
+/// facing *different* sectors, which no seg line can separate. The classic BSP
+/// pass rejects this in strict mode (`NodeBuildError::MixedSectorSubsector`) and
+/// tolerates it in lenient mode (ADR-0024 §7 amendment) — the geometry the
+/// retail masters themselves ship.
+fn udmf_mixed_sector_fan() -> String {
+    concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 64; y = 0; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 1; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; blocking = true; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 1; blocking = true; }\n",
+        "thing { x = 32; y = 0; type = 1; skill1 = true; skill2 = true; skill3 = true; }\n",
+    )
+    .to_owned()
+}
+
+/// A PWAD holding the mixed-sector-fan map (`MAP01`).
+fn write_udmf_mixed_sector_fan_wad() -> NamedTempFile {
+    let textmap = udmf_mixed_sector_fan();
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    )
+}
+
+/// Re-reads a WAD file and asserts every map group assembles strict-clean (no
+/// assembly warnings), the engine-playable acceptance criterion.
+fn assert_maps_assemble_strict_clean(path: &std::path::Path) {
+    let bytes = std::fs::read(path).expect("output WAD should be readable");
+    let wad = crustywad::Wad::from_bytes(bytes).expect("output WAD should parse");
+    let groups = wad.map_groups();
+    assert!(
+        !groups.is_empty(),
+        "output WAD should contain at least one map group"
+    );
+    for group in &groups {
+        let map = crustywad::map::Map::assemble(&wad, group)
+            .unwrap_or_else(|e| panic!("map {} should assemble: {e}", group.name));
+        assert!(
+            map.warnings().is_empty(),
+            "map {} should assemble strict-clean, got warnings {:?}",
+            group.name,
+            map.warnings()
+        );
+    }
+}
+
+#[test]
+fn convert_udmf_to_doom_with_nodes_builds_playable_lumps() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(0)
+        // With --nodes the node lumps are built for real, so the unconditional
+        // NodesNotBuilt warning must NOT appear (Global Constraint 4).
+        .stderr(predicate::str::contains("run a nodebuilder").not());
+
+    // The canonical Doom lump run, with the node lumps present.
+    assert_eq!(
+        lump_names(out.path()),
+        vec![
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP", "COLORMAP",
+        ]
+    );
+
+    // A real geometry build yields non-empty SEGS (and the sibling node lumps),
+    // unlike the zero-length lumps `add_doom_map` emits.
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "SEGS should be non-empty after a node build"
+    );
+    assert!(!lump_bytes(out.path(), "SSECTORS").is_empty());
+    assert!(!lump_bytes(out.path(), "BLOCKMAP").is_empty());
+
+    // The output is engine-playable: its maps re-read and assemble strict-clean.
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn convert_to_doom_with_nodes_refuses_mixed_sector_fan_and_hints_lenient() {
+    let wad = write_udmf_mixed_sector_fan_wad();
+
+    // Strict: `add_doom_map_with_nodes` fails with `MixedSectorSubsector`; the
+    // convert refuses (exit 3), names the map, and — because the error IS
+    // lenient-recoverable (#264) — suggests `--lenient`.
+    let strict_out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            strict_out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "cannot convert map MAP01 to doom: a convex subsector",
+        ))
+        .stderr(predicate::str::contains("spans multiple sectors"))
+        .stderr(predicate::str::contains("re-run with --lenient"));
+
+    // Lenient: the fan is tolerated (ADR-0024 §7), so the same conversion
+    // succeeds and produces a playable map.
+    let lenient_out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            lenient_out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(0);
+    assert!(!lump_bytes(lenient_out.path(), "SEGS").is_empty());
+}
+
+/// A PWAD holding a single **Doom-format** square-room map (`MAP01`) whose
+/// SEGS/SSECTORS/NODES/REJECT/BLOCKMAP lumps are present but zero-length — the
+/// output `add_doom_map` produces (an editor's "run a nodebuilder" map) — plus
+/// a trailing `COLORMAP` non-map lump. The geometry is the square room, so a
+/// real node build turns the empty node lumps into a populated BSP.
+fn write_doom_square_room_empty_nodes_wad() -> NamedTempFile {
+    // Assemble the square room from its UDMF form, then serialize to the Doom
+    // binary format with empty node lumps via the write path.
+    let textmap = udmf_square_room();
+    let src = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let src_bytes = std::fs::read(src.path()).expect("source WAD readable");
+    let src_wad = crustywad::Wad::from_bytes(src_bytes).expect("source WAD parses");
+    let groups = src_wad.map_groups();
+    let group = groups.first().expect("source has one map group");
+    let map = crustywad::map::Map::assemble(&src_wad, group).expect("square room assembles");
+
+    let mut builder = crustywad::WadBuilder::new(crustywad::WadKind::Pwad);
+    crustywad::map::add_doom_map(
+        &mut builder,
+        "MAP01",
+        &map,
+        &crustywad::WriteOptions::strict(),
+    )
+    .expect("writes empty-node Doom map");
+    builder.add_lump("COLORMAP", vec![4_u8, 5, 6]);
+    let bytes = builder.build().expect("builds Doom WAD");
+
+    let out = NamedTempFile::new().unwrap();
+    std::fs::write(out.path(), &bytes).expect("write Doom fixture");
+    out
+}
+
+#[test]
+fn convert_doom_to_doom_with_nodes_rebuilds_empty_node_lumps() {
+    // Baseline: the Doom-format input's node lumps are empty (editor output).
+    let wad = write_doom_square_room_empty_nodes_wad();
+    assert!(
+        lump_bytes(wad.path(), "SEGS").is_empty(),
+        "fixture precondition: input SEGS is empty"
+    );
+
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(0)
+        // The map is rebuilt (not passed through), so it is counted and the
+        // NodesNotBuilt warning is absent.
+        .stdout(predicate::str::contains("converted 1 map to doom"))
+        .stderr(predicate::str::contains("run a nodebuilder").not());
+
+    // Same-format Doom map is now rebuilt: node lumps populated, non-map lump
+    // still passed through in order.
+    assert_eq!(
+        lump_names(out.path()),
+        vec![
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP", "COLORMAP",
+        ]
+    );
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "SEGS should be non-empty after a Doom->Doom node build"
+    );
+    assert!(!lump_bytes(out.path(), "SSECTORS").is_empty());
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn convert_doom_to_doom_without_nodes_passes_through_empty_node_lumps() {
+    // Contrast with the --nodes case: without --nodes, a same-format Doom map
+    // passes through verbatim, keeping its empty node lumps.
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 0 maps to doom"));
+
+    // Passed through unchanged: SEGS stays empty.
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "without --nodes the empty SEGS should pass through unchanged"
+    );
+}
+
+#[test]
+fn convert_nodes_ignored_for_udmf_target_with_note() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "--nodes has no effect with --to udmf",
+        ));
+}
+
 #[test]
 fn convert_map_already_in_target_format_passes_through() {
     let wad = write_doom_map_wad("MAP01");
