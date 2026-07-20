@@ -211,6 +211,91 @@ pub enum NodeBuildError {
     },
 }
 
+impl NodeBuildError {
+    /// Whether re-running the build with [`NodeBuildOptions::lenient`] recovers
+    /// from this error, turning it into a [`NodeBuildWarning`]-carrying success.
+    ///
+    /// Mirrors [`DoomWriteError::is_lenient_recoverable`]. The CLI uses this to
+    /// decide whether suggesting `--lenient` after a strict-mode refusal would
+    /// be honest (#264): the hint appears only when lenient mode would actually
+    /// accept the input.
+    ///
+    /// Returns:
+    ///
+    /// - `true` for [`MixedSectorSubsector`][Self::MixedSectorSubsector], which
+    ///   strict mode rejects but lenient mode accepts with a
+    ///   [`NodeBuildWarning::MixedSectorSubsector`].
+    /// - The wrapped error's own classification for
+    ///   [`Write`][Self::Write] — the shared write-path pass decides.
+    /// - `false` for the errors produced identically in **both** strictness
+    ///   modes — [`EmptyGeometry`][Self::EmptyGeometry],
+    ///   [`DegeneratePartition`][Self::DegeneratePartition] — and for the
+    ///   arena/offset ceilings ([`TooManyElements`][Self::TooManyElements],
+    ///   [`BlockmapOverflow`][Self::BlockmapOverflow]): each conflates a
+    ///   dominant structurally unrepresentable case (both modes error) with a
+    ///   strict-only vanilla-ceiling subset that lenient recovers. Classifying
+    ///   the whole variant `false` never yields a dishonest `--lenient` hint
+    ///   (a false positive, the #264 anti-pattern); at worst it omits the hint
+    ///   for the rare vanilla-ceiling subset, matching how
+    ///   [`DoomWriteError::TooManyElements`] classifies `false`.
+    #[must_use]
+    pub fn is_lenient_recoverable(&self) -> bool {
+        match self {
+            Self::Write(inner) => inner.is_lenient_recoverable(),
+            Self::MixedSectorSubsector { .. } => true,
+            Self::EmptyGeometry
+            | Self::BlockmapOverflow { .. }
+            | Self::TooManyElements { .. }
+            | Self::DegeneratePartition { .. } => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lenient_recoverable_classification() {
+        // Strict-only: lenient accepts the mixed-sector fan with a warning.
+        assert!(
+            NodeBuildError::MixedSectorSubsector { subsector_segs: 3 }.is_lenient_recoverable()
+        );
+
+        // Both-modes structural / hardening errors: lenient does not recover.
+        assert!(!NodeBuildError::EmptyGeometry.is_lenient_recoverable());
+        assert!(!NodeBuildError::BlockmapOverflow { offset: 70_000 }.is_lenient_recoverable());
+        assert!(
+            !NodeBuildError::TooManyElements {
+                kind: "segs",
+                count: 70_000,
+                max: 65_536,
+            }
+            .is_lenient_recoverable()
+        );
+        assert!(!NodeBuildError::DegeneratePartition { set_segs: 4 }.is_lenient_recoverable());
+
+        // Write delegates to the wrapped write error's own classification.
+        assert!(
+            NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+                block: "vertex",
+                field: "x",
+                index: 0,
+                value: 40_000,
+            })
+            .is_lenient_recoverable()
+        );
+        assert!(
+            !NodeBuildError::Write(DoomWriteError::TooManyElements {
+                kind: "vertices",
+                count: 70_000,
+                max: 65_536,
+            })
+            .is_lenient_recoverable()
+        );
+    }
+}
+
 /// A non-fatal condition recovered while building a map's node lumps in lenient
 /// mode (ADR-0024 §5).
 ///

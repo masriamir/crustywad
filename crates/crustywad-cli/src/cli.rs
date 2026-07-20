@@ -216,5 +216,9 @@ pub(crate) enum SubCommand {
         /// Output WAD kind.
         #[arg(long, default_value = "pwad", value_name = "KIND")]
         kind: WadKindArg,
+        /// Build engine-playable SEGS/SSECTORS/NODES/REJECT/BLOCKMAP (classic
+        /// Doom output only; ignored for `--to udmf`).
+        #[arg(long)]
+        nodes: bool,
     },
 }

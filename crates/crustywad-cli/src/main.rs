@@ -1008,7 +1008,9 @@ fn run(cli: Cli) -> Result<i32> {
             to,
             map,
             kind,
+            nodes,
         } => {
+            use crustywad::map::build::{NodeBuildOptions, add_doom_map_with_nodes};
             use crustywad::map::detect_map_format;
             use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
 
@@ -1027,6 +1029,23 @@ fn run(cli: Cli) -> Result<i32> {
             } else {
                 crustywad::WriteOptions::strict()
             };
+            // Node building mirrors the same strict/lenient choice as the write
+            // path, so a `--lenient` conversion also recovers node-build
+            // overflows into warnings.
+            let build_opts = if cli.lenient {
+                NodeBuildOptions::lenient()
+            } else {
+                NodeBuildOptions::strict()
+            };
+            // `--nodes` builds binary node lumps, which only the Doom format
+            // has; UDMF stores geometry as text and lets the engine (or an
+            // external tool) build nodes, so the flag is a no-op there. Note it
+            // once rather than silently ignoring it.
+            if nodes && matches!(to, MapFormatArg::Udmf) {
+                eprintln!(
+                    "note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring"
+                );
+            }
             // `target` is only compared against `detect_map_format` (to skip a
             // map already in the target format); the writer is chosen from `to`
             // instead. `target_name` is the user-facing spelling.
@@ -1137,6 +1156,18 @@ fn run(cli: Cli) -> Result<i32> {
                     // below dispatches on — and handle it once rather than per
                     // target format.
                     let written: Result<Vec<String>, Refusal> = match to {
+                        MapFormatArg::Doom if nodes => add_doom_map_with_nodes(
+                            &mut builder,
+                            &group.name,
+                            &assembled,
+                            &write_opts,
+                            &build_opts,
+                        )
+                        .map(|ws| ws.iter().map(ToString::to_string).collect())
+                        .map_err(|e| Refusal {
+                            lenient_recoverable: e.is_lenient_recoverable(),
+                            message: e.to_string(),
+                        }),
                         MapFormatArg::Doom => {
                             add_doom_map(&mut builder, &group.name, &assembled, &write_opts)
                                 .map(|ws| ws.iter().map(ToString::to_string).collect())
