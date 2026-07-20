@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-31ec4270.js";
+            window.path_to_searchindex_js = "searchindex-a27261e8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2918eee.js"></script>
@@ -193,7 +193,7 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#doom64-tests"><code>doom64-tests</code></a></td><td>no</td><td>Integration tests against a local Doom 64 IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
-<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, and the <code>to_lump_bytes</code> serializers</td></tr>
+<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), and the <code>to_lump_bytes</code> serializers</td></tr>
 <tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
 </tbody>
 </table>
@@ -369,23 +369,28 @@ mode writes the raw 4-byte magic.</li>
 <hr>
 <h2 id="nodebuild"><a class="header" href="#nodebuild"><code>nodebuild</code></a></h2>
 <p><strong>Enables:</strong> the <code>map::build</code> module — <code>NodeBuildOptions</code>, <code>NodeBuildError</code>, <code>NodeBuildWarning</code>,
-<code>build_blockmap</code>, <code>build_reject</code>, and <code>nodebuild</code>-gated <code>to_lump_bytes</code> serializers on the
-read-side lump types (<code>MapBlockmap</code> and <code>MapReject</code>; the classic BSP builders follow —
-issue #315, ADR-0024 §9)</p>
+<code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass), and the
+<code>nodebuild</code>-gated <code>to_lump_bytes</code> serializers on the read-side lump types (<code>MapBlockmap</code>,
+<code>MapReject</code>, and <code>BuiltNodes</code>)</p>
 <p><strong>Adds dependency:</strong> none — implies <code>write</code></p>
-<p>Clean-room BLOCKMAP, REJECT, and (in later stages) classic BSP generation from an
-assembled <code>Map</code> (ADR-0024) — stage 1 covers the collision and sight lumps; a map is not
-vanilla-playable until the BSP stage (#315) lands. It fulfills the revisit condition
-<code>add_doom_map</code> left open: that path deliberately emits zero-length <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/
-<code>REJECT</code>/<code>BLOCKMAP</code> with an always-on <code>DoomWriteWarning::NodesNotBuilt</code>, whereas the
-<code>nodebuild</code> builders produce those lumps for real. Coordinate narrowing is shared with the
-write path (ADR-0024 §3), so a builder operates on exactly the <code>i16</code> geometry the engine reads.</p>
-<p>Stage 1 ships both <code>build_reject</code> and <code>build_blockmap</code>. <code>build_reject</code> returns the
-correctly-sized all-zeros <code>REJECT</code> (<code>ceil(sectors² / 8)</code> bytes) — an all-clear table
-pre-rejects no line of sight, which is always engine-correct and is what <code>zdbsp</code> itself
-emits. <code>build_blockmap</code> builds the packed 128-unit-grid <code>BLOCKMAP</code> (deduplicated
-blocklists, strict/lenient offset-ceiling policy per ADR-0024 §5). BSP node building
-itself (<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>) is the later stage — issue #315.</p>
+<p>Clean-room BLOCKMAP, REJECT, and classic BSP (<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>) generation from an
+assembled <code>Map</code> (ADR-0024) — together the full set of node lumps a vanilla engine needs. It
+fulfills the revisit condition <code>add_doom_map</code> left open: that path deliberately emits
+zero-length <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/<code>REJECT</code>/<code>BLOCKMAP</code> with an always-on
+<code>DoomWriteWarning::NodesNotBuilt</code>, whereas the <code>nodebuild</code> builders produce those lumps for
+real. Coordinate narrowing is shared with the write path (ADR-0024 §3), so a builder
+operates on exactly the <code>i16</code> geometry the engine reads.</p>
+<p><code>build_reject</code> returns the correctly-sized all-zeros <code>REJECT</code> (<code>ceil(sectors² / 8)</code> bytes) —
+an all-clear table pre-rejects no line of sight, which is always engine-correct and is what
+<code>zdbsp</code> itself emits. <code>build_blockmap</code> builds the packed 128-unit-grid <code>BLOCKMAP</code>
+(deduplicated blocklists, strict/lenient offset-ceiling policy per ADR-0024 §5).
+<code>build_nodes</code> is the classic BSP pass: it partitions the map on seg lines into a
+deterministic <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code> tree (<code>BuiltNodes</code>), narrowing through the same
+write-path pass. It is validated against the full retail collection — 551 classic maps build
+clean, save for the mixed-sector fan (two sectors meeting at a bare corner vertex, which no
+seg line can separate): strict <code>build_nodes</code> rejects such a map, and lenient accepts the leaf
+with a <code>NodeBuildWarning::MixedSectorSubsector</code> — the exact engine-tolerated output the retail
+masters themselves ship (ADR-0024 §7 amendment, 2026-07-19).</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.6.0", features = ["nodebuild"] }
@@ -395,15 +400,36 @@ crustywad = { version = "0.6.0", features = ["nodebuild"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>use crustywad::map::build::{NodeBuildOptions, build_blockmap, build_reject};
-use crustywad::{WadBuilder, WadKind};
+</span>use crustywad::map::build::{NodeBuildOptions, build_blockmap, build_nodes, build_reject};
+use crustywad::map::write_doom_map;
+use crustywad::{WadBuilder, WadKind, WriteOptions};
 
 <span class="boring">fn run(map: &amp;crustywad::map::Map) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 </span>let reject = build_reject(map); // infallible: ceil(sectors² / 8) all-zero bytes
 let (blockmap, _warnings) = build_blockmap(map, &amp;NodeBuildOptions::strict())?;
 
+// The classic BSP pass: SEGS/SSECTORS/NODES. Lenient tolerates the mixed-sector
+// fan the retail masters ship (ADR-0024 §7 amendment); strict rejects it.
+let (nodes, _warnings) = build_nodes(map, &amp;NodeBuildOptions::lenient())?;
+let node_lumps = nodes.to_lump_bytes()?;
+
+// The five data lumps. When the BSP pass splits segs it creates new vertices;
+// `split_vertexes` MUST be appended to VERTEXES or the segs' vertex indices
+// (which address the map's vertices followed by the split ones) dangle.
+let (mut data, _warnings) = write_doom_map(map, &amp;WriteOptions::strict())?;
+data.vertexes.extend_from_slice(&amp;node_lumps.split_vertexes);
+
 let mut builder = WadBuilder::new(WadKind::Pwad);
 builder
+    .add_lump("MAP01", b"")
+    .add_lump("THINGS", data.things)
+    .add_lump("LINEDEFS", data.linedefs)
+    .add_lump("SIDEDEFS", data.sidedefs)
+    .add_lump("VERTEXES", data.vertexes) // map vertices + split vertices
+    .add_lump("SEGS", node_lumps.segs)
+    .add_lump("SSECTORS", node_lumps.ssectors)
+    .add_lump("NODES", node_lumps.nodes)
+    .add_lump("SECTORS", data.sectors)
     .add_lump("REJECT", reject.to_lump_bytes())
     .add_lump("BLOCKMAP", blockmap.to_lump_bytes()?);
 <span class="boring">let _ = builder;
