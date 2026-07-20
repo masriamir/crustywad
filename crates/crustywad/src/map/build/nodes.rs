@@ -1,17 +1,16 @@
-//! The classic BSP pass's output types and their lump serialization
-//! (ADR-0024 §2, staging §9.2, issue #315).
+//! The classic BSP pass — the `build_nodes` kernel, its output types, and
+//! their lump serialization (ADR-0024 §2, staging §9.2, issue #315).
 //!
-//! [`BuiltNodes`] is what the (Task 2) kernel `build_nodes` produces: the split
-//! vertices it created, plus the `SEGS`, `SSECTORS`, and `NODES` arenas of a
-//! finished classic BSP tree, expressed in the same normalized graph types the
-//! reader assembles into ([`MapSeg`], [`MapSubsector`], [`MapNode`]).
-//! [`BuiltNodes::to_lump_bytes`] renders those arenas to the four on-disk lumps
-//! the engine reads, reusing the [`common`](crate::map::common) record structs
-//! so the byte layout is declared exactly once.
-//!
-//! This module deliberately carries **only** the output types and their
-//! serializer: it can be — and is — unit-tested against hand-constructed
-//! [`BuiltNodes`] values before the partitioning kernel exists.
+//! [`build_nodes`] partitions an assembled [`Map`]'s segs into a classic BSP
+//! tree on seg lines only (no synthesized partitions), producing [`BuiltNodes`]:
+//! the split vertices it created, plus the `SEGS`, `SSECTORS`, and `NODES`
+//! arenas, expressed in the same normalized graph types the reader assembles
+//! into ([`MapSeg`], [`MapSubsector`], [`MapNode`]).
+//! [`BuiltNodes::to_lump_bytes`] renders those arenas to the on-disk lumps the
+//! engine reads, reusing the [`common`](crate::map::common) record structs so
+//! the byte layout is declared exactly once. A convex leaf spanning more than
+//! one sector with no separating seg line is the tolerated mixed-sector fan
+//! (ADR-0024 §7 amendment): strict rejects it, lenient warns and emits it.
 //!
 //! [`Map`]: crate::map::Map
 
@@ -1697,8 +1696,8 @@ mod tests {
 
     /// The vertex/seg soft ceiling is the sanctioned unit seam for the
     /// over-32,768 / over-65,536 tests: a live 33k-seg *convex* map would make
-    /// the partition search O(n²) and blow the time budget (documented in the
-    /// Task 2 report), so the threshold logic is exercised here directly.
+    /// the partition search O(n²) and blow the time budget, so the threshold
+    /// logic is exercised here directly.
     #[test]
     fn soft_ceiling_thresholds() {
         // Under both ceilings: clean.
