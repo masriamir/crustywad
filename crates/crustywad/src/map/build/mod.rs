@@ -177,6 +177,22 @@ pub enum NodeBuildError {
         /// The number of segs in the offending convex subsector.
         subsector_segs: usize,
     },
+    /// A partition line chosen by the selector (ADR-0024 §B) failed to separate
+    /// its seg set into two non-empty sides. `select` only returns a candidate
+    /// whose classification places content on both sides, so this is an
+    /// internal invariant — but the endpoint-coincidence split fallback
+    /// (ADR-0024 §C.3, which routes a straddling seg whole to one side when its
+    /// rounded intersection lands on an endpoint) can, for adversarial
+    /// geometry, collapse every straddling seg onto a single side. Rather than
+    /// emit a degenerate node or risk non-termination, the build fails cleanly
+    /// in **both** strictness modes (a denial-of-service hardening guard on a
+    /// fuzzed-input path, ADR-0016). Well-formed geometry never trips it.
+    #[error("selected partition of {set_segs} segs did not separate them into two non-empty sides")]
+    DegeneratePartition {
+        /// The number of segs in the set that the selected line failed to
+        /// partition.
+        set_segs: usize,
+    },
 }
 
 /// A non-fatal condition recovered while building a map's node lumps in lenient

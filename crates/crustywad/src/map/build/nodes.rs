@@ -412,6 +412,10 @@ const SAMPLE_BUDGET: usize = 512;
 /// - [`NodeBuildError::MixedSectorSubsector`] (strict) when a convex region
 ///   spans multiple sectors with no separating partition; lenient accepts it and
 ///   emits [`NodeBuildWarning::MixedSectorSubsector`] once.
+/// - [`NodeBuildError::DegeneratePartition`] (both modes) — a hardening guard —
+///   when a selected partition fails to separate its seg set into two non-empty
+///   sides (only reachable for adversarial geometry via the §C.3 endpoint
+///   fallback; well-formed maps never trip it).
 pub fn build_nodes(
     map: &Map,
     opts: &NodeBuildOptions,
@@ -467,24 +471,79 @@ struct WorkSeg {
 /// its line a valid partition). The relaxed sector-separating rule (§C.2) does
 /// count colinear segs, which is how a two-sided shared line separates two
 /// sectors in an otherwise convex region.
+/// A single classification decision is shared verbatim by [`Bsp::select`]'s
+/// scoring and [`Bsp::split_set`]'s routing (via [`Bsp::classify_seg`]) so the
+/// two can **never** disagree — the invariant that keeps
+/// [`NodeBuildError::DegeneratePartition`] unreachable on well-formed geometry.
+/// A straddler is [`Class::Split`] **only** when its rounded intersection is
+/// strictly interior (§C.3 endpoint-coincidence collapse already folded in), so
+/// a candidate whose "splits" all collapse to one side is correctly scored as
+/// leaving the other side empty.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Class {
-    /// Genuine extent on the front (right) half-plane.
+    /// Genuine extent on the front (right) half-plane (includes a straddler that
+    /// collapsed to the front by the §C.3 endpoint rule).
     Front,
-    /// Genuine extent on the back (left) half-plane.
+    /// Genuine extent on the back (left) half-plane (includes a §C.3 collapse).
     Back,
     /// Both endpoints on the line, same direction as the partition → front side.
     ColinearFront,
     /// Both endpoints on the line, opposite direction → back side.
     ColinearBack,
-    /// Strictly straddling: one endpoint each side — must be split.
-    Split,
+    /// Strictly straddling with a strictly-interior rounded intersection at
+    /// `(x, y)` — the two fragments are guaranteed distinct and land on opposite
+    /// sides.
+    Split(i32, i32),
 }
 
 impl Class {
-    /// Whether this seg routes to the front side when the set is partitioned.
+    /// Whether a non-splitting seg routes to the front side when partitioned.
     fn is_front(self) -> bool {
         matches!(self, Class::Front | Class::ColinearFront)
+    }
+}
+
+/// A partition line and its precomputed integer/`i128` forms, built once per
+/// candidate so [`Bsp::classify_seg`] does no redundant widening.
+#[derive(Clone, Copy)]
+struct Partition {
+    /// Line start `x` (the splitter seg's `v1`), map units.
+    px: i32,
+    /// Line start `y`.
+    py: i32,
+    /// Line direction `dx` (fits `i16` by §B.1).
+    dx: i32,
+    /// Line direction `dy`.
+    dy: i32,
+    /// `px` as `i64`.
+    pxi: i64,
+    /// `py` as `i64`.
+    pyi: i64,
+    /// `dx` as `i64`.
+    pdx: i64,
+    /// `dy` as `i64`.
+    pdy: i64,
+    /// `dx² + dy²` as `i128` (the on-line threshold denominator).
+    len2: i128,
+}
+
+impl Partition {
+    /// Builds a partition from integer line start `(px, py)` and direction
+    /// `(dx, dy)`.
+    fn new(px: i32, py: i32, dx: i32, dy: i32) -> Self {
+        let (pxi, pyi, pdx, pdy) = (i64::from(px), i64::from(py), i64::from(dx), i64::from(dy));
+        let len2 = i128::from(pdx) * i128::from(pdx) + i128::from(pdy) * i128::from(pdy);
+        Self {
+            px,
+            py,
+            dx,
+            dy,
+            pxi,
+            pyi,
+            pdx,
+            pdy,
+            len2,
+        }
     }
 }
 
@@ -530,15 +589,6 @@ enum Task {
         /// Partition-line `dy`.
         dy: i32,
     },
-}
-
-/// Outcome of splitting one straddling seg.
-enum SplitOutcome {
-    /// Two fragments: `(front_seg_id, back_seg_id)`.
-    Two(usize, usize),
-    /// The rounded intersection coincided with an endpoint, so the seg was not
-    /// split; classify it whole to this side (§C.3).
-    Whole(Class, usize),
 }
 
 /// The classic BSP builder's working state (spec §A–D).
@@ -713,7 +763,7 @@ impl<'a> Bsp<'a> {
         done: &mut Vec<TreeRef>,
     ) -> Result<(), NodeBuildError> {
         if let Some(cand) = self.select(&set, false) {
-            return self.branch(cand, &set, work, done);
+            return self.branch(cand, &set, work);
         }
         // Convex: no seg's line has content on both sides (§B.4).
         if self.single_sector(&set) {
@@ -723,7 +773,7 @@ impl<'a> Bsp<'a> {
         // §C.2: a multi-sector convex region. Retry with the sector-separating
         // relaxation; a separating line is a normal branch.
         if let Some(cand) = self.select(&set, true) {
-            return self.branch(cand, &set, work, done);
+            return self.branch(cand, &set, work);
         }
         // Truly coincident mixed-sector geometry.
         match self.strictness {
@@ -748,20 +798,25 @@ impl<'a> Bsp<'a> {
         cand: usize,
         set: &[usize],
         work: &mut Vec<Task>,
-        done: &mut Vec<TreeRef>,
     ) -> Result<(), NodeBuildError> {
         let s = self.segs[cand];
         let (px, py) = self.coord(s.v1);
         let (x2, y2) = self.coord(s.v2);
         let (dx, dy) = (x2 - px, y2 - py);
+        let part = Partition::new(px, py, dx, dy);
 
-        let (front, back) = self.split_set(set, px, py, dx, dy)?;
+        let (front, back) = self.split_set(set, &part)?;
         if front.is_empty() || back.is_empty() {
-            // A valid partition always yields two non-empty sides (§B.3); guard
-            // the impossible so a bug degrades to a leaf rather than looping.
-            debug_assert!(false, "valid partition must yield two non-empty sides");
-            self.push_leaf(set.to_vec(), done);
-            return Ok(());
+            // `select` returns only a candidate whose `classify_seg` counts place
+            // content on both sides, and `split_set` routes by that *same*
+            // classification, so a valid selection cannot empty a side. This
+            // guard therefore stays as a fuzz-safe backstop (Global Constraint 9):
+            // rather than emit a degenerate node or loop on adversarial geometry
+            // that somehow reaches here, fail cleanly in both modes. Well-formed
+            // geometry — including the full retail collection — never trips it.
+            return Err(NodeBuildError::DegeneratePartition {
+                set_segs: set.len(),
+            });
         }
 
         work.push(Task::Merge { px, py, dx, dy });
@@ -782,29 +837,60 @@ impl<'a> Bsp<'a> {
         set.iter().all(|&id| self.segs[id].side_sector == first)
     }
 
-    /// Classifies seg `s` against the partition line through `(px, py)` with
-    /// direction `(pdx, pdy)` and squared length `len2` (§B.2). All arithmetic is
-    /// exact: `i64` cross products, `i128` for the on-line threshold.
-    fn classify(&self, px: i64, py: i64, pdx: i64, pdy: i64, len2: i128, s: &WorkSeg) -> Class {
-        let mut front = 0u8;
-        let mut back = 0u8;
-        for &e in &[s.v1, s.v2] {
-            let (qx, qy) = self.coord(e);
-            let cross = (i64::from(qx) - px) * pdy - (i64::from(qy) - py) * pdx;
-            let c = i128::from(cross);
-            // Within 0.5 units of the line (distance² < 1/4 ⇔ cross² < len²/4 ⇔
-            // 4·cross² < len²). Exact in i128.
-            if c * c * 4 < len2 {
-                // on the line — contributes to neither tally
-            } else if cross > 0 {
-                front += 1;
-            } else {
-                back += 1;
-            }
-        }
+    /// The exact `i64` cross product of the partition direction with the vector
+    /// from the line start to vertex `e`: `> 0` front, `< 0` back (§B.2, engine
+    /// convention `R_PointOnSide`, `src/doom/r_main.c:145`).
+    fn cross(&self, part: &Partition, e: usize) -> i64 {
+        let (qx, qy) = self.coord(e);
+        (i64::from(qx) - part.pxi) * part.pdy - (i64::from(qy) - part.pyi) * part.pdx
+    }
+
+    /// Whether cross product `c` places its vertex within 0.5 map units of the
+    /// line (`distance² < 1/4 ⇔ cross² < len²/4 ⇔ 4·cross² < len²`; exact in
+    /// `i128`).
+    fn on_line(part: &Partition, c: i64) -> bool {
+        i128::from(c) * i128::from(c) * 4 < part.len2
+    }
+
+    /// Classifies seg `s` against `part` (§B.2), folding in the §C.3
+    /// endpoint-coincidence collapse so the result is **exactly** what
+    /// [`split_set`](Self::split_set) will do: a straddler is [`Class::Split`]
+    /// only when its rounded intersection is strictly interior, otherwise it
+    /// classifies to the side it actually collapses to. This single source of
+    /// truth is what keeps `select` and `split_set` in agreement.
+    fn classify_seg(&self, part: &Partition, s: &WorkSeg) -> Class {
+        let c1 = self.cross(part, s.v1);
+        let c2 = self.cross(part, s.v2);
+        let (on1, on2) = (Self::on_line(part, c1), Self::on_line(part, c2));
+        let front = u8::from(!on1 && c1 > 0) + u8::from(!on2 && c2 > 0);
+        let back = u8::from(!on1 && c1 < 0) + u8::from(!on2 && c2 < 0);
+
         if front > 0 && back > 0 {
-            Class::Split
-        } else if front > 0 {
+            // Strict straddler. Compute where the split would actually land, on
+            // the seg's own linedef geometry (§C.3).
+            let Some((mx, my)) = self.intersection(s, part) else {
+                // Parallel to its own linedef — impossible for a straddler; do
+                // not divide by zero (Global Constraint 9).
+                debug_assert!(
+                    false,
+                    "a straddling seg cannot be parallel to the partition"
+                );
+                return Class::Front;
+            };
+            let ec1 = self.coord(s.v1);
+            let ec2 = self.coord(s.v2);
+            // If the rounded split coincides with an endpoint, the seg does not
+            // actually straddle after rounding — it collapses to the *other*
+            // (non-coincident) endpoint's side.
+            if (mx, my) == ec1 {
+                return if c2 > 0 { Class::Front } else { Class::Back };
+            }
+            if (mx, my) == ec2 {
+                return if c1 > 0 { Class::Front } else { Class::Back };
+            }
+            return Class::Split(mx, my);
+        }
+        if front > 0 {
             Class::Front
         } else if back > 0 {
             Class::Back
@@ -813,14 +899,42 @@ impl<'a> Bsp<'a> {
             // partition → front (the engine draws the front side first).
             let (sx1, sy1) = self.coord(s.v1);
             let (sx2, sy2) = self.coord(s.v2);
-            let dot =
-                pdx * (i64::from(sx2) - i64::from(sx1)) + pdy * (i64::from(sy2) - i64::from(sy1));
+            let dot = part.pdx * (i64::from(sx2) - i64::from(sx1))
+                + part.pdy * (i64::from(sy2) - i64::from(sy1));
             if dot > 0 {
                 Class::ColinearFront
             } else {
                 Class::ColinearBack
             }
         }
+    }
+
+    /// The rounded intersection of `part`'s line with seg `s`'s own linedef's
+    /// canonical geometry (§C.3), or `None` if they are parallel. Computing on
+    /// the linedef (not the seg's possibly-reversed `v1`/`v2`) is what makes a
+    /// two-sided linedef's front and back segs split at the identical vertex.
+    // The per-axis `f64` component pairs are conventional; renaming obscures them.
+    #[allow(clippy::similar_names)]
+    fn intersection(&self, s: &WorkSeg, part: &Partition) -> Option<(i32, i32)> {
+        let ld = &self.map.linedefs()[s.linedef];
+        let (lsx, lsy) = self.coord(ld.start.0);
+        let (lex, ley) = self.coord(ld.end.0);
+        let (ldx, ldy) = (f64::from(lex - lsx), f64::from(ley - lsy));
+        let (pdxf, pdyf) = (f64::from(part.dx), f64::from(part.dy));
+        let (lsxf, lsyf) = (f64::from(lsx), f64::from(lsy));
+        let (pxf, pyf) = (f64::from(part.px), f64::from(part.py));
+
+        // t = cross(part_dir, line_start - part_point) / -cross(part_dir, line_dir).
+        let num = pdxf * (lsyf - pyf) - pdyf * (lsxf - pxf);
+        let denom = -(pdxf * ldy - pdyf * ldx);
+        if denom.abs() < 1e-9 {
+            return None;
+        }
+        let t = num / denom;
+        Some((
+            round_half_away(lsxf + t * ldx),
+            round_half_away(lsyf + t * ldy),
+        ))
     }
 
     /// Selects the best splitter in `set` (§B), or `None` if the set is convex
@@ -862,24 +976,19 @@ impl<'a> Bsp<'a> {
             if pdx.abs() > MAX_PARTITION_DELTA || pdy.abs() > MAX_PARTITION_DELTA {
                 continue;
             }
-            let len2 = i128::from(pdx) * i128::from(pdx) + i128::from(pdy) * i128::from(pdy);
-            if len2 == 0 {
+            #[allow(clippy::cast_possible_truncation)]
+            let part = Partition::new(px, py, pdx as i32, pdy as i32);
+            if part.len2 == 0 {
                 continue; // a degenerate zero-length fragment cannot partition
             }
             // Full front/back counts (colinear included) drive scoring; the
             // non-colinear counts (`front_solid`/`back_solid`) drive the normal
-            // convexity test (see `Class`).
+            // convexity test (see `Class`). Because `classify_seg` reports the
+            // *post-rounding* outcome, these counts match `split_set` exactly.
             let (mut nf, mut nb, mut nsp) = (0usize, 0usize, 0usize);
             let (mut front_solid, mut back_solid) = (0usize, 0usize);
             for &sid in set {
-                match self.classify(
-                    i64::from(px),
-                    i64::from(py),
-                    pdx,
-                    pdy,
-                    len2,
-                    &self.segs[sid],
-                ) {
+                match self.classify_seg(&part, &self.segs[sid]) {
                     Class::Front => {
                         nf += 1;
                         front_solid += 1;
@@ -890,7 +999,7 @@ impl<'a> Bsp<'a> {
                     }
                     Class::ColinearFront => nf += 1,
                     Class::ColinearBack => nb += 1,
-                    Class::Split => nsp += 1,
+                    Class::Split(..) => nsp += 1,
                 }
             }
             let valid = if relaxed {
@@ -925,113 +1034,57 @@ impl<'a> Bsp<'a> {
         }
     }
 
-    /// Partitions `set` by the line through `(px, py)` with direction
-    /// `(dx, dy)`, splitting straddling segs (§C.3–C.4). Returns `(front, back)`.
+    /// Partitions `set` by `part`, splitting straddling segs (§C.3–C.4).
+    /// Routing uses the same [`classify_seg`](Self::classify_seg) that
+    /// [`select`](Self::select) scored with, so a non-empty side here is
+    /// guaranteed whenever the selector deemed the candidate valid. Returns
+    /// `(front, back)`.
     fn split_set(
         &mut self,
         set: &[usize],
-        px: i32,
-        py: i32,
-        dx: i32,
-        dy: i32,
+        part: &Partition,
     ) -> Result<(Vec<usize>, Vec<usize>), NodeBuildError> {
-        let (pxi, pyi) = (i64::from(px), i64::from(py));
-        let (pdx, pdy) = (i64::from(dx), i64::from(dy));
-        let len2 = i128::from(pdx) * i128::from(pdx) + i128::from(pdy) * i128::from(pdy);
         let mut front = Vec::new();
         let mut back = Vec::new();
         for &sid in set {
             let s = self.segs[sid];
-            let class = self.classify(pxi, pyi, pdx, pdy, len2, &s);
-            if class == Class::Split {
-                match self.split_seg(sid, px, py, dx, dy)? {
-                    SplitOutcome::Two(f, b) => {
-                        front.push(f);
-                        back.push(b);
-                    }
-                    SplitOutcome::Whole(side, id) => {
-                        if side.is_front() {
-                            front.push(id);
-                        } else {
-                            back.push(id);
-                        }
-                    }
+            match self.classify_seg(part, &s) {
+                Class::Split(mx, my) => {
+                    let (f, b) = self.split_seg_at(part, sid, mx, my)?;
+                    front.push(f);
+                    back.push(b);
                 }
-            } else if class.is_front() {
-                front.push(sid);
-            } else {
-                back.push(sid);
+                class if class.is_front() => front.push(sid),
+                _ => back.push(sid),
             }
         }
         Ok((front, back))
     }
 
-    /// Splits straddling seg `sid` at its intersection with the partition line,
-    /// computed on the seg's own linedef's canonical geometry so a two-sided
-    /// linedef's front and back segs split at the identical vertex (§C.3).
-    // The `f64` component names (`pdxf`/`pdyf`/`lsxf`/`lsyf`/`pxf`/`pyf`) are the
-    // conventional per-axis pairs; renaming would only obscure the geometry.
-    #[allow(clippy::similar_names)]
-    fn split_seg(
+    /// Splits straddling seg `sid` at the strictly-interior rounded intersection
+    /// `(mx, my)` that [`classify_seg`](Self::classify_seg) already computed and
+    /// vetted (§C.3–C.4), returning `(front_fragment, back_fragment)`. The mid
+    /// vertex is interned (deduplicated), so a two-sided linedef's two segs share
+    /// one split vertex — no crack.
+    fn split_seg_at(
         &mut self,
+        part: &Partition,
         sid: usize,
-        px: i32,
-        py: i32,
-        dx: i32,
-        dy: i32,
-    ) -> Result<SplitOutcome, NodeBuildError> {
+        mx: i32,
+        my: i32,
+    ) -> Result<(usize, usize), NodeBuildError> {
         let s = self.segs[sid];
         let ld = &self.map.linedefs()[s.linedef];
-        let (lsx, lsy) = self.coord(ld.start.0);
-        let (lex, ley) = self.coord(ld.end.0);
-        let (ldx, ldy) = (f64::from(lex - lsx), f64::from(ley - lsy));
-
-        let (pdxf, pdyf) = (f64::from(dx), f64::from(dy));
-        let (lsxf, lsyf) = (f64::from(lsx), f64::from(lsy));
-        let (pxf, pyf) = (f64::from(px), f64::from(py));
-
-        // t = cross(part_dir, line_start - part_point) / -cross(part_dir, line_dir).
-        let num = pdxf * (lsyf - pyf) - pdyf * (lsxf - pxf);
-        let denom = -(pdxf * ldy - pdyf * ldx);
-        if denom.abs() < 1e-9 {
-            // Colinear — unreachable for a genuine straddler. Degrade to "front"
-            // rather than divide by zero (Global Constraint 9: never panic).
-            debug_assert!(
-                false,
-                "a straddling seg cannot be colinear with the partition"
-            );
-            return Ok(SplitOutcome::Whole(Class::Front, sid));
-        }
-        let t = num / denom;
-        let mx = round_half_away(lsxf + t * ldx);
-        let my = round_half_away(lsyf + t * ldy);
-
-        // §C.3: if the rounded split lands on an endpoint, do not split —
-        // classify the whole seg to the side of its farther endpoint.
+        // Offset reference: linedef start (dir 0) or end (dir 1) — §D.
+        let ref_idx = if s.direction == 0 {
+            ld.start.0
+        } else {
+            ld.end.0
+        };
+        let (rx, ry) = self.coord(ref_idx);
         let c1 = self.coord(s.v1);
-        let c2 = self.coord(s.v2);
-        if (mx, my) == c1 || (mx, my) == c2 {
-            let (pxi, pyi, pdx, pdy) = (i64::from(px), i64::from(py), i64::from(dx), i64::from(dy));
-            let cross1 = (i64::from(c1.0) - pxi) * pdy - (i64::from(c1.1) - pyi) * pdx;
-            let cross2 = (i64::from(c2.0) - pxi) * pdy - (i64::from(c2.1) - pyi) * pdx;
-            let far = if cross1.abs() >= cross2.abs() {
-                cross1
-            } else {
-                cross2
-            };
-            let side = if far > 0 { Class::Front } else { Class::Back };
-            return Ok(SplitOutcome::Whole(side, sid));
-        }
-
         let mid = self.intern_vertex(mx, my);
 
-        // Offsets on the ORIGINAL narrowed linedef geometry (§D): from the seg's
-        // own start reference — linedef start (dir 0) or end (dir 1).
-        let (rx, ry) = if s.direction == 0 {
-            self.coord(ld.start.0)
-        } else {
-            self.coord(ld.end.0)
-        };
         let off_front = self.finalize_offset(distance(rx, ry, c1.0, c1.1), s.linedef)?;
         let off_mid = self.finalize_offset(distance(rx, ry, mx, my), s.linedef)?;
 
@@ -1067,12 +1120,10 @@ impl<'a> Bsp<'a> {
 
         // Fragment A takes the side of s.v1; B takes the side of s.v2. As a
         // straddler they are on opposite sides.
-        let (pxi, pyi, pdx, pdy) = (i64::from(px), i64::from(py), i64::from(dx), i64::from(dy));
-        let cross_v1 = (i64::from(c1.0) - pxi) * pdy - (i64::from(c1.1) - pyi) * pdx;
-        if cross_v1 > 0 {
-            Ok(SplitOutcome::Two(id_a, id_b))
+        if self.cross(part, s.v1) > 0 {
+            Ok((id_a, id_b))
         } else {
-            Ok(SplitOutcome::Two(id_b, id_a))
+            Ok((id_b, id_a))
         }
     }
 
