@@ -368,12 +368,20 @@ pub enum NodeBuildError {
     /// A blocklist offset in the packed `BLOCKMAP` exceeds the applicable
     /// offset ceiling (table below).
     BlockmapOverflow { offset: usize },
+    /// Strict mode: a convex leaf spans more than one sector and no seg's
+    /// line separates them (the mixed-sector fan of the amendment below).
+    /// Lenient mode accepts the leaf and warns instead.
+    MixedSectorSubsector { subsector_segs: usize },
 }
 
 #[non_exhaustive]
 pub enum NodeBuildWarning {
     /// A narrowing recovery from the shared write-path pass (§3).
     Write(DoomWriteWarning),
+    /// Lenient mode: a convex leaf spans more than one sector, unsplittable
+    /// by any seg-line; emitted as the engine-tolerated micro-sliver the
+    /// retail masters themselves ship (see the amendment below).
+    MixedSectorSubsector { subsector_segs: usize },
     /// Lenient mode: a built arena exceeds the vanilla-safe ceiling but fits
     /// the format ceiling; the output was emitted and needs a limit-removing
     /// port.
@@ -393,8 +401,12 @@ pub enum NodeBuildWarning {
 | any `BLOCKMAP` blocklist offset > 32,767 | `BlockmapOverflow` | emit, `BlockmapVanillaOverflow` |
 | any `BLOCKMAP` blocklist offset > 65,535 | `BlockmapOverflow` | `BlockmapOverflow` (the offset word is unsigned 16-bit at most) |
 | zero linedefs/vertices/sidedefs/sectors | `EmptyGeometry` | `EmptyGeometry` |
+| convex leaf spans >1 sector, no seg-line separates | `MixedSectorSubsector` | emit, `MixedSectorSubsector` |
 
-No retail classic map reaches a third of the tightest of these ceilings; the
+The last row is the seg-line nodebuilder's one irreducible soft defect; the
+amendment at the end of this ADR records why it is a warning, not a bug, and
+why the retail sweep (§7) runs lenient to tolerate it. No retail classic map
+reaches a third of the tightest of the numeric ceilings; the
 strict/lenient split exists for synthetic and converted content, and the
 unconditional rows are the write path's tier-1 "structurally impossible"
 precedent applied to the build outputs.
@@ -406,10 +418,12 @@ leading `0` delimiter word (vanilla tolerates it, GZDoom's blockmap verifier
 *requires* it) and a `0xFFFF` terminator; identical blocklists are
 deduplicated (the read side already models aliased lists); every linedef
 appears in every block its geometry crosses (the hard collision requirement);
-node bboxes bound their subtrees; subsectors are convex, non-empty, and
-single-sector, with their first seg carrying the sidedef that determines the
-subsector's sector; `nodes.len() == subsectors.len() − 1` (validated — it held
-on 551/551 retail maps); and building is **deterministic** — identical input
+node bboxes bound their subtrees; subsectors are convex and non-empty, with
+their first seg carrying the sidedef that determines the subsector's sector;
+subsectors are single-sector **except** for the unsplittable mixed-sector fan
+the amendment describes (strict rejects it, lenient warns and emits it);
+`nodes.len() == subsectors.len() − 1` (validated — it held on 551/551 retail
+maps); and building is **deterministic** — identical input
 and options produce identical bytes, with no iteration-order-sensitive
 containers on any output path.
 
@@ -459,11 +473,15 @@ containers on any output path.
   collection (gated like the existing sweep, `CRUSTYWAD_SWEEP_DIR`): rebuild
   nodes/blockmap/reject from the assembled graph, then assert the engine
   contract mechanically — every index in range, tree acyclic and rooted last,
-  every subsector non-empty/single-sector, every seg geometrically on the
-  correct side of every ancestor partition line, every linedef present in
-  every blockmap cell its geometry crosses (verified by independent
-  brute-force rasterization), `nodes == subsectors − 1`. This oracle needs no
-  external builder and no golden files.
+  every subsector non-empty (single-sector except the tolerated mixed-sector
+  fan), every seg geometrically on the correct side of every ancestor
+  partition line, every linedef present in every blockmap cell its geometry
+  crosses (verified by independent brute-force rasterization),
+  `nodes == subsectors − 1`. The node sweep runs `build_nodes` in **lenient**
+  mode and pins its warning set to the single `MixedSectorSubsector` class —
+  the same "known-condition pin, not an allowlist" shape stage 1's sweeps
+  use — so any *other* warning, or any error, still fails it. This oracle
+  needs no external builder and no golden files.
 - **Calibration corridor.** The sweep additionally asserts the build stays
   inside the empirically established envelope (segs ≤ ~3× linedefs, split
   vertices a bounded fraction of the arena) — a tripwire for pathological
@@ -622,3 +640,64 @@ Stage 1 has no dependency on stage 2; stage 3 depends on both.
   `crustybsp`) — a second `[[bin]]` in `crustywad-cli` wrapping the same
   `nodebuild` feature behind a zdbsp-compatible option surface, so editors'
   external-nodebuilder config slots accept it as a drop-in.
+
+## Amendment (2026-07-19, #315): mixed-sector subsectors are a tolerated lenient warning
+
+Stage 2's `build_nodes` (§9.2) partitions **only on seg lines** (§B/§C) — the
+clean-room, deterministic core the ADR scoped. Building it against the retail
+collection surfaced a class this restriction cannot resolve: **the
+mixed-sector fan**. A convex leaf whose segs belong to two sectors that meet
+only at a bare corner vertex (e.g. DOOM `E3M2`: `ld155`, sector 22, horizontal
+at `y=1936`, and `ld156`, sector 21, vertical at `x=1664`, touching at
+`(1664, 1936)`) has *no* seg whose line separates the two sectors — a
+separating line must pass through the shared vertex at an intermediate slope no
+seg provides. 52 of the 551 classic retail maps contain at least one such fan.
+
+This is **not a kernel defect**, and the decision is to accept it rather than
+engineer around it:
+
+- **The retail masters ship the same class.** Reading each map's *original*
+  `SEGS`/`SSECTORS` (built by DoomBSP/ZDBSP) shows **47 mixed-sector
+  subsectors across 30 shipped retail maps** (independently verified through
+  crustywad's own assembly, 2026-07-19: DOOM `E3M2` ships exactly 1, `E3M8`
+  ships 2; freedoom2 12, strife1 19, and a scatter across DOOM2/Heretic/Hexen).
+  The original nodebuilders produced mixed-sector subsectors at exactly this
+  geometry and the shipped engines run the maps fine — the engine renders the
+  first seg's sector's flats across a micro-sliver, a known, imperceptible
+  artifact. A "one subsector = one sector" invariant would reject real,
+  shipping content.
+- **Seg-line partitioning cannot avoid it.** `MixedSectorSubsector` is emitted
+  only when the *maximally permissive* seg-line rule (§C.2, any seg-line
+  leaving both sides non-empty) finds nothing; strengthening that validity
+  criterion is provably powerless (a stricter rule is a subset). Eliminating
+  the fan requires **synthesizing a non-seg partition line** — a real
+  algorithmic extension beyond §B/§C, with its own linear-separation,
+  termination, determinism, and clean-room surface — to achieve a purity the
+  reference tools themselves do not. Considered and **rejected** as gilding
+  past parity for a capability no retail map needs.
+
+**The contract.** `MixedSectorSubsector { subsector_segs }` is added to both
+`NodeBuildError` and `NodeBuildWarning` (additive to the `#[non_exhaustive]`
+enums, so still a compatible change). It joins §5's decision table as the last
+row: **strict** `build_nodes` errors on a mixed-sector fan — a caller that
+needs a guaranteed single-sector tree is told which map cannot provide one;
+**lenient** `build_nodes` accepts the leaf and warns, producing exactly the
+engine-tolerated output the masters ship. The graph already carries the
+capacity to represent it (`MapSubsector` does not itself assert single-sector),
+and the `validate_bsp_allowing_mixed_sector` oracle relaxes only that one
+check.
+
+**Sweep contract (§7 updated above).** The node retail sweep runs `build_nodes`
+in **lenient** mode and pins its warning set to the single `MixedSectorSubsector`
+class — the "known-condition pin, not an allowlist" shape stage 1's sfx/sweep
+pins already established. Every other warning, and every error, still fails the
+sweep; `DegeneratePartition` (the resolved classify↔split-consistency guard)
+must never fire, and does not on any of the 551 maps. This preserves the sweep
+as the primary correctness instrument while telling the truth about the one
+soft defect inherent to seg-line node-building.
+
+**Why this is recorded here.** The choice narrows the ADR's original §7 phrasing
+("every subsector … single-sector", "strict mode with zero warnings") — that
+wording predated contact with the retail corpus and was over-strict. The
+milestone owner chose acceptance (option B) over algorithmic extension
+(option A) on 2026-07-19 with the shipped-IWAD evidence in hand.
