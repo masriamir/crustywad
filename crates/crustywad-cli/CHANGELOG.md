@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.3.1...crustywad-cli-v0.3.2) - 2026-07-20
+
+### Added
+
+- nodebuilder stage 3 — add_doom_map_with_nodes + cwad convert --nodes (ADR-0024 §9.3) ([#321](https://github.com/masriamir/crustywad/pull/321))
+- *(build)* the classic BSP pass (build_nodes) with the mixed-sector amendment (ADR-0024 stage 2) ([#319](https://github.com/masriamir/crustywad/pull/319))
+- *(build)* nodebuild feature with BLOCKMAP and REJECT builders (ADR-0024 stage 1) ([#317](https://github.com/masriamir/crustywad/pull/317))
+
 ## [0.3.1](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.3.0...crustywad-cli-v0.3.1) - 2026-07-19
 
 ### Added
