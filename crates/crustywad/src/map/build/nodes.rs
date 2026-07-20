@@ -358,8 +358,7 @@ const VANILLA_CEILING: usize = 0x8000;
 /// signed** `i16` range `[-32_768, 32_767]` on both axes. The range is
 /// asymmetric — `i16::MIN` is a valid delta, `+32_768` is not.
 fn partition_delta_fits(pdx: i64, pdy: i64) -> bool {
-    let fits = |v: i64| i64::from(i16::MIN) <= v && v <= i64::from(i16::MAX);
-    fits(pdx) && fits(pdy)
+    i16::try_from(pdx).is_ok() && i16::try_from(pdy).is_ok()
 }
 
 /// Above this working-set size the partition search evaluates every
