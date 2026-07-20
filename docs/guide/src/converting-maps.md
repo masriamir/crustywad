@@ -124,8 +124,11 @@ let bytes = builder.build()?;
 > in-crate with the [`nodebuild`](./features.md#nodebuild) feature's
 > `build_nodes` (the classic BSP `SEGS`/`SSECTORS`/`NODES`), `build_blockmap`,
 > and `build_reject` (ADR-0024) and add them to the WAD yourself before loading
-> it in a source port. (Extended/GL node *generation* remains tracked separately,
-> issue #199.)
+> it in a source port. When `build_nodes` splits segs it creates new vertices;
+> append `to_lump_bytes()`'s `split_vertexes` to the map's `VERTEXES` lump (see
+> the [`nodebuild` example](./features.md#nodebuild)) or the segs' vertex
+> indices will point past the vertex table. (Extended/GL node *generation*
+> remains tracked separately, issue #199.)
 
 ## Round-tripping: not symmetric
 

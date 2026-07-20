@@ -302,7 +302,8 @@ cargo add crustywad --features nodebuild
 
 ```rust
 use crustywad::map::build::{NodeBuildOptions, build_blockmap, build_nodes, build_reject};
-use crustywad::{WadBuilder, WadKind};
+use crustywad::map::write_doom_map;
+use crustywad::{WadBuilder, WadKind, WriteOptions};
 
 # fn run(map: &crustywad::map::Map) -> Result<(), Box<dyn std::error::Error>> {
 let reject = build_reject(map); // infallible: ceil(sectors² / 8) all-zero bytes
@@ -313,11 +314,23 @@ let (blockmap, _warnings) = build_blockmap(map, &NodeBuildOptions::strict())?;
 let (nodes, _warnings) = build_nodes(map, &NodeBuildOptions::lenient())?;
 let node_lumps = nodes.to_lump_bytes()?;
 
+// The five data lumps. When the BSP pass splits segs it creates new vertices;
+// `split_vertexes` MUST be appended to VERTEXES or the segs' vertex indices
+// (which address the map's vertices followed by the split ones) dangle.
+let (mut data, _warnings) = write_doom_map(map, &WriteOptions::strict())?;
+data.vertexes.extend_from_slice(&node_lumps.split_vertexes);
+
 let mut builder = WadBuilder::new(WadKind::Pwad);
 builder
+    .add_lump("MAP01", b"")
+    .add_lump("THINGS", data.things)
+    .add_lump("LINEDEFS", data.linedefs)
+    .add_lump("SIDEDEFS", data.sidedefs)
+    .add_lump("VERTEXES", data.vertexes) // map vertices + split vertices
     .add_lump("SEGS", node_lumps.segs)
     .add_lump("SSECTORS", node_lumps.ssectors)
     .add_lump("NODES", node_lumps.nodes)
+    .add_lump("SECTORS", data.sectors)
     .add_lump("REJECT", reject.to_lump_bytes())
     .add_lump("BLOCKMAP", blockmap.to_lump_bytes()?);
 # let _ = builder;
