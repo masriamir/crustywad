@@ -481,13 +481,16 @@ BSP partition line rather than following a linedef — so `MapSeg::linedef` is `
 (`None` for a miniseg) rather than always `Some`.
 
 The two compressed **`Z*`** dialects (`ZNOD`, `ZGLN`, `ZGL2`, `ZGL3` — zlib-wrapped twins of the
-`X*` streams above) and DeePBSP's `xNd4` are still **gated**, not parsed: detecting one of those
-signatures gates the whole BSP normalization step — in strict mode assembly fails with
+`X*` streams above) are still **gated**, not parsed: detecting one of those signatures gates the
+whole BSP normalization step — in strict mode assembly fails with
 `MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves `map.segs()`,
 `map.subsectors()`, and `map.nodes()` empty and records one `MapWarning::UnsupportedNodeEncoding`
-per gated lump — up to two, when both `NODES` and `SSECTORS` carry a signature. Reading those
-remaining encodings is tracked as [#199](https://github.com/masriamir/crustywad/issues/199); see
-ADR-0025 for the staged design.
+per gated lump — up to two, when both `NODES` and `SSECTORS` carry a signature. DeePBSP's `xNd4`
+is not yet detected as an extended encoding at all: a lump beginning with that tag falls through
+to the classic record decoder rather than tripping this gate, pending a later stage
+([#328](https://github.com/masriamir/crustywad/issues/328)). Reading the remaining `Z*`
+encodings is tracked as [#199](https://github.com/masriamir/crustywad/issues/199); see ADR-0025
+for the staged design.
 
 The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent

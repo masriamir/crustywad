@@ -117,9 +117,12 @@ pub(crate) enum ExtendedNodeKind {
 impl ExtendedNodeKind {
     /// Maps a 4-byte lump-head signature to the decodable dialect it names, or
     /// `None` when the signature is recognized but this build cannot decode it
-    /// (the zlib-wrapped `Z*` twins, #327, and `DeePBSP`'s `xNd4`, #328) or is
-    /// not an extended-node signature at all. `Some` means "decode with this
-    /// kind"; `None` means "keep the extended-encoding gate".
+    /// (the zlib-wrapped `Z*` twins, #327) or is not an extended-node signature
+    /// at all. `DeePBSP`'s `xNd4` falls into the latter case: it is not yet
+    /// detected as an extended encoding by the caller at all (#328), so this
+    /// function never even sees it gated — it never reaches this match.
+    /// `Some` means "decode with this kind"; `None` means "keep the
+    /// extended-encoding gate".
     pub(crate) fn from_signature(sig: [u8; 4]) -> Option<ExtendedNodeKind> {
         match &sig {
             b"XNOD" => Some(ExtendedNodeKind::Xnod),

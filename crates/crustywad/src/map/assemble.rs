@@ -1545,10 +1545,13 @@ impl Map {
     /// binary** map's `NODES`/`SSECTORS` lump carrying an *uncompressed*
     /// `ZDoom` extended-node stream (`XNOD`/`XGLN`/`XGL2`/`XGL3`) is decoded in
     /// place into the BSP arenas (ADR-0025, #326); a still-unsupported extended
-    /// encoding (the zlib-wrapped `Z*` twins, #327; `DeePBSP`'s `xNd4`, #328) is
+    /// encoding (the zlib-wrapped `Z*` twins, #327) is
     /// [`MapAssembleError::UnsupportedNodeEncoding`] in strict mode, or skipped
     /// in lenient mode with **all three** BSP arenas left empty plus one
-    /// warning per gated lump; the gate does not apply to Doom 64 nested
+    /// warning per gated lump. `DeePBSP`'s `xNd4` is not yet detected as an
+    /// extended encoding at all (#328) and falls through to the classic
+    /// record decoder instead of hitting this gate. The gate does not apply
+    /// to Doom 64 nested
     /// sub-lumps, whose records were already decoded by
     /// [`doom64::read_doom64_map`]. Lenient mode likewise degrades the whole
     /// BSP (empty arenas, one warning) when a BSP reference cannot be clamped,

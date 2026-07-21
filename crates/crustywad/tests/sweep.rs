@@ -122,8 +122,8 @@ fn sweep_assembles_every_map_of_every_wad() {
 ///   node's child indices are in bounds, the BSP root resolves), the map's
 ///   geometry is intact, and lenient assembly agrees (also populated, with
 ///   no warnings).
-/// - `Err(MapAssembleError::UnsupportedNodeEncoding)` is a still-gated `Z*`/
-///   `xNd4` fixture (Stage 2, #327). It must satisfy the **gate contract**:
+/// - `Err(MapAssembleError::UnsupportedNodeEncoding)` is a still-gated `Z*`
+///   fixture (Stage 2, #327). It must satisfy the **gate contract**:
 ///   strict fails with that variant, lenient recovers with all three BSP
 ///   arenas empty plus the gate warning, and the map's geometry is intact.
 /// - Any other `Err` is a real regression and fails the test loudly.

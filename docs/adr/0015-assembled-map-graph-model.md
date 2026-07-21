@@ -402,5 +402,6 @@ slices (or a dedicated `Option`) rather than failing assembly.
   formats (`XNOD`/`XGLN`/`XGL2`/`XGL3`) into the classic `MapSeg`/
   `MapSubsector`/`MapNode` arenas defined here, on both the binary
   `NODES`/`SSECTORS` gate and the UDMF `ZNODES` path. The #204 gate now
-  narrows to the still-unsupported compressed `Z*` twins and DeePBSP `xNd4`.
-  See ADR-0025 for the full design and staging.
+  narrows to the still-unsupported compressed `Z*` twins; DeePBSP `xNd4` is
+  not yet detected as an extended encoding at all and is a later stage
+  (#328). See ADR-0025 for the full design and staging.

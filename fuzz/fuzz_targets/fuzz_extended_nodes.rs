@@ -22,6 +22,17 @@
 //! the extended-node stream length fed to the decoder (each record consumes
 //! several bytes of the stream, so this generous per-item bound holds
 //! without needing the exact per-dialect record size).
+//!
+//! Corpus seeds (`fuzz/corpus/fuzz_extended_nodes/`) match this harness's
+//! input model: a leading selector byte whose `% 4` picks the dialect,
+//! followed by the *tagless* stream body (the real 4-byte dialect tag is
+//! synthesized above, not read from the input, so a seed must not carry its
+//! own tag or it collapses into the wrong branch). Each seed's body is lifted
+//! from `map/extended.rs`'s unit-test fixtures with the tag stripped:
+//! `seed_xnod.bin` selector `0x00` (`0 % 4 == 0` -> XNOD), `seed_xgln.bin`
+//! selector `0x01` (`1 % 4 == 1` -> XGLN), `seed_xgl2.bin` selector `0x02`
+//! (`2 % 4 == 2` -> XGL2), `seed_xgl3_node.bin` selector `0x03`
+//! (`3 % 4 == 3` -> XGL3).
 
 use libfuzzer_sys::fuzz_target;
 
