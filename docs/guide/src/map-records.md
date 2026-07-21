@@ -194,10 +194,13 @@ Both reference engines locate a section's extent by unguarded subtraction of two
 independently looked-up marker positions, with no check for a missing, inverted, or
 duplicated marker (ADR-0022 §2) — this API replaces that anti-pattern with a validated
 scan: `Wad::sections` (strict) returns the first `SectionError` on a malformed marker
-layout (an unpaired start/end, a duplicate or nested pair, cross-kind interleaving, or
-an orphaned sub-namespace), while `Wad::sections_with_options` under
+layout (an unpaired start/end, a duplicate or nested pair, or cross-kind interleaving),
+while `Wad::sections_with_options` under
 `ParseOptions::lenient()` never errors — it recovers a best-effort `SectionTable` and
-records each anomaly as a `SectionWarning` instead. As with map groups, section
+records each anomaly as a `SectionWarning` instead. A balanced numbered pair with no
+enclosing parent of its kind (e.g. a bare `P3_START..P3_END`, as shipped by SVE.wad) is
+**not** an anomaly — engines model no parent/child relationship between markers, so it is
+read as a first-class top-level section in both modes. As with map groups, section
 scanning is scoped to one WAD's directory; multi-WAD load-order overlay is out of
 scope here (tracked on the editor epic's future lump/resource manager, #65).
 
