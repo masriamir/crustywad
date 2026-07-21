@@ -1,12 +1,15 @@
 //! Decoding uncompressed ZDoom extended BSP node streams (ADR-0025, #326).
 //!
 //! ZDoom's node builder can emit the `SEGS`/`SSECTORS`/`NODES` data as a single
-//! self-describing blob in the `NODES` lump instead of the three classic
-//! fixed-size record lumps. This module decodes the four **uncompressed**
-//! dialects — `XNOD` (the non-GL extended layout), and the GL layouts `XGLN`,
-//! `XGL2`, and `XGL3` — into the graph's [`MapSeg`]/[`MapSubsector`]/[`MapNode`]
-//! arenas. The zlib-wrapped `Z*` twins (#327) and DeePBSP `xNd4` (#328) are out
-//! of scope here.
+//! self-describing blob in one lump instead of the three classic fixed-size
+//! record lumps. The carrier lump depends on the dialect and map format: the
+//! non-GL `XNOD` goes in `NODES`, the GL family (`XGLN`/`XGL2`/`XGL3`) in
+//! `SSECTORS` on the binary path, and any of them in `ZNODES` on the UDMF path
+//! (the caller, `map::assemble`, locates the lump and hands its bytes here). This
+//! module decodes the four **uncompressed** dialects — `XNOD` (the non-GL
+//! extended layout), and the GL layouts `XGLN`, `XGL2`, and `XGL3` — into the
+//! graph's [`MapSeg`]/[`MapSubsector`]/[`MapNode`] arenas. The zlib-wrapped `Z*`
+//! twins (#327) and DeePBSP `xNd4` (#328) are out of scope here.
 //!
 //! The byte layout is source-verified against the gzdoom loader
 //! (`P_LoadZNodes`/`LoadZSegs`/`LoadGLZSegs`) and the zdbsp writer. Framing,
