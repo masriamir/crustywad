@@ -478,22 +478,24 @@ pub(crate) fn decode_extended_nodes(
 ) -> Result<DecodedExtendedBsp, MapAssembleError> {
     let watermark = warnings.len();
     // The 4-byte tag is part of the lump; skip it and decode the tag-less body.
+    let dialect = kind.lump_name();
     let result = if bytes.len() < 4 {
         Err(MapAssembleError::ExtendedNode {
-            dialect: kind.lump_name(),
+            dialect,
             reason: ExtendedNodeError::Truncated { section: "tag" },
         })
     } else {
         decode_body(
             &bytes[4..],
             kind,
+            dialect,
             existing_vertices,
             linedefs,
             strictness,
             warnings,
         )
     };
-    finish_with_degrade(result, kind, strictness, warnings, watermark)
+    finish_with_degrade(result, dialect, strictness, warnings, watermark)
 }
 
 /// Applies the lenient whole-BSP degrade to a decode result: on error in
@@ -503,7 +505,7 @@ pub(crate) fn decode_extended_nodes(
 /// posture is shared by the uncompressed and (feature-gated) compressed entries.
 fn finish_with_degrade(
     result: Result<DecodedExtendedBsp, MapAssembleError>,
-    kind: ExtendedNodeKind,
+    dialect: &'static str,
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
     watermark: usize,
@@ -512,7 +514,7 @@ fn finish_with_degrade(
         Ok(bsp) => Ok(bsp),
         Err(err) if strictness == Strictness::Lenient => {
             warnings.truncate(watermark);
-            warnings.push(degrade_warning(&err, kind.lump_name()));
+            warnings.push(degrade_warning(&err, dialect));
             Ok(DecodedExtendedBsp::empty())
         }
         Err(err) => Err(err),
@@ -567,6 +569,7 @@ pub(crate) fn decode_compressed_extended_nodes(
             Ok(body) => decode_body(
                 &body,
                 kind,
+                dialect,
                 existing_vertices,
                 linedefs,
                 strictness,
@@ -587,7 +590,7 @@ pub(crate) fn decode_compressed_extended_nodes(
             }
         }
     };
-    finish_with_degrade(result, kind, strictness, warnings, watermark)
+    finish_with_degrade(result, dialect, strictness, warnings, watermark)
 }
 
 /// Maps a fatal decode error to the single [`MapWarning`] recorded for a lenient
@@ -625,12 +628,15 @@ fn degrade_warning(err: &MapAssembleError, dialect: &'static str) -> MapWarning 
 fn decode_body(
     body: &[u8],
     kind: ExtendedNodeKind,
+    dialect: &'static str,
     existing_vertices: &[MapVertex],
     linedefs: &[MapLinedef],
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<DecodedExtendedBsp, MapAssembleError> {
-    let dialect = kind.lump_name();
+    // `dialect` is the on-disk tag to name in diagnostics — the `X*` tag for an
+    // uncompressed lump, the `Z*` tag for a compressed one (both share this
+    // body decoder). It is not always `kind.lump_name()`.
     let truncated = |section: &'static str| MapAssembleError::ExtendedNode {
         dialect,
         reason: ExtendedNodeError::Truncated { section },
@@ -1846,6 +1852,31 @@ mod tests {
             Err(MapAssembleError::ExtendedNode {
                 dialect: "ZNOD",
                 reason: ExtendedNodeError::CorruptStream,
+            })
+        ));
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn compressed_valid_zlib_malformed_body_reports_zlib_tag() {
+        // A valid zlib wrapper around a MALFORMED body: inflation SUCCEEDS, then
+        // the shared body decoder faults. The diagnostic must still report the
+        // `Z*` tag ("ZGLN"), not the `X*` twin — the compressed dialect is now
+        // threaded into the body decoder too (regression guard).
+        let z_lump = zlib_lump(*b"ZGLN", &[0u8; 6]); // 6 bytes < the 8-byte vertex header
+        let (strict, _) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                dialect: "ZGLN",
+                reason: ExtendedNodeError::Truncated { .. },
             })
         ));
     }
