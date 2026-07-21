@@ -476,10 +476,12 @@ The four **uncompressed** dialects — `XNOD` (non-GL) and the GL layouts `XGLN`
 now decode transparently into the same `map.segs()`, `map.subsectors()`, and `map.nodes()`
 arenas as the classic encoding, on both the binary `NODES`/`SSECTORS` path and the UDMF
 `ZNODES` path. There is nothing extra to opt into: assembly detects the signature and decodes
-the stream in place, in both `Strictness` modes. A structurally malformed `X*` stream (a bad
-count, a truncated record, an out-of-range reference) fails strict assembly with
-`MapAssembleError::ExtendedNode` and recovers under `ParseOptions::lenient()` as a
-`MapWarning::ExtendedNode` with empty BSP arenas. One difference from a classic-decoded map is
+the stream in place, in both `Strictness` modes. A **structural framing** fault — a bad count or
+a truncated record — fails strict assembly with `MapAssembleError::ExtendedNode`, recovering
+under `ParseOptions::lenient()` as a `MapWarning::ExtendedNode` with empty BSP arenas. An
+**out-of-range** vertex/linedef/child reference instead reuses `MapAssembleError::DanglingReference`
+(strict), which lenient mode clamps with a `MapWarning::DanglingReference`, usually keeping the
+rest of the BSP populated. One difference from a classic-decoded map is
 worth knowing: a GL dialect's segs can include **minisegs** — synthetic segs that run along a
 BSP partition line rather than following a linedef — so `MapSeg::linedef` is `Option<LinedefIdx>`
 (`None` for a miniseg) rather than always `Some`.
