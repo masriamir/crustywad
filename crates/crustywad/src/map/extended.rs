@@ -354,20 +354,14 @@ fn resolve_child(
 /// `0x8000`, due-south `0xC000`. Valid for minisegs (endpoints only). Coincident
 /// endpoints give `atan2(0, 0) == 0` — a deterministic `0x0000`, never a panic.
 fn derive_angle(v1: MapVertex, v2: MapVertex) -> u16 {
-    let rad = (v2.y - v1.y).atan2(v2.x - v1.x);
-    // Scale the [-PI, PI] angle to a signed 32-bit turn, then wrap into u32.
-    // `as u32` on an f64 saturates (wrong for the negative half), so route the
-    // value through `i64` first, which truncates modularly — the intended BAM
-    // wrap. The scaled value is in (-2^31, 2^31], always exact in i64.
-    let scaled = rad / (2.0 * std::f64::consts::PI) * 2f64.powi(32);
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
-    )]
-    let bam = scaled as i64 as u32;
-    #[allow(clippy::cast_possible_truncation)]
-    let angle = (bam >> 16) as u16;
+    let radians = (v2.y - v1.y).atan2(v2.x - v1.x);
+    // Scale the [-PI, PI] angle to a 16-bit binary angle (BAM), rounding to the
+    // nearest unit and wrapping the negative half into 0..65536 — the same
+    // encoding as the node builder's `bam_angle`, so a seg's angle is identical
+    // whether decoded from an extended stream here or synthesized by the builder.
+    let scaled = radians / std::f64::consts::TAU * 65536.0;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let angle = (scaled.round() as i64).rem_euclid(65536) as u16;
     angle
 }
 
