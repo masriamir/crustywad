@@ -28,11 +28,6 @@
 //! with a [`MapAssembleError`], lenient degrades the whole BSP to empty arenas
 //! (or clamps an individual reference) and records a [`MapWarning`].
 
-// The crate-internal decoder entry points are exercised by this module's tests
-// and wired into the map assembler in a follow-up (#326 Task 3); until then they
-// are unused by non-test code.
-#![allow(dead_code)]
-
 use crate::Strictness;
 use crate::map::assemble::MapAssembleError;
 use crate::map::graph::{
@@ -120,6 +115,21 @@ pub(crate) enum ExtendedNodeKind {
 }
 
 impl ExtendedNodeKind {
+    /// Maps a 4-byte lump-head signature to the decodable dialect it names, or
+    /// `None` when the signature is recognized but this build cannot decode it
+    /// (the zlib-wrapped `Z*` twins, #327, and `DeePBSP`'s `xNd4`, #328) or is
+    /// not an extended-node signature at all. `Some` means "decode with this
+    /// kind"; `None` means "keep the extended-encoding gate".
+    pub(crate) fn from_signature(sig: [u8; 4]) -> Option<ExtendedNodeKind> {
+        match &sig {
+            b"XNOD" => Some(ExtendedNodeKind::Xnod),
+            b"XGLN" => Some(ExtendedNodeKind::Xgln),
+            b"XGL2" => Some(ExtendedNodeKind::Xgl2),
+            b"XGL3" => Some(ExtendedNodeKind::Xgl3),
+            _ => None,
+        }
+    }
+
     /// The 4-byte ASCII tag naming this dialect, for diagnostics.
     fn lump_name(self) -> &'static str {
         match self {

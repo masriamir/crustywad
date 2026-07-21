@@ -1,6 +1,7 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::doom64::Doom64TextureNames;
+use crate::map::extended::{ExtendedNodeKind, decode_extended_nodes};
 use crate::map::graph::{
     LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
     MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,
@@ -1541,8 +1542,10 @@ impl Map {
     /// fails to decode, or (in strict mode) a cross-reference is out of range.
     /// In lenient mode only structural failures (missing lump, undecodable
     /// records, an empty *required* target arena) return an error. A **classic
-    /// binary** map's `NODES`/`SSECTORS` lump carrying an unsupported extended
-    /// node encoding (ZDBSP family; see issue #199) is
+    /// binary** map's `NODES`/`SSECTORS` lump carrying an *uncompressed*
+    /// `ZDoom` extended-node stream (`XNOD`/`XGLN`/`XGL2`/`XGL3`) is decoded in
+    /// place into the BSP arenas (ADR-0025, #326); a still-unsupported extended
+    /// encoding (the zlib-wrapped `Z*` twins, #327; `DeePBSP`'s `xNd4`, #328) is
     /// [`MapAssembleError::UnsupportedNodeEncoding`] in strict mode, or skipped
     /// in lenient mode with **all three** BSP arenas left empty plus one
     /// warning per gated lump; the gate does not apply to Doom 64 nested
@@ -1573,7 +1576,7 @@ impl Map {
                 let raw_sectors = decode_required::<common::Sector>(wad, group, "SECTORS")?;
                 let raw_sides = decode_required::<common::Sidedef>(wad, group, "SIDEDEFS")?;
 
-                let vertices = normalize_vertices(&raw_verts);
+                let mut vertices = normalize_vertices(&raw_verts);
                 let sectors = normalize_sectors(&raw_sectors);
                 let sidedefs = normalize_sidedefs(&raw_sides, sectors.len(), s, &mut warnings)?;
 
@@ -1614,12 +1617,32 @@ impl Map {
                     MapFormat::Doom64 => return assemble_doom64(wad, group, options, warnings),
                 };
 
-                // Extended node encodings (ZDBSP/GL) are #199's scope: strict refuses,
-                // lenient skips the BSP arenas entirely and warns (never garbage-decode).
-                let mut bsp_gated = false;
-                for lump in ["NODES", "SSECTORS"] {
-                    if let Some(signature) = extended_signature(wad, group, lump) {
-                        match s {
+                // Extended node encodings (ZDBSP/GL) live in a single self-describing
+                // blob: zdbsp writes the non-GL `XNOD`/`ZNOD` into `NODES` and the GL
+                // `XGL*`/`ZGL*` family into `SSECTORS` (gzdoom `ML_ZNODES`/`ML_GLZNODES`),
+                // so at most one of the two lumps carries a signature. An uncompressed
+                // `X*` stream is decoded in place (ADR-0025, #326); a still-gated `Z*`
+                // keeps #199's extended-encoding gate: strict refuses, lenient skips the
+                // BSP arenas entirely and warns (never garbage-decode).
+                let extended = ["NODES", "SSECTORS"].into_iter().find_map(|lump| {
+                    let bytes = lump_bytes(wad, group, lump)?;
+                    extended_signature(wad, group, lump).map(|sig| (lump, sig, bytes))
+                });
+                let (segs, subsectors, nodes) = if let Some((lump, signature, bytes)) = extended {
+                    match ExtendedNodeKind::from_signature(signature) {
+                        Some(kind) => {
+                            let decoded = decode_extended_nodes(
+                                bytes,
+                                kind,
+                                &vertices,
+                                &linedefs,
+                                s,
+                                &mut warnings,
+                            )?;
+                            vertices.extend(decoded.new_vertices);
+                            (decoded.segs, decoded.subsectors, decoded.nodes)
+                        }
+                        None => match s {
                             Strictness::Strict => {
                                 return Err(MapAssembleError::UnsupportedNodeEncoding {
                                     lump,
@@ -1628,13 +1651,10 @@ impl Map {
                             }
                             Strictness::Lenient => {
                                 warnings.push(MapWarning::UnsupportedNodeEncoding { lump });
-                                bsp_gated = true;
+                                (Vec::new(), Vec::new(), Vec::new())
                             }
-                        }
+                        },
                     }
-                }
-                let (segs, subsectors, nodes) = if bsp_gated {
-                    (Vec::new(), Vec::new(), Vec::new())
                 } else {
                     let raw_segs = decode_optional::<common::Seg>(wad, group, "SEGS")?;
                     let raw_subsectors =
@@ -2074,7 +2094,7 @@ fn assemble_udmf(
     let udmf = crate::map::udmf::parse_udmf(text, options.limits)
         .map_err(|source| MapAssembleError::Udmf { source })?;
 
-    let vertices = normalize_udmf_vertices(&udmf.vertices);
+    let mut vertices = normalize_udmf_vertices(&udmf.vertices);
     let sectors = normalize_udmf_sectors(&udmf.sectors);
     let sidedefs = normalize_udmf_sidedefs(&udmf.sidedefs, sectors.len(), s, &mut warnings)?;
     let linedefs = normalize_udmf_linedefs(
@@ -2085,6 +2105,38 @@ fn assemble_udmf(
         &mut warnings,
     )?;
     let things = normalize_udmf_things(&udmf.things, s, &mut warnings)?;
+
+    // UDMF BSP data lives in a `ZNODES` lump carrying an extended-node stream.
+    // An uncompressed `X*` dialect decodes in place (ADR-0025, #326); a still-gated
+    // `Z*` twin (#327) applies the same extended-encoding gate the binary path uses.
+    let (segs, subsectors, nodes) = if let Some(bytes) = lump_bytes(wad, group, "ZNODES") {
+        let signature: [u8; 4] = bytes
+            .get(..4)
+            .and_then(|head| head.try_into().ok())
+            .unwrap_or_default();
+        match ExtendedNodeKind::from_signature(signature) {
+            Some(kind) => {
+                let decoded =
+                    decode_extended_nodes(bytes, kind, &vertices, &linedefs, s, &mut warnings)?;
+                vertices.extend(decoded.new_vertices);
+                (decoded.segs, decoded.subsectors, decoded.nodes)
+            }
+            None => match s {
+                Strictness::Strict => {
+                    return Err(MapAssembleError::UnsupportedNodeEncoding {
+                        lump: "ZNODES",
+                        signature,
+                    });
+                }
+                Strictness::Lenient => {
+                    warnings.push(MapWarning::UnsupportedNodeEncoding { lump: "ZNODES" });
+                    (Vec::new(), Vec::new(), Vec::new())
+                }
+            },
+        }
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    };
 
     let (reject, blockmap) = decode_reject_blockmap(
         lump_bytes(wad, group, "REJECT"),
@@ -2105,11 +2157,9 @@ fn assemble_udmf(
         sectors,
         things,
         lights: vec![],
-        // UDMF (ZDoom) BSP data lives in embedded ZNODES/ZGL text or binary
-        // lumps with its own encoding, out of scope here; see issue #199.
-        segs: Vec::new(),
-        subsectors: Vec::new(),
-        nodes: Vec::new(),
+        segs,
+        subsectors,
+        nodes,
         leafs: Vec::new(),
         macros: Vec::new(),
         reject,
