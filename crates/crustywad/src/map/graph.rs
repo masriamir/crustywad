@@ -598,7 +598,7 @@ pub enum MapWarning {
         /// The dialect tag naming the stream (`"XNOD"`, `"XGLN"`, `"XGL2"`, or `"XGL3"`).
         dialect: &'static str,
         /// The specific structural fault that was recovered.
-        reason: crate::map::extended::ExtendedNodeError,
+        reason: crate::map::ExtendedNodeError,
     },
     /// The `REJECT` lump was smaller than its map's sector count requires;
     /// the missing bits read as "not rejected" during lenient assembly.

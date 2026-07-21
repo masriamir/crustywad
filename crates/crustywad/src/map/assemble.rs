@@ -106,7 +106,7 @@ pub enum MapAssembleError {
         dialect: &'static str,
         /// The specific structural fault.
         #[source]
-        reason: crate::map::extended::ExtendedNodeError,
+        reason: crate::map::ExtendedNodeError,
     },
     /// The `REJECT` lump was smaller than the table its map's sector count
     /// requires (strict mode; lenient reads missing bits as "not rejected").
