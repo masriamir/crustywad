@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5ea31eaa.js";
+            window.path_to_searchindex_js = "searchindex-01defddc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -559,9 +559,10 @@ is empty for every source format other than Doom 64.</p>
 tree: <code>map.segs()</code>, <code>map.subsectors()</code>, and <code>map.nodes()</code>, normalized from the <code>SEGS</code>, <code>SSECTORS</code>,
 and <code>NODES</code> lumps. These are populated for classic Doom/Heretic, Hexen, and Doom 64 maps alike —
 Doom 64’s BSP records share the classic on-disk layout, so they normalize through the same code
-path. UDMF maps always leave the three arenas empty; ZDoom-style BSP data lives in its own
-<code>ZNODES</code>/<code>ZGL</code>-family encoding, out of scope here (see <a href="#extended-node-encodings">Extended node encodings</a>
-below).</p>
+path. A UDMF map’s BSP data, <em>when present</em>, lives in its own <code>ZNODES</code> lump instead, carrying the
+same ZDoom extended/GL node encoding described below — see
+<a href="#extended-node-encodings">Extended node encodings</a>. Like the classic BSP lumps, it is optional: a
+UDMF map with no <code>ZNODES</code> lump simply has empty <code>segs()</code>/<code>subsectors()</code>/<code>nodes()</code>.</p>
 <p><code>map.bsp_root()</code> returns the index of the tree’s root node — <code>Some(NodeIdx)</code> if <code>map.nodes()</code> is
 non-empty, <code>None</code> otherwise. By convention the root is the <strong>last</strong> node in the arena, matching
 Chocolate Doom’s <code>R_RenderPlayerView</code>, which starts traversal at <code>R_RenderBSPNode(numnodes - 1)</code>.</p>
@@ -593,16 +594,40 @@ use crustywad::map::{Map, NodeChild};
 <span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
 </span><span class="boring">}</span></code></pre>
 <h4 id="extended-node-encodings"><a class="header" href="#extended-node-encodings">Extended node encodings</a></h4>
-<p>A <code>NODES</code> or <code>SSECTORS</code> lump can instead carry an extended/GL node encoding (the ZDBSP family:
-<code>XNOD</code>, <code>ZNOD</code>, <code>XGLN</code>, <code>ZGLN</code>, <code>XGL2</code>, <code>XGL3</code>, <code>ZGL2</code>, <code>ZGL3</code>), identified by a 4-byte signature
-at the head of the lump. <code>crustywad</code>‘s classic-path BSP normalizer never attempts to decode these
-as fixed-size classic records — doing so would misread the signature bytes as garbage geometry.
-Instead, detecting one of these signatures gates the whole BSP normalization step: in strict mode
-assembly fails with <code>MapAssembleError::UnsupportedNodeEncoding</code>; in lenient mode assembly leaves
-<code>map.segs()</code>, <code>map.subsectors()</code>, and <code>map.nodes()</code> empty and records one
-<code>MapWarning::UnsupportedNodeEncoding</code> per gated lump — up to two, when both <code>NODES</code> and
-<code>SSECTORS</code> carry a signature. Reading these encodings’ actual contents is out of scope
-for now (tracked as <a href="https://github.com/masriamir/crustywad/issues/199">#199</a>).</p>
+<p>A <code>NODES</code> or <code>SSECTORS</code> lump (or, for UDMF, a <code>ZNODES</code> lump) can instead carry an extended/GL
+node encoding — the ZDBSP family: <code>XNOD</code>, <code>ZNOD</code>, <code>XGLN</code>, <code>ZGLN</code>, <code>XGL2</code>, <code>XGL3</code>, <code>ZGL2</code>, <code>ZGL3</code> —
+identified by a 4-byte signature at the head of the lump. <code>crustywad</code>’s classic-path BSP
+normalizer never attempts to decode these as fixed-size classic records — doing so would
+misread the signature bytes as garbage geometry.</p>
+<p>The four <strong>uncompressed</strong> dialects — <code>XNOD</code> (non-GL) and the GL layouts <code>XGLN</code>, <code>XGL2</code>, <code>XGL3</code> —
+now decode transparently into the same <code>map.segs()</code>, <code>map.subsectors()</code>, and <code>map.nodes()</code>
+arenas as the classic encoding, on both the binary <code>NODES</code>/<code>SSECTORS</code> path and the UDMF
+<code>ZNODES</code> path. There is nothing extra to opt into: assembly detects the signature and decodes
+the stream in place, in both <code>Strictness</code> modes. A <strong>structural framing</strong> fault — a bad count or
+a truncated record — fails strict assembly with <code>MapAssembleError::ExtendedNode</code>, recovering
+under <code>ParseOptions::lenient()</code> as a <code>MapWarning::ExtendedNode</code> with empty BSP arenas. An
+<strong>out-of-range</strong> vertex/linedef/child reference instead reuses <code>MapAssembleError::DanglingReference</code>
+(strict), which lenient mode clamps with a <code>MapWarning::DanglingReference</code>, usually keeping the
+rest of the BSP populated. One difference from a classic-decoded map is
+worth knowing: a GL dialect’s segs can include <strong>minisegs</strong> — synthetic segs that run along a
+BSP partition line rather than following a linedef — so <code>MapSeg::linedef</code> is <code>Option&lt;LinedefIdx&gt;</code>
+(<code>None</code> for a miniseg) rather than always <code>Some</code>.</p>
+<p>The four compressed <strong><code>Z*</code></strong> dialects (<code>ZNOD</code>, <code>ZGLN</code>, <code>ZGL2</code>, <code>ZGL3</code> — zlib-wrapped twins of the
+<code>X*</code> streams above) are still <strong>gated</strong>, not parsed: detecting one of those signatures gates the
+whole BSP normalization step — in strict mode assembly fails with
+<code>MapAssembleError::UnsupportedNodeEncoding</code>; in lenient mode assembly leaves <code>map.segs()</code>,
+<code>map.subsectors()</code>, and <code>map.nodes()</code> empty and records one <code>MapWarning::UnsupportedNodeEncoding</code>
+for the gated lump (a map’s extended stream lives in a single lump, so assembly stops at the
+first signature it finds and warns once). DeePBSP’s <code>xNd4</code>
+is not yet detected as an extended encoding on the <strong>binary</strong> <code>NODES</code>/<code>SSECTORS</code> path: a lump
+beginning with that tag falls through to the classic record decoder rather than tripping this
+gate, pending a later stage (<a href="https://github.com/masriamir/crustywad/issues/328">#328</a>). On the
+UDMF <code>ZNODES</code> path there is no classic decoder to fall through to, so any non-<code>X*</code> tag there
+(including <code>xNd4</code>) is gated exactly like a <code>Z*</code> stream — strict error, or lenient warning with
+empty BSP arenas. Reading the compressed <code>Z*</code>
+encodings is tracked as <a href="https://github.com/masriamir/crustywad/issues/327">#327</a> (under the
+<a href="https://github.com/masriamir/crustywad/issues/199">#199</a> umbrella); see ADR-0025 for the
+staged design.</p>
 <p>The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent
 <code>SSECTORS</code> arena) drops all three arenas, records the dangling reference as a warning, and the
