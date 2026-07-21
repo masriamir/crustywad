@@ -176,8 +176,10 @@ pub enum Strictness {
 /// Bounds UDMF text nesting depth (`max_depth`), the pixel allocation of a
 /// single texture composition (`max_composite_pixels`), the pixel allocation
 /// of a single `doom64-gfx` PNG decode (`max_decoded_pixels`), and the inflated
-/// output of a single compressed extended-node lump (`max_decoded_node_bytes`);
-/// ignored by the other binary-format paths. Construct via [`Limits::new`]
+/// output of a single compressed extended-node lump (`max_decoded_node_bytes`,
+/// applied during binary **or** UDMF map assembly when the `extended-nodes-zlib`
+/// feature is enabled). A path that touches none of these — e.g. a classic map
+/// with uncompressed nodes — is unaffected. Construct via [`Limits::new`]
 /// and the `with_*` setters — the struct is `#[non_exhaustive]` so future
 /// limits can be added without a breaking change.
 #[non_exhaustive]
