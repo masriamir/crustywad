@@ -301,7 +301,7 @@ linedef's `special` still holds its classic action number and sector tag (the la
 ```rust
 use crustywad::map::{Map, MapFormat};
 
-# let wad = crustywad::Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+# let wad = crustywad::Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec())?;
 if let Some(group) = wad.map_group("MAP01") {
     let map = Map::assemble(&wad, &group)?;
 
@@ -320,7 +320,7 @@ if let Some(group) = wad.map_group("MAP01") {
         }
     }
 }
-# Ok::<(), crustywad::map::MapAssembleError>(())
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Strict vs. lenient assembly
