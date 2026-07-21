@@ -739,7 +739,10 @@ impl MapBlockmap {
 /// binary formats (whose non-negative `u16` indices widen losslessly); a negative
 /// index is treated as out of range, taking the same dangling-reference path. The
 /// raw signed `index` is preserved in the diagnostic (error/warning).
-fn resolve_required(
+///
+/// `pub(crate)` so the `DeePBSP` v4 normalizer ([`crate::map::deepbsp`]) shares the
+/// exact strict-error / lenient-clamp discipline used by the classic BSP path.
+pub(crate) fn resolve_required(
     index: i32,
     count: usize,
     referent: &'static str,

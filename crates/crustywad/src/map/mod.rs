@@ -30,6 +30,12 @@ pub mod assemble;
 #[cfg(feature = "nodebuild")]
 pub mod build;
 pub mod common;
+/// Decoding DeePBSP v4 (`xNd4`) BSP node lumps (ADR-0025 Stage 3, #328). A
+/// classic-widened format: the three separate `SEGS`/`SSECTORS`/`NODES` lumps
+/// hold wider records (32-bit vertex/child indices) with classic seg semantics
+/// (no minisegs). Crate-internal decoder reusing the classic normalization
+/// discipline from [`assemble`].
+mod deepbsp;
 pub mod doom;
 pub mod doom64;
 /// Decoding uncompressed ZDoom extended BSP node streams (XNOD/XGLN/XGL2/XGL3;
