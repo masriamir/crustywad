@@ -21,9 +21,10 @@ guide:
     mdbook build docs/guide
 
 # Compile-check the guide's Rust code samples. The pages are pulled into the crate as
-# doctests (src/guide_doctests.rs, cfg(doctest) only) and compiled here with every feature
-# enabled, so API drift in a snippet fails CI. `mdbook test` cannot do this: it only passes
-# `-L` to rustdoc, never `--extern`, and has no way to enable Cargo features.
+# doctests (src/guide_doctests.rs, gated cfg(all(doctest, feature = "guide-doctests")),
+# which --all-features enables) and compiled with every feature enabled, so API drift in a
+# snippet fails CI. `mdbook test` cannot do this: it only passes `-L` to rustdoc, never
+# `--extern`, and has no way to enable Cargo features.
 guide-test:
     cargo test -p crustywad --doc --all-features
 

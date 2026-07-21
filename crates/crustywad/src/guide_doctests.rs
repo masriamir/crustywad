@@ -1,11 +1,13 @@
 //! Compile-checks the mdBook user guide's Rust code samples.
 //!
 //! Each `#[doc = include_str!(...)]` pulls a guide page into the crate **only**
-//! under `#[cfg(doctest)]`, so `cargo test --all-features` compiles (and runs)
-//! every ` ```rust ` block the guide presents as real code — with the crate
-//! fully linked and every feature enabled — while `cargo doc` and normal builds
-//! never see these items. This is the single source of truth: the guide's
-//! snippets live in the Markdown and are checked here, so API drift breaks CI
+//! under the doctest build (the module is gated
+//! `cfg(all(doctest, feature = "guide-doctests"))`; see below), so
+//! `cargo test --all-features` compiles (and runs) every ` ```rust ` block the
+//! guide presents as real code — with the crate fully linked and every feature
+//! enabled — while `cargo doc` and normal builds never see these items. This is
+//! the single source of truth: the guide's snippets live in the Markdown and
+//! are checked here, so API drift breaks CI
 //! instead of slipping through hand-verification.
 //!
 //! `mdbook test` cannot do this: it can only pass `-L` to rustdoc, never

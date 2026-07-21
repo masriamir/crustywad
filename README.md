@@ -183,6 +183,7 @@ cargo run -p crustywad-cli -- list path/to/file.wad
 | `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD, supplied via `CRUSTYWAD_HEXEN_DIR` (not auto-fetchable). |
 | `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD, supplied via `CRUSTYWAD_DOOM64_DIR` (not auto-fetchable). |
 | `sweep-tests` | no | Enables an optional sweep test that assembles every map of every WAD in a local collection, supplied via `CRUSTYWAD_SWEEP_DIR` (not auto-fetchable). |
+| `guide-doctests` | no | Internal, CI-only: compiles the guide's Rust code samples as crate doctests (enabled by `--all-features`); not a runtime capability. |
 
 ## Development
 
