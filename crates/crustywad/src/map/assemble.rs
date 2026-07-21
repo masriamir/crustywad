@@ -1,7 +1,7 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::doom64::Doom64TextureNames;
-use crate::map::extended::{ExtendedNodeKind, decode_extended_nodes};
+use crate::map::extended::{NodeCompression, classify_signature, decode_extended_nodes};
 use crate::map::graph::{
     LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
     MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,
@@ -1627,8 +1627,8 @@ impl Map {
                         .then_some((lump, head, bytes))
                 });
                 let (segs, subsectors, nodes) = if let Some((lump, signature, bytes)) = extended {
-                    match ExtendedNodeKind::from_signature(signature) {
-                        Some(kind) => {
+                    match classify_signature(signature) {
+                        Some((kind, NodeCompression::Uncompressed)) => {
                             let decoded = decode_extended_nodes(
                                 bytes,
                                 kind,
@@ -1640,7 +1640,10 @@ impl Map {
                             vertices.extend(decoded.new_vertices);
                             (decoded.segs, decoded.subsectors, decoded.nodes)
                         }
-                        None => match s {
+                        // A zlib-compressed `Z*` stream keeps #199's extended-encoding
+                        // gate for now; the feature-gated decode is wired in by #327's
+                        // Task 2. An unrecognized signature is gated the same way.
+                        Some((_, NodeCompression::Zlib)) | None => match s {
                             Strictness::Strict => {
                                 return Err(MapAssembleError::UnsupportedNodeEncoding {
                                     lump,
@@ -2114,14 +2117,17 @@ fn assemble_udmf(
         let mut signature = [0u8; 4];
         let head = &bytes[..bytes.len().min(4)];
         signature[..head.len()].copy_from_slice(head);
-        match ExtendedNodeKind::from_signature(signature) {
-            Some(kind) => {
+        match classify_signature(signature) {
+            Some((kind, NodeCompression::Uncompressed)) => {
                 let decoded =
                     decode_extended_nodes(bytes, kind, &vertices, &linedefs, s, &mut warnings)?;
                 vertices.extend(decoded.new_vertices);
                 (decoded.segs, decoded.subsectors, decoded.nodes)
             }
-            None => match s {
+            // A zlib-compressed `Z*` stream keeps #199's extended-encoding gate for
+            // now; the feature-gated decode is wired in by #327's Task 2. An
+            // unrecognized signature is gated the same way.
+            Some((_, NodeCompression::Zlib)) | None => match s {
                 Strictness::Strict => {
                     return Err(MapAssembleError::UnsupportedNodeEncoding {
                         lump: "ZNODES",
