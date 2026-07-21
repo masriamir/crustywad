@@ -426,9 +426,10 @@ Beyond the geometry arenas, `Map` also exposes the engine-built BSP (Binary Spac
 tree: `map.segs()`, `map.subsectors()`, and `map.nodes()`, normalized from the `SEGS`, `SSECTORS`,
 and `NODES` lumps. These are populated for classic Doom/Heretic, Hexen, and Doom 64 maps alike —
 Doom 64's BSP records share the classic on-disk layout, so they normalize through the same code
-path. A UDMF map's BSP data lives in its own `ZNODES` lump instead, carrying the same ZDoom
-extended/GL node encoding described below — see
-[Extended node encodings](#extended-node-encodings).
+path. A UDMF map's BSP data, *when present*, lives in its own `ZNODES` lump instead, carrying the
+same ZDoom extended/GL node encoding described below — see
+[Extended node encodings](#extended-node-encodings). Like the classic BSP lumps, it is optional: a
+UDMF map with no `ZNODES` lump simply has empty `segs()`/`subsectors()`/`nodes()`.
 
 `map.bsp_root()` returns the index of the tree's root node — `Some(NodeIdx)` if `map.nodes()` is
 non-empty, `None` otherwise. By convention the root is the **last** node in the arena, matching
