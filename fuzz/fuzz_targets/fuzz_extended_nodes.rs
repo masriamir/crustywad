@@ -45,12 +45,12 @@ fn push_lump(payload: &mut Vec<u8>, directory: &mut Vec<u8>, name: &str, bytes: 
     payload.extend_from_slice(bytes);
     directory.extend_from_slice(
         &i32::try_from(filepos)
-            .expect("fixture payload stays well within i32 range")
+            .expect("fixture payload stays within i32 range (the fuzz body caps input length)")
             .to_le_bytes(),
     );
     directory.extend_from_slice(
         &i32::try_from(bytes.len())
-            .expect("fixture lump stays well within i32 range")
+            .expect("fixture lump stays within i32 range (the fuzz body caps input length)")
             .to_le_bytes(),
     );
     let mut encoded = [0u8; 8];
@@ -115,7 +115,7 @@ fn build_map_wad(nodes_bytes: &[u8]) -> Vec<u8> {
 
     let lump_count = 7i32;
     let directory_offset =
-        i32::try_from(12 + payload.len()).expect("fixture payload stays well within i32 range");
+        i32::try_from(12 + payload.len()).expect("fixture payload stays within i32 range (the fuzz body caps input length)");
 
     let mut wad = Vec::new();
     wad.extend_from_slice(b"PWAD");
@@ -128,6 +128,14 @@ fn build_map_wad(nodes_bytes: &[u8]) -> Vec<u8> {
 
 fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
+        return;
+    }
+    // Bound the input: the synthetic WAD's directory offsets/sizes are `i32`
+    // (`build_map_wad`), so an over-large stream would overflow the `try_from`
+    // conversions there — a HARNESS panic that would masquerade as a
+    // no-panic-oracle failure of the decoder under test. Real node streams are
+    // far below this; the cap keeps every size within `i32` by construction.
+    if data.len() > (1usize << 24) {
         return;
     }
 

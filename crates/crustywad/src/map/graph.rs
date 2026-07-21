@@ -578,13 +578,14 @@ pub enum MapWarning {
     /// [`Doom64Warning`](crate::map::doom64::Doom64Warning).
     #[error("{0}")]
     Doom64(crate::map::doom64::Doom64Warning),
-    /// A `NODES`/`SSECTORS` lump opened with an extended/GL node-encoding
-    /// signature (ZDBSP family) and was skipped during lenient assembly —
-    /// reading these encodings is out of scope for classic-path BSP
-    /// normalization (see issue #199).
+    /// A `NODES`/`SSECTORS` lump (or the UDMF `ZNODES` lump) carried an
+    /// extended node-encoding signature this build cannot yet decode — the
+    /// compressed `Z*` twins (#327); the uncompressed `X*` family decodes
+    /// (#326). The BSP arenas were left empty during lenient assembly.
     #[error("{lump} uses an unsupported extended node encoding; skipped; BSP arenas left empty")]
     UnsupportedNodeEncoding {
-        /// The name of the lump carrying the extended encoding (`"NODES"` or `"SSECTORS"`).
+        /// The name of the lump carrying the extended encoding (`"NODES"`,
+        /// `"SSECTORS"`, or the UDMF `"ZNODES"`).
         lump: &'static str,
     },
     /// An uncompressed `ZDoom` extended-node stream

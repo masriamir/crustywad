@@ -480,7 +480,7 @@ worth knowing: a GL dialect's segs can include **minisegs** — synthetic segs t
 BSP partition line rather than following a linedef — so `MapSeg::linedef` is `Option<LinedefIdx>`
 (`None` for a miniseg) rather than always `Some`.
 
-The two compressed **`Z*`** dialects (`ZNOD`, `ZGLN`, `ZGL2`, `ZGL3` — zlib-wrapped twins of the
+The four compressed **`Z*`** dialects (`ZNOD`, `ZGLN`, `ZGL2`, `ZGL3` — zlib-wrapped twins of the
 `X*` streams above) are still **gated**, not parsed: detecting one of those signatures gates the
 whole BSP normalization step — in strict mode assembly fails with
 `MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves `map.segs()`,

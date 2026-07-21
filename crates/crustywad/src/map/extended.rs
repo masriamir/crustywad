@@ -688,7 +688,11 @@ fn decode_inner(
             end: VertexIdx(end_idx),
             angle,
             linedef,
-            direction: u16::from(raw.side),
+            // `direction` is a 0/1 flag (`MapSeg::direction`); the on-disk `side`
+            // is a `u8`, so clamp any nonzero to 1 rather than propagate a
+            // malformed value. Matches how `offset` above already treats `side`
+            // (the `side == 0` reference-vertex choice).
+            direction: u16::from(raw.side != 0),
             offset,
         });
     }

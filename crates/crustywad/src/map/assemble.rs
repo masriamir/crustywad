@@ -79,17 +79,18 @@ pub enum MapAssembleError {
         /// The offending value.
         value: i32,
     },
-    /// A `NODES`/`SSECTORS` lump opened with an extended/GL node-encoding
-    /// signature (ZDBSP family) instead of classic fixed-size records (strict
-    /// mode). Reading these encodings is out of scope for classic-path BSP
-    /// normalization (see issue #199); the classic record decoder must never
-    /// misread them as garbage classic records.
+    /// A `NODES`/`SSECTORS` lump (or the UDMF `ZNODES` lump) carried an
+    /// extended node-encoding signature this build cannot yet decode (strict
+    /// mode) — the compressed `Z*` twins (#327). The uncompressed `X*` family
+    /// decodes into the BSP arenas (#326); the classic record decoder must
+    /// never misread a gated stream as garbage classic records.
     #[error(
         "{lump} uses the unsupported extended node encoding {} (see issue #199)",
         String::from_utf8_lossy(signature)
     )]
     UnsupportedNodeEncoding {
-        /// The name of the lump carrying the extended encoding (`"NODES"` or `"SSECTORS"`).
+        /// The name of the lump carrying the extended encoding (`"NODES"`,
+        /// `"SSECTORS"`, or the UDMF `"ZNODES"`).
         lump: &'static str,
         /// The 4-byte signature found at the head of the lump (e.g. `*b"XNOD"`).
         signature: [u8; 4],
@@ -2113,10 +2114,12 @@ fn assemble_udmf(
     // An uncompressed `X*` dialect decodes in place (ADR-0025, #326); a still-gated
     // `Z*` twin (#327) applies the same extended-encoding gate the binary path uses.
     let (segs, subsectors, nodes) = if let Some(bytes) = lump_bytes(wad, group, "ZNODES") {
-        let signature: [u8; 4] = bytes
-            .get(..4)
-            .and_then(|head| head.try_into().ok())
-            .unwrap_or_default();
+        // Preserve whatever prefix is present (zero-padded) so a truncated
+        // `ZNODES` lump reports the actual bytes in the gate error rather than
+        // an all-zero signature.
+        let mut signature = [0u8; 4];
+        let head = &bytes[..bytes.len().min(4)];
+        signature[..head.len()].copy_from_slice(head);
         match ExtendedNodeKind::from_signature(signature) {
             Some(kind) => {
                 let decoded =
