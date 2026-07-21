@@ -17,14 +17,17 @@
 //! features (`write`, `nodebuild`, `doom64-gfx`). Compiling the pages as
 //! crate doctests under `--all-features` sidesteps both limitations.
 //!
-//! The module is gated `cfg(all(doctest, feature = "guide-doctests"))`. The
-//! feature is **off by default** because the `include_str!`s reach repo-level
-//! `docs/` files that are *not* shipped in the published crate — so a plain
-//! `cargo test --doc` on the packaged crate must not try to include them. CI's
-//! existing `cargo test --workspace --all-features` (the `test` job) enables
-//! the feature and runs these — no dedicated job is needed; `just guide-test`
-//! does the same locally. Keep the crate's doctests enabled (do not set
-//! `[lib] doctest = false`), or this check silently stops running.
+//! The module is gated `cfg(all(doctest, feature = "guide-doctests",
+//! has_guide_sources))`. The feature is **off by default**, and `build.rs` sets
+//! `has_guide_sources` only when the repo-level `docs/guide/src/` files (which
+//! the `include_str!`s reach) actually exist — so enabling `guide-doctests`
+//! outside the source workspace, e.g. a `cargo test --all-features` on the
+//! *published* crate, is a graceful no-op instead of a missing-file compile
+//! error. In this workspace both hold, so CI's existing
+//! `cargo test --workspace --all-features` (the `test` job) runs these — no
+//! dedicated job is needed; `just guide-test` does the same locally. Keep the
+//! crate's doctests enabled (do not set `[lib] doctest = false`), or this check
+//! silently stops running.
 //!
 //! Blocks that cannot compile as-is are marked in the Markdown: struct-layout
 //! illustrations use ` ```rust,ignore `, and snippets that do real file I/O use
