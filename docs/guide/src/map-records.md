@@ -487,21 +487,29 @@ BSP partition line rather than following a linedef — so `MapSeg::linedef` is `
 (`None` for a miniseg) rather than always `Some`.
 
 The four compressed **`Z*`** dialects (`ZNOD`, `ZGLN`, `ZGL2`, `ZGL3` — zlib-wrapped twins of the
-`X*` streams above) are still **gated**, not parsed: detecting one of those signatures gates the
-whole BSP normalization step — in strict mode assembly fails with
-`MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves `map.segs()`,
-`map.subsectors()`, and `map.nodes()` empty and records one `MapWarning::UnsupportedNodeEncoding`
-for the gated lump (a map's extended stream lives in a single lump, so assembly stops at the
-first signature it finds and warns once). DeePBSP's `xNd4`
-is not yet detected as an extended encoding on the **binary** `NODES`/`SSECTORS` path: a lump
-beginning with that tag falls through to the classic record decoder rather than tripping this
-gate, pending a later stage ([#328](https://github.com/masriamir/crustywad/issues/328)). On the
-UDMF `ZNODES` path there is no classic decoder to fall through to, so any non-`X*` tag there
-(including `xNd4`) is gated exactly like a `Z*` stream — strict error, or lenient warning with
-empty BSP arenas. Reading the compressed `Z*`
-encodings is tracked as [#327](https://github.com/masriamir/crustywad/issues/327) (under the
-[#199](https://github.com/masriamir/crustywad/issues/199) umbrella); see ADR-0025 for the
-staged design.
+`X*` streams above) decode **when the [`extended-nodes-zlib`](features.md#extended-nodes-zlib)
+feature is enabled** ([#327](https://github.com/masriamir/crustywad/issues/327)): assembly skips
+the 4-byte tag, inflates the remaining zlib stream — bounded by
+[`Limits::max_decoded_node_bytes`](https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_decoded_node_bytes)
+(default 64 MiB) so a "zip bomb" can't exhaust memory — and decodes the inflated body through the
+*same* parser its uncompressed twin uses, into the same `segs()`/`subsectors()`/`nodes()` arenas,
+on both the binary and UDMF paths. The structural-fault contract matches the uncompressed
+dialects; an un-inflatable stream is `MapAssembleError::ExtendedNode` with an `ExtendedNodeError::CorruptStream`
+reason (strict), or a whole-BSP degrade-to-empty with one warning (lenient), and exceeding the
+decode cap is `ExtendedNodeError::DecodedSizeExceeded` under the same split.
+
+**Without** the `extended-nodes-zlib` feature, a `Z*` signature is **gated**, not parsed: detecting
+one gates the whole BSP normalization step — strict mode fails with
+`MapAssembleError::UnsupportedNodeEncoding`; lenient mode leaves `map.segs()`, `map.subsectors()`,
+and `map.nodes()` empty and records one `MapWarning::UnsupportedNodeEncoding` for the gated lump
+(a map's extended stream lives in a single lump, so assembly stops at the first signature it finds
+and warns once). DeePBSP's `xNd4` is not yet detected as an extended encoding on the **binary**
+`NODES`/`SSECTORS` path: a lump beginning with that tag falls through to the classic record
+decoder rather than tripping this gate, pending a later stage
+([#328](https://github.com/masriamir/crustywad/issues/328)). On the UDMF `ZNODES` path there is no
+classic decoder to fall through to, so any unrecognized tag there (including `xNd4`) is gated —
+strict error, or lenient warning with empty BSP arenas. The staged extended-node design lives
+under the [#199](https://github.com/masriamir/crustywad/issues/199) umbrella; see ADR-0025.
 
 The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent

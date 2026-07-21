@@ -98,6 +98,37 @@ pub enum ExtendedNodeError {
         /// The seg arena length.
         num_segs: usize,
     },
+    /// The zlib stream following a compressed `Z*` lump's 4-byte plaintext tag
+    /// could not be inflated — a corrupt or truncated DEFLATE/zlib stream (any
+    /// `miniz_oxide` failure status other than the output-limit hit). Only
+    /// produced on the `extended-nodes-zlib` compressed path (#327).
+    #[error("corrupt or truncated compressed extended node stream")]
+    CorruptStream,
+    /// Inflating a compressed `Z*` lump would produce more than
+    /// `Limits::max_decoded_node_bytes` bytes — the ADR-0016 §1 bounded-output
+    /// guard (`miniz_oxide` `TINFLStatus::HasMoreOutput`) tripped, so decoding
+    /// stops rather than risk an unbounded allocation. Only produced on the
+    /// `extended-nodes-zlib` compressed path (#327).
+    #[error("compressed extended node stream inflates beyond the {limit}-byte decode cap")]
+    DecodedSizeExceeded {
+        /// The `Limits::max_decoded_node_bytes` cap that the inflated output
+        /// would have exceeded.
+        limit: usize,
+    },
+}
+
+/// Whether an extended-node lump's payload is stored raw or wrapped in a zlib
+/// stream. The 4-byte tag (`X*` vs `Z*`) is the only difference on disk; a
+/// `Zlib` lump is `[4-byte plaintext tag][zlib RFC1950 stream]` whose inflated
+/// body is byte-identical to the corresponding `X*` twin's tag-less body
+/// (ADR-0025 §5, #327).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NodeCompression {
+    /// An `X*` lump: the body follows the tag uncompressed.
+    Uncompressed,
+    /// A `Z*` lump: a zlib (RFC1950) stream follows the tag, inflating to the
+    /// `X*` twin's body. Decodable only on the `extended-nodes-zlib` build.
+    Zlib,
 }
 
 /// Which uncompressed extended-node dialect a stream is, selecting the seg and
@@ -117,25 +148,34 @@ pub(crate) enum ExtendedNodeKind {
     Xgl3,
 }
 
-impl ExtendedNodeKind {
-    /// Maps a 4-byte lump-head signature to the decodable dialect it names, or
-    /// `None` when the signature is recognized but this build cannot decode it
-    /// (the zlib-wrapped `Z*` twins, #327) or is not an extended-node signature
-    /// at all. `DeePBSP`'s `xNd4` falls into the latter case: it is not yet
-    /// detected as an extended encoding by the caller at all (#328), so this
-    /// function never even sees it gated — it never reaches this match.
-    /// `Some` means "decode with this kind"; `None` means "keep the
-    /// extended-encoding gate".
-    pub(crate) fn from_signature(sig: [u8; 4]) -> Option<ExtendedNodeKind> {
-        match &sig {
-            b"XNOD" => Some(ExtendedNodeKind::Xnod),
-            b"XGLN" => Some(ExtendedNodeKind::Xgln),
-            b"XGL2" => Some(ExtendedNodeKind::Xgl2),
-            b"XGL3" => Some(ExtendedNodeKind::Xgl3),
-            _ => None,
-        }
+/// Classifies a 4-byte lump-head signature into the dialect it names and
+/// whether that dialect is zlib-compressed, or `None` when the signature is not
+/// an extended-node signature at all. All eight tags are recognized: the
+/// uncompressed `XNOD`/`XGLN`/`XGL2`/`XGL3` map to
+/// [`NodeCompression::Uncompressed`], and their zlib-wrapped twins
+/// `ZNOD`/`ZGLN`/`ZGL2`/`ZGL3` to [`NodeCompression::Zlib`] (the same layout as
+/// the `X*` twin once inflated, #327). `DeePBSP`'s `xNd4` is not an extended-node
+/// signature here and returns `None` (#328).
+///
+/// The compression the classifier reports governs which decoder the caller runs:
+/// an `Uncompressed` kind decodes in place, while a `Zlib` kind decodes only on
+/// the `extended-nodes-zlib` build (otherwise the caller keeps the
+/// extended-encoding gate).
+pub(crate) fn classify_signature(sig: [u8; 4]) -> Option<(ExtendedNodeKind, NodeCompression)> {
+    match &sig {
+        b"XNOD" => Some((ExtendedNodeKind::Xnod, NodeCompression::Uncompressed)),
+        b"XGLN" => Some((ExtendedNodeKind::Xgln, NodeCompression::Uncompressed)),
+        b"XGL2" => Some((ExtendedNodeKind::Xgl2, NodeCompression::Uncompressed)),
+        b"XGL3" => Some((ExtendedNodeKind::Xgl3, NodeCompression::Uncompressed)),
+        b"ZNOD" => Some((ExtendedNodeKind::Xnod, NodeCompression::Zlib)),
+        b"ZGLN" => Some((ExtendedNodeKind::Xgln, NodeCompression::Zlib)),
+        b"ZGL2" => Some((ExtendedNodeKind::Xgl2, NodeCompression::Zlib)),
+        b"ZGL3" => Some((ExtendedNodeKind::Xgl3, NodeCompression::Zlib)),
+        _ => None,
     }
+}
 
+impl ExtendedNodeKind {
     /// The 4-byte ASCII tag naming this dialect, for diagnostics.
     fn lump_name(self) -> &'static str {
         match self {
@@ -143,6 +183,21 @@ impl ExtendedNodeKind {
             ExtendedNodeKind::Xgln => "XGLN",
             ExtendedNodeKind::Xgl2 => "XGL2",
             ExtendedNodeKind::Xgl3 => "XGL3",
+        }
+    }
+
+    /// The 4-byte ASCII tag of this dialect's zlib-compressed `Z*` twin, for
+    /// diagnostics on the compressed decode path. `classify_signature` maps a
+    /// `Z*` signature to the same [`ExtendedNodeKind`] as its `X*` twin, so a
+    /// compressed lump's error `dialect` would otherwise report the `X*` name
+    /// (`"XNOD"` for a `ZNOD` lump); this returns the `Z*` tag instead.
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn zlib_lump_name(self) -> &'static str {
+        match self {
+            ExtendedNodeKind::Xnod => "ZNOD",
+            ExtendedNodeKind::Xgln => "ZGLN",
+            ExtendedNodeKind::Xgl2 => "ZGL2",
+            ExtendedNodeKind::Xgl3 => "ZGL3",
         }
     }
 
@@ -214,7 +269,7 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    /// A reader positioned at `pos` (past the already-consumed 4-byte tag).
+    /// A reader over `bytes`, positioned at byte offset `pos`.
     fn new(bytes: &'a [u8], pos: usize) -> Self {
         Self { bytes, pos }
     }
@@ -422,25 +477,120 @@ pub(crate) fn decode_extended_nodes(
     warnings: &mut Vec<MapWarning>,
 ) -> Result<DecodedExtendedBsp, MapAssembleError> {
     let watermark = warnings.len();
-    match decode_inner(
-        bytes,
-        kind,
-        existing_vertices,
-        linedefs,
-        strictness,
-        warnings,
-    ) {
+    // The 4-byte tag is part of the lump; skip it and decode the tag-less body.
+    let dialect = kind.lump_name();
+    let result = if bytes.len() < 4 {
+        Err(MapAssembleError::ExtendedNode {
+            dialect,
+            reason: ExtendedNodeError::Truncated { section: "tag" },
+        })
+    } else {
+        decode_body(
+            &bytes[4..],
+            kind,
+            dialect,
+            existing_vertices,
+            linedefs,
+            strictness,
+            warnings,
+        )
+    };
+    finish_with_degrade(result, dialect, strictness, warnings, watermark)
+}
+
+/// Applies the lenient whole-BSP degrade to a decode result: on error in
+/// [`Strictness::Lenient`], drops any per-element warnings describing the arenas
+/// being discarded and surfaces exactly one warning for the degrade (the same
+/// posture as the classic extended-encoding gate); strict errors propagate. This
+/// posture is shared by the uncompressed and (feature-gated) compressed entries.
+fn finish_with_degrade(
+    result: Result<DecodedExtendedBsp, MapAssembleError>,
+    dialect: &'static str,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+    watermark: usize,
+) -> Result<DecodedExtendedBsp, MapAssembleError> {
+    match result {
         Ok(bsp) => Ok(bsp),
         Err(err) if strictness == Strictness::Lenient => {
-            // Whole-BSP degrade: drop any per-element warnings describing the
-            // arenas we are discarding, and surface exactly one warning for the
-            // degrade (the same posture as the classic extended-encoding gate).
             warnings.truncate(watermark);
-            warnings.push(degrade_warning(&err, kind.lump_name()));
+            warnings.push(degrade_warning(&err, dialect));
             Ok(DecodedExtendedBsp::empty())
         }
         Err(err) => Err(err),
     }
+}
+
+/// Decodes a zlib-compressed extended-node lump (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`,
+/// ADR-0025 §5, #327). The lump is `[4-byte plaintext tag][zlib RFC1950 stream]`;
+/// this skips the tag, inflates the remaining bytes with a hard
+/// `max_decoded_node_bytes` output cap (the ADR-0016 §1 bounded-output guard,
+/// via `miniz_oxide`'s length-limited inflater), and decodes the inflated
+/// tag-less body through the same parser the uncompressed `X*` twins use — so a
+/// `Z*` stream yields arenas identical to its `X*` twin.
+///
+/// `kind` is the twin dialect from [`classify_signature`]; the remaining
+/// arguments match [`decode_extended_nodes`].
+///
+/// # Errors
+///
+/// In [`Strictness::Strict`], returns [`MapAssembleError::ExtendedNode`] with
+/// [`ExtendedNodeError::CorruptStream`] for an un-inflatable stream,
+/// [`ExtendedNodeError::DecodedSizeExceeded`] when the inflated output would
+/// exceed `max_decoded_node_bytes`, or any structural/reference fault the shared
+/// body decoder raises (see [`decode_extended_nodes`]). In [`Strictness::Lenient`],
+/// every fatal fault degrades the whole BSP to empty arenas with a single
+/// [`MapWarning`].
+#[cfg(feature = "extended-nodes-zlib")]
+pub(crate) fn decode_compressed_extended_nodes(
+    lump_bytes: &[u8],
+    kind: ExtendedNodeKind,
+    existing_vertices: &[MapVertex],
+    linedefs: &[MapLinedef],
+    max_decoded_node_bytes: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<DecodedExtendedBsp, MapAssembleError> {
+    let watermark = warnings.len();
+    // Report the compressed `Z*` tag (not the `X*` twin) in diagnostics for the
+    // errors this fn builds directly (truncated tag, corrupt/oversized stream).
+    let dialect = kind.zlib_lump_name();
+    let result = if lump_bytes.len() < 4 {
+        Err(MapAssembleError::ExtendedNode {
+            dialect,
+            reason: ExtendedNodeError::Truncated { section: "tag" },
+        })
+    } else {
+        // The 4-byte tag is plaintext; the zlib stream is everything after it.
+        match miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(
+            &lump_bytes[4..],
+            max_decoded_node_bytes,
+        ) {
+            Ok(body) => decode_body(
+                &body,
+                kind,
+                dialect,
+                existing_vertices,
+                linedefs,
+                strictness,
+                warnings,
+            ),
+            Err(err) => {
+                // `HasMoreOutput` is the length-limited inflater hitting the
+                // decode cap (ADR-0016 §1); any other status is genuine
+                // corruption or truncation of the stream.
+                let reason = if err.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput {
+                    ExtendedNodeError::DecodedSizeExceeded {
+                        limit: max_decoded_node_bytes,
+                    }
+                } else {
+                    ExtendedNodeError::CorruptStream
+                };
+                Err(MapAssembleError::ExtendedNode { dialect, reason })
+            }
+        }
+    };
+    finish_with_degrade(result, dialect, strictness, warnings, watermark)
 }
 
 /// Maps a fatal decode error to the single [`MapWarning`] recorded for a lenient
@@ -461,7 +611,7 @@ fn degrade_warning(err: &MapAssembleError, dialect: &'static str) -> MapWarning 
         MapAssembleError::ExtendedNode { dialect, reason } => {
             MapWarning::ExtendedNode { dialect, reason }
         }
-        // decode_inner only produces the two kinds above; keep the mapping total
+        // decode_body only produces the two kinds above; keep the mapping total
         // without inventing a warning for an impossible variant.
         _ => MapWarning::ExtendedNode {
             dialect,
@@ -475,15 +625,18 @@ fn degrade_warning(err: &MapAssembleError, dialect: &'static str) -> MapWarning 
 /// mode; the two "recover and continue" mismatches (a smaller-than-map
 /// `origVerts`, a partner out of range) warn in lenient mode and proceed.
 #[allow(clippy::too_many_lines)]
-fn decode_inner(
-    bytes: &[u8],
+fn decode_body(
+    body: &[u8],
     kind: ExtendedNodeKind,
+    dialect: &'static str,
     existing_vertices: &[MapVertex],
     linedefs: &[MapLinedef],
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<DecodedExtendedBsp, MapAssembleError> {
-    let dialect = kind.lump_name();
+    // `dialect` is the on-disk tag to name in diagnostics — the `X*` tag for an
+    // uncompressed lump, the `Z*` tag for a compressed one (both share this
+    // body decoder). It is not always `kind.lump_name()`.
     let truncated = |section: &'static str| MapAssembleError::ExtendedNode {
         dialect,
         reason: ExtendedNodeError::Truncated { section },
@@ -493,11 +646,9 @@ fn decode_inner(
         reason: ExtendedNodeError::CountOverflow { section },
     };
 
-    // The 4-byte tag is part of the lump; skip it.
-    if bytes.len() < 4 {
-        return Err(truncated("tag"));
-    }
-    let mut reader = Reader::new(bytes, 4);
+    // `body` is the tag-less stream (the caller has already skipped the 4-byte
+    // tag, or inflated a compressed lump to this body); read from its start.
+    let mut reader = Reader::new(body, 0);
 
     // --- 1a. Vertex header ---
     let orig_verts = reader.u32().ok_or_else(|| truncated("vertex header"))?;
@@ -1497,28 +1648,369 @@ mod tests {
     }
 
     #[test]
-    fn from_signature_maps_all_four_dialects_and_rejects_others() {
-        assert_eq!(
-            ExtendedNodeKind::from_signature(*b"XNOD"),
-            Some(ExtendedNodeKind::Xnod)
-        );
-        assert_eq!(
-            ExtendedNodeKind::from_signature(*b"XGLN"),
-            Some(ExtendedNodeKind::Xgln)
-        );
-        assert_eq!(
-            ExtendedNodeKind::from_signature(*b"XGL2"),
-            Some(ExtendedNodeKind::Xgl2)
-        );
-        assert_eq!(
-            ExtendedNodeKind::from_signature(*b"XGL3"),
-            Some(ExtendedNodeKind::Xgl3)
-        );
-        // The zlib-wrapped Z* twins (#327) are recognized elsewhere (the
-        // caller's EXTENDED_NODE_SIGNATURES gate) but not decodable here.
-        assert_eq!(ExtendedNodeKind::from_signature(*b"ZNOD"), None);
+    fn classify_signature_maps_all_eight_dialects_and_rejects_others() {
+        use ExtendedNodeKind::{Xgl2, Xgl3, Xgln, Xnod};
+        use NodeCompression::{Uncompressed, Zlib};
+        // The four uncompressed X* tags.
+        assert_eq!(classify_signature(*b"XNOD"), Some((Xnod, Uncompressed)));
+        assert_eq!(classify_signature(*b"XGLN"), Some((Xgln, Uncompressed)));
+        assert_eq!(classify_signature(*b"XGL2"), Some((Xgl2, Uncompressed)));
+        assert_eq!(classify_signature(*b"XGL3"), Some((Xgl3, Uncompressed)));
+        // The four zlib-wrapped Z* twins now classify to the same kind, tagged
+        // `Zlib` (#327) — the compression governs which decoder the caller runs.
+        assert_eq!(classify_signature(*b"ZNOD"), Some((Xnod, Zlib)));
+        assert_eq!(classify_signature(*b"ZGLN"), Some((Xgln, Zlib)));
+        assert_eq!(classify_signature(*b"ZGL2"), Some((Xgl2, Zlib)));
+        assert_eq!(classify_signature(*b"ZGL3"), Some((Xgl3, Zlib)));
         // An unrelated 4-byte tag is not an extended-node signature at all.
-        assert_eq!(ExtendedNodeKind::from_signature(*b"JUNK"), None);
+        assert_eq!(classify_signature(*b"JUNK"), None);
+    }
+
+    /// A 2-subsector, 0-seg, 1-node XGL3 lump (the fixture from
+    /// `xgl3_node_fixed_point_partition_bbox_and_children`, reused so the
+    /// compressed round-trip exercises the 40-byte-node dialect).
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn xgl3_fixture() -> Vec<u8> {
+        Buf::default()
+            .tag(*b"XGL3")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(2) // numSubsectors
+            .u32(0) // ss0 segCount
+            .u32(0) // ss1 segCount
+            .u32(0) // numSegs
+            .u32(1) // numNodes
+            .i32(64 * 65536)
+            .i32(128 * 65536)
+            .i32(-16 * 65536)
+            .i32(32 * 65536)
+            .i16(100)
+            .i16(-100)
+            .i16(-50)
+            .i16(50)
+            .i16(10)
+            .i16(-10)
+            .i16(-5)
+            .i16(5)
+            .u32(0x8000_0000)
+            .u32(0x8000_0001)
+            .build()
+    }
+
+    /// Builds an on-disk compressed `Z*` lump from an uncompressed `X*` lump:
+    /// strip the 4-byte `X*` tag to get the tag-less body, zlib-compress it, and
+    /// prepend the plaintext `Z*` tag — exactly the `[tag][zlib stream]` layout.
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn zlib_lump(z_tag: [u8; 4], x_full: &[u8]) -> Vec<u8> {
+        let mut lump = z_tag.to_vec();
+        lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&x_full[4..], 6));
+        lump
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn decode_compressed(
+        lump: &[u8],
+        kind: ExtendedNodeKind,
+        verts: &[MapVertex],
+        lds: &[MapLinedef],
+        cap: usize,
+        strictness: Strictness,
+    ) -> (
+        Result<DecodedExtendedBsp, MapAssembleError>,
+        Vec<MapWarning>,
+    ) {
+        let mut warnings = Vec::new();
+        let out = decode_compressed_extended_nodes(
+            lump,
+            kind,
+            verts,
+            lds,
+            cap,
+            strictness,
+            &mut warnings,
+        );
+        (out, warnings)
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn zgln_roundtrip_is_identical_to_uncompressed_twin() {
+        let x_full = xgln_square([0, 1, 2, 3]);
+        let z_lump = zlib_lump(*b"ZGLN", &x_full);
+        let (twin, wx) = decode(
+            &x_full,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        let (comp, wz) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert_eq!(
+            comp.expect("compressed ZGLN decodes"),
+            twin.expect("uncompressed XGLN decodes"),
+            "inflated ZGLN arenas must equal the XGLN twin's"
+        );
+        assert!(wx.is_empty() && wz.is_empty());
+    }
+
+    /// A 4-seg square `XGL2` stream (13-byte segs, u32 linedef sentinel),
+    /// mirroring `xgln_square` for the ZGL2 compressed round-trip test.
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn xgl2_square(line_overrides: [u32; 4]) -> Vec<u8> {
+        let mut b = Buf::default()
+            .tag(*b"XGL2")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(4) // ss0 segCount
+            .u32(4); // numSegs
+        for (i, line) in line_overrides.iter().enumerate() {
+            b = b
+                .u32(u32::try_from(i).unwrap()) // v1
+                .u32(0xFFFF_FFFF) // partner = none
+                .u32(*line) // linedef
+                .u8(0); // side
+        }
+        b.u32(0).build() // numNodes = 0
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn zgl2_roundtrip_is_identical_to_uncompressed_twin() {
+        let x_full = xgl2_square([0, 1, 2, 3]);
+        let z_lump = zlib_lump(*b"ZGL2", &x_full);
+        let (twin, wx) = decode(
+            &x_full,
+            ExtendedNodeKind::Xgl2,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        let (comp, wz) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgl2,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert_eq!(
+            comp.expect("compressed ZGL2 decodes"),
+            twin.expect("uncompressed XGL2 decodes"),
+            "inflated ZGL2 arenas must equal the XGL2 twin's"
+        );
+        assert!(wx.is_empty() && wz.is_empty());
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn zgl3_roundtrip_is_identical_to_uncompressed_twin() {
+        let x_full = xgl3_fixture();
+        let z_lump = zlib_lump(*b"ZGL3", &x_full);
+        let (twin, _) = decode(
+            &x_full,
+            ExtendedNodeKind::Xgl3,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        let (comp, wz) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgl3,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert_eq!(
+            comp.expect("compressed ZGL3 decodes"),
+            twin.expect("uncompressed XGL3 decodes"),
+            "inflated ZGL3 arenas must equal the XGL3 twin's"
+        );
+        assert!(wz.is_empty());
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn compressed_corrupt_stream_strict_errors_lenient_degrades() {
+        // A valid Z tag followed by bytes that are not a zlib stream: the first
+        // byte's CM nibble is invalid, so the inflater fails on the header —
+        // never `HasMoreOutput`, so this is a CorruptStream, not a cap hit.
+        let mut lump = b"ZGLN".to_vec();
+        lump.extend_from_slice(&[0xFF, 0x00, 0x13, 0x37, 0x42, 0x99]);
+        let (strict, _) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                reason: ExtendedNodeError::CorruptStream,
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("lenient degrades to empty arenas");
+        assert!(bsp.segs.is_empty() && bsp.subsectors.is_empty() && bsp.nodes.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            MapWarning::ExtendedNode {
+                reason: ExtendedNodeError::CorruptStream,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn compressed_truncated_tag_strict_errors_lenient_degrades() {
+        // Fewer than 4 bytes: too short to even carry the plaintext `Z*` tag,
+        // let alone a zlib stream after it.
+        let lump = b"ZG".to_vec();
+        let (strict, _) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                dialect: "ZGLN",
+                reason: ExtendedNodeError::Truncated { section: "tag" },
+            })
+        ));
+        let (lenient, warnings) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("lenient degrades to empty arenas");
+        assert!(bsp.segs.is_empty() && bsp.subsectors.is_empty() && bsp.nodes.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            MapWarning::ExtendedNode {
+                dialect: "ZGLN",
+                reason: ExtendedNodeError::Truncated { section: "tag" },
+            }
+        ));
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn compressed_corrupt_znod_reports_zlib_tag_not_x_twin() {
+        // A `ZNOD` lump classifies to `Xnod` (the twin kind), but its error
+        // `dialect` must report the compressed `Z*` tag the user actually has —
+        // `"ZNOD"`, not the twin's `"XNOD"`.
+        let mut lump = b"ZNOD".to_vec();
+        lump.extend_from_slice(&[0xFF, 0x00, 0x13, 0x37, 0x42, 0x99]);
+        let (strict, _) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xnod,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                dialect: "ZNOD",
+                reason: ExtendedNodeError::CorruptStream,
+            })
+        ));
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn compressed_valid_zlib_malformed_body_reports_zlib_tag() {
+        // A valid zlib wrapper around a MALFORMED body: inflation SUCCEEDS, then
+        // the shared body decoder faults. The diagnostic must still report the
+        // `Z*` tag ("ZGLN"), not the `X*` twin — the compressed dialect is now
+        // threaded into the body decoder too (regression guard).
+        let z_lump = zlib_lump(*b"ZGLN", &[0u8; 6]); // 6 bytes < the 8-byte vertex header
+        let (strict, _) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                dialect: "ZGLN",
+                reason: ExtendedNodeError::Truncated { .. },
+            })
+        ));
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn compressed_inflates_past_small_cap_strict_errors_lenient_degrades() {
+        // The XGLN body inflates to 68 bytes; a 16-byte cap must trip the
+        // bounded-output guard (`HasMoreOutput`) rather than corrupt-stream.
+        let x_full = xgln_square([0, 1, 2, 3]);
+        let z_lump = zlib_lump(*b"ZGLN", &x_full);
+        let cap = 16;
+        let (strict, _) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            cap,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                reason: ExtendedNodeError::DecodedSizeExceeded { limit: 16 },
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            cap,
+            Strictness::Lenient,
+        );
+        assert!(lenient.expect("lenient degrades").segs.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            MapWarning::ExtendedNode {
+                reason: ExtendedNodeError::DecodedSizeExceeded { .. },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1956,7 +2448,7 @@ mod tests {
 
     #[test]
     fn degrade_warning_defensive_arm_covers_an_impossible_variant() {
-        // decode_inner only ever produces DanglingReference or ExtendedNode;
+        // decode_body only ever produces DanglingReference or ExtendedNode;
         // the `_` arm is unreachable in production but must still be total.
         // Called directly since no in-crate caller can reach it.
         let err = MapAssembleError::MissingLump { lump: "NODES" };

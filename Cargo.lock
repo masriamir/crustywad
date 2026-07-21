@@ -358,6 +358,7 @@ dependencies = [
  "binrw",
  "criterion",
  "memmap2",
+ "miniz_oxide",
  "png",
  "proptest",
  "tempfile",

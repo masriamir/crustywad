@@ -234,6 +234,7 @@ See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full f
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
 | `nodebuild` | no | Enables the `map::build` node-lump builders (implies `write`) — `build_blockmap`/`build_reject`/`build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and their `to_lump_bytes` serializers, for clean-room BLOCKMAP/REJECT/BSP node generation (ADR-0024). Powers `cwad convert --nodes` |
 | `doom64-gfx` | no | Enables `Doom64Png` decoding of Doom 64's PNG texture/sprite lumps via the `png` crate (indexed pixels + palette rows + `grAb` offsets, capped by `Limits::max_decoded_pixels`) |
+| `extended-nodes-zlib` | no | Enables reading the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) by inflating (via the pure-Rust `miniz_oxide`) to their uncompressed twins and decoding through the same parser, bounded by `Limits::max_decoded_node_bytes`. Off by default so the core build stays decompressor-free (ADR-0025 §5, #327). Powers the `Z*` half of the extended-node reader |
 
 ## Commit conventions
 

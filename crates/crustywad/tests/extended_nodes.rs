@@ -1,8 +1,11 @@
-//! Integration tests for wiring the uncompressed `ZDoom` extended-node decoder
-//! (ADR-0025, #326) into the map assembler at its two seams: the binary
-//! `NODES`/`SSECTORS` gate dispatch and the UDMF `ZNODES` routing. Each test
-//! assembles a whole [`Map`] through the public API and asserts the resulting
-//! BSP arenas, in **both** strictness modes.
+//! Integration tests for wiring the `ZDoom` extended-node decoder into the map
+//! assembler at its two seams: the binary `NODES`/`SSECTORS` gate dispatch and
+//! the UDMF `ZNODES` routing. Covers the uncompressed `X*` dialects (ADR-0025,
+//! #326) and, under the `extended-nodes-zlib` feature, their zlib-compressed
+//! `Z*` twins (ADR-0025 §5, #327); with the feature off a `Z*` signature keeps
+//! #199's extended-encoding gate. Each test assembles a whole [`Map`] through
+//! the public API and asserts the resulting BSP arenas, in **both** strictness
+//! modes.
 //!
 //! The extended streams are hand-built here to be consistent with the enclosing
 //! map (the stream's `origVerts` matches the map's vertex count, and every seg's
@@ -195,6 +198,16 @@ fn xgl3_stream(tag: [u8; 4]) -> Vec<u8> {
         .build()
 }
 
+/// Builds an on-disk compressed `Z*` lump from a full uncompressed `X*` stream:
+/// strip the 4-byte `X*` tag, zlib-compress the tag-less body, and prepend the
+/// plaintext `Z*` tag — the `[tag][zlib stream]` layout the decoder expects.
+#[cfg(feature = "extended-nodes-zlib")]
+fn zlib_lump(z_tag: [u8; 4], x_full: &[u8]) -> Vec<u8> {
+    let mut lump = z_tag.to_vec();
+    lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&x_full[4..], 6));
+    lump
+}
+
 // --- Binary path: positive decodes. ---
 
 fn assemble_square_with(
@@ -256,11 +269,14 @@ fn xgl3_ssectors_lump_decodes_with_miniseg_on_the_binary_path() {
     }
 }
 
-// --- Binary path: a still-gated Z* keeps the extended-encoding gate. ---
+// --- Binary path: Z* — gated without the feature, decoded with it. ---
 
+#[cfg(not(feature = "extended-nodes-zlib"))]
 #[test]
 fn zgl3_ssectors_lump_still_gates_on_the_binary_path() {
-    // A minimal (tag-only) ZGL3 blob: recognized, but this build cannot decode it.
+    // Without `extended-nodes-zlib`, a recognized `Z*` signature keeps #199's
+    // extended-encoding gate. A minimal (tag-only) ZGL3 blob suffices: the gate
+    // fires on the signature alone, before any inflate is attempted.
     let blob = xgl3_stream(*b"ZGL3");
 
     // Strict: the gate rejects with UnsupportedNodeEncoding.
@@ -286,6 +302,57 @@ fn zgl3_ssectors_lump_still_gates_on_the_binary_path() {
     assert!(matches!(
         map.warnings()[0],
         MapWarning::UnsupportedNodeEncoding { lump: "SSECTORS" }
+    ));
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn zgl3_ssectors_lump_decodes_on_the_binary_path_with_the_feature() {
+    // With `extended-nodes-zlib`, a compressed ZGL3 lump inflates to its XGL3
+    // twin's body and yields the same arenas the uncompressed twin decodes to.
+    let z_lump = zlib_lump(*b"ZGL3", &xgl3_stream(*b"XGL3"));
+    for options in [ParseOptions::default(), ParseOptions::lenient()] {
+        let map = assemble_square_with(&[("SSECTORS", &z_lump)], options)
+            .expect("compressed ZGL3 decodes");
+        assert_eq!(map.vertices().len(), 4, "no added vertices");
+        assert_eq!(map.segs().len(), 4);
+        assert_eq!(map.subsectors().len(), 2);
+        assert_eq!(map.nodes().len(), 1);
+        assert_eq!(map.segs()[1].linedef, None, "miniseg survives inflate");
+        assert!(map.warnings().is_empty());
+    }
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn corrupt_zgl3_ssectors_lump_errors_through_the_binary_dispatch() {
+    // A ZGL3 tag over a body that is not a zlib stream (the raw uncompressed
+    // XGL3 bytes): with the feature on, the gate now routes to the compressed
+    // decoder, which fails to inflate — an ExtendedNode/CorruptStream fault
+    // (proving the dispatch reaches the decoder), not the old gate error.
+    let blob = xgl3_stream(*b"ZGL3");
+    let err = assemble_square_with(&[("SSECTORS", &blob)], ParseOptions::default())
+        .expect_err("un-inflatable Z* stream is fatal in strict mode");
+    assert!(matches!(
+        err,
+        MapAssembleError::ExtendedNode {
+            dialect: "ZGL3",
+            reason: ExtendedNodeError::CorruptStream,
+        }
+    ));
+
+    // Lenient: the whole BSP degrades to empty arenas with a single warning.
+    let map = assemble_square_with(&[("SSECTORS", &blob)], ParseOptions::lenient())
+        .expect("un-inflatable Z* degrades, not fatal, in lenient mode");
+    assert!(map.segs().is_empty());
+    assert_eq!(map.vertices().len(), 4, "geometry survives the degrade");
+    assert_eq!(map.warnings().len(), 1);
+    assert!(matches!(
+        map.warnings()[0],
+        MapWarning::ExtendedNode {
+            dialect: "ZGL3",
+            reason: ExtendedNodeError::CorruptStream,
+        }
     ));
 }
 
@@ -361,11 +428,12 @@ fn udmf_znodes_xgl3_decodes() {
     }
 }
 
+#[cfg(not(feature = "extended-nodes-zlib"))]
 #[test]
 fn udmf_znodes_zgl3_gates() {
     let blob = xgl3_stream(*b"ZGL3");
 
-    // Strict: the UDMF path now gates too (it previously never did).
+    // Strict: without the feature the UDMF path gates too (it previously never did).
     let err = assemble_udmf_square_with_znodes(&blob, ParseOptions::default())
         .expect_err("Z* gates on the UDMF path in strict mode");
     assert!(matches!(
@@ -388,5 +456,92 @@ fn udmf_znodes_zgl3_gates() {
     assert!(matches!(
         map.warnings()[0],
         MapWarning::UnsupportedNodeEncoding { lump: "ZNODES" }
+    ));
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn udmf_znodes_unrecognized_signature_gates_even_with_the_feature() {
+    // A `ZNODES` lump whose head is not one of the 8 known X*/Z* signatures
+    // classifies to `None`, falling through to the `_` gate arm even with
+    // `extended-nodes-zlib` on — distinct from `udmf_znodes_zgl3_gates`
+    // above, which only gates a *recognized* `Z*` signature when the feature
+    // is off.
+    let blob = b"xNd4\x00\x00\x00\x00".to_vec();
+
+    let err = assemble_udmf_square_with_znodes(&blob, ParseOptions::default())
+        .expect_err("unrecognized signature gates in strict mode");
+    assert!(matches!(
+        err,
+        MapAssembleError::UnsupportedNodeEncoding {
+            lump: "ZNODES",
+            signature,
+        } if &signature == b"xNd4"
+    ));
+
+    // Lenient: empty BSP arenas, one warning, UDMF geometry intact.
+    let map = assemble_udmf_square_with_znodes(&blob, ParseOptions::lenient())
+        .expect("unrecognized signature is skipped, not fatal, in lenient mode");
+    assert!(map.segs().is_empty());
+    assert!(map.subsectors().is_empty());
+    assert!(map.nodes().is_empty());
+    assert_eq!(map.vertices().len(), 4, "geometry survives the gate");
+    assert_eq!(map.linedefs().len(), 4);
+    assert_eq!(map.warnings().len(), 1);
+    assert!(matches!(
+        map.warnings()[0],
+        MapWarning::UnsupportedNodeEncoding { lump: "ZNODES" }
+    ));
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn udmf_znodes_zgl3_decodes_with_the_feature() {
+    // With the feature, a compressed ZGL3 `ZNODES` lump inflates and decodes to
+    // the same arenas the uncompressed twin yields on the UDMF path.
+    let z_lump = zlib_lump(*b"ZGL3", &xgl3_stream(*b"XGL3"));
+    for options in [ParseOptions::default(), ParseOptions::lenient()] {
+        let map = assemble_udmf_square_with_znodes(&z_lump, options)
+            .expect("UDMF compressed ZGL3 decodes");
+        assert_eq!(map.format(), MapFormat::Udmf);
+        assert_eq!(map.vertices().len(), 4);
+        assert_eq!(map.segs().len(), 4);
+        assert_eq!(map.subsectors().len(), 2);
+        assert_eq!(map.nodes().len(), 1);
+        assert_eq!(map.segs()[1].linedef, None, "miniseg carries through UDMF");
+        assert!(map.warnings().is_empty());
+    }
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn corrupt_zgl3_znodes_lump_errors_through_the_udmf_dispatch() {
+    // Mirrors `corrupt_zgl3_ssectors_lump_errors_through_the_binary_dispatch`
+    // for the UDMF `ZNODES` seam: an un-inflatable `Z*` stream must propagate
+    // through the UDMF decode arm's own error path too, not just the binary
+    // path's.
+    let blob = xgl3_stream(*b"ZGL3");
+    let err = assemble_udmf_square_with_znodes(&blob, ParseOptions::default())
+        .expect_err("un-inflatable Z* stream is fatal in strict mode");
+    assert!(matches!(
+        err,
+        MapAssembleError::ExtendedNode {
+            dialect: "ZGL3",
+            reason: ExtendedNodeError::CorruptStream,
+        }
+    ));
+
+    // Lenient: the whole BSP degrades to empty arenas with a single warning.
+    let map = assemble_udmf_square_with_znodes(&blob, ParseOptions::lenient())
+        .expect("un-inflatable Z* degrades, not fatal, in lenient mode");
+    assert!(map.segs().is_empty());
+    assert_eq!(map.vertices().len(), 4, "geometry survives the degrade");
+    assert_eq!(map.warnings().len(), 1);
+    assert!(matches!(
+        map.warnings()[0],
+        MapWarning::ExtendedNode {
+            dialect: "ZGL3",
+            reason: ExtendedNodeError::CorruptStream,
+        }
     ));
 }

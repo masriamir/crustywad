@@ -16,6 +16,7 @@ allowing callers to opt in to additional capabilities.
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
 | [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; powers `cwad convert --nodes` |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
+| [`extended-nodes-zlib`](#extended-nodes-zlib) | no | Decode the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) via `miniz_oxide`, bounded by `Limits::max_decoded_node_bytes` |
 
 ---
 
@@ -433,6 +434,77 @@ of `crustywad::gfx`.
 
 ---
 
+## `extended-nodes-zlib`
+
+**Enables:** reading the zlib-compressed ZDoom extended node formats
+(`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) — the compressed twins of the uncompressed
+`XNOD`/`XGLN`/`XGL2`/`XGL3` dialects — by inflating each to its uncompressed body and
+decoding it through the same parser
+
+**Adds dependency:** [`miniz_oxide`](https://crates.io/crates/miniz_oxide)
+
+ZDoom's node builders (ZDBSP, GDBSP) can write the extended node data either raw (`X*`, read
+unconditionally since ADR-0025 §4, #326) or zlib-compressed (`Z*`). A compressed lump is
+`[4-byte plaintext tag][zlib RFC1950 stream]`; with this feature on, the assembler skips the
+tag, inflates the remaining bytes, and feeds the result to the *same* decoder its uncompressed
+twin uses — so a `ZNOD` lump yields BSP arenas byte-identical to the `XNOD` twin's. The
+inflater is the pure-Rust [`miniz_oxide`](https://crates.io/crates/miniz_oxide) (no C
+dependency), used through its length-limited entry point so the decompressor stops at the cap
+rather than materializing an unbounded buffer from a malicious "zip bomb". Off by default so
+the core build pulls in no decompressor. This covers both the binary `NODES`/`SSECTORS` seam
+and the UDMF `ZNODES` lump.
+
+With the feature **off**, a recognized `Z*` signature keeps the extended-encoding gate: strict
+mode returns `MapAssembleError::UnsupportedNodeEncoding`, lenient mode skips the BSP arenas and
+records a warning — the geometry still assembles.
+
+The classic-format GL node lumps (`GL_VERT`/`GL_SEGS`/…) and the `xNd4`-compressed variant
+remain out of scope (tracked separately, #324/#328).
+
+### Usage
+
+```toml
+# Cargo.toml
+crustywad = { version = "0.6.0", features = ["extended-nodes-zlib"] }
+```
+
+Or with `cargo add`:
+
+```sh
+cargo add crustywad --features extended-nodes-zlib
+```
+
+Decoding is transparent — the compressed lump is inflated and decoded during normal map
+assembly:
+
+```rust
+use crustywad::map::Map;
+use crustywad::{ParseOptions, Wad};
+
+# fn run(wad_bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+let wad = Wad::from_bytes(wad_bytes)?;
+let group = wad.map_group("MAP01").expect("MAP01");
+// With `extended-nodes-zlib`, a compressed `ZNOD`/`ZGL*` node lump inflates
+// and decodes into the map's BSP arenas exactly as an uncompressed `X*` lump.
+let map = Map::assemble_with_options(&wad, &group, ParseOptions::strict())?;
+let _ = (map.segs(), map.subsectors(), map.nodes());
+# Ok(())
+# }
+```
+
+### Strictness and limits
+
+The inflated output of a single compressed node lump is bounded by
+[`Limits::max_decoded_node_bytes`](https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_decoded_node_bytes)
+(default `1 << 26`, 64 MiB), enforced *during* inflation via `miniz_oxide`'s length-limited
+inflater — the decoder never allocates a buffer larger than the cap (ADR-0016 §1). Exceeding it
+is `MapAssembleError::ExtendedNode { reason: DecodedSizeExceeded, .. }` in strict mode, or a
+whole-BSP degrade-to-empty with one warning in lenient mode; an un-inflatable stream is
+`CorruptStream` under the same strict/lenient split. All other structural faults in the inflated
+body follow the same contract as the uncompressed decoder.
+
+---
+
 ## Common `cargo` invocations
 
 | Goal | Command |
@@ -451,6 +523,8 @@ of `crustywad::gfx`.
 | Test with `nodebuild` | `cargo test -p crustywad --features nodebuild` |
 | Build with `doom64-gfx` | `cargo build -p crustywad --features doom64-gfx` |
 | Test with `doom64-gfx` | `cargo test -p crustywad --features doom64-gfx` |
+| Build with `extended-nodes-zlib` | `cargo build -p crustywad --features extended-nodes-zlib` |
+| Test with `extended-nodes-zlib` | `cargo test -p crustywad --features extended-nodes-zlib` |
 | Full CI check | `just ci` |
 
 See the [`justfile`](https://github.com/masriamir/crustywad/blob/main/justfile) for

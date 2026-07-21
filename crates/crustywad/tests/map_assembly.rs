@@ -1283,15 +1283,13 @@ fn bsp_child_into_empty_arena_strict_errors_lenient_degrades() {
     assert_eq!(map.linedefs().len(), 1); // geometry intact
 }
 
-// A NODES lump carrying a still-gated ZDBSP signature (the zlib-wrapped `Z*`
-// family, #327): strict -> structured error naming the encoding; lenient ->
-// empty BSP arenas + warning, geometry intact. (The uncompressed `X*` twins now
-// decode instead of gating — see `tests/extended_nodes.rs`.)
-#[test]
-fn extended_node_encoding_gates_instead_of_garbage_decoding() {
+/// Builds a map WAD whose `NODES` lump is a `ZNOD`-tagged blob with a garbage
+/// (non-zlib) payload — the shared fixture for both the feature-off gate test
+/// and the feature-on corrupt-stream test below.
+fn wad_with_garbage_znod() -> Vec<u8> {
     let mut znod = b"ZNOD".to_vec();
-    znod.extend([0u8; 24]); // payload irrelevant; the gate only reads the tag
-    let bytes = common::build_named_lumps(&[
+    znod.extend([0u8; 24]); // not a valid zlib stream
+    common::build_named_lumps(&[
         ("E1M1", vec![]),
         ("THINGS", vec![]),
         ("LINEDEFS", linedef(0, 1, 0, 0xffff)),
@@ -1301,8 +1299,17 @@ fn extended_node_encoding_gates_instead_of_garbage_decoding() {
         ("SSECTORS", subsector(1, 0)),
         ("NODES", znod),
         ("SECTORS", sector()),
-    ]);
-    let wad = Wad::from_bytes(bytes).unwrap();
+    ])
+}
+
+// A NODES lump carrying a ZDBSP `Z*` signature without the `extended-nodes-zlib`
+// feature: strict -> structured error naming the encoding; lenient -> empty BSP
+// arenas + warning, geometry intact. (The uncompressed `X*` twins always decode
+// — see `tests/extended_nodes.rs`.)
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn extended_node_encoding_gates_instead_of_garbage_decoding() {
+    let wad = Wad::from_bytes(wad_with_garbage_znod()).unwrap();
     let group = wad.map_group("E1M1").unwrap();
     let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
     assert!(matches!(
@@ -1315,5 +1322,37 @@ fn extended_node_encoding_gates_instead_of_garbage_decoding() {
     let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
     assert!(map.nodes().is_empty() && map.segs().is_empty() && map.subsectors().is_empty());
     assert_eq!(map.warnings().len(), 1);
+    assert_eq!(map.linedefs().len(), 1); // geometry still assembled
+}
+
+// With `extended-nodes-zlib` the same `Z*` signature is no longer gated: the
+// gate routes to the compressed decoder, which fails to inflate the garbage
+// payload — an ExtendedNode/CorruptStream fault naming the `ZNOD` dialect
+// (strict), or a whole-BSP degrade with one warning (lenient), geometry intact.
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn compressed_znod_decodes_and_reports_corrupt_stream_with_feature() {
+    use crustywad::map::{ExtendedNodeError, MapWarning};
+
+    let wad = Wad::from_bytes(wad_with_garbage_znod()).unwrap();
+    let group = wad.map_group("E1M1").unwrap();
+    let err = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).unwrap_err();
+    assert!(matches!(
+        err,
+        MapAssembleError::ExtendedNode {
+            dialect: "ZNOD",
+            reason: ExtendedNodeError::CorruptStream,
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.nodes().is_empty() && map.segs().is_empty() && map.subsectors().is_empty());
+    assert_eq!(map.warnings().len(), 1);
+    assert!(matches!(
+        map.warnings()[0],
+        MapWarning::ExtendedNode {
+            dialect: "ZNOD",
+            reason: ExtendedNodeError::CorruptStream,
+        }
+    ));
     assert_eq!(map.linedefs().len(), 1); // geometry still assembled
 }

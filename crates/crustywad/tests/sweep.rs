@@ -22,15 +22,18 @@
 //!
 //! A second collection (`CRUSTYWAD_SWEEP_EXTENDED_DIR`, #269) holds WADs
 //! whose `NODES` lumps carry extended/ZDBSP encodings. Since #326 (Stage 1)
-//! decodes the uncompressed `X*` formats (XNOD/XGLN/XGL2/XGL3), this
-//! collection is now **mixed**: XNOD-generated fixtures positive-read (assert
-//! `segs()`/`subsectors()`/`nodes()` are populated and internally
-//! consistent) while ZNOD-generated ones still trip the extended-encoding
-//! gate (compressed `Z*` is Stage 2, #327) — every map is classified by its
-//! *assembly behavior*, not by peeking at the on-disk signature (this is an
-//! integration test; it cannot see the crate-internal `ExtendedNodeKind`).
-//! Neither branch is an allowlist: a map that assembles with populated BSP
-//! arenas but fails the positive-read consistency checks, or that errors
+//! decodes the uncompressed `X*` formats (XNOD/XGLN/XGL2/XGL3), and #327
+//! (Stage 2) decodes their zlib-compressed `Z*` twins **under the
+//! `extended-nodes-zlib` feature**, this collection is classified by each
+//! map's *assembly behavior*, not by peeking at the on-disk signature (this is
+//! an integration test; it cannot see the crate-internal `ExtendedNodeKind`).
+//! With `extended-nodes-zlib` **on** (as `just test-sweep` runs it), both the
+//! XNOD and ZNOD families positive-read (populated, internally consistent BSP
+//! arenas). With the feature **off**, the XNOD family positive-reads while the
+//! ZNOD family trips the extended-encoding gate — the by-behavior classifier
+//! accepts either outcome per map, so the same test passes in both feature
+//! states. Neither branch is an allowlist: a map that assembles with populated
+//! BSP arenas but fails the positive-read consistency checks, or that errors
 //! with anything other than `UnsupportedNodeEncoding`, fails the test.
 //! Fixtures are ZDBSP-derived Freedoom variants (BSD-licensed), regenerable
 //! from source: build zdbsp (`cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -115,17 +118,19 @@ fn sweep_assembles_every_map_of_every_wad() {
 /// its strict-assembly *behavior*, not by its on-disk signature (which this
 /// integration test cannot inspect):
 ///
-/// - `Ok(map)` with a non-empty `segs()` is a decodable uncompressed `X*`
-///   fixture (XNOD/XGLN/XGL2/XGL3, #326 Stage 1). It must satisfy the
-///   **positive-read contract**: `segs()`/`subsectors()`/`nodes()` are all
-///   non-empty, internally consistent (every subsector's seg range and every
-///   node's child indices are in bounds, the BSP root resolves), the map's
-///   geometry is intact, and lenient assembly agrees (also populated, with
-///   no warnings).
-/// - `Err(MapAssembleError::UnsupportedNodeEncoding)` is a still-gated `Z*`
-///   fixture (Stage 2, #327). It must satisfy the **gate contract**:
-///   strict fails with that variant, lenient recovers with all three BSP
-///   arenas empty plus the gate warning, and the map's geometry is intact.
+/// - `Ok(map)` with a non-empty `segs()` is a decoded extended-node fixture: an
+///   uncompressed `X*` fixture (XNOD/XGLN/XGL2/XGL3, #326 Stage 1), or — with
+///   the `extended-nodes-zlib` feature on — a zlib-compressed `Z*` fixture
+///   inflated to its twin (#327 Stage 2). It must satisfy the **positive-read
+///   contract**: `segs()`/`subsectors()`/`nodes()` are all non-empty,
+///   internally consistent (every subsector's seg range and every node's child
+///   indices are in bounds, the BSP root resolves), the map's geometry is
+///   intact, and lenient assembly agrees (also populated, with no warnings).
+/// - `Err(MapAssembleError::UnsupportedNodeEncoding)` is a gated fixture: a `Z*`
+///   fixture when the feature is off, or a genuinely-unsupported encoding. It
+///   must satisfy the **gate contract**: strict fails with that variant,
+///   lenient recovers with all three BSP arenas empty plus the gate warning,
+///   and the map's geometry is intact.
 /// - Any other `Err` is a real regression and fails the test loudly.
 ///
 /// Neither branch is an allowlist — every map in the collection must land in

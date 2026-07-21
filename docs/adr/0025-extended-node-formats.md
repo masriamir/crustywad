@@ -279,6 +279,38 @@ Classic GL (`gNd*`) remains out of scope.
   the subtle part; it gets the same oracle discipline the nodebuilder used
   (round-trip and, where a builder exists, cross-checks), plus fuzzing.
 
+## Amendment — Stage 2 shipped (2026-07-21, #327)
+
+Stage 2 (the compressed `Z*` family) is implemented; this records the concrete
+decisions §5 left open:
+
+- **Feature name is `extended-nodes-zlib`** (the working name from §5), not a
+  reuse of an existing feature. `png`/`doom64-gfx` vendor a decompressor
+  *transitively*, but reusing them would couple compressed-node reading to the
+  Doom 64 graphics stack; a dedicated, purpose-named flag keeps the surface
+  legible and lets the default build stay decompressor-free.
+- **`miniz_oxide` is the direct inflater**, taken as a first-class optional
+  dependency (`dep:miniz_oxide`) rather than reaching it through `flate2` or the
+  `png` transitive path. It is pure Rust (no C, preserving the crate's
+  `#![deny(unsafe_code)]` posture in the core) and — decisively — exposes
+  `decompress_to_vec_zlib_with_limit`, whose built-in **output limit** *is* the
+  ADR-0016 §1 bounded-output guard: inflation stops at the cap instead of
+  materializing an oversized buffer and checking after the fact.
+- **`Limits::max_decoded_node_bytes` default is `1 << 26`** (64 MiB). This
+  comfortably clears the real fixtures — the `RETAIL-EXT` ZNOD sweep (36 maps of
+  compressed Freedoom nodes) inflates every map well under the cap — while still
+  bounding a hostile "zip bomb". Exceeding it surfaces
+  `ExtendedNodeError::DecodedSizeExceeded` (strict) or a whole-BSP
+  degrade-to-empty warning (lenient); an un-inflatable stream is
+  `ExtendedNodeError::CorruptStream` under the same split.
+- **Decode path:** skip the 4-byte plaintext tag, inflate the remainder, and
+  feed the inflated body to the *same* Stage-1 parser the uncompressed twin
+  uses — so a `Z*` lump yields arenas byte-identical to its `X*` twin, on both
+  the binary `NODES`/`SSECTORS` seam and the UDMF `ZNODES` lump. Diagnostics
+  report the compressed `Z*` tag (not the `X*` twin the classifier maps to).
+- **Still out of scope after Stage 2:** DeePBSP `xNd4` (Stage 3, #328) and
+  classic GL `gNd*` (#324) — unchanged from §1/§5.
+
 ## Pros and cons of the options
 
 ### Option 2 — staged, ZDoom-first, skip classic GL (chosen)

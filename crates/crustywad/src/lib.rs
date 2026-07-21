@@ -174,9 +174,12 @@ pub enum Strictness {
 /// counts and dimensions.
 ///
 /// Bounds UDMF text nesting depth (`max_depth`), the pixel allocation of a
-/// single texture composition (`max_composite_pixels`), and the pixel
-/// allocation of a single `doom64-gfx` PNG decode (`max_decoded_pixels`);
-/// ignored by the other binary-format paths. Construct via [`Limits::new`]
+/// single texture composition (`max_composite_pixels`), the pixel allocation
+/// of a single `doom64-gfx` PNG decode (`max_decoded_pixels`), and the inflated
+/// output of a single compressed extended-node lump (`max_decoded_node_bytes`,
+/// applied during binary **or** UDMF map assembly when the `extended-nodes-zlib`
+/// feature is enabled). A path that touches none of these — e.g. a classic map
+/// with uncompressed nodes — is unaffected. Construct via [`Limits::new`]
 /// and the `with_*` setters — the struct is `#[non_exhaustive]` so future
 /// limits can be added without a breaking change.
 #[non_exhaustive]
@@ -194,17 +197,27 @@ pub struct Limits {
     /// an uncapped allocation from library-reported dimensions
     /// (ADR-0022 §5). Independent of the `png` crate's internal limits.
     pub max_decoded_pixels: usize,
+    /// Maximum number of bytes a single compressed extended-node lump
+    /// (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) may inflate to, enforced in BOTH
+    /// strictness modes on the `extended-nodes-zlib` path. A tiny compressed
+    /// lump can otherwise expand without bound, so this cap is passed straight
+    /// to `miniz_oxide`'s length-limited inflater as the ADR-0016 §1
+    /// bounded-output guard (ADR-0025 §5). Exceeding it is treated like a
+    /// corrupt stream: strict errors, lenient degrades to empty arenas.
+    pub max_decoded_node_bytes: usize,
 }
 
 impl Limits {
     /// The default limits (`max_depth = 64`, `max_composite_pixels = 1 <<
-    /// 24`, `max_decoded_pixels = 1 << 24`).
+    /// 24`, `max_decoded_pixels = 1 << 24`, `max_decoded_node_bytes = 1 <<
+    /// 26`).
     #[must_use]
     pub const fn new() -> Self {
         Self {
             max_depth: 64,
             max_composite_pixels: 1 << 24,
             max_decoded_pixels: 1 << 24,
+            max_decoded_node_bytes: 1 << 26,
         }
     }
 
@@ -226,6 +239,13 @@ impl Limits {
     #[must_use]
     pub const fn with_max_decoded_pixels(mut self, max_decoded_pixels: usize) -> Self {
         self.max_decoded_pixels = max_decoded_pixels;
+        self
+    }
+
+    /// Returns these limits with `max_decoded_node_bytes` replaced.
+    #[must_use]
+    pub const fn with_max_decoded_node_bytes(mut self, max_decoded_node_bytes: usize) -> Self {
+        self.max_decoded_node_bytes = max_decoded_node_bytes;
         self
     }
 }
@@ -1207,6 +1227,17 @@ mod tests {
         assert_eq!(Limits::new().max_depth, 64);
         assert_eq!(Limits::default().max_depth, 64);
         assert_eq!(Limits::default(), Limits::new());
+    }
+
+    #[test]
+    fn with_max_decoded_node_bytes_replaces_only_that_field() {
+        let base = Limits::new();
+        let updated = base.with_max_decoded_node_bytes(1234);
+        assert_eq!(updated.max_decoded_node_bytes, 1234);
+        // Every other field is untouched.
+        assert_eq!(updated.max_depth, base.max_depth);
+        assert_eq!(updated.max_composite_pixels, base.max_composite_pixels);
+        assert_eq!(updated.max_decoded_pixels, base.max_decoded_pixels);
     }
 
     #[test]

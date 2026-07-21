@@ -1,7 +1,9 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
 use crate::map::doom64::Doom64TextureNames;
-use crate::map::extended::{ExtendedNodeKind, decode_extended_nodes};
+#[cfg(feature = "extended-nodes-zlib")]
+use crate::map::extended::decode_compressed_extended_nodes;
+use crate::map::extended::{NodeCompression, classify_signature, decode_extended_nodes};
 use crate::map::graph::{
     LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
     MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,
@@ -80,13 +82,15 @@ pub enum MapAssembleError {
         value: i32,
     },
     /// A `NODES`/`SSECTORS` lump (or the UDMF `ZNODES` lump) carried an
-    /// extended node-encoding signature this build cannot yet decode (strict
-    /// mode) — the compressed `Z*` twins (#327). The uncompressed `X*` family
-    /// decodes into the BSP arenas (#326); the classic record decoder must
-    /// never misread a gated stream as garbage classic records.
+    /// extended node-encoding signature this build cannot decode (strict mode).
+    /// The uncompressed `X*` family always decodes into the BSP arenas (#326);
+    /// the compressed `Z*` twins decode only with the `extended-nodes-zlib`
+    /// feature (#327) and otherwise gate here; any other signature (e.g.
+    /// `DeePBSP`'s `xNd4`, #328) is unsupported. The classic record decoder must never
+    /// misread a gated stream as garbage classic records.
     #[error(
-        "{lump} uses the unsupported extended node encoding {} (compressed Z* reading is tracked in issue #327)",
-        String::from_utf8_lossy(signature)
+        "{lump} uses an unsupported extended node encoding {}",
+        String::from_utf8_lossy(signature).escape_default()
     )]
     UnsupportedNodeEncoding {
         /// The name of the lump carrying the extended encoding (`"NODES"`,
@@ -1627,8 +1631,8 @@ impl Map {
                         .then_some((lump, head, bytes))
                 });
                 let (segs, subsectors, nodes) = if let Some((lump, signature, bytes)) = extended {
-                    match ExtendedNodeKind::from_signature(signature) {
-                        Some(kind) => {
+                    match classify_signature(signature) {
+                        Some((kind, NodeCompression::Uncompressed)) => {
                             let decoded = decode_extended_nodes(
                                 bytes,
                                 kind,
@@ -1640,7 +1644,27 @@ impl Map {
                             vertices.extend(decoded.new_vertices);
                             (decoded.segs, decoded.subsectors, decoded.nodes)
                         }
-                        None => match s {
+                        // A zlib-compressed `Z*` stream inflates to its uncompressed
+                        // twin's body and decodes through the same parser, bounded by
+                        // `Limits::max_decoded_node_bytes` (ADR-0025 §5, #327).
+                        #[cfg(feature = "extended-nodes-zlib")]
+                        Some((kind, NodeCompression::Zlib)) => {
+                            let decoded = decode_compressed_extended_nodes(
+                                bytes,
+                                kind,
+                                &vertices,
+                                &linedefs,
+                                options.limits.max_decoded_node_bytes,
+                                s,
+                                &mut warnings,
+                            )?;
+                            vertices.extend(decoded.new_vertices);
+                            (decoded.segs, decoded.subsectors, decoded.nodes)
+                        }
+                        // A `Z*` stream without the `extended-nodes-zlib` feature, and
+                        // any unrecognized signature, keep #199's extended-encoding
+                        // gate: strict refuses, lenient skips the BSP arenas and warns.
+                        _ => match s {
                             Strictness::Strict => {
                                 return Err(MapAssembleError::UnsupportedNodeEncoding {
                                     lump,
@@ -2114,14 +2138,33 @@ fn assemble_udmf(
         let mut signature = [0u8; 4];
         let head = &bytes[..bytes.len().min(4)];
         signature[..head.len()].copy_from_slice(head);
-        match ExtendedNodeKind::from_signature(signature) {
-            Some(kind) => {
+        match classify_signature(signature) {
+            Some((kind, NodeCompression::Uncompressed)) => {
                 let decoded =
                     decode_extended_nodes(bytes, kind, &vertices, &linedefs, s, &mut warnings)?;
                 vertices.extend(decoded.new_vertices);
                 (decoded.segs, decoded.subsectors, decoded.nodes)
             }
-            None => match s {
+            // A zlib-compressed `Z*` stream inflates to its uncompressed twin's body
+            // and decodes through the same parser, bounded by
+            // `Limits::max_decoded_node_bytes` (ADR-0025 §5, #327).
+            #[cfg(feature = "extended-nodes-zlib")]
+            Some((kind, NodeCompression::Zlib)) => {
+                let decoded = decode_compressed_extended_nodes(
+                    bytes,
+                    kind,
+                    &vertices,
+                    &linedefs,
+                    options.limits.max_decoded_node_bytes,
+                    s,
+                    &mut warnings,
+                )?;
+                vertices.extend(decoded.new_vertices);
+                (decoded.segs, decoded.subsectors, decoded.nodes)
+            }
+            // A `Z*` stream without the `extended-nodes-zlib` feature, and any
+            // unrecognized signature, keep #199's extended-encoding gate.
+            _ => match s {
                 Strictness::Strict => {
                     return Err(MapAssembleError::UnsupportedNodeEncoding {
                         lump: "ZNODES",

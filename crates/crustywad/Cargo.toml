@@ -38,15 +38,24 @@ guide-doctests = []
 write = []
 nodebuild = ["write"]
 doom64-gfx = ["dep:png"]
+# Decode the zlib-compressed ZDoom extended node dialects (ZNOD/ZGLN/ZGL2/ZGL3,
+# ADR-0025 §5, #327). Pulls the pure-Rust `miniz_oxide` inflater; off by default
+# so the core build stays decompressor-free.
+extended-nodes-zlib = ["dep:miniz_oxide"]
 
 [dependencies]
 binrw.workspace = true
 memmap2 = { version = "0.9.5", optional = true }
+miniz_oxide = { version = "0.8", optional = true }
 png = { version = "0.18.1", optional = true, default-features = false }
 thiserror.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
+# Used by the `extended_nodes` integration test to build zlib-compressed `Z*`
+# fixtures for the `extended-nodes-zlib` decode-path tests. Always present (dev
+# builds only); the test bodies that use it are `#[cfg(feature = ...)]`-gated.
+miniz_oxide = "0.8"
 proptest.workspace = true
 tempfile.workspace = true
 
