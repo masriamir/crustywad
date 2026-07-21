@@ -38,7 +38,7 @@ of whether this feature is enabled.
 
 ```toml
 # Cargo.toml
-crustywad = { version = "0.6.0", features = ["mmap"] }
+crustywad = { version = "0.7.0", features = ["mmap"] }
 ```
 
 ```rust,no_run
@@ -242,7 +242,7 @@ Adds WAD serialization support. `WadBuilder` accumulates lumps and serializes th
 
 ```toml
 # Cargo.toml
-crustywad = { version = "0.6.0", features = ["write"] }
+crustywad = { version = "0.7.0", features = ["write"] }
 ```
 
 ```rust
@@ -324,7 +324,7 @@ tool.
 
 ```toml
 # Cargo.toml
-crustywad = { version = "0.6.0", features = ["nodebuild"] }
+crustywad = { version = "0.7.0", features = ["nodebuild"] }
 ```
 
 Or with `cargo add`:
@@ -395,7 +395,7 @@ strictness modes (the same DoS-cap exception `TextureSet::compose`'s composite l
 
 ```toml
 # Cargo.toml
-crustywad = { version = "0.6.0", features = ["doom64-gfx"] }
+crustywad = { version = "0.7.0", features = ["doom64-gfx"] }
 ```
 
 Or with `cargo add`:
@@ -465,7 +465,7 @@ remain out of scope (tracked separately, #324/#328).
 
 ```toml
 # Cargo.toml
-crustywad = { version = "0.6.0", features = ["extended-nodes-zlib"] }
+crustywad = { version = "0.7.0", features = ["extended-nodes-zlib"] }
 ```
 
 Or with `cargo add`:

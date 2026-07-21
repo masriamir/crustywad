@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.6.2...crustywad-v0.7.0) - 2026-07-21
+
+### Added
+
+- *(map)* read compressed ZDoom extended nodes (ZNOD/ZGL*) behind extended-nodes-zlib ([#327](https://github.com/masriamir/crustywad/pull/327)) ([#332](https://github.com/masriamir/crustywad/pull/332))
+- *(map)* [**breaking**] read uncompressed ZDoom extended nodes (XNOD/XGLN/XGL2/XGL3) ([#326](https://github.com/masriamir/crustywad/pull/326)) ([#331](https://github.com/masriamir/crustywad/pull/331))
+- *(sections)* [**breaking**] read a parentless numbered sub-pair as a first-class section ([#292](https://github.com/masriamir/crustywad/pull/292)) ([#330](https://github.com/masriamir/crustywad/pull/330))
+
+### Other
+
+- compile-check the guide's Rust code samples as doctests ([#297](https://github.com/masriamir/crustywad/pull/297)) ([#325](https://github.com/masriamir/crustywad/pull/325))
+
 ## [0.6.2](https://github.com/masriamir/crustywad/compare/crustywad-v0.6.1...crustywad-v0.6.2) - 2026-07-20
 
 ### Added
