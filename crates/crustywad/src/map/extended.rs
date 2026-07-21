@@ -1499,6 +1499,480 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn from_signature_maps_all_four_dialects_and_rejects_others() {
+        assert_eq!(
+            ExtendedNodeKind::from_signature(*b"XNOD"),
+            Some(ExtendedNodeKind::Xnod)
+        );
+        assert_eq!(
+            ExtendedNodeKind::from_signature(*b"XGLN"),
+            Some(ExtendedNodeKind::Xgln)
+        );
+        assert_eq!(
+            ExtendedNodeKind::from_signature(*b"XGL2"),
+            Some(ExtendedNodeKind::Xgl2)
+        );
+        assert_eq!(
+            ExtendedNodeKind::from_signature(*b"XGL3"),
+            Some(ExtendedNodeKind::Xgl3)
+        );
+        // The zlib-wrapped Z* twins (#327) are recognized elsewhere (the
+        // caller's EXTENDED_NODE_SIGNATURES gate) but not decodable here.
+        assert_eq!(ExtendedNodeKind::from_signature(*b"ZNOD"), None);
+        // An unrelated 4-byte tag is not an extended-node signature at all.
+        assert_eq!(ExtendedNodeKind::from_signature(*b"JUNK"), None);
+    }
+
+    #[test]
+    fn new_vertex_count_overflow_strict_errors_lenient_degrades() {
+        // newVerts is huge; only the 12-byte vertex header itself is present,
+        // so no byte budget remains for even one vertex record.
+        let bytes = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4) // origVerts
+            .u32(0xFFFF_FFFF) // newVerts: cannot possibly fit
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                reason: ExtendedNodeError::CountOverflow { section: "vertex" },
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Lenient,
+        );
+        assert!(lenient.expect("degrades").segs.is_empty());
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn subsector_count_overflow_strict_errors_lenient_degrades() {
+        // numSubsectors is huge; nothing follows it in the stream.
+        let bytes = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(0xFFFF_FFFF) // numSubsectors: cannot possibly fit
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                reason: ExtendedNodeError::CountOverflow {
+                    section: "subsector"
+                },
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Lenient,
+        );
+        assert!(lenient.expect("degrades").segs.is_empty());
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn node_count_overflow_strict_errors_lenient_degrades() {
+        // An empty vertex/subsector/seg block, then a huge numNodes with
+        // nothing following it.
+        let bytes = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(0) // numSubsectors
+            .u32(0) // numSegs
+            .u32(0xFFFF_FFFF) // numNodes: cannot possibly fit
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                reason: ExtendedNodeError::CountOverflow { section: "node" },
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Lenient,
+        );
+        assert!(lenient.expect("degrades").nodes.is_empty());
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn seg_v1_vertex_out_of_range_strict_errors_lenient_clamps() {
+        // A single-seg subsector whose v1 (99) is outside the combined
+        // 4-vertex arena. A miniseg linedef sentinel keeps the fixture
+        // focused on the vertex reference alone.
+        let bytes = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(1) // ss0 segCount
+            .u32(1) // numSegs
+            .u32(99) // v1 (out of range; combined_count == 4)
+            .u32(0xFFFF_FFFF) // partner = none
+            .u16(0xFFFF) // linedef sentinel = miniseg
+            .u8(0) // side
+            .u32(0) // numNodes
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::DanglingReference {
+                referent: "vertex",
+                from: "seg",
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("clamps, does not degrade");
+        assert_eq!(bsp.segs.len(), 1);
+        assert_eq!(bsp.segs[0].start, VertexIdx(0), "v1 clamped to 0");
+        assert!(!warnings.is_empty());
+        assert!(matches!(
+            warnings[0],
+            MapWarning::DanglingReference {
+                referent: "vertex",
+                from: "seg",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn seg_v2_vertex_out_of_range_strict_errors_lenient_clamps() {
+        // XNOD's v2 is explicit (unlike the GL dialects, whose implicit v2 is
+        // always filled from an in-range seg v1): v1 = 0 is valid, v2 = 99 is
+        // not.
+        let lds = square_linedefs();
+        let bytes = Buf::default()
+            .tag(*b"XNOD")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(1) // ss0 segCount
+            .u32(1) // numSegs
+            .u32(0) // v1 (valid)
+            .u32(99) // v2 (out of range; combined_count == 4)
+            .u16(0) // linedef
+            .u8(0) // side
+            .u32(0) // numNodes
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xnod,
+            &square(),
+            &lds,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::DanglingReference {
+                referent: "vertex",
+                from: "seg",
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xnod,
+            &square(),
+            &lds,
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("clamps, does not degrade");
+        assert_eq!(bsp.segs[0].start, VertexIdx(0));
+        assert_eq!(bsp.segs[0].end, VertexIdx(0), "v2 clamped to 0");
+        assert!(!warnings.is_empty());
+        assert!(matches!(
+            warnings[0],
+            MapWarning::DanglingReference {
+                referent: "vertex",
+                from: "seg",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn seg_linedef_out_of_range_nonempty_arena_strict_errors_lenient_clamps() {
+        // A GL seg whose (non-sentinel) linedef index (99) is outside the
+        // 4-linedef arena — distinct from the empty-arena case, which is
+        // always fatal regardless of strictness.
+        let lds = square_linedefs();
+        let bytes = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(1) // ss0 segCount
+            .u32(1) // numSegs
+            .u32(0) // v1
+            .u32(0xFFFF_FFFF) // partner = none
+            .u16(99) // linedef (out of range; not the 0xFFFF sentinel)
+            .u8(0) // side
+            .u32(0) // numNodes
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &lds,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::DanglingReference {
+                referent: "linedef",
+                from: "seg",
+                count: 4,
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &lds,
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("clamps, does not degrade");
+        assert_eq!(bsp.segs[0].linedef, Some(LinedefIdx(0)));
+        assert!(!warnings.is_empty());
+        assert!(matches!(
+            warnings[0],
+            MapWarning::DanglingReference {
+                referent: "linedef",
+                from: "seg",
+                count: 4,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn node_child_referencing_another_node_is_resolved() {
+        // Every other fixture in this module gives every node child the
+        // bit-31 subsector flag; this one exercises the sibling branch (bit
+        // clear => an internal node index) via node 0's right child pointing
+        // at node 1.
+        let mut b = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(0) // ss0 segCount
+            .u32(0) // numSegs
+            .u32(2); // numNodes
+        for _ in 0..2 {
+            for _ in 0..4 {
+                b = b.i16(0); // partition x,y,dx,dy
+            }
+            for _ in 0..8 {
+                b = b.i16(0); // right + left bbox
+            }
+            b = b.u32(1).u32(0x8000_0000); // right=Node(1) placeholder, left=Subsector(0)
+        }
+        let bytes = b.build();
+        let (out, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        let bsp = out.expect("valid stream");
+        assert!(warnings.is_empty());
+        assert_eq!(bsp.nodes.len(), 2);
+        assert_eq!(bsp.nodes[0].right, NodeChild::Node(NodeIdx(1)));
+        assert_eq!(bsp.nodes[0].left, NodeChild::Subsector(SubsectorIdx(0)));
+    }
+
+    #[test]
+    fn node_child_index_out_of_range_strict_errors_lenient_clamps() {
+        // The Node-typed sibling of `child_index_out_of_range_strict_errors_
+        // lenient_clamps` above (which exercises the Subsector branch): one
+        // node (node_count == 1), whose right child is a bit-clear Node
+        // reference (index 5) outside that single-node arena.
+        let bytes = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4)
+            .u32(0)
+            .u32(1) // numSubsectors
+            .u32(0)
+            .u32(0) // numSegs
+            .u32(1) // numNodes
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .i16(0)
+            .u32(5) // right: Node 5 (out of range; node_count == 1)
+            .u32(0x8000_0000) // left: Subsector 0
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::DanglingReference {
+                referent: "node",
+                ..
+            })
+        ));
+        // Lenient clamps the child to node 0 and continues (no degrade).
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("clamps");
+        assert_eq!(bsp.nodes.len(), 1);
+        assert_eq!(bsp.nodes[0].right, NodeChild::Node(NodeIdx(0)));
+        assert!(matches!(
+            warnings[0],
+            MapWarning::DanglingReference {
+                referent: "node",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn empty_linedef_arena_reference_is_always_fatal_and_degrades_lenient() {
+        // A seg referencing linedef 0 while the map has zero linedefs: an
+        // empty target arena is always fatal (nothing to clamp to), in
+        // *both* strictness modes — distinct from the nonempty out-of-range
+        // case above, which lenient mode can clamp. Lenient additionally
+        // routes this DanglingReference through the whole-BSP degrade
+        // (mirroring the assembler's `normalize_bsp_or_degrade`), producing
+        // exactly one `MapWarning::DanglingReference`.
+        let empty_linedefs: Vec<MapLinedef> = Vec::new();
+        let bytes = Buf::default()
+            .tag(*b"XGLN")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(1) // ss0 segCount
+            .u32(1) // numSegs
+            .u32(0) // v1
+            .u32(0xFFFF_FFFF) // partner = none
+            .u16(0) // linedef 0 (would be valid, but linedefs is empty)
+            .u8(0) // side
+            .u32(0) // numNodes
+            .build();
+        let (strict, _) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &empty_linedefs,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::DanglingReference {
+                referent: "linedef",
+                from: "seg",
+                count: 0,
+                ..
+            })
+        ));
+        let (lenient, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &empty_linedefs,
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("degrades to empty arenas");
+        assert!(bsp.segs.is_empty() && bsp.subsectors.is_empty() && bsp.nodes.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            MapWarning::DanglingReference {
+                referent: "linedef",
+                from: "seg",
+                count: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn degrade_warning_defensive_arm_covers_an_impossible_variant() {
+        // decode_inner only ever produces DanglingReference or ExtendedNode;
+        // the `_` arm is unreachable in production but must still be total.
+        // Called directly since no in-crate caller can reach it.
+        let err = MapAssembleError::MissingLump { lump: "NODES" };
+        let warning = degrade_warning(&err, "XNOD");
+        assert_eq!(
+            warning,
+            MapWarning::ExtendedNode {
+                dialect: "XNOD",
+                reason: ExtendedNodeError::Truncated { section: "stream" },
+            }
+        );
+    }
+
     proptest::proptest! {
         #[test]
         fn random_streams_never_panic(data in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..300)) {

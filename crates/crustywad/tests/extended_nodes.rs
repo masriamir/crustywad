@@ -11,7 +11,7 @@
 
 mod common;
 
-use crustywad::map::{Map, MapAssembleError, MapFormat, MapWarning};
+use crustywad::map::{ExtendedNodeError, Map, MapAssembleError, MapFormat, MapWarning};
 use crustywad::{ParseOptions, Wad};
 
 // --- A chainable little-endian byte-stream builder for the node streams. ---
@@ -286,6 +286,29 @@ fn zgl3_ssectors_lump_still_gates_on_the_binary_path() {
     assert!(matches!(
         map.warnings()[0],
         MapWarning::UnsupportedNodeEncoding { lump: "SSECTORS" }
+    ));
+}
+
+// --- Binary path: a structurally malformed X* propagates through the gate. ---
+
+#[test]
+fn malformed_xnod_nodes_lump_strict_error_propagates_through_the_binary_dispatch() {
+    // Every other binary-path test above either decodes cleanly or hits the
+    // still-gated-Z* branch, neither of which ever calls
+    // `decode_extended_nodes` in a way that returns `Err` — this exercises
+    // that error-propagation arm of the gate dispatch itself: a tag-only
+    // XNOD stream is truncated mid vertex-header, so `decode_extended_nodes`
+    // fails structurally (not with a cross-reference error) and, in strict
+    // mode, that `Err` propagates straight through the assembler.
+    let truncated: &[u8] = b"XNOD";
+    let err = assemble_square_with(&[("NODES", truncated)], ParseOptions::default())
+        .expect_err("truncated XNOD stream is fatal in strict mode");
+    assert!(matches!(
+        err,
+        MapAssembleError::ExtendedNode {
+            reason: ExtendedNodeError::Truncated { .. },
+            ..
+        }
     ));
 }
 

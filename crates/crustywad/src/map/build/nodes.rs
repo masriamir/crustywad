@@ -1959,6 +1959,33 @@ mod tests {
     }
 
     #[test]
+    fn to_lump_bytes_rejects_seg_linedef_index_over_u16() {
+        // A seg whose linedef index does not fit u16 — the defensive
+        // `encode_index` guard reached through the serializer's linedef
+        // field specifically (distinct from the vertex-index guard above and
+        // the miniseg guard below, which never reaches `encode_index` at
+        // all).
+        let s = seg(0, 1, 0x0000, 0x1_0000);
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: vec![s],
+            subsectors: vec![MapSubsector {
+                segs: 0..1,
+                leafs: 0..0,
+            }],
+            nodes: Vec::new(),
+        };
+        assert_eq!(
+            built.to_lump_bytes().unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "linedefs",
+                count: 0x1_0001,
+                max: MAX_U16_INDEXED,
+            }
+        );
+    }
+
+    #[test]
     fn to_lump_bytes_rejects_gl_miniseg() {
         // A GL miniseg (`linedef: None`) has no on-disk `SEGS` representation;
         // `to_lump_bytes` must return `Err`, not panic (the in-tree builder
