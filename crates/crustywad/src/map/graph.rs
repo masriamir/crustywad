@@ -579,9 +579,10 @@ pub enum MapWarning {
     #[error("{0}")]
     Doom64(crate::map::doom64::Doom64Warning),
     /// A `NODES`/`SSECTORS` lump (or the UDMF `ZNODES` lump) carried an
-    /// extended node-encoding signature this build cannot yet decode — the
-    /// compressed `Z*` twins (#327); the uncompressed `X*` family decodes
-    /// (#326). The BSP arenas were left empty during lenient assembly.
+    /// extended node-encoding signature this build cannot decode — a compressed
+    /// `Z*` twin without the `extended-nodes-zlib` feature (#327), or another
+    /// gated encoding; the uncompressed `X*` family always decodes (#326). The
+    /// BSP arenas were left empty during lenient assembly.
     #[error("{lump} uses an unsupported extended node encoding; skipped; BSP arenas left empty")]
     UnsupportedNodeEncoding {
         /// The name of the lump carrying the extended encoding (`"NODES"`,

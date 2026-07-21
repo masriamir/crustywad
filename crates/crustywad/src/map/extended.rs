@@ -186,6 +186,21 @@ impl ExtendedNodeKind {
         }
     }
 
+    /// The 4-byte ASCII tag of this dialect's zlib-compressed `Z*` twin, for
+    /// diagnostics on the compressed decode path. `classify_signature` maps a
+    /// `Z*` signature to the same [`ExtendedNodeKind`] as its `X*` twin, so a
+    /// compressed lump's error `dialect` would otherwise report the `X*` name
+    /// (`"XNOD"` for a `ZNOD` lump); this returns the `Z*` tag instead.
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn zlib_lump_name(self) -> &'static str {
+        match self {
+            ExtendedNodeKind::Xnod => "ZNOD",
+            ExtendedNodeKind::Xgln => "ZGLN",
+            ExtendedNodeKind::Xgl2 => "ZGL2",
+            ExtendedNodeKind::Xgl3 => "ZGL3",
+        }
+    }
+
     /// Whether this is a GL dialect (implicit `v2`, partner links, minisegs).
     fn is_gl(self) -> bool {
         !matches!(self, ExtendedNodeKind::Xnod)
@@ -524,10 +539,7 @@ fn finish_with_degrade(
 /// body decoder raises (see [`decode_extended_nodes`]). In [`Strictness::Lenient`],
 /// every fatal fault degrades the whole BSP to empty arenas with a single
 /// [`MapWarning`].
-// Wired into the assembler's node gate by #327's Task 2; until then it is
-// reached only by this module's tests, so the non-test lib build sees it unused.
 #[cfg(feature = "extended-nodes-zlib")]
-#[allow(dead_code)]
 pub(crate) fn decode_compressed_extended_nodes(
     lump_bytes: &[u8],
     kind: ExtendedNodeKind,
@@ -538,7 +550,9 @@ pub(crate) fn decode_compressed_extended_nodes(
     warnings: &mut Vec<MapWarning>,
 ) -> Result<DecodedExtendedBsp, MapAssembleError> {
     let watermark = warnings.len();
-    let dialect = kind.lump_name();
+    // Report the compressed `Z*` tag (not the `X*` twin) in diagnostics for the
+    // errors this fn builds directly (truncated tag, corrupt/oversized stream).
+    let dialect = kind.zlib_lump_name();
     let result = if lump_bytes.len() < 4 {
         Err(MapAssembleError::ExtendedNode {
             dialect,
@@ -594,7 +608,7 @@ fn degrade_warning(err: &MapAssembleError, dialect: &'static str) -> MapWarning 
         MapAssembleError::ExtendedNode { dialect, reason } => {
             MapWarning::ExtendedNode { dialect, reason }
         }
-        // decode_inner only produces the two kinds above; keep the mapping total
+        // decode_body only produces the two kinds above; keep the mapping total
         // without inventing a warning for an impossible variant.
         _ => MapWarning::ExtendedNode {
             dialect,
@@ -1813,6 +1827,31 @@ mod tests {
 
     #[cfg(feature = "extended-nodes-zlib")]
     #[test]
+    fn compressed_corrupt_znod_reports_zlib_tag_not_x_twin() {
+        // A `ZNOD` lump classifies to `Xnod` (the twin kind), but its error
+        // `dialect` must report the compressed `Z*` tag the user actually has —
+        // `"ZNOD"`, not the twin's `"XNOD"`.
+        let mut lump = b"ZNOD".to_vec();
+        lump.extend_from_slice(&[0xFF, 0x00, 0x13, 0x37, 0x42, 0x99]);
+        let (strict, _) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xnod,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                dialect: "ZNOD",
+                reason: ExtendedNodeError::CorruptStream,
+            })
+        ));
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
     fn compressed_inflates_past_small_cap_strict_errors_lenient_degrades() {
         // The XGLN body inflates to 68 bytes; a 16-byte cap must trip the
         // bounded-output guard (`HasMoreOutput`) rather than corrupt-stream.
@@ -2288,7 +2327,7 @@ mod tests {
 
     #[test]
     fn degrade_warning_defensive_arm_covers_an_impossible_variant() {
-        // decode_inner only ever produces DanglingReference or ExtendedNode;
+        // decode_body only ever produces DanglingReference or ExtendedNode;
         // the `_` arm is unreachable in production but must still be total.
         // Called directly since no in-crate caller can reach it.
         let err = MapAssembleError::MissingLump { lump: "NODES" };

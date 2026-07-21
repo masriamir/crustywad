@@ -64,7 +64,7 @@ test-freedoom dir=(justfile_directory() / "tests/fixtures/freedoom"):
 # the test binary with its CWD at the package root, so a relative path resolves
 # against crates/crustywad and a missed directory only prints a stderr skip note).
 test-sweep dir=(justfile_directory() / "RETAIL") extdir=(justfile_directory() / "RETAIL-EXT"):
-    CRUSTYWAD_SWEEP_DIR="{{dir}}" CRUSTYWAD_SWEEP_EXTENDED_DIR="{{extdir}}" cargo test -p crustywad --features sweep-tests --test sweep -- --nocapture
+    CRUSTYWAD_SWEEP_DIR="{{dir}}" CRUSTYWAD_SWEEP_EXTENDED_DIR="{{extdir}}" cargo test -p crustywad --features sweep-tests,extended-nodes-zlib --test sweep -- --nocapture
 
 # Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
 fuzz target="fuzz_wad_strict":

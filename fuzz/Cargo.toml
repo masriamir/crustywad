@@ -122,7 +122,11 @@ doc = false
 
 [dependencies]
 libfuzzer-sys = "0.4"
-crustywad = { path = "../crates/crustywad", features = ["nodebuild", "doom64-gfx"] }
+crustywad = { path = "../crates/crustywad", features = [
+    "nodebuild",
+    "doom64-gfx",
+    "extended-nodes-zlib",
+] }
 
 [profile.release]
 debug = 1
