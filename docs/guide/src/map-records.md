@@ -426,9 +426,9 @@ Beyond the geometry arenas, `Map` also exposes the engine-built BSP (Binary Spac
 tree: `map.segs()`, `map.subsectors()`, and `map.nodes()`, normalized from the `SEGS`, `SSECTORS`,
 and `NODES` lumps. These are populated for classic Doom/Heretic, Hexen, and Doom 64 maps alike —
 Doom 64's BSP records share the classic on-disk layout, so they normalize through the same code
-path. UDMF maps always leave the three arenas empty; ZDoom-style BSP data lives in its own
-`ZNODES`/`ZGL`-family encoding, out of scope here (see [Extended node encodings](#extended-node-encodings)
-below).
+path. A UDMF map's BSP data lives in its own `ZNODES` lump instead, carrying the same ZDoom
+extended/GL node encoding described below — see
+[Extended node encodings](#extended-node-encodings).
 
 `map.bsp_root()` returns the index of the tree's root node — `Some(NodeIdx)` if `map.nodes()` is
 non-empty, `None` otherwise. By convention the root is the **last** node in the arena, matching
@@ -465,16 +465,29 @@ if let Some(group) = wad.map_group("MAP01") {
 
 #### Extended node encodings
 
-A `NODES` or `SSECTORS` lump can instead carry an extended/GL node encoding (the ZDBSP family:
-`XNOD`, `ZNOD`, `XGLN`, `ZGLN`, `XGL2`, `XGL3`, `ZGL2`, `ZGL3`), identified by a 4-byte signature
-at the head of the lump. `crustywad`'s classic-path BSP normalizer never attempts to decode these
-as fixed-size classic records — doing so would misread the signature bytes as garbage geometry.
-Instead, detecting one of these signatures gates the whole BSP normalization step: in strict mode
-assembly fails with `MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves
-`map.segs()`, `map.subsectors()`, and `map.nodes()` empty and records one
-`MapWarning::UnsupportedNodeEncoding` per gated lump — up to two, when both `NODES` and
-`SSECTORS` carry a signature. Reading these encodings' actual contents is out of scope
-for now (tracked as [#199](https://github.com/masriamir/crustywad/issues/199)).
+A `NODES` or `SSECTORS` lump (or, for UDMF, a `ZNODES` lump) can instead carry an extended/GL
+node encoding — the ZDBSP family: `XNOD`, `ZNOD`, `XGLN`, `ZGLN`, `XGL2`, `XGL3`, `ZGL2`, `ZGL3` —
+identified by a 4-byte signature at the head of the lump. `crustywad`'s classic-path BSP
+normalizer never attempts to decode these as fixed-size classic records — doing so would
+misread the signature bytes as garbage geometry.
+
+The four **uncompressed** dialects — `XNOD` (non-GL) and the GL layouts `XGLN`, `XGL2`, `XGL3` —
+now decode transparently into the same `map.segs()`, `map.subsectors()`, and `map.nodes()`
+arenas as the classic encoding, on both the binary `NODES`/`SSECTORS` path and the UDMF
+`ZNODES` path. There is nothing extra to opt into: assembly detects the signature and decodes
+the stream in place, in both `Strictness` modes. One difference from a classic-decoded map is
+worth knowing: a GL dialect's segs can include **minisegs** — synthetic segs that run along a
+BSP partition line rather than following a linedef — so `MapSeg::linedef` is `Option<LinedefIdx>`
+(`None` for a miniseg) rather than always `Some`.
+
+The two compressed **`Z*`** dialects (`ZNOD`, `ZGLN`, `ZGL2`, `ZGL3` — zlib-wrapped twins of the
+`X*` streams above) and DeePBSP's `xNd4` are still **gated**, not parsed: detecting one of those
+signatures gates the whole BSP normalization step — in strict mode assembly fails with
+`MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves `map.segs()`,
+`map.subsectors()`, and `map.nodes()` empty and records one `MapWarning::UnsupportedNodeEncoding`
+per gated lump — up to two, when both `NODES` and `SSECTORS` carry a signature. Reading those
+remaining encodings is tracked as [#199](https://github.com/masriamir/crustywad/issues/199); see
+ADR-0025 for the staged design.
 
 The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent
