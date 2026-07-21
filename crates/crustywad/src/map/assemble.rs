@@ -90,7 +90,7 @@ pub enum MapAssembleError {
     /// misread a gated stream as garbage classic records.
     #[error(
         "{lump} uses an unsupported extended node encoding {}",
-        String::from_utf8_lossy(signature)
+        String::from_utf8_lossy(signature).escape_default()
     )]
     UnsupportedNodeEncoding {
         /// The name of the lump carrying the extended encoding (`"NODES"`,
