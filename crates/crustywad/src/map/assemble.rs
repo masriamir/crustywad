@@ -85,10 +85,11 @@ pub enum MapAssembleError {
     /// extended node-encoding signature this build cannot decode (strict mode).
     /// The uncompressed `X*` family always decodes into the BSP arenas (#326);
     /// the compressed `Z*` twins decode only with the `extended-nodes-zlib`
-    /// feature (#327) and otherwise gate here. The classic record decoder must
-    /// never misread a gated stream as garbage classic records.
+    /// feature (#327) and otherwise gate here; any other signature (e.g.
+    /// `DeePBSP`'s `xNd4`, #328) is unsupported. The classic record decoder must never
+    /// misread a gated stream as garbage classic records.
     #[error(
-        "{lump} uses the unsupported extended node encoding {} (compressed Z* reading needs the `extended-nodes-zlib` feature, #327)",
+        "{lump} uses an unsupported extended node encoding {}",
         String::from_utf8_lossy(signature)
     )]
     UnsupportedNodeEncoding {

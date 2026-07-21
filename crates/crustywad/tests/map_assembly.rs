@@ -1331,7 +1331,7 @@ fn extended_node_encoding_gates_instead_of_garbage_decoding() {
 // (strict), or a whole-BSP degrade with one warning (lenient), geometry intact.
 #[cfg(feature = "extended-nodes-zlib")]
 #[test]
-fn extended_node_encoding_gates_instead_of_garbage_decoding() {
+fn compressed_znod_decodes_and_reports_corrupt_stream_with_feature() {
     use crustywad::map::{ExtendedNodeError, MapWarning};
 
     let wad = Wad::from_bytes(wad_with_garbage_znod()).unwrap();
