@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-70ff487a.js";
+            window.path_to_searchindex_js = "searchindex-5ea31eaa.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -1090,10 +1090,13 @@ for flats in table.of_kind(SectionKind::Flats) {
 independently looked-up marker positions, with no check for a missing, inverted, or
 duplicated marker (ADR-0022 §2) — this API replaces that anti-pattern with a validated
 scan: <code>Wad::sections</code> (strict) returns the first <code>SectionError</code> on a malformed marker
-layout (an unpaired start/end, a duplicate or nested pair, cross-kind interleaving, or
-an orphaned sub-namespace), while <code>Wad::sections_with_options</code> under
+layout (an unpaired start/end, a duplicate or nested pair, or cross-kind interleaving),
+while <code>Wad::sections_with_options</code> under
 <code>ParseOptions::lenient()</code> never errors — it recovers a best-effort <code>SectionTable</code> and
-records each anomaly as a <code>SectionWarning</code> instead. As with map groups, section
+records each anomaly as a <code>SectionWarning</code> instead. A balanced numbered pair with no
+enclosing parent of its kind (e.g. a bare <code>P3_START..P3_END</code>, as shipped by SVE.wad) is
+<strong>not</strong> an anomaly — engines model no parent/child relationship between markers, so it is
+read as a first-class top-level section in both modes. As with map groups, section
 scanning is scoped to one WAD’s directory; multi-WAD load-order overlay is out of
 scope here (tracked on the editor epic’s future lump/resource manager, #65).</p>
 <h3 id="assembling-a-map"><a class="header" href="#assembling-a-map">Assembling a <code>Map</code></a></h3>
