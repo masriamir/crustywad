@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-01defddc.js";
+            window.path_to_searchindex_js = "searchindex-12a3c6e9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -196,6 +196,7 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
 <tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; powers <code>cwad convert --nodes</code></td></tr>
 <tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
+<tr><td><a href="#extended-nodes-zlib"><code>extended-nodes-zlib</code></a></td><td>no</td><td>Decode the zlib-compressed ZDoom extended node formats (<code>ZNOD</code>/<code>ZGLN</code>/<code>ZGL2</code>/<code>ZGL3</code>) via <code>miniz_oxide</code>, bounded by <code>Limits::max_decoded_node_bytes</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -509,6 +510,61 @@ single <code>decode</code> call allocates and is enforced in both modes, ahead o
 the <a href="graphics.html#doom-64-graphics">Graphics</a> guide page for how this fits alongside the rest
 of <code>crustywad::gfx</code>.</p>
 <hr>
+<h2 id="extended-nodes-zlib"><a class="header" href="#extended-nodes-zlib"><code>extended-nodes-zlib</code></a></h2>
+<p><strong>Enables:</strong> reading the zlib-compressed ZDoom extended node formats
+(<code>ZNOD</code>/<code>ZGLN</code>/<code>ZGL2</code>/<code>ZGL3</code>) — the compressed twins of the uncompressed
+<code>XNOD</code>/<code>XGLN</code>/<code>XGL2</code>/<code>XGL3</code> dialects — by inflating each to its uncompressed body and
+decoding it through the same parser</p>
+<p><strong>Adds dependency:</strong> <a href="https://crates.io/crates/miniz_oxide"><code>miniz_oxide</code></a></p>
+<p>ZDoom’s node builders (ZDBSP, GDBSP) can write the extended node data either raw (<code>X*</code>, read
+unconditionally since ADR-0025 §4, #326) or zlib-compressed (<code>Z*</code>). A compressed lump is
+<code>[4-byte plaintext tag][zlib RFC1950 stream]</code>; with this feature on, the assembler skips the
+tag, inflates the remaining bytes, and feeds the result to the <em>same</em> decoder its uncompressed
+twin uses — so a <code>ZNOD</code> lump yields BSP arenas byte-identical to the <code>XNOD</code> twin’s. The
+inflater is the pure-Rust <a href="https://crates.io/crates/miniz_oxide"><code>miniz_oxide</code></a> (no C
+dependency), used through its length-limited entry point so the decompressor stops at the cap
+rather than materializing an unbounded buffer from a malicious “zip bomb”. Off by default so
+the core build pulls in no decompressor. This covers both the binary <code>NODES</code>/<code>SSECTORS</code> seam
+and the UDMF <code>ZNODES</code> lump.</p>
+<p>With the feature <strong>off</strong>, a recognized <code>Z*</code> signature keeps the extended-encoding gate: strict
+mode returns <code>MapAssembleError::UnsupportedNodeEncoding</code>, lenient mode skips the BSP arenas and
+records a warning — the geometry still assembles.</p>
+<p>The classic-format GL node lumps (<code>GL_VERT</code>/<code>GL_SEGS</code>/…) and the <code>xNd4</code>-compressed variant
+remain out of scope (tracked separately, #324/#328).</p>
+<h3 id="usage-4"><a class="header" href="#usage-4">Usage</a></h3>
+<pre><code class="language-toml"># Cargo.toml
+crustywad = { version = "0.6.0", features = ["extended-nodes-zlib"] }
+</code></pre>
+<p>Or with <code>cargo add</code>:</p>
+<pre><code class="language-sh">cargo add crustywad --features extended-nodes-zlib
+</code></pre>
+<p>Decoding is transparent — the compressed lump is inflated and decoded during normal map
+assembly:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::map::Map;
+use crustywad::{ParseOptions, Wad};
+
+<span class="boring">fn run(wad_bytes: Vec&lt;u8&gt;) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let wad = Wad::from_bytes(wad_bytes)?;
+let group = wad.map_group("MAP01").expect("MAP01");
+// With `extended-nodes-zlib`, a compressed `ZNOD`/`ZGL*` node lump inflates
+// and decodes into the map's BSP arenas exactly as an uncompressed `X*` lump.
+let map = Map::assemble_with_options(&amp;wad, &amp;group, ParseOptions::strict())?;
+let _ = (map.segs(), map.subsectors(), map.nodes());
+<span class="boring">Ok(())
+</span><span class="boring">}
+</span><span class="boring">}</span></code></pre>
+<h3 id="strictness-and-limits-1"><a class="header" href="#strictness-and-limits-1">Strictness and limits</a></h3>
+<p>The inflated output of a single compressed node lump is bounded by
+<a href="https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_decoded_node_bytes"><code>Limits::max_decoded_node_bytes</code></a>
+(default <code>1 &lt;&lt; 26</code>, 64 MiB), enforced <em>during</em> inflation via <code>miniz_oxide</code>’s length-limited
+inflater — the decoder never allocates a buffer larger than the cap (ADR-0016 §1). Exceeding it
+is <code>MapAssembleError::ExtendedNode { reason: DecodedSizeExceeded, .. }</code> in strict mode, or a
+whole-BSP degrade-to-empty with one warning in lenient mode; an un-inflatable stream is
+<code>CorruptStream</code> under the same strict/lenient split. All other structural faults in the inflated
+body follow the same contract as the uncompressed decoder.</p>
+<hr>
 <h2 id="common-cargo-invocations"><a class="header" href="#common-cargo-invocations">Common <code>cargo</code> invocations</a></h2>
 <div class="table-wrapper">
 <table>
@@ -530,6 +586,8 @@ of <code>crustywad::gfx</code>.</p>
 <tr><td>Test with <code>nodebuild</code></td><td><code>cargo test -p crustywad --features nodebuild</code></td></tr>
 <tr><td>Build with <code>doom64-gfx</code></td><td><code>cargo build -p crustywad --features doom64-gfx</code></td></tr>
 <tr><td>Test with <code>doom64-gfx</code></td><td><code>cargo test -p crustywad --features doom64-gfx</code></td></tr>
+<tr><td>Build with <code>extended-nodes-zlib</code></td><td><code>cargo build -p crustywad --features extended-nodes-zlib</code></td></tr>
+<tr><td>Test with <code>extended-nodes-zlib</code></td><td><code>cargo test -p crustywad --features extended-nodes-zlib</code></td></tr>
 <tr><td>Full CI check</td><td><code>just ci</code></td></tr>
 </tbody>
 </table>
