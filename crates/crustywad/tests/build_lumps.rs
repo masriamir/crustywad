@@ -802,7 +802,7 @@ fn combined_coord(map: &Map, built: &BuiltNodes, idx: usize) -> (i32, i32) {
 
 /// The sector a built seg faces, resolved through its linedef's own side.
 fn seg_sector(map: &Map, seg: &crustywad::map::MapSeg) -> usize {
-    let ld = &map.linedefs()[seg.linedef.0];
+    let ld = &map.linedefs()[seg.linedef.expect("built seg is linedef-backed").0];
     let side = if seg.direction == 0 {
         ld.right
     } else {
@@ -834,7 +834,7 @@ fn subsector_of(built: &BuiltNodes, linedef: usize, direction: u16) -> Option<us
     built.subsectors.iter().position(|ss| {
         built.segs[ss.segs.clone()]
             .iter()
-            .any(|s| s.linedef.0 == linedef && s.direction == direction)
+            .any(|s| s.linedef.map(|l| l.0) == Some(linedef) && s.direction == direction)
     })
 }
 
@@ -1201,9 +1201,12 @@ fn build_nodes_two_sided_lines_split_without_a_crack() {
     // fragment ending at the shared (128,128) vertex.
     for dir in [0u16, 1u16] {
         assert!(
-            built.segs.iter().any(|s| s.linedef.0 == other_linedef
-                && s.direction == dir
-                && (s.start.0 == mid_idx || s.end.0 == mid_idx)),
+            built
+                .segs
+                .iter()
+                .any(|s| s.linedef.map(|l| l.0) == Some(other_linedef)
+                    && s.direction == dir
+                    && (s.start.0 == mid_idx || s.end.0 == mid_idx)),
             "direction {dir} of the split line meets the shared vertex"
         );
     }

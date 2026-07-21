@@ -143,6 +143,14 @@ impl BuiltNodes {
     ///   field. `build_nodes` narrows coordinates and bounds indices before
     ///   constructing a [`BuiltNodes`], so these guard only hand-constructed
     ///   values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any [`segs`](Self::segs) entry has a `None`
+    /// [`linedef`](MapSeg::linedef) (a GL miniseg, #326/ADR-0025). The
+    /// classic `SEGS` lump has no on-disk representation for a miniseg;
+    /// `build_nodes` (the only in-tree producer of a [`BuiltNodes`]) never
+    /// emits one, so a well-formed value never trips this.
     pub fn to_lump_bytes(&self) -> Result<BuiltNodeLumps, NodeBuildError> {
         // Structural count ceilings (both modes): the leaf flag occupies bit 15
         // of every child reference, so these indices must fit 15 bits.
@@ -175,7 +183,10 @@ impl BuiltNodes {
                 start_vertex: encode_index(s.start.0, "vertices")?,
                 end_vertex: encode_index(s.end.0, "vertices")?,
                 angle: s.angle,
-                linedef: encode_index(s.linedef.0, "linedefs")?,
+                linedef: encode_index(
+                    s.linedef.expect("classic segs are always linedef-backed").0,
+                    "linedefs",
+                )?,
                 direction: s.direction,
                 offset: narrow_offset(s.offset, i)?,
             });
@@ -1199,7 +1210,7 @@ impl<'a> Bsp<'a> {
                     start: VertexIdx(s.v1),
                     end: VertexIdx(s.v2),
                     angle: bam_angle(x2 - x1, y2 - y1),
-                    linedef: LinedefIdx(s.linedef),
+                    linedef: Some(LinedefIdx(s.linedef)),
                     direction: s.direction,
                     offset,
                 });
@@ -1473,7 +1484,7 @@ mod tests {
             start: VertexIdx(start),
             end: VertexIdx(end),
             angle,
-            linedef: LinedefIdx(linedef),
+            linedef: Some(LinedefIdx(linedef)),
             direction: 0,
             offset: 0,
         }

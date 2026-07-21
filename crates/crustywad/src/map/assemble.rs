@@ -1132,14 +1132,14 @@ fn normalize_bsp(
                 warnings,
             )?),
             angle: sg.angle,
-            linedef: LinedefIdx(resolve_required(
+            linedef: Some(LinedefIdx(resolve_required(
                 i32::from(sg.linedef),
                 linedef_count,
                 "linedef",
                 "seg",
                 strictness,
                 warnings,
-            )?),
+            )?)),
             direction: sg.direction,
             offset: i32::from(sg.offset),
         });

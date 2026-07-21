@@ -300,8 +300,11 @@ pub struct MapSeg {
     /// The seg's raw binary angle (BAM); render-domain interpretation is
     /// deferred to the viewer work (#64).
     pub angle: u16,
-    /// The index of the linedef this seg was cut from.
-    pub linedef: LinedefIdx,
+    /// The linedef this seg was cut from: `Some(idx)` for a normal seg;
+    /// `None` for a GL miniseg — a seg along a BSP partition line with no
+    /// backing linedef, introduced with `ZDoom` extended GL nodes (#326,
+    /// ADR-0025). Classic/vanilla BSP segs are always `Some`.
+    pub linedef: Option<LinedefIdx>,
     /// The seg's direction relative to its linedef: `0` if the seg runs the
     /// same way as the linedef, `1` if reversed.
     pub direction: u16,
