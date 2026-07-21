@@ -397,3 +397,11 @@ slices (or a dedicated `Option`) rather than failing assembly.
   plus a warning — rather than classic-decoded; reading those encodings is
   #199. `Map::bsp_root()` returns the last node, matching Chocolate Doom's
   `R_RenderBSPNode(numnodes-1)` entry point.
+- **2026-07-21 (#326):** the revisit condition's "extended ZDBSP nodes" clause
+  is partially discharged. Stage 1 reads the uncompressed ZDoom extended
+  formats (`XNOD`/`XGLN`/`XGL2`/`XGL3`) into the classic `MapSeg`/
+  `MapSubsector`/`MapNode` arenas defined here, on both the binary
+  `NODES`/`SSECTORS` gate and the UDMF `ZNODES` path. The #204 gate now
+  narrows to the still-unsupported compressed `Z*` twins; DeePBSP `xNd4` is
+  not yet detected as an extended encoding at all and is a later stage
+  (#328). See ADR-0025 for the full design and staging.

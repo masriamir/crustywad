@@ -32,6 +32,10 @@ pub mod build;
 pub mod common;
 pub mod doom;
 pub mod doom64;
+/// Decoding uncompressed ZDoom extended BSP node streams (XNOD/XGLN/XGL2/XGL3;
+/// ADR-0025). Crate-internal decoder plus the public [`ExtendedNodeError`]
+/// surfaced by [`MapAssembleError`] / [`MapWarning`].
+mod extended;
 pub mod graph;
 pub mod group;
 pub mod hexen;
@@ -45,6 +49,7 @@ pub use doom64::{
     Doom64Map, Doom64ReadError, Doom64TextureNames, Doom64Warning, is_doom64_map_lump,
     is_doom64_map_name, read_doom64_map, texture_name_hash,
 };
+pub use extended::ExtendedNodeError;
 pub use graph::{
     LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
     MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,

@@ -143,6 +143,12 @@ impl BuiltNodes {
     ///   field. `build_nodes` narrows coordinates and bounds indices before
     ///   constructing a [`BuiltNodes`], so these guard only hand-constructed
     ///   values.
+    /// - [`NodeBuildError::MinisegUnsupported`] when any [`segs`](Self::segs)
+    ///   entry has a `None` [`linedef`](MapSeg::linedef) (a GL miniseg,
+    ///   #326/ADR-0025) — the classic `SEGS` lump has no on-disk
+    ///   representation for a miniseg. `build_nodes` (the only in-tree
+    ///   producer of a [`BuiltNodes`]) never emits one, so this guards only a
+    ///   hand-constructed value.
     pub fn to_lump_bytes(&self) -> Result<BuiltNodeLumps, NodeBuildError> {
         // Structural count ceilings (both modes): the leaf flag occupies bit 15
         // of every child reference, so these indices must fit 15 bits.
@@ -175,7 +181,12 @@ impl BuiltNodes {
                 start_vertex: encode_index(s.start.0, "vertices")?,
                 end_vertex: encode_index(s.end.0, "vertices")?,
                 angle: s.angle,
-                linedef: encode_index(s.linedef.0, "linedefs")?,
+                linedef: encode_index(
+                    s.linedef
+                        .ok_or(NodeBuildError::MinisegUnsupported { seg: i })?
+                        .0,
+                    "linedefs",
+                )?,
                 direction: s.direction,
                 offset: narrow_offset(s.offset, i)?,
             });
@@ -1199,7 +1210,7 @@ impl<'a> Bsp<'a> {
                     start: VertexIdx(s.v1),
                     end: VertexIdx(s.v2),
                     angle: bam_angle(x2 - x1, y2 - y1),
-                    linedef: LinedefIdx(s.linedef),
+                    linedef: Some(LinedefIdx(s.linedef)),
                     direction: s.direction,
                     offset,
                 });
@@ -1473,7 +1484,7 @@ mod tests {
             start: VertexIdx(start),
             end: VertexIdx(end),
             angle,
-            linedef: LinedefIdx(linedef),
+            linedef: Some(LinedefIdx(linedef)),
             direction: 0,
             offset: 0,
         }
@@ -1944,6 +1955,55 @@ mod tests {
                 count: 0x1_0001,
                 max: MAX_U16_INDEXED,
             }
+        );
+    }
+
+    #[test]
+    fn to_lump_bytes_rejects_seg_linedef_index_over_u16() {
+        // A seg whose linedef index does not fit u16 — the defensive
+        // `encode_index` guard reached through the serializer's linedef
+        // field specifically (distinct from the vertex-index guard above and
+        // the miniseg guard below, which never reaches `encode_index` at
+        // all).
+        let s = seg(0, 1, 0x0000, 0x1_0000);
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: vec![s],
+            subsectors: vec![MapSubsector {
+                segs: 0..1,
+                leafs: 0..0,
+            }],
+            nodes: Vec::new(),
+        };
+        assert_eq!(
+            built.to_lump_bytes().unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "linedefs",
+                count: 0x1_0001,
+                max: MAX_U16_INDEXED,
+            }
+        );
+    }
+
+    #[test]
+    fn to_lump_bytes_rejects_gl_miniseg() {
+        // A GL miniseg (`linedef: None`) has no on-disk `SEGS` representation;
+        // `to_lump_bytes` must return `Err`, not panic (the in-tree builder
+        // never produces one — this guards a hand-constructed `BuiltNodes`).
+        let mut s = seg(0, 1, 0x0000, 0);
+        s.linedef = None;
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: vec![s],
+            subsectors: vec![MapSubsector {
+                segs: 0..1,
+                leafs: 0..0,
+            }],
+            nodes: Vec::new(),
+        };
+        assert_eq!(
+            built.to_lump_bytes().unwrap_err(),
+            NodeBuildError::MinisegUnsupported { seg: 0 }
         );
     }
 

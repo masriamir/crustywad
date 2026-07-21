@@ -1283,12 +1283,14 @@ fn bsp_child_into_empty_arena_strict_errors_lenient_degrades() {
     assert_eq!(map.linedefs().len(), 1); // geometry intact
 }
 
-// A NODES lump carrying a ZDBSP signature: strict -> structured error naming
-// the encoding; lenient -> empty BSP arenas + warning, geometry intact.
+// A NODES lump carrying a still-gated ZDBSP signature (the zlib-wrapped `Z*`
+// family, #327): strict -> structured error naming the encoding; lenient ->
+// empty BSP arenas + warning, geometry intact. (The uncompressed `X*` twins now
+// decode instead of gating — see `tests/extended_nodes.rs`.)
 #[test]
 fn extended_node_encoding_gates_instead_of_garbage_decoding() {
-    let mut xnod = b"XNOD".to_vec();
-    xnod.extend([0u8; 24]); // payload irrelevant; 28 bytes = one fake record
+    let mut znod = b"ZNOD".to_vec();
+    znod.extend([0u8; 24]); // payload irrelevant; the gate only reads the tag
     let bytes = common::build_named_lumps(&[
         ("E1M1", vec![]),
         ("THINGS", vec![]),
@@ -1297,7 +1299,7 @@ fn extended_node_encoding_gates_instead_of_garbage_decoding() {
         ("VERTEXES", [vertex(0, 0), vertex(64, 0)].concat()),
         ("SEGS", seg(0, 1, 0, 0)),
         ("SSECTORS", subsector(1, 0)),
-        ("NODES", xnod),
+        ("NODES", znod),
         ("SECTORS", sector()),
     ]);
     let wad = Wad::from_bytes(bytes).unwrap();
@@ -1307,7 +1309,7 @@ fn extended_node_encoding_gates_instead_of_garbage_decoding() {
         err,
         MapAssembleError::UnsupportedNodeEncoding {
             lump: "NODES",
-            signature: [b'X', b'N', b'O', b'D']
+            signature: [b'Z', b'N', b'O', b'D']
         }
     ));
     let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();

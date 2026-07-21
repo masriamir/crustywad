@@ -177,6 +177,17 @@ pub enum NodeBuildError {
         /// The maximum the format can index.
         max: usize,
     },
+    /// A seg had no backing linedef — a GL miniseg (`MapSeg::linedef == None`,
+    /// introduced with extended-node reading, #326). The classic on-disk `SEGS`
+    /// format cannot represent a linedef-less seg, so serializing a `BuiltNodes`
+    /// containing one fails cleanly (both modes) rather than panicking. The
+    /// in-tree node builder never produces minisegs; this guards a `BuiltNodes`
+    /// hand-constructed via its public fields.
+    #[error("seg {seg} is a GL miniseg (no linedef); the classic SEGS format cannot represent it")]
+    MinisegUnsupported {
+        /// The index of the offending seg in the `BuiltNodes` seg arena.
+        seg: usize,
+    },
     /// A convex subsector spans multiple sectors and no seg line separates them
     /// (ADR-0024 §C, §7 amendment 2026-07-19). The engine would render such a
     /// subsector with the first seg's sector — the wrong flats — so strict mode
@@ -229,7 +240,8 @@ impl NodeBuildError {
     ///   [`Write`][Self::Write] — the shared write-path pass decides.
     /// - `false` for the errors produced identically in **both** strictness
     ///   modes — [`EmptyGeometry`][Self::EmptyGeometry],
-    ///   [`DegeneratePartition`][Self::DegeneratePartition] — and for the
+    ///   [`DegeneratePartition`][Self::DegeneratePartition],
+    ///   [`MinisegUnsupported`][Self::MinisegUnsupported] — and for the
     ///   arena/offset ceilings ([`TooManyElements`][Self::TooManyElements],
     ///   [`BlockmapOverflow`][Self::BlockmapOverflow]): each conflates a
     ///   dominant structurally unrepresentable case (both modes error) with a
@@ -246,6 +258,7 @@ impl NodeBuildError {
             Self::EmptyGeometry
             | Self::BlockmapOverflow { .. }
             | Self::TooManyElements { .. }
+            | Self::MinisegUnsupported { .. }
             | Self::DegeneratePartition { .. } => false,
         }
     }
@@ -274,6 +287,7 @@ mod tests {
             .is_lenient_recoverable()
         );
         assert!(!NodeBuildError::DegeneratePartition { set_segs: 4 }.is_lenient_recoverable());
+        assert!(!NodeBuildError::MinisegUnsupported { seg: 0 }.is_lenient_recoverable());
 
         // Write delegates to the wrapped write error's own classification.
         assert!(

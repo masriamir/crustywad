@@ -300,8 +300,11 @@ pub struct MapSeg {
     /// The seg's raw binary angle (BAM); render-domain interpretation is
     /// deferred to the viewer work (#64).
     pub angle: u16,
-    /// The index of the linedef this seg was cut from.
-    pub linedef: LinedefIdx,
+    /// The linedef this seg was cut from: `Some(idx)` for a normal seg;
+    /// `None` for a GL miniseg — a seg along a BSP partition line with no
+    /// backing linedef, introduced with `ZDoom` extended GL nodes (#326,
+    /// ADR-0025). Classic/vanilla BSP segs are always `Some`.
+    pub linedef: Option<LinedefIdx>,
     /// The seg's direction relative to its linedef: `0` if the seg runs the
     /// same way as the linedef, `1` if reversed.
     pub direction: u16,
@@ -575,14 +578,27 @@ pub enum MapWarning {
     /// [`Doom64Warning`](crate::map::doom64::Doom64Warning).
     #[error("{0}")]
     Doom64(crate::map::doom64::Doom64Warning),
-    /// A `NODES`/`SSECTORS` lump opened with an extended/GL node-encoding
-    /// signature (ZDBSP family) and was skipped during lenient assembly —
-    /// reading these encodings is out of scope for classic-path BSP
-    /// normalization (see issue #199).
+    /// A `NODES`/`SSECTORS` lump (or the UDMF `ZNODES` lump) carried an
+    /// extended node-encoding signature this build cannot yet decode — the
+    /// compressed `Z*` twins (#327); the uncompressed `X*` family decodes
+    /// (#326). The BSP arenas were left empty during lenient assembly.
     #[error("{lump} uses an unsupported extended node encoding; skipped; BSP arenas left empty")]
     UnsupportedNodeEncoding {
-        /// The name of the lump carrying the extended encoding (`"NODES"` or `"SSECTORS"`).
+        /// The name of the lump carrying the extended encoding (`"NODES"`,
+        /// `"SSECTORS"`, or the UDMF `"ZNODES"`).
         lump: &'static str,
+    },
+    /// An uncompressed `ZDoom` extended-node stream
+    /// (`XNOD`/`XGLN`/`XGL2`/`XGL3`) was recovered during lenient assembly:
+    /// either an individual mismatch was tolerated and decoding continued, or a
+    /// structural fault degraded the whole BSP to empty arenas. See
+    /// [`ExtendedNodeError`](crate::map::ExtendedNodeError) (ADR-0025).
+    #[error("recovered malformed {dialect} extended node stream during lenient assembly: {reason}")]
+    ExtendedNode {
+        /// The dialect tag naming the stream (`"XNOD"`, `"XGLN"`, `"XGL2"`, or `"XGL3"`).
+        dialect: &'static str,
+        /// The specific structural fault that was recovered.
+        reason: crate::map::ExtendedNodeError,
     },
     /// The `REJECT` lump was smaller than its map's sector count requires;
     /// the missing bits read as "not rejected" during lenient assembly.
