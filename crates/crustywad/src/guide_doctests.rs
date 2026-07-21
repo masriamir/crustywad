@@ -1,8 +1,8 @@
 //! Compile-checks the mdBook user guide's Rust code samples.
 //!
 //! Each `#[doc = include_str!(...)]` pulls a guide page into the crate **only**
-//! under the doctest build (the module is gated
-//! `cfg(all(doctest, feature = "guide-doctests"))`; see below), so
+//! under the doctest build — the module is gated
+//! `cfg(all(doctest, feature = "guide-doctests"))`, described below — so
 //! `cargo test --doc --all-features` **compiles** every ` ```rust ` block the
 //! guide presents as real code — and **runs** those not marked `no_run` — with
 //! the crate fully linked and every feature enabled, while `cargo doc` and
