@@ -85,7 +85,7 @@ pub enum MapAssembleError {
     /// decodes into the BSP arenas (#326); the classic record decoder must
     /// never misread a gated stream as garbage classic records.
     #[error(
-        "{lump} uses the unsupported extended node encoding {} (see issue #199)",
+        "{lump} uses the unsupported extended node encoding {} (compressed Z* reading is tracked in issue #327)",
         String::from_utf8_lossy(signature)
     )]
     UnsupportedNodeEncoding {

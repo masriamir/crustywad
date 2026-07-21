@@ -476,7 +476,10 @@ The four **uncompressed** dialects — `XNOD` (non-GL) and the GL layouts `XGLN`
 now decode transparently into the same `map.segs()`, `map.subsectors()`, and `map.nodes()`
 arenas as the classic encoding, on both the binary `NODES`/`SSECTORS` path and the UDMF
 `ZNODES` path. There is nothing extra to opt into: assembly detects the signature and decodes
-the stream in place, in both `Strictness` modes. One difference from a classic-decoded map is
+the stream in place, in both `Strictness` modes. A structurally malformed `X*` stream (a bad
+count, a truncated record, an out-of-range reference) fails strict assembly with
+`MapAssembleError::ExtendedNode` and recovers under `ParseOptions::lenient()` as a
+`MapWarning::ExtendedNode` with empty BSP arenas. One difference from a classic-decoded map is
 worth knowing: a GL dialect's segs can include **minisegs** — synthetic segs that run along a
 BSP partition line rather than following a linedef — so `MapSeg::linedef` is `Option<LinedefIdx>`
 (`None` for a miniseg) rather than always `Some`.
@@ -493,9 +496,10 @@ beginning with that tag falls through to the classic record decoder rather than 
 gate, pending a later stage ([#328](https://github.com/masriamir/crustywad/issues/328)). On the
 UDMF `ZNODES` path there is no classic decoder to fall through to, so any non-`X*` tag there
 (including `xNd4`) is gated exactly like a `Z*` stream — strict error, or lenient warning with
-empty BSP arenas. Reading the remaining `Z*`
-encodings is tracked as [#199](https://github.com/masriamir/crustywad/issues/199); see ADR-0025
-for the staged design.
+empty BSP arenas. Reading the compressed `Z*`
+encodings is tracked as [#327](https://github.com/masriamir/crustywad/issues/327) (under the
+[#199](https://github.com/masriamir/crustywad/issues/199) umbrella); see ADR-0025 for the
+staged design.
 
 The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent
