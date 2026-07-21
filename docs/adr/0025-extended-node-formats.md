@@ -29,7 +29,7 @@ empties the three BSP arenas. Both variants cite #199 as the future reading
 path. This ADR decides that path.
 
 The design is grounded in three source-verified research passes recorded on
-#199 (2026-07-20): a format taxonomy from the zdbsp writers and gzdoom
+#199 (2026-07-20): a format taxonomy from the zdbsp writers and GZDoom
 loaders, a survey of engine consumption and de facto usage across the modern
 ports, and a crustywad-state audit of the read model and its seams.
 
@@ -38,7 +38,7 @@ ports, and a crustywad-state audit of the read model and its seams.
 **Fourteen format names collapse to a few readers.**
 
 - **Compression is orthogonal.** Every `Z*` tag is its `X*` twin wrapped in a
-  raw zlib stream after the 4-byte tag; gzdoom decodes both to the same
+  raw zlib stream after the 4-byte tag; GZDoom decodes both to the same
   internal `type` and calls one routine (`maploader.cpp:692-761`). One inflate
   front-end + four layout readers cover all eight ZDoom formats.
 - **The ZDoom family shares a framing.** XNOD/XGLN/XGL2/XGL3 all begin with
@@ -309,7 +309,7 @@ Classic GL (`gNd*`) remains out of scope.
 
 - **Research record:** the three consolidated passes on #199
   (2026-07-20) — taxonomy, engine consumption, crustywad state — with
-  `path:line` anchors into zdbsp/gzdoom and the crustywad codebase.
+  `path:line` anchors into zdbsp/GZDoom and the crustywad codebase.
 - **Amends** ADR-0015 (the assembled-map model; its revisit condition and the
   #204 gate amendment) and relates to ADR-0016 (hardening — the new parse
   surface and the inflate cap), ADR-0018 (Doom 64, routed away from the gate),
