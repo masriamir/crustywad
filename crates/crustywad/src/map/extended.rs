@@ -141,13 +141,13 @@ impl ExtendedNodeKind {
     }
 
     /// The on-disk byte size of one seg record in this dialect: `XNOD`
-    /// `u32 v1, u32 v2, u16 line, u8 side` = 13; `XGLN`
+    /// `u32 v1, u32 v2, u16 line, u8 side` = 11; `XGLN`
     /// `u32 v1, u32 partner, u16 line, u8 side` = 11; `XGL2`/`XGL3`
     /// `u32 v1, u32 partner, u32 line, u8 side` = 13.
     fn seg_size(self) -> usize {
         match self {
-            ExtendedNodeKind::Xnod | ExtendedNodeKind::Xgl2 | ExtendedNodeKind::Xgl3 => 13,
-            ExtendedNodeKind::Xgln => 11,
+            ExtendedNodeKind::Xnod | ExtendedNodeKind::Xgln => 11,
+            ExtendedNodeKind::Xgl2 | ExtendedNodeKind::Xgl3 => 13,
         }
     }
 
@@ -1073,6 +1073,70 @@ mod tests {
         assert_eq!(n.right_bbox, [50, -50, -25, 25]);
         assert_eq!(n.right, NodeChild::Subsector(SubsectorIdx(0)));
         assert_eq!(n.left, NodeChild::Subsector(SubsectorIdx(0)));
+    }
+
+    #[test]
+    fn xnod_seg_block_at_lump_end_is_not_overflowed_i1_regression() {
+        // Regression for I1: XNOD segs are 11 bytes each (u32 v1 + u32 v2 + u16
+        // line + u8 side), not 13. A 72-byte XNOD lump: 24-byte header (tag +
+        // origVerts + newVerts + numSubsectors + segCount + numSegs), 4 segs ×
+        // 11 bytes = 44, then numNodes = 0 (4 bytes). Before the fix,
+        // `seg_size()` returning 13 made `fits()` demand 52 bytes for the seg
+        // block when only 48 remained (44 segs + the trailing numNodes field),
+        // so this valid, minimal stream was spuriously rejected as
+        // `CountOverflow` even though the DECODE read path (11 bytes/seg) would
+        // have consumed it correctly.
+        let mut b = Buf::default()
+            .tag(*b"XNOD")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(4) // ss0 segCount
+            .u32(4); // numSegs
+        for i in 0..4u32 {
+            b = b
+                .u32(i) // v1
+                .u32((i + 1) % 4) // v2
+                .u16(u16::try_from(i).unwrap()) // linedef
+                .u8(0); // side
+        }
+        let bytes = b.u32(0).build(); // numNodes = 0
+        assert_eq!(
+            bytes.len(),
+            72,
+            "fixture is the exact 72-byte regression case"
+        );
+
+        let (out, warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xnod,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        let bsp = out.expect("valid XNOD stream with seg block at lump end must decode");
+        assert!(warnings.is_empty());
+        assert!(bsp.nodes.is_empty());
+        assert_eq!(bsp.subsectors.len(), 1);
+        assert_eq!(bsp.subsectors[0].segs, 0..4);
+        assert_eq!(bsp.segs.len(), 4);
+        for (i, seg) in bsp.segs.iter().enumerate() {
+            assert_eq!(seg.start, VertexIdx(i), "seg {i} start");
+            assert_eq!(seg.end, VertexIdx((i + 1) % 4), "seg {i} end");
+            assert_eq!(seg.linedef, Some(LinedefIdx(i)), "seg {i} linedef");
+        }
+
+        // Lenient mode must also decode successfully, not degrade to empty.
+        let (lenient, lenient_warnings) = decode(
+            &bytes,
+            ExtendedNodeKind::Xnod,
+            &square(),
+            &square_linedefs(),
+            Strictness::Lenient,
+        );
+        let lenient_bsp = lenient.expect("lenient must also decode, not degrade");
+        assert_eq!(lenient_bsp.segs.len(), 4);
+        assert!(lenient_warnings.is_empty());
     }
 
     #[test]
