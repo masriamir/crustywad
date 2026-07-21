@@ -161,14 +161,6 @@ pub enum SectionError {
         /// Directory index of the out-of-order `END` marker.
         index: usize,
     },
-    /// A numbered sub-pair outside its parent kind (rows 7-8).
-    #[error("numbered {kind:?} sub-section at lump {index} has no open parent of its kind")]
-    OrphanSubPair {
-        /// The sub-pair's kind.
-        kind: SectionKind,
-        /// Directory index of the sub-pair's `START` marker.
-        index: usize,
-    },
 }
 
 /// A marker anomaly recovered during lenient scanning; each variant states
@@ -237,17 +229,6 @@ pub enum SectionWarning {
         /// Directory index of the out-of-order `END` marker.
         index: usize,
     },
-    /// A numbered sub-pair with no open parent of its kind; promoted to a
-    /// top-level section.
-    #[error(
-        "numbered {kind:?} sub-section at lump {index} has no open parent of its kind; promoted to top level during lenient scanning"
-    )]
-    OrphanSubPair {
-        /// The sub-pair's kind.
-        kind: SectionKind,
-        /// Directory index of the sub-pair's `START` marker.
-        index: usize,
-    },
 }
 
 /// A classified marker name.
@@ -309,9 +290,9 @@ struct Open {
     sub: bool,
     start: usize,
     children: Vec<Section>,
-    /// A lenient open-time warning (orphan promotion, duplicate pair) was
-    /// already recorded for this marker; EOF cleanup then suppresses the
-    /// `UnpairedStart` so each marker lump warns at most once.
+    /// A lenient open-time warning (a duplicate pair) was already recorded for
+    /// this marker; EOF cleanup then suppresses the `UnpairedStart` so each
+    /// marker lump warns at most once.
     start_warned: bool,
 }
 
@@ -389,7 +370,18 @@ fn handle_top_start(
     Ok(())
 }
 
-/// Handles a numbered sub-pair `START` marker: rows 5, 7-8.
+/// Handles a numbered sub-pair `START` marker: row 5, and the parentless
+/// case (#292).
+///
+/// A numbered pair (`F1_`/`P3_`/..) with an enclosing same-kind parent nests
+/// as a child of that parent. A numbered pair with **no** parent is not an
+/// anomaly: no engine models a parent/child relationship between markers (all
+/// resolve resource lumps by bare name, and a numbered marker is not even a
+/// marker to them — see the module docs and #292), and a balanced pair is a
+/// structurally complete named region. It simply opens here and, having no
+/// enclosing parent, lands as a first-class top-level section of its kind when
+/// it closes (`handle_end`/`handle_eof`). Only a genuinely *unpaired* numbered
+/// `START` is flagged — at EOF, as `UnpairedStart`, like any other.
 fn handle_sub_start(
     open: &mut Vec<Open>,
     table: &mut SectionTable,
@@ -397,7 +389,6 @@ fn handle_sub_start(
     kind: SectionKind,
     i: usize,
 ) -> Result<(), SectionError> {
-    let has_parent = open.iter().any(|o| o.kind == kind && !o.sub);
     let sub_already_open = open.iter().any(|o| o.kind == kind && o.sub);
     if sub_already_open {
         let outer_start = open
@@ -421,27 +412,12 @@ fn handle_sub_start(
         }
         return Ok(());
     }
-    let mut start_warned = false;
-    if !has_parent {
-        match strictness {
-            Strictness::Strict => {
-                return Err(SectionError::OrphanSubPair { kind, index: i });
-            }
-            Strictness::Lenient => {
-                table
-                    .warnings
-                    .push(SectionWarning::OrphanSubPair { kind, index: i });
-                start_warned = true;
-            }
-        }
-        // rows 7-8: promote — open as top-level below.
-    }
     open.push(Open {
         kind,
         sub: true,
         start: i,
         children: Vec::new(),
-        start_warned,
+        start_warned: false,
     });
     Ok(())
 }
@@ -474,10 +450,10 @@ fn handle_end(
         // this section close at this END (row 2, one warning each,
         // attributed to their own START); a DIFFERENT kind is row 6 (ONE
         // warning, topmost). A jumped same-kind top-level can only arise
-        // from the lenient promoted-orphan shape (rows 4/5 keep at most one
-        // top-level per kind open, and strict rejects the orphan at its
-        // `START`), whose promotion warning already covers the anomaly —
-        // so same-kind entries never count as interleaving.
+        // from a parentless numbered section (#292), which promotes to top
+        // level in both modes (rows 4/5 keep at most one classic top-level
+        // per kind open) and is not itself an anomaly — so same-kind
+        // entries never count as interleaving.
         let jumped_foreign = open[pos + 1..]
             .iter()
             .rev()
@@ -529,9 +505,10 @@ fn handle_end(
     if sub {
         // Attach to the enclosing open top-level of the same kind: it must
         // both be top-level AND actually ENCLOSE this child (its START must
-        // precede the child's START). A promoted orphan opened before any
-        // same-kind parent existed has no enclosing parent even if one has
-        // since opened, and stays top-level.
+        // precede the child's START). A parentless numbered pair (#292)
+        // opened before any same-kind parent existed has no enclosing parent
+        // even if one has since opened, and stays a first-class top-level
+        // section.
         if let Some(parent) = open
             .iter_mut()
             .rev()
@@ -564,8 +541,8 @@ fn handle_eof(
                 });
             }
             Strictness::Lenient => {
-                // One warning per marker lump: an open-time warning (orphan
-                // promotion, duplicate pair) already covers this recovery.
+                // One warning per marker lump: an open-time warning (a
+                // duplicate pair) already covers this recovery.
                 if !o.start_warned {
                     table.warnings.push(SectionWarning::UnpairedStart {
                         kind: o.kind,
@@ -594,11 +571,11 @@ fn handle_eof(
 /// The scan. Strict returns the first anomaly; lenient records a warning
 /// per the policy table and recovers. `O(lumps)` single pass; the open set
 /// is bounded by one top-level entry plus one numbered sub-entry per
-/// [`SectionKind`] (orphan promotion can hold a sub open for each kind
-/// concurrently), i.e. at most `2 × kinds` entries, and warnings by one
+/// [`SectionKind`] (a parentless numbered pair still occupies just that one
+/// sub-entry), i.e. at most `2 × kinds` entries, and warnings by one
 /// per marker lump (ADR-0016 §1) — a marker that already warned at open
-/// (orphan promotion, duplicate pair) has its EOF `UnpairedStart`
-/// suppressed to preserve that bound.
+/// (a duplicate pair) has its EOF `UnpairedStart` suppressed to preserve
+/// that bound.
 pub(crate) fn scan(wad: &Wad, strictness: Strictness) -> Result<SectionTable, SectionError> {
     let mut open: Vec<Open> = Vec::new();
     let mut table = SectionTable::default();

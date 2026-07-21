@@ -337,31 +337,26 @@ fn row6_cross_kind_interleave_closes_matching_open() {
 }
 
 #[test]
-fn rows7_8_orphan_sub_pairs_promote() {
-    // Row 7: no parent at all. Row 8: wrong parent.
-    let orphan = wad_of(&["F1_START", "FLOORA", "F1_END"]);
-    assert!(matches!(
-        orphan.sections().unwrap_err(),
-        SectionError::OrphanSubPair {
-            kind: SectionKind::Flats,
-            index: 0
-        }
-    ));
-    let table = lenient(&orphan);
+fn parentless_numbered_sub_pairs_are_first_class_sections() {
+    // #292: a balanced numbered pair with no parent of its kind (whether at
+    // top level, or under a parent of a DIFFERENT kind) is not an anomaly —
+    // it is a first-class top-level section in BOTH modes, with no error and
+    // no warning. (Engines model no parent/child marker relationship at all.)
+    let no_parent = wad_of(&["F1_START", "FLOORA", "F1_END"]);
+    let table = no_parent.sections().unwrap();
+    assert!(table.warnings().is_empty());
     assert_eq!(table.sections().len(), 1);
     assert_eq!(table.sections()[0].kind, SectionKind::Flats);
     assert!(table.sections()[0].sub_sections.is_empty());
+    // Lenient agrees exactly — no anomaly to recover.
+    assert_eq!(lenient(&no_parent).sections(), table.sections());
 
+    // Under the WRONG parent (F1_ inside P_): the flats pair has no Flats
+    // parent, so it promotes to top level and is NOT adopted by the patches
+    // parent.
     let wrong_parent = wad_of(&["P_START", "F1_START", "FLOORA", "F1_END", "P_END"]);
-    assert!(matches!(
-        wrong_parent.sections().unwrap_err(),
-        SectionError::OrphanSubPair {
-            kind: SectionKind::Flats,
-            index: 1
-        }
-    ));
-    let table = lenient(&wrong_parent);
-    // Promoted flats section is top-level; patches has no children.
+    let table = wrong_parent.sections().unwrap();
+    assert!(table.warnings().is_empty());
     assert_eq!(table.of_kind(SectionKind::Flats).count(), 1);
     assert!(
         table
@@ -374,6 +369,23 @@ fn rows7_8_orphan_sub_pairs_promote() {
 }
 
 #[test]
+fn sve_bare_p3_start_is_strict_clean() {
+    // Regression for #292: SVE.wad (Strife: Veteran Edition) opens a bare
+    // `P3_START..P3_END` patch pair with no enclosing `P_START`, preceded by
+    // unrelated (sound) lumps. Every engine loads this — patches resolve by
+    // name, and `P3_START` is inert to them. crustywad now reads it strict-
+    // clean as a first-class top-level Patches section.
+    let sve = wad_of(&["DSPISTOL", "P3_START", "WALL01", "WALL02", "P3_END"]);
+    let table = sve.sections().unwrap();
+    assert!(table.warnings().is_empty());
+    let patches: Vec<_> = table.of_kind(SectionKind::Patches).collect();
+    assert_eq!(patches.len(), 1);
+    assert_eq!((patches[0].start_marker, patches[0].end_marker), (1, 4));
+    assert_eq!(patches[0].lumps, 2..4); // WALL01, WALL02
+    assert!(patches[0].sub_sections.is_empty());
+}
+
+#[test]
 fn sprite_numbered_subs_are_grammar_admitted() {
     // Never observed in retail (research §7b) but the grammar admits them.
     let wad = wad_of(&["S_START", "S1_START", "TROOA1", "S1_END", "S_END"]);
@@ -382,11 +394,11 @@ fn sprite_numbered_subs_are_grammar_admitted() {
 }
 
 #[test]
-fn promoted_orphan_sub_is_never_adopted_by_a_later_parent() {
-    // The fuzzer-found shape (#280 Task 2): an orphaned P1_ pair opens
-    // BEFORE any P_START exists, is promoted (row 7), and closes while a
-    // later-opened P_START is open. A parent must ENCLOSE its child —
-    // the promoted section stays top-level.
+fn parentless_numbered_sub_is_never_adopted_by_a_later_parent() {
+    // The fuzzer-found shape (#280 Task 2): a parentless P1_ pair opens
+    // BEFORE any P_START exists, is a first-class top-level section (#292),
+    // and closes while a later-opened P_START is open. A parent must ENCLOSE
+    // its child — the section stays top-level.
     let wad = wad_of(&["P1_START", "A", "P_START", "W1", "P1_END", "B"]);
     let table = lenient(&wad);
     assert_eq!(table.of_kind(SectionKind::Patches).count(), 2);
@@ -407,16 +419,24 @@ fn promoted_orphan_sub_is_never_adopted_by_a_later_parent() {
 }
 
 #[test]
-fn orphan_sub_left_unclosed_warns_exactly_once() {
-    // One warning per marker lump (#280 Task 2, second fuzzer find): the
-    // orphan promotion warning (row 7) already covers the recovery, so EOF
-    // cleanup must not add a second UnpairedStart for the same marker.
+fn parentless_numbered_sub_left_unclosed_warns_exactly_once() {
+    // #292: a parentless numbered START that is never closed is a genuine
+    // unpaired marker. No open-time warning fires (it is not an anomaly to
+    // open); EOF cleanup emits exactly one UnpairedStart for it, and strict
+    // rejects it with the same variant.
     let wad = wad_of(&["F1_START", "A"]);
+    assert!(matches!(
+        wad.sections().unwrap_err(),
+        SectionError::UnpairedStart {
+            kind: SectionKind::Flats,
+            index: 0
+        }
+    ));
     let table = lenient(&wad);
     assert_eq!(table.warnings().len(), 1);
     assert!(matches!(
         table.warnings()[0],
-        SectionWarning::OrphanSubPair {
+        SectionWarning::UnpairedStart {
             kind: SectionKind::Flats,
             index: 0
         }
@@ -424,7 +444,7 @@ fn orphan_sub_left_unclosed_warns_exactly_once() {
     assert_eq!(table.sections().len(), 1);
     let s = &table.sections()[0];
     assert_eq!(s.kind, SectionKind::Flats);
-    // Promoted to top level and EOF-closed.
+    // First-class top-level section, EOF-closed.
     assert_eq!((s.start_marker, s.end_marker), (0, 2));
     assert!(s.sub_sections.is_empty());
 }
@@ -628,23 +648,17 @@ fn retail_iwads_scan_to_their_known_shapes() {
 }
 
 #[test]
-fn promoted_orphan_close_across_same_kind_parent_warns_only_once() {
-    // The fuzzer-found adoption shape, warning-accounting view: the
-    // promoted P1_'s close jumps the later same-kind P_START, which is NOT
-    // cross-kind interleaving (row 6) — the promotion warning already
-    // covers the anomaly, so no same-kind Interleaved is emitted.
+fn parentless_numbered_close_across_same_kind_parent_warns_only_once() {
+    // The fuzzer-found adoption shape, warning-accounting view (#292): the
+    // parentless P1_'s close jumps the later same-kind P_START, which is NOT
+    // cross-kind interleaving (row 6) — a parentless numbered pair is not an
+    // anomaly, so it closes silently and no Interleaved is emitted. The lone
+    // warning is the genuinely-unpaired P_START at EOF.
     let wad = wad_of(&["P1_START", "A", "P_START", "W1", "P1_END", "B"]);
     let table = lenient(&wad);
-    assert_eq!(table.warnings().len(), 2); // OrphanSubPair + parent's EOF UnpairedStart
+    assert_eq!(table.warnings().len(), 1); // only the parent's EOF UnpairedStart
     assert!(matches!(
         table.warnings()[0],
-        SectionWarning::OrphanSubPair {
-            kind: SectionKind::Patches,
-            index: 0
-        }
-    ));
-    assert!(matches!(
-        table.warnings()[1],
         SectionWarning::UnpairedStart {
             kind: SectionKind::Patches,
             index: 2

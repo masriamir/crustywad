@@ -531,3 +531,35 @@ field is malformed, and strict mode says so honestly); the sweep pins the
 anomaly as a gate contract in the #269 style — the one affected IWAD must
 fail strict with exactly the pinned first offender, then build leniently
 with exactly four warnings and compose every texture without panicking.
+
+## Amendment (2026-07-20, #292): a parentless numbered sub-pair is a first-class section, not an anomaly
+
+The #156 amendment deferred SVE.wad's bare top-level `P3_START` (no enclosing
+`P_START`) to #292. Resolved: it is **not** an anomaly. A source survey of how
+engines resolve marker namespaces — Chocolate Doom (`r_data.c`), PrBoom+ and
+DSDA-Doom (`w_wad.c` `IsMarker` / `W_CoalesceMarkedResource`), and GZDoom
+(`file_wad.cpp`) — establishes three facts that undercut the original
+parent/child framing:
+
+- **No engine validates marker nesting.** Namespaces are assembled by a
+  single-pass boolean flip on marker names; an unmatched start/end is a no-op
+  or (GZDoom only) a non-fatal warning. Nothing is ever rejected.
+- **A numbered marker (`P1_`/`P3_`/`F1_`) is not a marker to any engine.** It
+  matches neither the exact marker name nor the doubled-first-letter alias
+  (`PP_`/`FF_`/`SS_`), so it is an inert `ns_global` lump — a DeuTex
+  authoring-time convention, with no "sub-range of `P_`" semantics anywhere.
+  (For patches specifically, no engine even has a WAD patch namespace: `P_`
+  markers themselves are inert and patches resolve by global name lookup.)
+- **SVE loads correctly in-engine.** Its patch lumps resolve by name and
+  `P3_START` is silently ignored. It is legitimate wild content.
+
+A balanced numbered pair is a structurally complete named region, and the old
+`SectionError::OrphanSubPair` asserted a relationship engines do not model —
+it was also *stricter than §2's own contract*, which makes only a missing,
+inverted, or unpaired marker a strict error (a balanced pair is none of
+those). Decision: a numbered pair nests as a child when a same-kind parent
+encloses it, and is a **first-class top-level section of its kind** otherwise,
+in both `Strictness` modes, with no error and no warning. Only a genuinely
+*unpaired* numbered `START` is flagged, as `UnpairedStart`, like any other.
+The `OrphanSubPair` error and warning variants are removed (a breaking API
+change). SVE.wad now reads strict-clean.
