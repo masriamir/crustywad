@@ -30,6 +30,11 @@ freedoom-tests = []
 hexen-tests = []
 doom64-tests = []
 sweep-tests = []
+# Internal, testing-only: compiles the mdBook guide's Rust samples as crate
+# doctests (see src/guide_doctests.rs). Off by default because the harness
+# `include_str!`s repo-level `docs/` files that are not in the published crate;
+# CI enables it via `--all-features`. Not a user-facing capability.
+guide-doctests = []
 write = []
 nodebuild = ["write"]
 doom64-gfx = ["dep:png"]

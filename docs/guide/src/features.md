@@ -12,6 +12,7 @@ allowing callers to opt in to additional capabilities.
 | [`hexen-tests`](#hexen-tests) | no | Integration tests against a local Hexen IWAD (not auto-fetchable) |
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
+| [`guide-doctests`](#guide-doctests) | no | **Internal, CI-only.** Compiles this guide's Rust code samples as crate doctests (enabled by `--all-features`); not a runtime capability |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
 | [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; powers `cwad convert --nodes` |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
@@ -39,7 +40,7 @@ of whether this feature is enabled.
 crustywad = { version = "0.6.0", features = ["mmap"] }
 ```
 
-```rust
+```rust,no_run
 use crustywad::{Wad, ParseOptions};
 
 // Zero-copy load from disk:
@@ -200,6 +201,29 @@ just test-sweep dir=/path/to/wads
 ```
 
 The test skips gracefully when `CRUSTYWAD_SWEEP_DIR` is unset or contains no WAD files.
+
+---
+
+## `guide-doctests`
+
+**Enables:** compiling this guide's own Rust code samples as crate doctests
+(`crates/crustywad/src/guide_doctests.rs`)
+
+**Adds dependency:** none
+
+Internal, CI-only. The harness pulls each guide page into the crate via
+`#[doc = include_str!(...)]` so that `cargo test --doc --all-features` compiles
+(and runs, where not `no_run`) every ` ```rust ` block the guide presents as
+real code — catching API drift in a sample before it ships. It is **not a
+runtime capability**; a library consumer never needs it.
+
+The module is gated `cfg(all(doctest, feature = "guide-doctests",
+has_guide_sources))`. `build.rs` sets `has_guide_sources` only when the
+repo-level `docs/guide/src/` files exist, so enabling the feature outside the
+source workspace (e.g. on the packaged crate, where those files are absent) is a
+graceful no-op rather than a missing-file compile error. CI runs it via the
+existing `cargo test --workspace --all-features`; `just guide-test` runs it
+locally.
 
 ---
 

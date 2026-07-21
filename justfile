@@ -20,6 +20,14 @@ guide:
     mdbook-mermaid install docs/guide
     mdbook build docs/guide
 
+# Compile-check the guide's Rust code samples. The pages are pulled into the crate as
+# doctests (src/guide_doctests.rs, gated on doctest + the guide-doctests feature +
+# build.rs's has_guide_sources cfg; --all-features enables the feature) and compiled with
+# every feature enabled, so API drift in a snippet fails CI. `mdbook test` cannot do this:
+# it only passes `-L` to rustdoc, never `--extern`, and has no way to enable Cargo features.
+guide-test:
+    cargo test -p crustywad --doc --all-features
+
 cov:
     cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 

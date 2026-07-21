@@ -63,6 +63,10 @@ values alongside the serialized bytes.
 pub mod audio;
 mod error;
 pub mod gfx;
+// Compile-checks the user guide's Rust samples as doctests; exists only during
+// doctest collection, so normal builds and `cargo doc` never see it.
+#[cfg(all(doctest, feature = "guide-doctests", has_guide_sources))]
+mod guide_doctests;
 pub mod map;
 #[cfg(feature = "mmap")]
 mod mmap;
