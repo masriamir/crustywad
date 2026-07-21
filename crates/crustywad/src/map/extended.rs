@@ -1760,6 +1760,55 @@ mod tests {
         assert!(wx.is_empty() && wz.is_empty());
     }
 
+    /// A 4-seg square `XGL2` stream (13-byte segs, u32 linedef sentinel),
+    /// mirroring `xgln_square` for the ZGL2 compressed round-trip test.
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn xgl2_square(line_overrides: [u32; 4]) -> Vec<u8> {
+        let mut b = Buf::default()
+            .tag(*b"XGL2")
+            .u32(4) // origVerts
+            .u32(0) // newVerts
+            .u32(1) // numSubsectors
+            .u32(4) // ss0 segCount
+            .u32(4); // numSegs
+        for (i, line) in line_overrides.iter().enumerate() {
+            b = b
+                .u32(u32::try_from(i).unwrap()) // v1
+                .u32(0xFFFF_FFFF) // partner = none
+                .u32(*line) // linedef
+                .u8(0); // side
+        }
+        b.u32(0).build() // numNodes = 0
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn zgl2_roundtrip_is_identical_to_uncompressed_twin() {
+        let x_full = xgl2_square([0, 1, 2, 3]);
+        let z_lump = zlib_lump(*b"ZGL2", &x_full);
+        let (twin, wx) = decode(
+            &x_full,
+            ExtendedNodeKind::Xgl2,
+            &square(),
+            &square_linedefs(),
+            Strictness::Strict,
+        );
+        let (comp, wz) = decode_compressed(
+            &z_lump,
+            ExtendedNodeKind::Xgl2,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert_eq!(
+            comp.expect("compressed ZGL2 decodes"),
+            twin.expect("uncompressed XGL2 decodes"),
+            "inflated ZGL2 arenas must equal the XGL2 twin's"
+        );
+        assert!(wx.is_empty() && wz.is_empty());
+    }
+
     #[cfg(feature = "extended-nodes-zlib")]
     #[test]
     fn zgl3_roundtrip_is_identical_to_uncompressed_twin() {
@@ -1827,6 +1876,47 @@ mod tests {
             MapWarning::ExtendedNode {
                 reason: ExtendedNodeError::CorruptStream,
                 ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn compressed_truncated_tag_strict_errors_lenient_degrades() {
+        // Fewer than 4 bytes: too short to even carry the plaintext `Z*` tag,
+        // let alone a zlib stream after it.
+        let lump = b"ZG".to_vec();
+        let (strict, _) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Strict,
+        );
+        assert!(matches!(
+            strict,
+            Err(MapAssembleError::ExtendedNode {
+                dialect: "ZGLN",
+                reason: ExtendedNodeError::Truncated { section: "tag" },
+            })
+        ));
+        let (lenient, warnings) = decode_compressed(
+            &lump,
+            ExtendedNodeKind::Xgln,
+            &square(),
+            &square_linedefs(),
+            1 << 20,
+            Strictness::Lenient,
+        );
+        let bsp = lenient.expect("lenient degrades to empty arenas");
+        assert!(bsp.segs.is_empty() && bsp.subsectors.is_empty() && bsp.nodes.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            MapWarning::ExtendedNode {
+                dialect: "ZGLN",
+                reason: ExtendedNodeError::Truncated { section: "tag" },
             }
         ));
     }

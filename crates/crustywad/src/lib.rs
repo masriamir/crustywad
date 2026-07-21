@@ -1230,6 +1230,17 @@ mod tests {
     }
 
     #[test]
+    fn with_max_decoded_node_bytes_replaces_only_that_field() {
+        let base = Limits::new();
+        let updated = base.with_max_decoded_node_bytes(1234);
+        assert_eq!(updated.max_decoded_node_bytes, 1234);
+        // Every other field is untouched.
+        assert_eq!(updated.max_depth, base.max_depth);
+        assert_eq!(updated.max_composite_pixels, base.max_composite_pixels);
+        assert_eq!(updated.max_decoded_pixels, base.max_decoded_pixels);
+    }
+
+    #[test]
     fn parse_options_carry_default_limits() {
         assert_eq!(ParseOptions::default().limits, Limits::new());
         assert_eq!(ParseOptions::strict().limits, Limits::new());
