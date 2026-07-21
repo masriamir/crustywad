@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-18e81e76.js";
+            window.path_to_searchindex_js = "searchindex-70ff487a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -238,7 +238,7 @@ if let Some(bytes) = wad.lump_bytes(0) {
 <p>By default <code>Wad::from_bytes</code> and <code>Wad::from_path</code> use <strong>strict</strong> mode: the first
 validation error stops parsing and returns a <code>ParseError</code>.</p>
 <p>Use <strong>lenient</strong> mode when you want best-effort recovery from malformed files:</p>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+<pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use crustywad::{ParseOptions, Wad};
 

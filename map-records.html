@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-18e81e76.js";
+            window.path_to_searchindex_js = "searchindex-70ff487a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -225,20 +225,15 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
 </span><span class="boring">}</span></code></pre>
 <h2 id="available-record-types"><a class="header" href="#available-record-types">Available record types</a></h2>
 <h3 id="thing"><a class="header" href="#thing">Thing</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Thing {
+<pre><code class="language-rust ignore">pub struct Thing {
     pub x: i16,        // X coordinate in map units
     pub y: i16,        // Y coordinate in map units
     pub angle: u16,    // Facing angle in degrees (0-359, counter-clockwise from east)
     pub type_id: u16,  // Editor number / thing type
     pub flags: u16,    // Doom thing flags
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="linedef"><a class="header" href="#linedef">Linedef</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Linedef {
+<pre><code class="language-rust ignore">pub struct Linedef {
     pub start_vertex: u16,   // Start vertex index
     pub end_vertex: u16,     // End vertex index
     pub flags: u16,
@@ -246,32 +241,23 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
     pub sector_tag: u16,
     pub right_sidedef: u16,  // Right sidedef index
     pub left_sidedef: u16,   // 0xffff when absent
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="sidedef"><a class="header" href="#sidedef">Sidedef</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Sidedef {
+<pre><code class="language-rust ignore">pub struct Sidedef {
     pub x_offset: i16,
     pub y_offset: i16,
     pub upper_texture: Name8,   // 8-byte NUL-padded name
     pub lower_texture: Name8,
     pub middle_texture: Name8,
     pub sector: u16,
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="vertex"><a class="header" href="#vertex">Vertex</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Vertex {
+<pre><code class="language-rust ignore">pub struct Vertex {
     pub x: i16,
     pub y: i16,
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="sector"><a class="header" href="#sector">Sector</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Sector {
+<pre><code class="language-rust ignore">pub struct Sector {
     pub floor_height: i16,
     pub ceiling_height: i16,
     pub floor_texture: Name8,
@@ -279,8 +265,7 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
     pub light_level: i16,
     pub special_type: i16,
     pub tag: i16,
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <p>See <code>crustywad::map</code> in the API docs for the full definitions of <code>Seg</code>,
 <code>Subsector</code>, and <code>Node</code>.</p>
 <h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
@@ -313,14 +298,11 @@ feature).</p>
 <p>A WAD stores maps as a marker lump (e.g. <code>E1M1</code>, <code>MAP01</code>) followed by a run of data lumps
 (<code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>VERTEXES</code>, <code>SECTORS</code>, and friends). <code>Wad::map_groups</code>
 and <code>Wad::map_group</code> locate these runs and return one <code>MapGroup</code> per map:</p>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct MapGroup {
+<pre><code class="language-rust ignore">pub struct MapGroup {
     pub marker_index: usize,   // directory index of the marker lump
     pub name: String,          // the map's name, e.g. "E1M1"
     pub data_indices: Vec&lt;usize&gt;,  // directory indices of the map's data lumps, in order
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use crustywad::Wad;
@@ -482,7 +464,7 @@ linedef’s <code>special</code> still holds its classic action number and secto
         }
     }
 }
-<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+<span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
 </span><span class="boring">}</span></code></pre>
 <h3 id="strict-vs-lenient-assembly"><a class="header" href="#strict-vs-lenient-assembly">Strict vs. lenient assembly</a></h3>
 <p><code>Map::assemble(wad, group)</code> is a convenience wrapper that always uses strict mode.

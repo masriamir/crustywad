@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-18e81e76.js";
+            window.path_to_searchindex_js = "searchindex-70ff487a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -260,7 +260,7 @@ println!("lumps: {}", wad.lump_count());
 <span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
 </span><span class="boring">}</span></code></pre>
 <h2 id="loading-from-a-file"><a class="header" href="#loading-from-a-file">Loading from a file</a></h2>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+<pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use crustywad::Wad;
 
@@ -339,7 +339,7 @@ if let Some(bytes) = wad.lump_bytes(0) {
 <p>By default <code>Wad::from_bytes</code> and <code>Wad::from_path</code> use <strong>strict</strong> mode: the first
 validation error stops parsing and returns a <code>ParseError</code>.</p>
 <p>Use <strong>lenient</strong> mode when you want best-effort recovery from malformed files:</p>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+<pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use crustywad::{ParseOptions, Wad};
 
@@ -972,20 +972,15 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
 </span><span class="boring">}</span></code></pre>
 <h2 id="available-record-types"><a class="header" href="#available-record-types">Available record types</a></h2>
 <h3 id="thing"><a class="header" href="#thing">Thing</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Thing {
+<pre><code class="language-rust ignore">pub struct Thing {
     pub x: i16,        // X coordinate in map units
     pub y: i16,        // Y coordinate in map units
     pub angle: u16,    // Facing angle in degrees (0-359, counter-clockwise from east)
     pub type_id: u16,  // Editor number / thing type
     pub flags: u16,    // Doom thing flags
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="linedef"><a class="header" href="#linedef">Linedef</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Linedef {
+<pre><code class="language-rust ignore">pub struct Linedef {
     pub start_vertex: u16,   // Start vertex index
     pub end_vertex: u16,     // End vertex index
     pub flags: u16,
@@ -993,32 +988,23 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
     pub sector_tag: u16,
     pub right_sidedef: u16,  // Right sidedef index
     pub left_sidedef: u16,   // 0xffff when absent
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="sidedef"><a class="header" href="#sidedef">Sidedef</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Sidedef {
+<pre><code class="language-rust ignore">pub struct Sidedef {
     pub x_offset: i16,
     pub y_offset: i16,
     pub upper_texture: Name8,   // 8-byte NUL-padded name
     pub lower_texture: Name8,
     pub middle_texture: Name8,
     pub sector: u16,
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="vertex"><a class="header" href="#vertex">Vertex</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Vertex {
+<pre><code class="language-rust ignore">pub struct Vertex {
     pub x: i16,
     pub y: i16,
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <h3 id="sector"><a class="header" href="#sector">Sector</a></h3>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct Sector {
+<pre><code class="language-rust ignore">pub struct Sector {
     pub floor_height: i16,
     pub ceiling_height: i16,
     pub floor_texture: Name8,
@@ -1026,8 +1012,7 @@ println!("Player 1 start at ({}, {}), angle {}", t.x, t.y, t.angle);
     pub light_level: i16,
     pub special_type: i16,
     pub tag: i16,
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <p>See <code>crustywad::map</code> in the API docs for the full definitions of <code>Seg</code>,
 <code>Subsector</code>, and <code>Node</code>.</p>
 <h2 id="error-handling-2"><a class="header" href="#error-handling-2">Error handling</a></h2>
@@ -1060,14 +1045,11 @@ feature).</p>
 <p>A WAD stores maps as a marker lump (e.g. <code>E1M1</code>, <code>MAP01</code>) followed by a run of data lumps
 (<code>THINGS</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>VERTEXES</code>, <code>SECTORS</code>, and friends). <code>Wad::map_groups</code>
 and <code>Wad::map_group</code> locate these runs and return one <code>MapGroup</code> per map:</p>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>pub struct MapGroup {
+<pre><code class="language-rust ignore">pub struct MapGroup {
     pub marker_index: usize,   // directory index of the marker lump
     pub name: String,          // the map's name, e.g. "E1M1"
     pub data_indices: Vec&lt;usize&gt;,  // directory indices of the map's data lumps, in order
-}
-<span class="boring">}</span></code></pre>
+}</code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use crustywad::Wad;
@@ -1229,7 +1211,7 @@ linedef’s <code>special</code> still holds its classic action number and secto
         }
     }
 }
-<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+<span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
 </span><span class="boring">}</span></code></pre>
 <h3 id="strict-vs-lenient-assembly"><a class="header" href="#strict-vs-lenient-assembly">Strict vs. lenient assembly</a></h3>
 <p><code>Map::assemble(wad, group)</code> is a convenience wrapper that always uses strict mode.
@@ -1902,6 +1884,7 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#hexen-tests"><code>hexen-tests</code></a></td><td>no</td><td>Integration tests against a local Hexen IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#doom64-tests"><code>doom64-tests</code></a></td><td>no</td><td>Integration tests against a local Doom 64 IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
+<tr><td><a href="#guide-doctests"><code>guide-doctests</code></a></td><td>no</td><td><strong>Internal, CI-only.</strong> Compiles this guide’s Rust code samples as crate doctests (enabled by <code>--all-features</code>); not a runtime capability</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
 <tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; powers <code>cwad convert --nodes</code></td></tr>
 <tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
@@ -1922,7 +1905,7 @@ of whether this feature is enabled.</p>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.6.0", features = ["mmap"] }
 </code></pre>
-<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+<pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use crustywad::{Wad, ParseOptions};
 
@@ -2031,6 +2014,22 @@ directory as an absolute path (an explicit <code>dir=</code> override should als
 just test-sweep dir=/path/to/wads
 </code></pre>
 <p>The test skips gracefully when <code>CRUSTYWAD_SWEEP_DIR</code> is unset or contains no WAD files.</p>
+<hr>
+<h2 id="guide-doctests"><a class="header" href="#guide-doctests"><code>guide-doctests</code></a></h2>
+<p><strong>Enables:</strong> compiling this guide’s own Rust code samples as crate doctests
+(<code>crates/crustywad/src/guide_doctests.rs</code>)</p>
+<p><strong>Adds dependency:</strong> none</p>
+<p>Internal, CI-only. The harness pulls each guide page into the crate via
+<code>#[doc = include_str!(...)]</code> so that <code>cargo test --doc --all-features</code> compiles
+(and runs, where not <code>no_run</code>) every <code>```rust</code> block the guide presents as
+real code — catching API drift in a sample before it ships. It is <strong>not a
+runtime capability</strong>; a library consumer never needs it.</p>
+<p>The module is gated <code>cfg(all(doctest, feature = "guide-doctests", has_guide_sources))</code>. <code>build.rs</code> sets <code>has_guide_sources</code> only when the
+repo-level <code>docs/guide/src/</code> files exist, so enabling the feature outside the
+source workspace (e.g. on the packaged crate, where those files are absent) is a
+graceful no-op rather than a missing-file compile error. CI runs it via the
+existing <code>cargo test --workspace --all-features</code>; <code>just guide-test</code> runs it
+locally.</p>
 <hr>
 <h2 id="write"><a class="header" href="#write"><code>write</code></a></h2>
 <p><strong>Enables:</strong> <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteWarning</code>, <code>WriteOptions</code>, and <code>Wad::to_builder</code></p>
@@ -2279,7 +2278,7 @@ just bench-open
 </code></pre>
 <p><code>just bench-open</code> uses <code>open</code> on macOS, <code>xdg-open</code> on Linux, and <code>explorer</code> on Windows.</p>
 <p>The Criterion HTML report is written to:</p>
-<pre><code>target/criterion/report/index.html
+<pre><code class="language-text">target/criterion/report/index.html
 </code></pre>
 <p>Open it to see per-benchmark violin plots, regression detection, and historical comparisons
 between the last two runs on your machine.</p>
