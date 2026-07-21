@@ -100,10 +100,10 @@ pub enum MapAssembleError {
     /// out-of-range cross-reference, which takes [`Self::DanglingReference`]
     /// (strict mode; lenient degrades the BSP to empty arenas and warns).
     /// See [`ExtendedNodeError`](crate::map::ExtendedNodeError) (ADR-0025).
-    #[error("malformed {lump} extended node stream: {reason}")]
+    #[error("malformed {dialect} extended node stream: {reason}")]
     ExtendedNode {
         /// The dialect tag naming the stream (`"XNOD"`, `"XGLN"`, `"XGL2"`, or `"XGL3"`).
-        lump: &'static str,
+        dialect: &'static str,
         /// The specific structural fault.
         #[source]
         reason: crate::map::extended::ExtendedNodeError,
@@ -243,15 +243,6 @@ where
             parse_records::<T>(bytes).map_err(|source| MapAssembleError::Records { lump, source })
         }
     }
-}
-
-/// Returns the extended-encoding signature at the head of `lump`'s bytes, if
-/// any. Checked before classic record decoding so a ZDBSP blob is never
-/// misread as classic records.
-fn extended_signature(wad: &Wad, group: &MapGroup, lump: &str) -> Option<[u8; 4]> {
-    let bytes = lump_bytes(wad, group, lump)?;
-    let head: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
-    EXTENDED_NODE_SIGNATURES.contains(&&head).then_some(head)
 }
 
 /// Decodes a group's `REJECT`/`BLOCKMAP` lumps (either may be absent) once
@@ -1630,7 +1621,10 @@ impl Map {
                 // BSP arenas entirely and warns (never garbage-decode).
                 let extended = ["NODES", "SSECTORS"].into_iter().find_map(|lump| {
                     let bytes = lump_bytes(wad, group, lump)?;
-                    extended_signature(wad, group, lump).map(|sig| (lump, sig, bytes))
+                    let head: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+                    EXTENDED_NODE_SIGNATURES
+                        .contains(&&head)
+                        .then_some((lump, head, bytes))
                 });
                 let (segs, subsectors, nodes) = if let Some((lump, signature, bytes)) = extended {
                     match ExtendedNodeKind::from_signature(signature) {

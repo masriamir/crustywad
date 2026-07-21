@@ -593,10 +593,10 @@ pub enum MapWarning {
     /// either an individual mismatch was tolerated and decoding continued, or a
     /// structural fault degraded the whole BSP to empty arenas. See
     /// [`ExtendedNodeError`](crate::map::ExtendedNodeError) (ADR-0025).
-    #[error("recovered malformed {lump} extended node stream during lenient assembly: {reason}")]
+    #[error("recovered malformed {dialect} extended node stream during lenient assembly: {reason}")]
     ExtendedNode {
         /// The dialect tag naming the stream (`"XNOD"`, `"XGLN"`, `"XGL2"`, or `"XGL3"`).
-        lump: &'static str,
+        dialect: &'static str,
         /// The specific structural fault that was recovered.
         reason: crate::map::extended::ExtendedNodeError,
     },

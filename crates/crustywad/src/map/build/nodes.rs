@@ -143,14 +143,12 @@ impl BuiltNodes {
     ///   field. `build_nodes` narrows coordinates and bounds indices before
     ///   constructing a [`BuiltNodes`], so these guard only hand-constructed
     ///   values.
-    ///
-    /// # Panics
-    ///
-    /// Panics if any [`segs`](Self::segs) entry has a `None`
-    /// [`linedef`](MapSeg::linedef) (a GL miniseg, #326/ADR-0025). The
-    /// classic `SEGS` lump has no on-disk representation for a miniseg;
-    /// `build_nodes` (the only in-tree producer of a [`BuiltNodes`]) never
-    /// emits one, so a well-formed value never trips this.
+    /// - [`NodeBuildError::MinisegUnsupported`] when any [`segs`](Self::segs)
+    ///   entry has a `None` [`linedef`](MapSeg::linedef) (a GL miniseg,
+    ///   #326/ADR-0025) — the classic `SEGS` lump has no on-disk
+    ///   representation for a miniseg. `build_nodes` (the only in-tree
+    ///   producer of a [`BuiltNodes`]) never emits one, so this guards only a
+    ///   hand-constructed value.
     pub fn to_lump_bytes(&self) -> Result<BuiltNodeLumps, NodeBuildError> {
         // Structural count ceilings (both modes): the leaf flag occupies bit 15
         // of every child reference, so these indices must fit 15 bits.
@@ -184,7 +182,9 @@ impl BuiltNodes {
                 end_vertex: encode_index(s.end.0, "vertices")?,
                 angle: s.angle,
                 linedef: encode_index(
-                    s.linedef.expect("classic segs are always linedef-backed").0,
+                    s.linedef
+                        .ok_or(NodeBuildError::MinisegUnsupported { seg: i })?
+                        .0,
                     "linedefs",
                 )?,
                 direction: s.direction,
@@ -1955,6 +1955,28 @@ mod tests {
                 count: 0x1_0001,
                 max: MAX_U16_INDEXED,
             }
+        );
+    }
+
+    #[test]
+    fn to_lump_bytes_rejects_gl_miniseg() {
+        // A GL miniseg (`linedef: None`) has no on-disk `SEGS` representation;
+        // `to_lump_bytes` must return `Err`, not panic (the in-tree builder
+        // never produces one — this guards a hand-constructed `BuiltNodes`).
+        let mut s = seg(0, 1, 0x0000, 0);
+        s.linedef = None;
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: vec![s],
+            subsectors: vec![MapSubsector {
+                segs: 0..1,
+                leafs: 0..0,
+            }],
+            nodes: Vec::new(),
+        };
+        assert_eq!(
+            built.to_lump_bytes().unwrap_err(),
+            NodeBuildError::MinisegUnsupported { seg: 0 }
         );
     }
 

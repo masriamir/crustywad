@@ -448,7 +448,7 @@ pub(crate) fn decode_extended_nodes(
 
 /// Maps a fatal decode error to the single [`MapWarning`] recorded for a lenient
 /// whole-BSP degrade.
-fn degrade_warning(err: &MapAssembleError, lump: &'static str) -> MapWarning {
+fn degrade_warning(err: &MapAssembleError, dialect: &'static str) -> MapWarning {
     match *err {
         MapAssembleError::DanglingReference {
             referent,
@@ -461,13 +461,13 @@ fn degrade_warning(err: &MapAssembleError, lump: &'static str) -> MapWarning {
             from,
             count,
         },
-        MapAssembleError::ExtendedNode { lump, reason } => {
-            MapWarning::ExtendedNode { lump, reason }
+        MapAssembleError::ExtendedNode { dialect, reason } => {
+            MapWarning::ExtendedNode { dialect, reason }
         }
         // decode_inner only produces the two kinds above; keep the mapping total
         // without inventing a warning for an impossible variant.
         _ => MapWarning::ExtendedNode {
-            lump,
+            dialect,
             reason: ExtendedNodeError::Truncated { section: "stream" },
         },
     }
@@ -486,13 +486,13 @@ fn decode_inner(
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<DecodedExtendedBsp, MapAssembleError> {
-    let lump = kind.lump_name();
+    let dialect = kind.lump_name();
     let truncated = |section: &'static str| MapAssembleError::ExtendedNode {
-        lump,
+        dialect,
         reason: ExtendedNodeError::Truncated { section },
     };
     let overflow = |section: &'static str| MapAssembleError::ExtendedNode {
-        lump,
+        dialect,
         reason: ExtendedNodeError::CountOverflow { section },
     };
 
@@ -510,7 +510,7 @@ fn decode_inner(
     if orig_verts_usize > existing_len {
         // More original vertices than the map has: unusable (gzdoom rejects).
         return Err(MapAssembleError::ExtendedNode {
-            lump,
+            dialect,
             reason: ExtendedNodeError::VertexHeaderMismatch {
                 orig_verts: orig_verts_usize,
                 existing: existing_len,
@@ -525,8 +525,8 @@ fn decode_inner(
             existing: existing_len,
         };
         match strictness {
-            Strictness::Strict => return Err(MapAssembleError::ExtendedNode { lump, reason }),
-            Strictness::Lenient => warnings.push(MapWarning::ExtendedNode { lump, reason }),
+            Strictness::Strict => return Err(MapAssembleError::ExtendedNode { dialect, reason }),
+            Strictness::Lenient => warnings.push(MapWarning::ExtendedNode { dialect, reason }),
         }
     }
     if !fits(new_verts, 8, reader.remaining()) {
@@ -560,7 +560,7 @@ fn decode_inner(
     let num_segs = reader.u32().ok_or_else(|| truncated("seg block"))?;
     if seg_total != u64::from(num_segs) {
         return Err(MapAssembleError::ExtendedNode {
-            lump,
+            dialect,
             reason: ExtendedNodeError::SegCountMismatch {
                 seg_total,
                 num_segs: u64::from(num_segs),
@@ -583,9 +583,11 @@ fn decode_inner(
                 };
                 match strictness {
                     Strictness::Strict => {
-                        return Err(MapAssembleError::ExtendedNode { lump, reason });
+                        return Err(MapAssembleError::ExtendedNode { dialect, reason });
                     }
-                    Strictness::Lenient => warnings.push(MapWarning::ExtendedNode { lump, reason }),
+                    Strictness::Lenient => {
+                        warnings.push(MapWarning::ExtendedNode { dialect, reason });
+                    }
                 }
             }
             // v2 is implicit for GL; filled from the subsector run below.
