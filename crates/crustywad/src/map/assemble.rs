@@ -93,6 +93,19 @@ pub enum MapAssembleError {
         /// The 4-byte signature found at the head of the lump (e.g. `*b"XNOD"`).
         signature: [u8; 4],
     },
+    /// An uncompressed `ZDoom` extended-node stream (`XNOD`/`XGLN`/`XGL2`/`XGL3`)
+    /// was structurally malformed — a framing defect, as distinct from an
+    /// out-of-range cross-reference, which takes [`Self::DanglingReference`]
+    /// (strict mode; lenient degrades the BSP to empty arenas and warns).
+    /// See [`ExtendedNodeError`](crate::map::ExtendedNodeError) (ADR-0025).
+    #[error("malformed {lump} extended node stream: {reason}")]
+    ExtendedNode {
+        /// The dialect tag naming the stream (`"XNOD"`, `"XGLN"`, `"XGL2"`, or `"XGL3"`).
+        lump: &'static str,
+        /// The specific structural fault.
+        #[source]
+        reason: crate::map::extended::ExtendedNodeError,
+    },
     /// The `REJECT` lump was smaller than the table its map's sector count
     /// requires (strict mode; lenient reads missing bits as "not rejected").
     #[error("REJECT lump is {actual} bytes; {expected} bytes required for {sectors} sectors")]

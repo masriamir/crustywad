@@ -587,6 +587,18 @@ pub enum MapWarning {
         /// The name of the lump carrying the extended encoding (`"NODES"` or `"SSECTORS"`).
         lump: &'static str,
     },
+    /// An uncompressed `ZDoom` extended-node stream
+    /// (`XNOD`/`XGLN`/`XGL2`/`XGL3`) was recovered during lenient assembly:
+    /// either an individual mismatch was tolerated and decoding continued, or a
+    /// structural fault degraded the whole BSP to empty arenas. See
+    /// [`ExtendedNodeError`](crate::map::ExtendedNodeError) (ADR-0025).
+    #[error("recovered malformed {lump} extended node stream during lenient assembly: {reason}")]
+    ExtendedNode {
+        /// The dialect tag naming the stream (`"XNOD"`, `"XGLN"`, `"XGL2"`, or `"XGL3"`).
+        lump: &'static str,
+        /// The specific structural fault that was recovered.
+        reason: crate::map::extended::ExtendedNodeError,
+    },
     /// The `REJECT` lump was smaller than its map's sector count requires;
     /// the missing bits read as "not rejected" during lenient assembly.
     #[error(
