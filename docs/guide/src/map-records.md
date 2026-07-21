@@ -488,9 +488,12 @@ whole BSP normalization step — in strict mode assembly fails with
 `map.subsectors()`, and `map.nodes()` empty and records one `MapWarning::UnsupportedNodeEncoding`
 for the gated lump (a map's extended stream lives in a single lump, so assembly stops at the
 first signature it finds and warns once). DeePBSP's `xNd4`
-is not yet detected as an extended encoding at all: a lump beginning with that tag falls through
-to the classic record decoder rather than tripping this gate, pending a later stage
-([#328](https://github.com/masriamir/crustywad/issues/328)). Reading the remaining `Z*`
+is not yet detected as an extended encoding on the **binary** `NODES`/`SSECTORS` path: a lump
+beginning with that tag falls through to the classic record decoder rather than tripping this
+gate, pending a later stage ([#328](https://github.com/masriamir/crustywad/issues/328)). On the
+UDMF `ZNODES` path there is no classic decoder to fall through to, so any non-`X*` tag there
+(including `xNd4`) is gated exactly like a `Z*` stream — strict error, or lenient warning with
+empty BSP arenas. Reading the remaining `Z*`
 encodings is tracked as [#199](https://github.com/masriamir/crustywad/issues/199); see ADR-0025
 for the staged design.
 
