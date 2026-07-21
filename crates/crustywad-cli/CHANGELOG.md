@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.3.2...crustywad-cli-v0.3.3) - 2026-07-21
+
+### Added
+
+- *(map)* read compressed ZDoom extended nodes (ZNOD/ZGL*) behind extended-nodes-zlib ([#327](https://github.com/masriamir/crustywad/pull/327)) ([#332](https://github.com/masriamir/crustywad/pull/332))
+
+### Other
+
+- compile-check the guide's Rust code samples as doctests ([#297](https://github.com/masriamir/crustywad/pull/297)) ([#325](https://github.com/masriamir/crustywad/pull/325))
+
 ## [0.3.2](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.3.1...crustywad-cli-v0.3.2) - 2026-07-20
 
 ### Added
