@@ -14,14 +14,14 @@ use std::path::Path;
 fn main() {
     // Declare the cfg unconditionally so `unexpected_cfgs` stays quiet whether or
     // not it ends up set.
-    println!("cargo::rustc-check-cfg=cfg(has_guide_sources)");
+    println!("cargo:rustc-check-cfg=cfg(has_guide_sources)");
 
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set");
     // The guide lives at the repo root (`docs/guide/src/`), two levels up from
     // this crate. Probe one representative page.
     let probe = Path::new(&manifest).join("../../docs/guide/src/getting-started.md");
-    println!("cargo::rerun-if-changed={}", probe.display());
+    println!("cargo:rerun-if-changed={}", probe.display());
     if probe.exists() {
-        println!("cargo::rustc-cfg=has_guide_sources");
+        println!("cargo:rustc-cfg=has_guide_sources");
     }
 }
