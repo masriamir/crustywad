@@ -1025,7 +1025,7 @@ mod tests {
 
     #[test]
     fn xnod_explicit_v2_and_i16_node() {
-        // XNOD: 13-byte segs with explicit v2, no partner, no minisegs; a
+        // XNOD: 11-byte segs with explicit v2, no partner, no minisegs; a
         // 32-byte i16 node.
         let lds = vec![linedef(1, 0), linedef(3, 2)];
         let bytes = Buf::default()
@@ -1101,7 +1101,7 @@ mod tests {
         // origVerts + newVerts + numSubsectors + segCount + numSegs), 4 segs ×
         // 11 bytes = 44, then numNodes = 0 (4 bytes). Before the fix,
         // `seg_size()` returning 13 made `fits()` demand 52 bytes for the seg
-        // block when only 48 remained (44 segs + the trailing numNodes field),
+        // block when only 48 remained (44 seg bytes + the trailing numNodes field),
         // so this valid, minimal stream was spuriously rejected as
         // `CountOverflow` even though the DECODE read path (11 bytes/seg) would
         // have consumed it correctly.

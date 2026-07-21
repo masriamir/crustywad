@@ -485,7 +485,8 @@ The four compressed **`Z*`** dialects (`ZNOD`, `ZGLN`, `ZGL2`, `ZGL3` — zlib-w
 whole BSP normalization step — in strict mode assembly fails with
 `MapAssembleError::UnsupportedNodeEncoding`; in lenient mode assembly leaves `map.segs()`,
 `map.subsectors()`, and `map.nodes()` empty and records one `MapWarning::UnsupportedNodeEncoding`
-per gated lump — up to two, when both `NODES` and `SSECTORS` carry a signature. DeePBSP's `xNd4`
+for the gated lump (a map's extended stream lives in a single lump, so assembly stops at the
+first signature it finds and warns once). DeePBSP's `xNd4`
 is not yet detected as an extended encoding at all: a lump beginning with that tag falls through
 to the classic record decoder rather than tripping this gate, pending a later stage
 ([#328](https://github.com/masriamir/crustywad/issues/328)). Reading the remaining `Z*`
