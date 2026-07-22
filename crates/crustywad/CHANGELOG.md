@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/masriamir/crustywad/compare/crustywad-v0.7.0...crustywad-v0.7.1) - 2026-07-22
+
+### Added
+
+- *(map)* read DeePBSP v4 (xNd4) BSP nodes — completes the extended-node read layer ([#328](https://github.com/masriamir/crustywad/pull/328)) ([#335](https://github.com/masriamir/crustywad/pull/335))
+
 ## [0.7.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.6.2...crustywad-v0.7.0) - 2026-07-21
 
 ### Added
