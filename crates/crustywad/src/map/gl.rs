@@ -8,21 +8,26 @@
 //! on-disk versions exist, identified by a magic signature at the head of
 //! `GL_VERT` (and, for the V2/V3 split, `GL_SEGS`).
 //!
-//! This module currently provides version detection ([`detect_gl_version`]),
-//! the `GL_VERT` decoder ([`decode_gl_vertices`]), the `GL_SEGS` decoder
-//! ([`decode_gl_segs`], which applies the GL/normal vertex high-bit split), and
-//! the `GL_SSECT`/`GL_NODES` decoders ([`decode_gl_subsectors`] and
-//! [`decode_gl_nodes`], which validate seg runs and BSP-child references); the
-//! assembly wiring that combines them lands in a later task in the classic-GL
-//! read effort (#324).
+//! This module decodes a complete GL node group. Version detection
+//! ([`detect_gl_version`]) classifies the group from the `GL_VERT`/`GL_SEGS`
+//! magics, then four lump decoders read the records: `GL_VERT`
+//! ([`decode_gl_vertices`]), `GL_SEGS` ([`decode_gl_segs`], which applies the
+//! GL/normal vertex high-bit split and resolves partner segs), `GL_SSECT`
+//! ([`decode_gl_subsectors`], which validates seg runs), and `GL_NODES`
+//! ([`decode_gl_nodes`], which resolves BSP-child references). The orchestrator
+//! [`decode_gl_group`] ties them together — detecting the version, refusing
+//! V1/V4, stripping the V3-only `gNd3` header, decoding in dependency order,
+//! and degrading the whole group cleanly on a structural fault. The assembly
+//! wiring that stores the resulting [`DecodedGl`] arenas on the map graph lands
+//! in a later task in the classic-GL read effort (#324).
 
 use crate::Strictness;
+use crate::map::assemble::{MapAssembleError, resolve_required};
 use crate::map::common::Node as ClassicNode;
 use crate::map::graph::{
     GlNode, GlNodeChild, GlNodeIdx, GlSeg, GlSegIdx, GlSubsector, GlSubsectorIdx, GlVertex,
     GlVertexIdx, GlVertexRef, LinedefIdx, MapWarning, VertexIdx,
 };
-use crate::map::assemble::{MapAssembleError, resolve_required};
 use crate::map::{MapParseError, parse_records};
 
 /// A decodable classic GL node format version.
@@ -31,10 +36,6 @@ use crate::map::{MapParseError, parse_records};
 /// Only V2, V3, and V5 are decodable here — V1 and V4 are refused (see
 /// [`detect_gl_version`]).
 ///
-/// Not yet constructed outside tests: the per-version decoders that match on
-/// this enum land in later tasks (#324), so `dead_code` is explicitly allowed
-/// here until those call sites land.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GlVersion {
     /// glBSP V2: `GL_VERT` begins with `gNd2`, `GL_SEGS` does not begin with
@@ -69,10 +70,7 @@ pub(crate) enum GlVersion {
 ///   seg information needed to rebuild subsector winding and is refused by
 ///   gzdoom for the same reason.
 ///
-/// Not yet called outside tests: assembly wiring (`Map::assemble`) lands in a
-/// later task (#324), so `dead_code` is explicitly allowed here until that
-/// call site lands.
-#[allow(dead_code)]
+/// Consumed by [`decode_gl_group`], the group orchestrator.
 pub(crate) fn detect_gl_version(gl_vert: &[u8], gl_segs: &[u8]) -> Result<GlVersion, u8> {
     match gl_vert.get(0..4) {
         Some(b"gNd5") => Ok(GlVersion::V5),
@@ -112,10 +110,7 @@ pub(crate) fn detect_gl_version(gl_vert: &[u8], gl_segs: &[u8]) -> Result<GlVers
 /// - the byte count remaining after the magic is not an exact multiple of 8
 ///   (a partial trailing vertex).
 ///
-/// Not yet called outside tests: assembly wiring lands in a later task
-/// (#324), so `dead_code` is explicitly allowed here until that call site
-/// lands.
-#[allow(dead_code)]
+/// Consumed by [`decode_gl_group`], the group orchestrator.
 pub(crate) fn decode_gl_vertices(bytes: &[u8]) -> Result<Vec<GlVertex>, MapAssembleError> {
     if bytes.len() < 4 {
         return Err(MapAssembleError::Records {
@@ -167,7 +162,6 @@ pub(crate) fn decode_gl_vertices(bytes: &[u8]) -> Result<Vec<GlVertex>, MapAssem
 ///
 /// Propagates [`resolve_required`]'s [`MapAssembleError::DanglingReference`] when
 /// the (masked) index is out of range in strict mode.
-#[allow(dead_code)] // Wired into assembly in a later task (#324).
 fn split_vertex(
     raw: u32,
     ver: GlVersion,
@@ -287,9 +281,7 @@ fn read_seg_record(c: &[u8], ver: GlVersion) -> (u32, u32, u16, u8, Option<u32>)
 /// [`MapAssembleError::DanglingReference`] from a vertex, linedef, or partner
 /// reference that is out of range in strict mode.
 ///
-/// Not yet called outside tests: assembly wiring lands in a later task (#324),
-/// so `dead_code` is explicitly allowed here until that call site lands.
-#[allow(dead_code)]
+/// Consumed by [`decode_gl_group`], the group orchestrator.
 pub(crate) fn decode_gl_segs(
     bytes: &[u8],
     ver: GlVersion,
@@ -429,9 +421,7 @@ pub(crate) fn decode_gl_segs(
 /// [`MapAssembleError::DanglingReference`] from an out-of-range seg run in strict
 /// mode.
 ///
-/// Not yet called outside tests: assembly wiring lands in a later task (#324), so
-/// `dead_code` is explicitly allowed here until that call site lands.
-#[allow(dead_code)]
+/// Consumed by [`decode_gl_group`], the group orchestrator.
 pub(crate) fn decode_gl_subsectors(
     bytes: &[u8],
     ver: GlVersion,
@@ -494,8 +484,7 @@ pub(crate) fn decode_gl_subsectors(
                         from: "gl subsector",
                         count: seg_count,
                     });
-                    let clamped_first =
-                        usize::try_from(first.clamp(0, seg_count_i)).unwrap_or(0);
+                    let clamped_first = usize::try_from(first.clamp(0, seg_count_i)).unwrap_or(0);
                     clamped_first..seg_count
                 }
             }
@@ -528,12 +517,7 @@ fn resolve_gl_node_child(
         // for every width used here (u16 always; u32 <= 0x7FFF_FFFF).
         let index = i32::try_from(raw).unwrap_or(i32::MAX);
         Ok(GlNodeChild::Node(GlNodeIdx(resolve_required(
-            index,
-            node_count,
-            "gl node",
-            "gl node",
-            strictness,
-            warnings,
+            index, node_count, "gl node", "gl node", strictness, warnings,
         )?)))
     } else {
         let index = i32::try_from(raw & mask).unwrap_or(i32::MAX);
@@ -633,9 +617,7 @@ fn build_gl_node(
 /// [`MapAssembleError::DanglingReference`] from an out-of-range child in strict
 /// mode.
 ///
-/// Not yet called outside tests: assembly wiring lands in a later task (#324), so
-/// `dead_code` is explicitly allowed here until that call site lands.
-#[allow(dead_code)]
+/// Consumed by [`decode_gl_group`], the group orchestrator.
 pub(crate) fn decode_gl_nodes(
     bytes: &[u8],
     ver: GlVersion,
@@ -651,12 +633,11 @@ pub(crate) fn decode_gl_nodes(
             // index mask = 0x7FFF.
             const FLAG_16: u32 = 0x8000;
             const MASK_16: u32 = 0x7FFF;
-            let raw: Vec<ClassicNode> = parse_records(bytes).map_err(|source| {
-                MapAssembleError::Records {
+            let raw: Vec<ClassicNode> =
+                parse_records(bytes).map_err(|source| MapAssembleError::Records {
                     lump: "GL_NODES",
                     source,
-                }
-            })?;
+                })?;
             let node_count = raw.len();
             let mut nodes = Vec::with_capacity(node_count);
             for nd in raw {
@@ -728,11 +709,199 @@ pub(crate) fn decode_gl_nodes(
     }
 }
 
+/// The four decoded classic GL node arenas for one map, produced by
+/// [`decode_gl_group`].
+///
+/// Each field is the fully decoded, cross-referenced form of one `GL_*` lump.
+/// A refused version or a lenient degrade yields the empty (`default`) value,
+/// so callers observe "no GL data" identically to a group that was never
+/// present.
+///
+/// Not yet constructed outside tests: the assembly wiring that stores these
+/// arenas on the map graph lands in a later task (#324), so `dead_code` is
+/// explicitly allowed here until that call site lands.
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub(crate) struct DecodedGl {
+    /// Decoded `GL_VERT` vertices (extra glBSP vertices in world units).
+    pub vertices: Vec<GlVertex>,
+    /// Decoded `GL_SEGS` records (minisegs plus partner links).
+    pub segs: Vec<GlSeg>,
+    /// Decoded `GL_SSECT` subsectors (contiguous seg runs).
+    pub subsectors: Vec<GlSubsector>,
+    /// Decoded `GL_NODES` BSP nodes.
+    pub nodes: Vec<GlNode>,
+}
+
+/// Decodes the four GL data lumps into their record-form fallible steps.
+///
+/// Split out from [`decode_gl_group`] so the whole sequence is a single
+/// fallible unit the orchestrator can match on for the lenient degrade — a
+/// structural fault in any step must roll the whole group back, which a chain
+/// of `?` inside the public function could not express.
+#[allow(clippy::too_many_arguments)]
+fn decode_gl_group_records(
+    vert: &[u8],
+    segs_rec: &[u8],
+    ssect_rec: &[u8],
+    nodes: &[u8],
+    ver: GlVersion,
+    normal_vert_count: usize,
+    linedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<DecodedGl, MapAssembleError> {
+    let vertices = decode_gl_vertices(vert)?;
+    let segs = decode_gl_segs(
+        segs_rec,
+        ver,
+        normal_vert_count,
+        vertices.len(),
+        linedef_count,
+        strictness,
+        warnings,
+    )?;
+    let subsectors = decode_gl_subsectors(ssect_rec, ver, segs.len(), strictness, warnings)?;
+    let nodes = decode_gl_nodes(nodes, ver, subsectors.len(), strictness, warnings)?;
+    Ok(DecodedGl {
+        vertices,
+        segs,
+        subsectors,
+        nodes,
+    })
+}
+
+/// Orchestrates decoding one complete classic GL node group (`GL_VERT`,
+/// `GL_SEGS`, `GL_SSECT`, `GL_NODES`) into the [`DecodedGl`] arenas.
+///
+/// Ties together [`detect_gl_version`] and the four lump decoders, wiring each
+/// stage's output count into the next (GL-vertex count into segs, seg count into
+/// subsectors, subsector count into nodes) and resolving partner segs against the
+/// final seg count. The caller supplies the map's `normal_vert_count` (the
+/// classic `VERTEXES` arena) and `linedef_count` for cross-lump reference checks.
+///
+/// # Strictness posture
+///
+/// Two distinct fault classes are handled here; both mirror the classic-BSP and
+/// `DeePBSP` decoders ([`assemble`](crate::map::assemble) /
+/// [`deepbsp`](crate::map::deepbsp)):
+///
+/// - **Refused version (V1/V4).** [`detect_gl_version`] rejects the group. In
+///   **Strict** this is a hard [`MapAssembleError::UnsupportedGlNodeVersion`]
+///   carrying the first four `GL_VERT` bytes as `magic` (zero-padded when the
+///   lump is shorter than four bytes). In **Lenient** it is recovered: a single
+///   [`MapWarning::GlNodesRefused`] is pushed and empty arenas are returned, so
+///   the caller sees "no GL data" exactly as for an absent group. This
+///   Strict/Lenient split is decided here.
+/// - **Structural / cross-reference fault** (a dangling vertex, seg, subsector,
+///   linedef, or child reference). In **Strict** the first such
+///   [`MapAssembleError::DanglingReference`] propagates. In **Lenient**, when a
+///   reference cannot be recovered by clamping (a reference into an *empty*
+///   arena), the whole group degrades: `warnings` is rolled back to the
+///   watermark captured on entry, a single [`MapWarning::GlNodesDegraded`] is
+///   pushed, and empty arenas are returned — the same whole-BSP degrade posture
+///   as `normalize_bsp_or_degrade`, so a partially broken GL BSP does not
+///   surface a pile of per-element diagnostics.
+///
+/// **Framing defects stay hard errors in both modes**: a bad lump length, or a
+/// V3 `GL_SEGS`/`GL_SSECT` lump too short to hold its `gNd3` header, returns
+/// [`MapAssembleError::Records`] regardless of strictness (matching the
+/// framing-defect posture of every GL lump decoder).
+///
+/// # V3 header stripping
+///
+/// The lump decoders are header-agnostic (pure records). For **V3 only**,
+/// `GL_SEGS` and `GL_SSECT` carry a 4-byte `gNd3` version marker, which is
+/// stripped here before decoding; `GL_VERT` strips its own magic and `GL_NODES`
+/// never carries one.
+///
+/// # Errors
+///
+/// Returns [`MapAssembleError::UnsupportedGlNodeVersion`] (Strict refusal),
+/// [`MapAssembleError::Records`] (framing defect, both modes), or
+/// [`MapAssembleError::DanglingReference`] (Strict structural fault). See the
+/// strictness posture above.
+///
+/// Not yet called outside tests: assembly wiring lands in a later task (#324),
+/// so `dead_code` is explicitly allowed here until that call site lands.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn decode_gl_group(
+    vert: &[u8],
+    segs: &[u8],
+    ssect: &[u8],
+    nodes: &[u8],
+    normal_vert_count: usize,
+    linedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<DecodedGl, MapAssembleError> {
+    // Step 1: detect the version, deciding the Strict/Lenient refusal split here.
+    let ver = match detect_gl_version(vert, segs) {
+        Ok(ver) => ver,
+        Err(version) => {
+            return match strictness {
+                Strictness::Strict => {
+                    // First four GL_VERT bytes, zero-padded when the lump is short.
+                    let mut magic = [0u8; 4];
+                    let n = vert.len().min(4);
+                    magic[..n].copy_from_slice(&vert[..n]);
+                    Err(MapAssembleError::UnsupportedGlNodeVersion { magic })
+                }
+                Strictness::Lenient => {
+                    warnings.push(MapWarning::GlNodesRefused { version });
+                    Ok(DecodedGl::default())
+                }
+            };
+        }
+    };
+
+    // Step 2: strip the V3-only `gNd3` header from GL_SEGS/GL_SSECT before the
+    // header-agnostic decoders see them. A lump too short to hold its header is a
+    // framing defect -> a hard error in both modes (propagated by `?`).
+    let (segs_rec, ssect_rec) = if ver == GlVersion::V3 {
+        let segs_rec = segs.get(4..).ok_or(MapAssembleError::Records {
+            lump: "GL_SEGS",
+            source: MapParseError::TrailingBytes { offset: 0 },
+        })?;
+        let ssect_rec = ssect.get(4..).ok_or(MapAssembleError::Records {
+            lump: "GL_SSECT",
+            source: MapParseError::TrailingBytes { offset: 0 },
+        })?;
+        (segs_rec, ssect_rec)
+    } else {
+        (segs, ssect)
+    };
+
+    // Steps 3-4: decode in dependency order, degrading the whole group in Lenient
+    // on an unrecoverable structural fault (mirrors `normalize_bsp_or_degrade` /
+    // the DeePBSP inline degrade). Framing errors fall through as hard errors.
+    let watermark = warnings.len();
+    match decode_gl_group_records(
+        vert,
+        segs_rec,
+        ssect_rec,
+        nodes,
+        ver,
+        normal_vert_count,
+        linedef_count,
+        strictness,
+        warnings,
+    ) {
+        Err(MapAssembleError::DanglingReference { .. }) if strictness == Strictness::Lenient => {
+            warnings.truncate(watermark);
+            warnings.push(MapWarning::GlNodesDegraded);
+            Ok(DecodedGl::default())
+        }
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        GlVersion, decode_gl_nodes, decode_gl_segs, decode_gl_subsectors, decode_gl_vertices,
-        detect_gl_version,
+        GlVersion, decode_gl_group, decode_gl_nodes, decode_gl_segs, decode_gl_subsectors,
+        decode_gl_vertices, detect_gl_version,
     };
     use crate::Strictness;
     use crate::map::MapParseError;
@@ -1032,7 +1201,8 @@ mod tests {
     fn v2_ssect_run_resolves() {
         let bytes = v2_ssect(3, 0);
         let mut w = Vec::new();
-        let ss = decode_gl_subsectors(&bytes, GlVersion::V2, 3, Strictness::Strict, &mut w).unwrap();
+        let ss =
+            decode_gl_subsectors(&bytes, GlVersion::V2, 3, Strictness::Strict, &mut w).unwrap();
         assert_eq!(ss.len(), 1);
         assert_eq!(ss[0].segs, 0..3);
         assert!(w.is_empty());
@@ -1056,9 +1226,8 @@ mod tests {
         // 6 bytes: not a whole multiple of the 4-byte V2 record.
         let bytes = vec![0u8; 6];
         for strictness in [Strictness::Strict, Strictness::Lenient] {
-            let err =
-                decode_gl_subsectors(&bytes, GlVersion::V2, 4, strictness, &mut Vec::new())
-                    .unwrap_err();
+            let err = decode_gl_subsectors(&bytes, GlVersion::V2, 4, strictness, &mut Vec::new())
+                .unwrap_err();
             assert!(matches!(
                 err,
                 MapAssembleError::Records {
@@ -1073,8 +1242,14 @@ mod tests {
     fn ssect_out_of_range_run_strict_errors_lenient_clamps() {
         // count 5 from first 0 overruns the 2 available segs.
         let bytes = v2_ssect(5, 0);
-        let err = decode_gl_subsectors(&bytes, GlVersion::V2, 2, Strictness::Strict, &mut Vec::new())
-            .unwrap_err();
+        let err = decode_gl_subsectors(
+            &bytes,
+            GlVersion::V2,
+            2,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             MapAssembleError::DanglingReference {
@@ -1163,8 +1338,26 @@ mod tests {
             0x8000_0001, // VERIFIED leaf: bit31 set -> Subsector(1)
             0x0000_0002, // interior: bit31 clear -> Node(2)
         );
-        bytes.extend(v5_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000_0000, 0x8000_0000));
-        bytes.extend(v5_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000_0000, 0x8000_0000));
+        bytes.extend(v5_node(
+            0,
+            0,
+            0,
+            0,
+            [0; 4],
+            [0; 4],
+            0x8000_0000,
+            0x8000_0000,
+        ));
+        bytes.extend(v5_node(
+            0,
+            0,
+            0,
+            0,
+            [0; 4],
+            [0; 4],
+            0x8000_0000,
+            0x8000_0000,
+        ));
         let mut w = Vec::new();
         // subsector_count 2, node self-count 3.
         let nodes = decode_gl_nodes(&bytes, GlVersion::V5, 2, Strictness::Strict, &mut w).unwrap();
@@ -1226,9 +1419,14 @@ mod tests {
         }
         // V5's 32-byte record: 40 bytes leaves a 8-byte partial tail.
         let bytes = vec![0u8; 40];
-        let err =
-            decode_gl_nodes(&bytes, GlVersion::V5, 1, Strictness::Strict, &mut Vec::new())
-                .unwrap_err();
+        let err = decode_gl_nodes(
+            &bytes,
+            GlVersion::V5,
+            1,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             MapAssembleError::Records {
@@ -1242,8 +1440,14 @@ mod tests {
     fn node_dangling_child_strict_errors_lenient_clamps() {
         // left_child Node(5) overruns the single node in the lump.
         let bytes = v2_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000, 0x0005);
-        let err = decode_gl_nodes(&bytes, GlVersion::V2, 1, Strictness::Strict, &mut Vec::new())
-            .unwrap_err();
+        let err = decode_gl_nodes(
+            &bytes,
+            GlVersion::V2,
+            1,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             MapAssembleError::DanglingReference {
@@ -1265,5 +1469,189 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    // ---- decode_gl_group orchestration ----
+
+    #[test]
+    fn v2_group_orchestrates_full_decode() {
+        // GL_VERT: gNd2 + 1 GL vertex.
+        let mut vert = b"gNd2".to_vec();
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        // GL_SEGS: two segs (normal 0 <-> GL 0) that partner each other.
+        let mut segs = v2_seg(0x0000, 0x8000, 0x0000, 0x0000, 0x0001);
+        segs.extend(v2_seg(0x8000, 0x0000, 0x0000, 0x0001, 0x0000));
+        // GL_SSECT: one run covering both segs.
+        let ssect = v2_ssect(2, 0);
+        // GL_NODES: one node whose children both name the single subsector.
+        let nodes = v2_node(
+            1,
+            2,
+            3,
+            4,
+            [10, 20, 30, 40],
+            [50, 60, 70, 80],
+            0x8000,
+            0x8000,
+        );
+
+        let mut w = Vec::new();
+        let gl = decode_gl_group(
+            &vert,
+            &segs,
+            &ssect,
+            &nodes,
+            1,
+            1,
+            Strictness::Strict,
+            &mut w,
+        )
+        .unwrap();
+        assert_eq!(gl.vertices.len(), 1);
+        assert_eq!(gl.segs.len(), 2);
+        assert_eq!(gl.segs[0].start, GlVertexRef::Normal(VertexIdx(0)));
+        assert_eq!(gl.segs[0].end, GlVertexRef::Gl(GlVertexIdx(0)));
+        assert_eq!(gl.segs[0].partner, Some(GlSegIdx(1)));
+        assert_eq!(gl.segs[1].partner, Some(GlSegIdx(0)));
+        assert_eq!(gl.subsectors.len(), 1);
+        assert_eq!(gl.subsectors[0].segs, 0..2);
+        assert_eq!(gl.nodes.len(), 1);
+        assert_eq!(gl.nodes[0].right, GlNodeChild::Subsector(GlSubsectorIdx(0)));
+        assert_eq!(gl.nodes[0].left, GlNodeChild::Subsector(GlSubsectorIdx(0)));
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v3_group_strips_gnd3_header_on_segs_and_ssect() {
+        // GL_VERT: gNd2 + 1 GL vertex (V3 shares V2's vert magic).
+        let mut vert = b"gNd2".to_vec();
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        // GL_SEGS: gNd3 header + one 16-byte V3 seg (GL 0 -> normal 0, miniseg).
+        let mut segs = b"gNd3".to_vec();
+        segs.extend(v5_seg(
+            0xC000_0000,
+            0x0000_0000,
+            0xFFFF,
+            0x0000,
+            0xFFFF_FFFF,
+        ));
+        // GL_SSECT: gNd3 header + one 8-byte V3 run.
+        let mut ssect = b"gNd3".to_vec();
+        ssect.extend(v3_ssect(1, 0));
+        // GL_NODES: never carries a header; one 28-byte node -> subsector 0.
+        let nodes = v2_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000, 0x8000);
+
+        let mut w = Vec::new();
+        let gl = decode_gl_group(
+            &vert,
+            &segs,
+            &ssect,
+            &nodes,
+            1,
+            1,
+            Strictness::Strict,
+            &mut w,
+        )
+        .unwrap();
+        assert_eq!(gl.vertices.len(), 1);
+        // Header stripping proven: the 16-byte record decodes as one seg, not a
+        // framing error from the leading 4 magic bytes.
+        assert_eq!(gl.segs.len(), 1);
+        assert_eq!(gl.segs[0].start, GlVertexRef::Gl(GlVertexIdx(0)));
+        assert_eq!(gl.segs[0].end, GlVertexRef::Normal(VertexIdx(0)));
+        assert_eq!(gl.subsectors.len(), 1);
+        assert_eq!(gl.subsectors[0].segs, 0..1);
+        assert_eq!(gl.nodes.len(), 1);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v4_group_refused_strict_errors_lenient_warns() {
+        let mut vert = b"gNd4".to_vec();
+        vert.extend_from_slice(&[0u8; 8]);
+
+        let err = decode_gl_group(
+            &vert,
+            &[],
+            &[],
+            &[],
+            0,
+            0,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::UnsupportedGlNodeVersion { magic } if &magic == b"gNd4"
+        ));
+
+        let mut w = Vec::new();
+        let gl = decode_gl_group(&vert, &[], &[], &[], 0, 0, Strictness::Lenient, &mut w).unwrap();
+        assert!(gl.vertices.is_empty());
+        assert!(gl.segs.is_empty());
+        assert!(gl.subsectors.is_empty());
+        assert!(gl.nodes.is_empty());
+        assert!(matches!(
+            w.as_slice(),
+            [MapWarning::GlNodesRefused { version: 4 }]
+        ));
+    }
+
+    #[test]
+    fn short_vert_refusal_pads_magic() {
+        // gl_vert shorter than 4 bytes: refused as V1, magic zero-padded.
+        let err = decode_gl_group(
+            b"gN",
+            &[],
+            &[],
+            &[],
+            0,
+            0,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::UnsupportedGlNodeVersion { magic } if magic == [b'g', b'N', 0, 0]
+        ));
+    }
+
+    #[test]
+    fn dangling_reference_degrades_in_lenient_errors_in_strict() {
+        // GL_VERT holds zero GL vertices, so any GL-vertex reference lands in an
+        // empty arena that cannot be clamped -> a hard DanglingReference in both
+        // modes. seg v1 (normal 5) is a recoverable clamp; seg v2 (GL 0) is the
+        // fatal empty-arena reference.
+        let vert = b"gNd2".to_vec();
+        let segs = v2_seg(0x0005, 0x8000, 0xFFFF, 0x0000, 0xFFFF);
+
+        // Strict: the first dangling reference propagates.
+        let err = decode_gl_group(
+            &vert,
+            &segs,
+            &[],
+            &[],
+            1,
+            1,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, MapAssembleError::DanglingReference { .. }));
+
+        // Lenient: the whole group degrades -- empty arenas, a single
+        // GlNodesDegraded, and the intermediate clamp warning rolled back.
+        let mut w = Vec::new();
+        let gl =
+            decode_gl_group(&vert, &segs, &[], &[], 1, 1, Strictness::Lenient, &mut w).unwrap();
+        assert!(gl.vertices.is_empty());
+        assert!(gl.segs.is_empty());
+        assert!(gl.subsectors.is_empty());
+        assert!(gl.nodes.is_empty());
+        assert!(matches!(w.as_slice(), [MapWarning::GlNodesDegraded]));
     }
 }
