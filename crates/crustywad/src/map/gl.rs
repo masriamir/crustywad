@@ -8,13 +8,18 @@
 //! on-disk versions exist, identified by a magic signature at the head of
 //! `GL_VERT` (and, for the V2/V3 split, `GL_SEGS`).
 //!
-//! This module currently provides only version detection
-//! ([`detect_gl_version`]); decoders for the individual lumps are added by
-//! later tasks in the classic-GL read effort (#324).
+//! This module currently provides version detection ([`detect_gl_version`]),
+//! the `GL_VERT` decoder ([`decode_gl_vertices`]), and the `GL_SEGS` decoder
+//! ([`decode_gl_segs`], which applies the GL/normal vertex high-bit split);
+//! decoders for the remaining lumps are added by later tasks in the classic-GL
+//! read effort (#324).
 
+use crate::Strictness;
 use crate::map::MapParseError;
-use crate::map::assemble::MapAssembleError;
-use crate::map::graph::GlVertex;
+use crate::map::assemble::{MapAssembleError, resolve_required};
+use crate::map::graph::{
+    GlSeg, GlSegIdx, GlVertex, GlVertexIdx, GlVertexRef, LinedefIdx, MapWarning, VertexIdx,
+};
 
 /// A decodable classic GL node format version.
 ///
@@ -138,11 +143,267 @@ pub(crate) fn decode_gl_vertices(bytes: &[u8]) -> Result<Vec<GlVertex>, MapAssem
         .collect())
 }
 
+/// Splits a raw `GL_SEGS` vertex reference into a [`GlVertexRef`], applying the
+/// version's GL-vertex high-bit convention.
+///
+/// The high bit(s) of the on-disk index select which arena the remaining bits
+/// index into:
+///
+/// - **V2:** bit `0x8000` set → a `GL_VERT` vertex, index is `raw & 0x7FFF`.
+/// - **V3/V5:** either of the top two bits (`0xC000_0000`) set → a `GL_VERT`
+///   vertex, index is `raw & 0x3FFF_FFFF` (gzdoom `checkGLVertex3`).
+///
+/// The extracted index is used **directly** as the 0-based index into
+/// `gl_vertices` — unlike gzdoom, which adds a `firstglvertex` offset because it
+/// stores GL and normal vertices in one combined array; this crate keeps them in
+/// separate arenas, so no offset is applied. A clear flag selects the normal
+/// `VERTEXES` arena with the raw index unchanged.
+///
+/// # Errors
+///
+/// Propagates [`resolve_required`]'s [`MapAssembleError::DanglingReference`] when
+/// the (masked) index is out of range in strict mode.
+#[allow(dead_code)] // Wired into assembly in a later task (#324).
+fn split_vertex(
+    raw: u32,
+    ver: GlVersion,
+    normal_count: usize,
+    gl_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<GlVertexRef, MapAssembleError> {
+    let (is_gl, index) = match ver {
+        GlVersion::V2 => {
+            const GL_FLAG_V2: u32 = 0x8000; // VERIFIED gzdoom glnodes.cpp
+            const GL_MASK_V2: u32 = 0x7FFF; // VERIFIED gzdoom glnodes.cpp
+            if raw & GL_FLAG_V2 != 0 {
+                (true, raw & GL_MASK_V2)
+            } else {
+                (false, raw)
+            }
+        }
+        // V3 and V5 GL_SEGS use the identical 16-byte record and the two-top-bit
+        // flag (gzdoom `checkGLVertex3`).
+        GlVersion::V3 | GlVersion::V5 => {
+            const GL_FLAG_V3: u32 = 0xC000_0000; // VERIFIED gzdoom glnodes.cpp checkGLVertex3
+            const GL_MASK_V3: u32 = 0x3FFF_FFFF; // VERIFIED gzdoom glnodes.cpp checkGLVertex3
+            if raw & GL_FLAG_V3 != 0 {
+                (true, raw & GL_MASK_V3)
+            } else {
+                (false, raw)
+            }
+        }
+    };
+    // The masked index always fits a non-negative `i32` (V2: <= 0x7FFF; V3/V5:
+    // <= 0x3FFF_FFFF), so this conversion never truncates.
+    let signed = i32::try_from(index).unwrap_or(i32::MAX);
+    if is_gl {
+        Ok(GlVertexRef::Gl(GlVertexIdx(resolve_required(
+            signed,
+            gl_count,
+            "gl vertex",
+            "gl seg",
+            strictness,
+            warnings,
+        )?)))
+    } else {
+        Ok(GlVertexRef::Normal(VertexIdx(resolve_required(
+            signed,
+            normal_count,
+            "vertex",
+            "gl seg",
+            strictness,
+            warnings,
+        )?)))
+    }
+}
+
+/// Reads one raw `GL_SEGS` record's fields as `(v1, v2, linedef, side, partner)`.
+///
+/// `v1`/`v2` are the raw endpoint words (widened to `u32`, high-bit flag intact
+/// for [`split_vertex`]); `side` is the low byte of the 2-byte side field (`0` or
+/// `1`); `partner` is `None` for the version's one-sided sentinel (V2 `0xFFFF`,
+/// V3/V5 `0xFFFF_FFFF`) and otherwise the raw partner index widened to `u32`.
+///
+/// `c` must be exactly `record_size` bytes (10 for V2, 16 for V3/V5), as
+/// guaranteed by the `chunks_exact` caller.
+fn read_seg_record(c: &[u8], ver: GlVersion) -> (u32, u32, u16, u8, Option<u32>) {
+    match ver {
+        GlVersion::V2 => {
+            // VERIFIED gzdoom glnodes.cpp: u16 v1, u16 v2, u16 linedef, u16 side, u16 partner.
+            let v1 = u32::from(u16::from_le_bytes([c[0], c[1]]));
+            let v2 = u32::from(u16::from_le_bytes([c[2], c[3]]));
+            let linedef = u16::from_le_bytes([c[4], c[5]]);
+            let side = c[6]; // low byte of the 2-byte side field (value is 0 or 1)
+            let partner_raw = u16::from_le_bytes([c[8], c[9]]);
+            // VERIFIED gzdoom glnodes.cpp: V2 partner sentinel is 0xFFFF.
+            let partner = (partner_raw != 0xFFFF).then_some(u32::from(partner_raw));
+            (v1, v2, linedef, side, partner)
+        }
+        GlVersion::V3 | GlVersion::V5 => {
+            // VERIFIED gzdoom glnodes.cpp: i32 v1, i32 v2, u16 linedef, u16 side, i32 partner.
+            let v1 = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+            let v2 = u32::from_le_bytes([c[4], c[5], c[6], c[7]]);
+            let linedef = u16::from_le_bytes([c[8], c[9]]);
+            let side = c[10]; // low byte of the 2-byte side field (value is 0 or 1)
+            let partner_raw = u32::from_le_bytes([c[12], c[13], c[14], c[15]]);
+            // VERIFIED gzdoom glnodes.cpp: V3/V5 partner sentinel is 0xFFFF_FFFF.
+            let partner = (partner_raw != 0xFFFF_FFFF).then_some(partner_raw);
+            (v1, v2, linedef, side, partner)
+        }
+    }
+}
+
+/// Decodes a `GL_SEGS` lump (V2, V3, or V5 layout) into [`GlSeg`] records.
+///
+/// Record widths and sentinels are version-dependent (all little-endian):
+///
+/// - **V2:** 10-byte records — `u16 v1, u16 v2, u16 linedef, u16 side,
+///   u16 partner`; the `linedef`/`partner` "none" sentinel is `0xFFFF`.
+/// - **V3/V5:** 16-byte records (byte-identical, one decode path) — `i32 v1,
+///   i32 v2, u16 linedef, u16 side, i32 partner`; the `linedef` sentinel is
+///   `0xFFFF` and the `partner` sentinel is `0xFFFF_FFFF`.
+///
+/// The `v1`/`v2` endpoints carry the GL-vertex high-bit convention decoded by
+/// [`split_vertex`]. `linedef == 0xFFFF` marks a GL miniseg (`linedef: None`).
+/// `side` is `0` (right/front) or `1` (left/back). `partner` references another
+/// seg **in this same lump**, so it is resolved in a second pass once the total
+/// seg count is known: in range → `Some`, out of range → strict error / lenient
+/// `None` + a [`MapWarning::DanglingReference`], mirroring `resolve_optional`.
+///
+/// Bounded and panic-safe: iterates fixed-size chunks (`chunks_exact`), so
+/// memory use is `O(bytes.len())` with no capacity taken from an untrusted
+/// count.
+///
+/// # Errors
+///
+/// Returns [`MapAssembleError::Records`] (fatal in **both** strictness modes,
+/// matching [`decode_gl_vertices`]) when `bytes.len()` is not an exact multiple
+/// of the version's record width (a partial trailing record). Propagates
+/// [`MapAssembleError::DanglingReference`] from a vertex, linedef, or partner
+/// reference that is out of range in strict mode.
+///
+/// Not yet called outside tests: assembly wiring lands in a later task (#324),
+/// so `dead_code` is explicitly allowed here until that call site lands.
+#[allow(dead_code)]
+pub(crate) fn decode_gl_segs(
+    bytes: &[u8],
+    ver: GlVersion,
+    normal_vert_count: usize,
+    gl_vert_count: usize,
+    linedef_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<GlSeg>, MapAssembleError> {
+    // VERIFIED gzdoom glnodes.cpp: V2 seg = 10 bytes, V3/V5 seg = 16 bytes.
+    let record_size = match ver {
+        GlVersion::V2 => 10,
+        GlVersion::V3 | GlVersion::V5 => 16,
+    };
+
+    if !bytes.len().is_multiple_of(record_size) {
+        return Err(MapAssembleError::Records {
+            lump: "GL_SEGS",
+            source: MapParseError::TrailingBytes {
+                offset: (bytes.len() / record_size * record_size) as u64,
+            },
+        });
+    }
+
+    // Pass 1: decode endpoints, linedef, and side; capture each seg's raw
+    // partner value (`None` = sentinel) for pass-2 resolution.
+    let mut segs: Vec<GlSeg> = Vec::with_capacity(bytes.len() / record_size);
+    let mut raw_partners: Vec<Option<u32>> = Vec::with_capacity(bytes.len() / record_size);
+
+    for c in bytes.chunks_exact(record_size) {
+        let (v1, v2, linedef, side, partner) = read_seg_record(c, ver);
+
+        let start = split_vertex(
+            v1,
+            ver,
+            normal_vert_count,
+            gl_vert_count,
+            strictness,
+            warnings,
+        )?;
+        let end = split_vertex(
+            v2,
+            ver,
+            normal_vert_count,
+            gl_vert_count,
+            strictness,
+            warnings,
+        )?;
+        // VERIFIED gzdoom glnodes.cpp: linedef sentinel is 0xFFFF (GL miniseg).
+        let linedef = if linedef == 0xFFFF {
+            None
+        } else {
+            Some(LinedefIdx(resolve_required(
+                i32::from(linedef),
+                linedef_count,
+                "linedef",
+                "gl seg",
+                strictness,
+                warnings,
+            )?))
+        };
+
+        segs.push(GlSeg {
+            start,
+            end,
+            linedef,
+            side,
+            partner: None,
+        });
+        raw_partners.push(partner);
+    }
+
+    // Pass 2: resolve partner references against the now-known seg count using
+    // optional semantics (mirroring `resolve_optional`): in range → `Some`,
+    // out of range → strict error / lenient `None` + a dangling-reference warning.
+    let seg_count = segs.len();
+    for (seg, raw) in segs.iter_mut().zip(raw_partners) {
+        let Some(raw) = raw else { continue };
+        let index = i32::try_from(raw).unwrap_or(i32::MAX);
+        if let Ok(u) = usize::try_from(index)
+            && u < seg_count
+        {
+            seg.partner = Some(GlSegIdx(u));
+            continue;
+        }
+        match strictness {
+            Strictness::Strict => {
+                return Err(MapAssembleError::DanglingReference {
+                    referent: "gl seg",
+                    index,
+                    from: "gl seg",
+                    count: seg_count,
+                });
+            }
+            Strictness::Lenient => {
+                warnings.push(MapWarning::DanglingReference {
+                    referent: "gl seg",
+                    index,
+                    from: "gl seg",
+                    count: seg_count,
+                });
+                seg.partner = None;
+            }
+        }
+    }
+
+    Ok(segs)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{GlVersion, decode_gl_vertices, detect_gl_version};
+    use super::{GlVersion, decode_gl_segs, decode_gl_vertices, detect_gl_version};
+    use crate::Strictness;
     use crate::map::MapParseError;
     use crate::map::assemble::MapAssembleError;
+    use crate::map::graph::{
+        GlSegIdx, GlVertexIdx, GlVertexRef, LinedefIdx, MapWarning, VertexIdx,
+    };
 
     #[test]
     fn detects_v5() {
@@ -222,5 +483,193 @@ mod tests {
     fn decodes_empty_vertex_run() {
         let v = decode_gl_vertices(b"gNd2").unwrap();
         assert_eq!(v.len(), 0);
+    }
+
+    // ---- GL_SEGS ----
+
+    /// Builds a single 10-byte V2 `GL_SEGS` record.
+    fn v2_seg(v1: u16, v2: u16, linedef: u16, side: u16, partner: u16) -> Vec<u8> {
+        let mut b = Vec::with_capacity(10);
+        b.extend_from_slice(&v1.to_le_bytes());
+        b.extend_from_slice(&v2.to_le_bytes());
+        b.extend_from_slice(&linedef.to_le_bytes());
+        b.extend_from_slice(&side.to_le_bytes());
+        b.extend_from_slice(&partner.to_le_bytes());
+        b
+    }
+
+    /// Builds a single 16-byte V3/V5 `GL_SEGS` record.
+    fn v5_seg(v1: u32, v2: u32, linedef: u16, side: u16, partner: u32) -> Vec<u8> {
+        let mut b = Vec::with_capacity(16);
+        b.extend_from_slice(&v1.to_le_bytes());
+        b.extend_from_slice(&v2.to_le_bytes());
+        b.extend_from_slice(&linedef.to_le_bytes());
+        b.extend_from_slice(&side.to_le_bytes());
+        b.extend_from_slice(&partner.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn v2_seg_normal_and_gl_vertex_split() {
+        // start = normal vtx 2 (0x0002), end = GL vtx 0 (0x8000),
+        // linedef 0xFFFF (miniseg), side 0, partner 0xFFFF (one-sided).
+        let bytes = v2_seg(0x0002, 0x8000, 0xFFFF, 0x0000, 0xFFFF);
+        let mut w = Vec::new();
+        let segs =
+            decode_gl_segs(&bytes, GlVersion::V2, 3, 1, 5, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].start, GlVertexRef::Normal(VertexIdx(2)));
+        assert_eq!(segs[0].end, GlVertexRef::Gl(GlVertexIdx(0)));
+        assert_eq!(segs[0].linedef, None);
+        assert_eq!(segs[0].side, 0);
+        assert_eq!(segs[0].partner, None);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v5_seg_top_two_bit_flag_and_normal() {
+        // seg0: start GL flag via top bit (0xC000_0005 -> Gl 5), end plain (3 -> Normal 3),
+        //       linedef 0 -> Some(0), side 1, partner 0xFFFF_FFFF -> None.
+        // seg1: start GL flag via bit30 only (0x4000_0000 -> Gl 0), end plain (1 -> Normal 1),
+        //       linedef 0xFFFF -> None, side 0, partner 0xFFFF_FFFF -> None.
+        let mut bytes = v5_seg(0xC000_0005, 0x0000_0003, 0x0000, 0x0001, 0xFFFF_FFFF);
+        bytes.extend(v5_seg(
+            0x4000_0000,
+            0x0000_0001,
+            0xFFFF,
+            0x0000,
+            0xFFFF_FFFF,
+        ));
+        let mut w = Vec::new();
+        let segs =
+            decode_gl_segs(&bytes, GlVersion::V5, 4, 6, 1, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].start, GlVertexRef::Gl(GlVertexIdx(5)));
+        assert_eq!(segs[0].end, GlVertexRef::Normal(VertexIdx(3)));
+        assert_eq!(segs[0].linedef, Some(LinedefIdx(0)));
+        assert_eq!(segs[0].side, 1);
+        assert_eq!(segs[0].partner, None);
+        assert_eq!(segs[1].start, GlVertexRef::Gl(GlVertexIdx(0)));
+        assert_eq!(segs[1].end, GlVertexRef::Normal(VertexIdx(1)));
+        assert_eq!(segs[1].linedef, None);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v2_in_range_partner_resolves() {
+        // seg0 partners seg1 (in range, count == 2); seg1 is one-sided.
+        let mut bytes = v2_seg(0x0000, 0x0001, 0x0000, 0x0000, 0x0001);
+        bytes.extend(v2_seg(0x0001, 0x0000, 0x0000, 0x0001, 0xFFFF));
+        let mut w = Vec::new();
+        let segs =
+            decode_gl_segs(&bytes, GlVersion::V2, 2, 0, 1, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].partner, Some(GlSegIdx(1)));
+        assert_eq!(segs[1].partner, None);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v2_out_of_range_partner_strict_errors_lenient_warns() {
+        // Single seg whose partner (1) points past the only seg (count == 1).
+        let bytes = v2_seg(0x0000, 0x0001, 0x0000, 0x0000, 0x0001);
+        let mut w = Vec::new();
+        let err =
+            decode_gl_segs(&bytes, GlVersion::V2, 2, 0, 1, Strictness::Strict, &mut w).unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "gl seg",
+                ..
+            }
+        ));
+
+        let mut w = Vec::new();
+        let segs =
+            decode_gl_segs(&bytes, GlVersion::V2, 2, 0, 1, Strictness::Lenient, &mut w).unwrap();
+        assert_eq!(segs[0].partner, None);
+        assert!(matches!(
+            w.as_slice(),
+            [MapWarning::DanglingReference {
+                referent: "gl seg",
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn bad_length_lump_is_framing_error() {
+        // 15 bytes: not a whole multiple of the 10-byte V2 record.
+        let bytes = vec![0u8; 15];
+        let err = decode_gl_segs(
+            &bytes,
+            GlVersion::V2,
+            4,
+            4,
+            4,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::Records {
+                lump: "GL_SEGS",
+                source: MapParseError::TrailingBytes { offset: 10 },
+            }
+        ));
+        // Lenient mode rejects the same framing defect.
+        let err = decode_gl_segs(
+            &bytes,
+            GlVersion::V2,
+            4,
+            4,
+            4,
+            Strictness::Lenient,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::Records {
+                lump: "GL_SEGS",
+                source: MapParseError::TrailingBytes { offset: 10 },
+            }
+        ));
+    }
+
+    #[test]
+    fn dangling_vertex_strict_errors_lenient_clamps() {
+        // start references normal vtx 9, but only 1 normal vertex exists.
+        let bytes = v2_seg(0x0009, 0x0000, 0xFFFF, 0x0000, 0xFFFF);
+        let err = decode_gl_segs(
+            &bytes,
+            GlVersion::V2,
+            1,
+            1,
+            1,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "vertex",
+                ..
+            }
+        ));
+
+        let mut w = Vec::new();
+        let segs =
+            decode_gl_segs(&bytes, GlVersion::V2, 1, 1, 1, Strictness::Lenient, &mut w).unwrap();
+        assert_eq!(segs[0].start, GlVertexRef::Normal(VertexIdx(0)));
+        assert!(matches!(
+            w.as_slice(),
+            [MapWarning::DanglingReference {
+                referent: "vertex",
+                ..
+            }]
+        ));
     }
 }
