@@ -762,12 +762,12 @@ fn decode_gl_group_records(
         warnings,
     )?;
     let subsectors = decode_gl_subsectors(ssect_rec, ver, segs.len(), strictness, warnings)?;
-    let nodes = decode_gl_nodes(nodes, ver, subsectors.len(), strictness, warnings)?;
+    let decoded_nodes = decode_gl_nodes(nodes, ver, subsectors.len(), strictness, warnings)?;
     Ok(DecodedGl {
         vertices,
         segs,
         subsectors,
-        nodes,
+        nodes: decoded_nodes,
     })
 }
 
@@ -860,6 +860,13 @@ pub(crate) fn decode_gl_group(
     // header-agnostic decoders see them. A lump too short to hold its header is a
     // framing defect -> a hard error in both modes (propagated by `?`).
     let (segs_rec, ssect_rec) = if ver == GlVersion::V3 {
+        // Defensively unreachable: `detect_gl_version` only returns `V3` when
+        // `segs[0..4] == b"gNd3"`, which already requires `segs.len() >= 4` — so
+        // this `None` arm can never fire for a properly-detected V3 group. Kept
+        // (and the `?` kept) as defense in depth rather than an `unwrap`; there is
+        // no dedicated test for this arm because it is unreachable, unlike the
+        // `ssect` arm below, which `detect_gl_version` never inspects and so can
+        // genuinely be too short (see `v3_group_short_ssect_lump_is_framing_error`).
         let segs_rec = segs.get(4..).ok_or(MapAssembleError::Records {
             lump: "GL_SEGS",
             source: MapParseError::TrailingBytes { offset: 0 },
@@ -1565,6 +1572,37 @@ mod tests {
         assert_eq!(gl.subsectors[0].segs, 0..1);
         assert_eq!(gl.nodes.len(), 1);
         assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v3_group_short_ssect_lump_is_framing_error() {
+        // GL_VERT: gNd2 + 1 GL vertex (V3 shares V2's vert magic).
+        let mut vert = b"gNd2".to_vec();
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        // GL_SEGS: exactly the 4-byte gNd3 header, nothing else. This alone is
+        // enough for `detect_gl_version` to classify the group as V3 (it only
+        // inspects `segs[0..4]`), so `segs.get(4..)` yields `Some(&[])`, not
+        // `None` — the segs framing-error arm stays unreachable here, as expected.
+        let segs = b"gNd3".to_vec();
+        // GL_SSECT: shorter than the 4-byte gNd3 header a V3 group requires.
+        // `detect_gl_version` never inspects GL_SSECT, so this is the one lump
+        // that can genuinely trip the post-detection framing check.
+        let ssect = b"gN".to_vec();
+        let nodes: Vec<u8> = Vec::new();
+
+        for strictness in [Strictness::Strict, Strictness::Lenient] {
+            let mut w = Vec::new();
+            let err = decode_gl_group(&vert, &segs, &ssect, &nodes, 1, 1, strictness, &mut w)
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                MapAssembleError::Records {
+                    lump: "GL_SSECT",
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]
