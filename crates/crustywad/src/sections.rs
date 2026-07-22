@@ -551,15 +551,14 @@ fn handle_eof(
                 }
                 let (kind, sub) = (o.kind, o.sub);
                 let section = o.close(eof);
-                if sub {
-                    if let Some(parent) = open
+                if sub
+                    && let Some(parent) = open
                         .iter_mut()
                         .rev()
                         .find(|p| p.kind == kind && !p.sub && p.start < section.start_marker)
-                    {
-                        parent.children.push(section);
-                        continue;
-                    }
+                {
+                    parent.children.push(section);
+                    continue;
                 }
                 table.sections.push(section);
             }

@@ -31,7 +31,7 @@ impl Flat {
     /// "proceeds with what is present"), warns, and never fails.
     pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<Self, GfxError> {
         let mut warnings = Vec::new();
-        if bytes.len() % 64 != 0 || bytes.len() < 4096 {
+        if !bytes.len().is_multiple_of(64) || bytes.len() < 4096 {
             match options.strictness {
                 Strictness::Strict => {
                     return Err(GfxError::FlatSize { len: bytes.len() });

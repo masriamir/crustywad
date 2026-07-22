@@ -763,10 +763,10 @@ pub(crate) fn resolve_required(
         });
     }
     // A negative index (or one past `count`) is out of range.
-    if let Ok(idx) = usize::try_from(index) {
-        if idx < count {
-            return Ok(idx);
-        }
+    if let Ok(idx) = usize::try_from(index)
+        && idx < count
+    {
+        return Ok(idx);
     }
     match strictness {
         Strictness::Strict => Err(MapAssembleError::DanglingReference {
@@ -801,10 +801,10 @@ fn resolve_optional(
     strictness: Strictness,
     warnings: &mut Vec<MapWarning>,
 ) -> Result<Option<usize>, MapAssembleError> {
-    if let Ok(u) = usize::try_from(idx) {
-        if u < count {
-            return Ok(Some(u));
-        }
+    if let Ok(u) = usize::try_from(idx)
+        && u < count
+    {
+        return Ok(Some(u));
     }
     match strictness {
         Strictness::Strict => Err(MapAssembleError::DanglingReference {

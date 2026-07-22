@@ -154,7 +154,7 @@ where
         return Err(MapParseError::TrailingBytes { offset: 0 });
     }
 
-    if bytes.len() % record_size != 0 {
+    if !bytes.len().is_multiple_of(record_size) {
         return Err(MapParseError::TrailingBytes {
             offset: (bytes.len() / record_size * record_size) as u64,
         });

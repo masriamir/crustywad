@@ -5,13 +5,13 @@ Provides a consistent Rust development environment for VS Code and GitHub Codesp
 ## Base image
 
 ```
-mcr.microsoft.com/devcontainers/rust:1-1.85-bullseye
+mcr.microsoft.com/devcontainers/rust:1-1.94-bullseye
 ```
 
-The tag `1-1.85-bullseye` tracks Rust 1.85.x (the project MSRV) on Debian Bullseye. It is a
+The tag `1-1.94-bullseye` tracks Rust 1.94.x (the project MSRV) on Debian Bullseye. It is a
 floating tag maintained by Microsoft and receives security patches without requiring a tag bump.
-The `1-1.85` prefix ensures that minor Rust updates within the 1.85 series are picked up, but
-a major upgrade (e.g., to 1.86) requires an explicit tag change here and in `devcontainer.json`.
+The `1-1.94` prefix ensures that minor Rust updates within the 1.94 series are picked up, but
+a major upgrade (e.g., to 1.95) requires an explicit tag change here and in `devcontainer.json`.
 
 **When to update the tag:** bump the tag here and in `devcontainer.json` when the project MSRV
 is raised. Pin to a digest (`@sha256:…`) in the image field if you need fully reproducible

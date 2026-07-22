@@ -729,10 +729,8 @@ impl SndSeq {
                     if let Some(sequence) = open.as_mut() {
                         sequence.commands.push(command);
                     }
-                    if is_end {
-                        if let Some(sequence) = open.take() {
-                            sequences.push(sequence);
-                        }
+                    if is_end && let Some(sequence) = open.take() {
+                        sequences.push(sequence);
                     }
                 }
                 Err(diag) => match strictness {

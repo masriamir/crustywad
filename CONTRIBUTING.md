@@ -4,7 +4,7 @@ Thanks for your interest in `crustywad`.
 
 ## Local setup
 
-1. Install Rust **1.85.0** or newer.
+1. Install Rust **1.94.0** or newer.
 2. Install `just`.
 3. Optionally install `cargo-llvm-cov`, `cargo-deny`, and `lefthook`.
 4. Run `lefthook install` to enable the local hooks.
