@@ -860,4 +860,101 @@ mod tests {
         assert_eq!(w.len(), 1);
         assert!(matches!(w[0], MapWarning::DanglingReference { .. }));
     }
+
+    /// (g) A record-size-misaligned lump (SSECTORS length not a multiple of 6)
+    /// is a fatal `Records` error in both modes.
+    #[test]
+    fn misaligned_ssectors_lump() {
+        let segs = seg4(0, 1, 0, 0, 0, 0);
+        let mut ssectors = subsector4(1, 0);
+        ssectors.push(0); // one byte extra -> 7 bytes, not a multiple of 6
+        let nodes = nodes_lump(&[]);
+
+        for strictness in [Strictness::Strict, Strictness::Lenient] {
+            let mut w = Vec::new();
+            let err = decode_deepbsp(&segs, &ssectors, &nodes, 2, 1, strictness, &mut w)
+                .expect_err("misaligned SSECTORS is fatal");
+            assert!(matches!(
+                err,
+                MapAssembleError::Records {
+                    lump: "SSECTORS",
+                    ..
+                }
+            ));
+        }
+    }
+
+    /// (h) A seg `v2` (end) vertex index out of range: strict errors, lenient
+    /// clamps + warns. `v1` stays in range so this exercises the `v2` resolve
+    /// distinctly from the existing `seg_vertex_out_of_range` (`v1`) case.
+    #[test]
+    fn seg_v2_vertex_out_of_range() {
+        // v1 = 0 (valid), v2 = 9 but only 4 vertices exist.
+        let segs = seg4(0, 9, 0, 0, 0, 0);
+        let ssectors = subsector4(1, 0);
+        let nodes = nodes_lump(&[]);
+
+        let mut w = Vec::new();
+        let err = decode_deepbsp(&segs, &ssectors, &nodes, 4, 1, Strictness::Strict, &mut w)
+            .expect_err("strict rejects");
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "vertex",
+                index: 9,
+                from: "seg",
+                count: 4
+            }
+        ));
+
+        let mut w = Vec::new();
+        let (segs, _, _) =
+            decode_deepbsp(&segs, &ssectors, &nodes, 4, 1, Strictness::Lenient, &mut w)
+                .expect("lenient recovers");
+        assert_eq!(segs[0].start, VertexIdx(0)); // v1 unaffected
+        assert_eq!(segs[0].end, VertexIdx(0)); // v2 clamped to 0
+        assert_eq!(w.len(), 1);
+        assert!(matches!(
+            w[0],
+            MapWarning::DanglingReference {
+                referent: "vertex",
+                index: 9,
+                ..
+            }
+        ));
+    }
+
+    /// (i) A node's LEFT child index out of range, with a valid RIGHT child:
+    /// strict errors, lenient clamps + warns. Exercises the left-child resolve
+    /// distinctly from `node_child_out_of_range` (which faults the right child).
+    #[test]
+    fn node_left_child_out_of_range() {
+        let segs = seg4(0, 1, 0, 0, 0, 0);
+        let ssectors = subsector4(1, 0);
+        // Single node; right child is a valid subsector leaf, left references
+        // node index 9 (only 1 node exists, bit 31 clear).
+        let node = node4(0, 0, 1, 1, [0; 4], [0; 4], NF_SUBSECTOR, 9);
+        let nodes = nodes_lump(&node);
+
+        let mut w = Vec::new();
+        let err = decode_deepbsp(&segs, &ssectors, &nodes, 2, 1, Strictness::Strict, &mut w)
+            .expect_err("strict rejects");
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "node",
+                index: 9,
+                from: "node",
+                count: 1
+            }
+        ));
+
+        let mut w = Vec::new();
+        let (_, _, nodes) =
+            decode_deepbsp(&segs, &ssectors, &nodes, 2, 1, Strictness::Lenient, &mut w)
+                .expect("lenient recovers");
+        assert_eq!(nodes[0].right, NodeChild::Subsector(SubsectorIdx(0)));
+        assert_eq!(nodes[0].left, NodeChild::Node(NodeIdx(0))); // clamped
+        assert_eq!(w.len(), 1);
+    }
 }
