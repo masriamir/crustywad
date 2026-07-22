@@ -158,6 +158,13 @@ fuzz_target!(|data: &[u8]| {
     let output_bound = data.len() + 8;
 
     for options in [ParseOptions::strict(), ParseOptions::lenient()] {
+        // The fixed map bytes around the fuzzed NODES lump are always valid,
+        // but the container parse is kept in the loop (rather than hoisted out
+        // and shared) so a future change to either parser can't silently stop
+        // exercising this path — matching `fuzz_extended_nodes`. The cost is
+        // negligible: `Wad::from_bytes` parses only the small fixed directory
+        // and loads lumps lazily, so this is O(directory), not O(NODES-lump),
+        // regardless of the fuzzed input size.
         let Ok(wad) = Wad::from_bytes_with_options(wad_bytes.clone(), options) else {
             continue;
         };
