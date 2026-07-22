@@ -5,17 +5,24 @@ Provides a consistent Rust development environment for VS Code and GitHub Codesp
 ## Base image
 
 ```
-mcr.microsoft.com/devcontainers/rust:1-1.94-bullseye
+mcr.microsoft.com/devcontainers/rust:1-bookworm
 ```
 
-The tag `1-1.94-bullseye` tracks Rust 1.94.x (the project MSRV) on Debian Bullseye. It is a
-floating tag maintained by Microsoft and receives security patches without requiring a tag bump.
-The `1-1.94` prefix ensures that minor Rust updates within the 1.94 series are picked up, but
-a major upgrade (e.g., to 1.95) requires an explicit tag change here and in `devcontainer.json`.
+The `devcontainers/rust` image is **not tagged by Rust version** — its tags track the
+devcontainer image version and the Debian base, not a Rust toolchain. `1-bookworm` is a floating
+tag (devcontainer image v1 on Debian 12 "Bookworm"), maintained by Microsoft, that receives
+security and toolchain updates without a tag bump. It ships a current stable Rust toolchain
+(1.96.1 at the time of writing), comfortably above the project MSRV (1.94.0); the image tag does
+not select a specific Rust minor.
 
-**When to update the tag:** bump the tag here and in `devcontainer.json` when the project MSRV
-is raised. Pin to a digest (`@sha256:…`) in the image field if you need fully reproducible
-builds; the floating tag is intentional for this development container.
+**MSRV guarantee:** the image's stable Rust tracks ahead of the project's rolling N-3 MSRV floor,
+so the container builds the workspace without any Rust pin. If you need an *exact* toolchain, add
+a `rust-toolchain.toml` or the `ghcr.io/devcontainers/features/rust` feature — the image tag
+cannot do it.
+
+**When to update the tag:** only to change the Debian base (e.g. a future `1-trixie`) or the
+devcontainer image major version — **not** when the MSRV is raised, since the tag carries no Rust
+version. Pin to a digest (`@sha256:…`) in the image field if you need fully reproducible builds.
 
 ## Tools installed on creation
 
