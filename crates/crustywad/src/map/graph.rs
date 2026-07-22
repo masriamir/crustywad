@@ -56,6 +56,22 @@ pub struct SubsectorIdx(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeIdx(pub usize);
 
+/// A zero-based index into [`Map::gl_vertices`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlVertexIdx(pub usize);
+
+/// A zero-based index into [`Map::gl_segs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlSegIdx(pub usize);
+
+/// A zero-based index into [`Map::gl_subsectors`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlSubsectorIdx(pub usize);
+
+/// A zero-based index into [`Map::gl_nodes`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlNodeIdx(pub usize);
+
 /// A normalized map vertex; coordinates are `f64` so binary `i16` widens
 /// losslessly and future UDMF floats fit natively.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -382,6 +398,84 @@ pub struct MapNode {
     pub right: NodeChild,
     /// The left (back) child: another node, or a subsector leaf.
     pub left: NodeChild,
+}
+
+/// A GL vertex from a `GL_VERT` lump. Coordinates are `f64` world units,
+/// converted losslessly from the on-disk 16.16 fixed-point (`raw / 65536.0`,
+/// mirroring [`MapVertex`]'s widening) in a later task — Task 1 only defines
+/// the type (#324).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlVertex {
+    /// The vertex's X coordinate, in map units.
+    pub x: f64,
+    /// The vertex's Y coordinate, in map units.
+    pub y: f64,
+}
+
+/// A GL seg endpoint: either a normal `VERTEXES` vertex or a `GL_VERT`
+/// vertex. This encodes the GL-vertex high-bit convention in the on-disk
+/// `GL_SEGS` record (#324).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlVertexRef {
+    /// A vertex from the map's own `VERTEXES` lump, indexed into [`Map::vertices`].
+    Normal(VertexIdx),
+    /// A vertex from the `GL_VERT` lump, indexed into [`Map::gl_vertices`].
+    Gl(GlVertexIdx),
+}
+
+/// A single GL seg from a `GL_SEGS` lump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlSeg {
+    /// The seg's start vertex.
+    pub start: GlVertexRef,
+    /// The seg's end vertex.
+    pub end: GlVertexRef,
+    /// Source linedef, or `None` for a GL miniseg (on-disk `0xFFFF`).
+    pub linedef: Option<LinedefIdx>,
+    /// `0` = right/front side, `1` = left/back side.
+    pub side: u8,
+    /// The adjacent subsector's partner seg, or `None` for a one-sided edge.
+    pub partner: Option<GlSegIdx>,
+}
+
+/// A GL subsector: a contiguous run of [`Map::gl_segs`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlSubsector {
+    /// The validated run into [`Map::gl_segs`].
+    pub segs: core::ops::Range<usize>,
+}
+
+/// A GL BSP node child: an interior node or a subsector leaf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlNodeChild {
+    /// An internal GL BSP node, indexed into [`Map::gl_nodes`].
+    Node(GlNodeIdx),
+    /// A leaf GL subsector, indexed into [`Map::gl_subsectors`].
+    Subsector(GlSubsectorIdx),
+}
+
+/// A GL BSP node from a `GL_NODES` lump. Partition-line and bbox fields
+/// mirror [`MapNode`]; children reference the GL arenas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlNode {
+    /// The X coordinate of the partition line's start point, in map units.
+    pub x: i32,
+    /// The Y coordinate of the partition line's start point, in map units.
+    pub y: i32,
+    /// The partition line's X direction from `(x, y)`, in map units.
+    pub dx: i32,
+    /// The partition line's Y direction from `(x, y)`, in map units.
+    pub dy: i32,
+    /// Axis-aligned bounding box for the right child, as `[top, bottom, left,
+    /// right]` in map units.
+    pub right_bbox: [i32; 4],
+    /// Axis-aligned bounding box for the left child, as `[top, bottom, left,
+    /// right]` in map units.
+    pub left_bbox: [i32; 4],
+    /// The right (front) child: another GL node, or a GL subsector leaf.
+    pub right: GlNodeChild,
+    /// The left (back) child: another GL node, or a GL subsector leaf.
+    pub left: GlNodeChild,
 }
 
 /// The `REJECT` lump decoded into a typed sector-visibility table.
@@ -742,6 +836,10 @@ pub struct Map {
     pub(crate) segs: Vec<MapSeg>,
     pub(crate) subsectors: Vec<MapSubsector>,
     pub(crate) nodes: Vec<MapNode>,
+    pub(crate) gl_vertices: Vec<GlVertex>,
+    pub(crate) gl_segs: Vec<GlSeg>,
+    pub(crate) gl_subsectors: Vec<GlSubsector>,
+    pub(crate) gl_nodes: Vec<GlNode>,
     pub(crate) leafs: Vec<MapLeaf>,
     pub(crate) macros: Vec<MapMacro>,
     pub(crate) reject: Option<MapReject>,
@@ -833,6 +931,38 @@ impl Map {
     #[must_use]
     pub fn nodes(&self) -> &[MapNode] {
         &self.nodes
+    }
+
+    /// Returns the map's GL vertex arena, decoded from `GL_VERT`. Empty for
+    /// a map assembled without classic GL nodes (#324) — the type-plumbing
+    /// stage lands in Task 1; decoding follows in later tasks.
+    #[must_use]
+    pub fn gl_vertices(&self) -> &[GlVertex] {
+        &self.gl_vertices
+    }
+
+    /// Returns the map's GL seg arena, decoded from `GL_SEGS`. Empty for a
+    /// map assembled without classic GL nodes (#324) — the type-plumbing
+    /// stage lands in Task 1; decoding follows in later tasks.
+    #[must_use]
+    pub fn gl_segs(&self) -> &[GlSeg] {
+        &self.gl_segs
+    }
+
+    /// Returns the map's GL subsector arena, decoded from `GL_SSECT`. Empty
+    /// for a map assembled without classic GL nodes (#324) — the
+    /// type-plumbing stage lands in Task 1; decoding follows in later tasks.
+    #[must_use]
+    pub fn gl_subsectors(&self) -> &[GlSubsector] {
+        &self.gl_subsectors
+    }
+
+    /// Returns the map's GL BSP node arena, decoded from `GL_NODES`. Empty
+    /// for a map assembled without classic GL nodes (#324) — the
+    /// type-plumbing stage lands in Task 1; decoding follows in later tasks.
+    #[must_use]
+    pub fn gl_nodes(&self) -> &[GlNode] {
+        &self.gl_nodes
     }
 
     /// Returns the index of the BSP tree's root node, or `None` if the map
@@ -965,6 +1095,10 @@ mod tests {
             segs: Vec::new(),
             subsectors: Vec::new(),
             nodes: Vec::new(),
+            gl_vertices: Vec::new(),
+            gl_segs: Vec::new(),
+            gl_subsectors: Vec::new(),
+            gl_nodes: Vec::new(),
             leafs: Vec::new(),
             macros: Vec::new(),
             reject: None,
@@ -1000,5 +1134,16 @@ mod tests {
         assert!(m.subsectors().is_empty());
         assert!(m.nodes().is_empty());
         assert_eq!(m.bsp_root(), None);
+    }
+
+    #[test]
+    fn non_gl_map_has_empty_gl_arenas() {
+        // A map assembled without GL lumps has empty GL arenas (#324 Task 1:
+        // the arenas exist but nothing decodes into them yet).
+        let m = tiny_map();
+        assert!(m.gl_vertices().is_empty());
+        assert!(m.gl_segs().is_empty());
+        assert!(m.gl_subsectors().is_empty());
+        assert!(m.gl_nodes().is_empty());
     }
 }

@@ -389,3 +389,15 @@ proptest! {
         // Non-multiple lengths: only absence of panic is asserted (covered by I-5)
     }
 }
+
+// Type-level smoke test for the classic-GL-node graph types (#324 Task 1):
+// this only asserts that `GlVertexRef` composes over `GlVertexIdx` as
+// expected. It does not exercise assembly or a `Map`'s GL arenas — those are
+// covered once decoding lands in a later task.
+#[test]
+fn gl_vertex_ref_variants_compose() {
+    use crustywad::map::graph::{GlVertexIdx, GlVertexRef};
+
+    let r = GlVertexRef::Gl(GlVertexIdx(3));
+    assert!(matches!(r, GlVertexRef::Gl(GlVertexIdx(3))));
+}

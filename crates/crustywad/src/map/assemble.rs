@@ -1773,6 +1773,10 @@ impl Map {
                     segs,
                     subsectors,
                     nodes,
+                    gl_vertices: Vec::new(),
+                    gl_segs: Vec::new(),
+                    gl_subsectors: Vec::new(),
+                    gl_nodes: Vec::new(),
                     leafs: Vec::new(),
                     macros: Vec::new(),
                     reject,
@@ -2137,6 +2141,10 @@ fn assemble_doom64(
         segs,
         subsectors,
         nodes,
+        gl_vertices: Vec::new(),
+        gl_segs: Vec::new(),
+        gl_subsectors: Vec::new(),
+        gl_nodes: Vec::new(),
         leafs: leaf_arena,
         macros,
         reject,
@@ -2146,6 +2154,7 @@ fn assemble_doom64(
 }
 
 /// Assembles a UDMF (`TEXTMAP`) map group into a [`Map`] (ADR-0017 §3).
+#[allow(clippy::too_many_lines)]
 fn assemble_udmf(
     wad: &Wad,
     group: &MapGroup,
@@ -2261,6 +2270,10 @@ fn assemble_udmf(
         segs,
         subsectors,
         nodes,
+        gl_vertices: Vec::new(),
+        gl_segs: Vec::new(),
+        gl_subsectors: Vec::new(),
+        gl_nodes: Vec::new(),
         leafs: Vec::new(),
         macros: Vec::new(),
         reject,
