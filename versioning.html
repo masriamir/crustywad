@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-76e2396a.js";
+            window.path_to_searchindex_js = "searchindex-edf62cdd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -238,16 +238,23 @@ or a future <code>MAJOR.0.0</code>.</p>
 </ul>
 <hr>
 <h2 id="msrv-policy"><a class="header" href="#msrv-policy">MSRV Policy</a></h2>
-<p>The current minimum supported Rust version (MSRV) is <strong>1.85.0</strong>, set via <code>rust-version</code> in
+<p>The current minimum supported Rust version (MSRV) is <strong>1.94.0</strong>, set via <code>rust-version</code> in
 <code>Cargo.toml</code>. The project targets the Rust 2024 edition.</p>
 <p>Rules:</p>
 <ul>
 <li><strong>An MSRV bump is a minor version change</strong>, never a patch. A caller pinned to the old
 compiler will fail to build after an MSRV bump, so it is treated as a backward-incompatible
 change to the build environment even though the public API is unchanged.</li>
-<li><strong>MSRV bumps are need-driven.</strong> The MSRV will only be raised when there is a concrete need
-(for example, a required dependency or language feature), and only to a toolchain version
-that has been stable for a reasonable period.</li>
+<li><strong>Rolling N-3 target.</strong> The MSRV tracks a bounded window: at each release it is
+<strong>(latest stable Rust minor at release time) − 3</strong>, so the crates are guaranteed to build on
+the <strong>last four stable Rust releases</strong> (roughly the most recent six months). This replaces the
+former need-driven policy — the window makes the compatibility promise explicit rather than
+leaving it implicit, and keeps the toolchain modern enough for the current dependency
+ecosystem.</li>
+<li><strong>Revisited each release.</strong> The MSRV is reviewed at every release and raised when the rolling
+window advances, or earlier when a required dependency or language feature demands a newer
+toolchain. Raising it stays a <strong>minor</strong> version bump (see the first rule); dropping support for
+releases below the new floor is the deliberate, semver-signaled cost of a bounded window.</li>
 <li><strong>CI enforces the declared MSRV.</strong> The <code>msrv</code> job in CI builds and tests the workspace on
 the declared MSRV on every PR. The toolchain version is pinned explicitly in
 <code>.github/workflows/ci.yml</code> and does not auto-track <code>[workspace.package].rust-version</code>. A
