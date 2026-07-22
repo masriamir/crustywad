@@ -18,12 +18,6 @@
 //! lenient-clamp handling of out-of-range references, and the same whole-BSP
 //! lenient degrade posture as `normalize_bsp_or_degrade`.
 
-// This reader is additive: Task 1 (#328) builds and unit-tests the decoder;
-// Task 2 wires `decode_deepbsp` into the assembly gate. Until then the
-// crate-internal items are reachable only from the test module. Remove this
-// allow when Task 2 makes them live in a non-test build.
-#![allow(dead_code)]
-
 use binrw::BinRead;
 
 use crate::Strictness;
@@ -38,6 +32,18 @@ use crate::map::{MapParseError, parse_records};
 /// Node records begin at this offset (`NF_LUMPOFFSET = 8`, gzdoom
 /// `doomdata.h`).
 const NODES_SIGNATURE_LEN: usize = 8;
+
+/// The 8-byte `DeePBSP` v4 signature that heads a `DeePBSP` `NODES` lump
+/// (gzdoom `doomdata.h`). The assembly gate ([`crate::map::assemble`]) routes a
+/// `NODES` lump starting with these bytes to [`decode_deepbsp`], ahead of the
+/// 4-byte `ZDoom` `EXTENDED_NODE_SIGNATURES` check.
+pub(crate) const DEEPBSP_SIGNATURE: [u8; NODES_SIGNATURE_LEN] = *b"xNd4\0\0\0\0";
+
+/// Returns `true` when `nodes` begins with the 8-byte [`DEEPBSP_SIGNATURE`],
+/// identifying it as a `DeePBSP` v4 `NODES` lump.
+pub(crate) fn is_deepbsp(nodes: &[u8]) -> bool {
+    nodes.starts_with(&DEEPBSP_SIGNATURE)
+}
 
 /// The child-index leaf flag: when bit 31 is set the remaining 31 bits are a
 /// subsector index, otherwise the whole value is a node index

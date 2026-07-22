@@ -37,6 +37,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_deepbsp"
+path = "fuzz_targets/fuzz_deepbsp.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_parse_udmf"
 path = "fuzz_targets/fuzz_parse_udmf.rs"
 test = false

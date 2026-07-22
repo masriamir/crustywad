@@ -405,3 +405,14 @@ slices (or a dedicated `Option`) rather than failing assembly.
   narrows to the still-unsupported compressed `Z*` twins; DeePBSP `xNd4` is
   not yet detected as an extended encoding at all and is a later stage
   (#328). See ADR-0025 for the full design and staging.
+- **2026-07-21 (#328):** the revisit condition's extended-node clause is now
+  **fully discharged for reading**. Stage 2 (#327) added the compressed ZDoom
+  `Z*` twins under the `extended-nodes-zlib` feature, and Stage 3 (#328) adds
+  DeePBSP v4 (`xNd4`): a classic-widened format detected by an 8-byte signature
+  on the binary `NODES` lump (ahead of the 4-byte `EXTENDED_NODE_SIGNATURES`
+  check) and decoded into the same `MapSeg`/`MapSubsector`/`MapNode` arenas. A
+  structurally malformed DeePBSP lump is a hard `MapAssembleError::Records` in
+  **both** strictness modes, mirroring the classic path it resembles rather than
+  the ZDoom readers' whole-BSP lenient degrade. The extended-node **read** layer
+  is complete (Stages 1–3); a node **writer** remains a separate follow-up. See
+  ADR-0025 for the full design and its Stage 1–3 amendments.

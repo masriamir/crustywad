@@ -311,6 +311,51 @@ decisions §5 left open:
 - **Still out of scope after Stage 2:** DeePBSP `xNd4` (Stage 3, #328) and
   classic GL `gNd*` (#324) — unchanged from §1/§5.
 
+## Amendment — Stage 3 shipped (2026-07-21, #328)
+
+Stage 3 (DeePBSP v4, `xNd4`) is implemented; the extended-node **read** layer is
+now complete (Stages 1–3). This records the concrete decisions §1/§3 left open:
+
+- **A separate `map::deepbsp` reader, not the ZDoom parser.** DeePBSP v4 is a
+  *classic-widened* format: it keeps the three separate `SEGS`/`SSECTORS`/`NODES`
+  lumps (widening only vertex/seg/child indices to 32-bit), stores classic seg
+  semantics (`angle`/`offset`/`side` on disk, no minisegs, no new vertices),
+  and shares nothing with the ZDoom family's single self-describing blob. The
+  reader is a clean-room classic-shaped decoder that reuses the classic
+  `resolve_required` cross-reference discipline and the `normalize_bsp_or_degrade`
+  whole-BSP lenient-degrade posture (an out-of-range reference clamps and warns;
+  a reference into an empty arena degrades the whole BSP to empty with one
+  warning). It is **uncompressed always-on core** — no feature flag.
+- **8-byte-signature detection, separate from `EXTENDED_NODE_SIGNATURES`.** The
+  `xNd4\0\0\0\0` signature is 8 bytes and heads the `NODES` lump only. The gate
+  detects it **first** — before the 4-byte `EXTENDED_NODE_SIGNATURES` `find_map`
+  — via `deepbsp::is_deepbsp`/`DEEPBSP_SIGNATURE`, and routes to
+  `decode_deepbsp`. It is **not** added to `EXTENDED_NODE_SIGNATURES` (which
+  stays a 4-byte table). A `NODES` lump without the `xNd4` signature falls
+  through to the 4-byte extended check, then classic — unchanged. DeePBSP is
+  binary-only: it never touches the UDMF `ZNODES` path (where `xNd4` remains an
+  unrecognized, gated tag).
+- **Framing-defect policy: hard error in *both* modes, no new `MapWarning`
+  variant.** A structurally malformed DeePBSP lump — a record stream whose
+  length is not a whole multiple of its record size (16 `SEGS` / 6 `SSECTORS` /
+  32 post-signature `NODES`), or a `NODES` lump shorter than its 8-byte
+  signature — is a fatal `MapAssembleError::Records` in **both** strictness
+  modes. This deliberately **mirrors the classic `SEGS`/`SSECTORS`/`NODES` path**
+  DeePBSP structurally resembles (the classic `decode_optional`/`parse_records`
+  decoders reject a misaligned record stream in both modes too), and differs
+  from the ZDoom `X*`/`Z*` readers' whole-BSP lenient degrade: for the ZDoom
+  family a single self-describing blob degrades to empty on any structural fault,
+  whereas DeePBSP's three separate classic-shaped lumps get classic framing
+  discipline. Lenient recovery still applies to cross-references, not to
+  unparseable bytes.
+- **No sweep fixture.** `zdbsp` does not emit DeePBSP, so there is no DeePBSP map
+  in `RETAIL-EXT`; Stage 3 coverage is the `deepbsp.rs` unit tests, the
+  `tests/deepbsp.rs` integration tests, and the `fuzz_deepbsp` target.
+- **The ADR-0015 extended-node revisit condition is fully discharged for
+  reading.** Reading the ZDoom uncompressed (#326), compressed (#327), and
+  DeePBSP v4 (#328) node formats is done; writing (`#323`) remains a separate
+  follow-up (§6).
+
 ## Pros and cons of the options
 
 ### Option 2 — staged, ZDoom-first, skip classic GL (chosen)
