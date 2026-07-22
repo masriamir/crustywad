@@ -1782,7 +1782,7 @@ impl Map {
                 // mode a refusal (V1/V4) or framing defect propagates; in lenient
                 // mode `decode_gl_group` returns empty arenas plus a warning.
                 let (gl_vertices, gl_segs, gl_subsectors, gl_nodes) =
-                    if let Some(g) = crate::map::group::gl_group_for(wad, &group.name) {
+                    if let Some(g) = crate::map::group::gl_group_for(wad, group) {
                         let decoded = crate::map::gl::decode_gl_group(
                             wad.lump_bytes(g.vert).unwrap_or_default(),
                             wad.lump_bytes(g.segs).unwrap_or_default(),
