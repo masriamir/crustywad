@@ -14,10 +14,11 @@ is the **devcontainer image version and the Debian base** — it does not select
 minor. The image ships a recent stable Rust toolchain that tracks ahead of the project MSRV, so it
 satisfies the rolling N-3 floor without any pin.
 
-**MSRV guarantee:** the image's stable Rust stays at or above the project's rolling N-3 MSRV floor,
-so the container builds the workspace out of the box. If you need an *exact* toolchain, add a
-`rust-toolchain.toml` or the `ghcr.io/devcontainers/features/rust` feature — the image tag cannot
-pin a Rust version for you.
+**Rust toolchain:** the image ships a recent stable Rust that should sit comfortably above the
+project's rolling N-3 MSRV floor — but because `1-bookworm` is a floating tag, treat that as an
+expectation, not a hard guarantee. For a strictly pinned or reproducible toolchain, add a
+`rust-toolchain.toml` or the `ghcr.io/devcontainers/features/rust` feature — the image tag itself
+does not select a Rust version.
 
 **When to update the tag:** only to change the Debian base (e.g. a future `1-trixie`) or the
 devcontainer image major version — **not** when the MSRV is raised, since the tag carries no Rust
