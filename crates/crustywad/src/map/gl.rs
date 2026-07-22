@@ -9,17 +9,21 @@
 //! `GL_VERT` (and, for the V2/V3 split, `GL_SEGS`).
 //!
 //! This module currently provides version detection ([`detect_gl_version`]),
-//! the `GL_VERT` decoder ([`decode_gl_vertices`]), and the `GL_SEGS` decoder
-//! ([`decode_gl_segs`], which applies the GL/normal vertex high-bit split);
-//! decoders for the remaining lumps are added by later tasks in the classic-GL
+//! the `GL_VERT` decoder ([`decode_gl_vertices`]), the `GL_SEGS` decoder
+//! ([`decode_gl_segs`], which applies the GL/normal vertex high-bit split), and
+//! the `GL_SSECT`/`GL_NODES` decoders ([`decode_gl_subsectors`] and
+//! [`decode_gl_nodes`], which validate seg runs and BSP-child references); the
+//! assembly wiring that combines them lands in a later task in the classic-GL
 //! read effort (#324).
 
 use crate::Strictness;
-use crate::map::MapParseError;
-use crate::map::assemble::{MapAssembleError, resolve_required};
+use crate::map::common::Node as ClassicNode;
 use crate::map::graph::{
-    GlSeg, GlSegIdx, GlVertex, GlVertexIdx, GlVertexRef, LinedefIdx, MapWarning, VertexIdx,
+    GlNode, GlNodeChild, GlNodeIdx, GlSeg, GlSegIdx, GlSubsector, GlSubsectorIdx, GlVertex,
+    GlVertexIdx, GlVertexRef, LinedefIdx, MapWarning, VertexIdx,
 };
+use crate::map::assemble::{MapAssembleError, resolve_required};
+use crate::map::{MapParseError, parse_records};
 
 /// A decodable classic GL node format version.
 ///
@@ -395,14 +399,347 @@ pub(crate) fn decode_gl_segs(
     Ok(segs)
 }
 
+/// Decodes a `GL_SSECT` lump (V2, V3, or V5 layout) into [`GlSubsector`] runs.
+///
+/// Each subsector names a contiguous run of `GL_SEGS` as `first..first + count`.
+/// Record widths and field types are version-dependent (all little-endian):
+///
+/// - **V2:** 4-byte records — `u16 count, u16 first`.
+/// - **V3/V5:** 8-byte records (byte-identical, one decode path) — `i32 count,
+///   i32 first` (gzdoom `gl3_mapsubsector_t`; values are non-negative).
+///
+/// The lump passed here holds **pure records** — V3's 4-byte `gNd3` header is
+/// stripped by the caller before this function is reached (mirroring
+/// [`decode_gl_segs`]); this decoder never sees a magic.
+///
+/// Each run is range-checked against `seg_count` using the same semantics as the
+/// classic subsector normalizer (`normalize_bsp` in
+/// [`assemble`](crate::map::assemble)): in range → `first..first + count`; out of
+/// range → strict error / lenient clamp (`first.min(seg_count)..seg_count`) plus a
+/// [`MapWarning::DanglingReference`].
+///
+/// Bounded and panic-safe: iterates fixed-size chunks (`chunks_exact`), so memory
+/// use is `O(bytes.len())` with no capacity taken from an untrusted count.
+///
+/// # Errors
+///
+/// Returns [`MapAssembleError::Records`] (fatal in **both** strictness modes,
+/// matching [`decode_gl_segs`]) when `bytes.len()` is not an exact multiple of the
+/// version's record width (a partial trailing record). Returns
+/// [`MapAssembleError::DanglingReference`] from an out-of-range seg run in strict
+/// mode.
+///
+/// Not yet called outside tests: assembly wiring lands in a later task (#324), so
+/// `dead_code` is explicitly allowed here until that call site lands.
+#[allow(dead_code)]
+pub(crate) fn decode_gl_subsectors(
+    bytes: &[u8],
+    ver: GlVersion,
+    seg_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<GlSubsector>, MapAssembleError> {
+    // VERIFIED gzdoom glnodes.cpp: V2 subsector = 4 bytes (u16,u16),
+    // V3/V5 subsector = 8 bytes (i32,i32).
+    let record_size = match ver {
+        GlVersion::V2 => 4,
+        GlVersion::V3 | GlVersion::V5 => 8,
+    };
+
+    if !bytes.len().is_multiple_of(record_size) {
+        return Err(MapAssembleError::Records {
+            lump: "GL_SSECT",
+            source: MapParseError::TrailingBytes {
+                offset: (bytes.len() / record_size * record_size) as u64,
+            },
+        });
+    }
+
+    // `seg_count` never exceeds `isize::MAX`, so it fits `i64` losslessly; the
+    // whole range check runs in `i64` so a malformed negative V3/V5 field is
+    // treated as out of range rather than wrapping through `usize`.
+    let seg_count_i = i64::try_from(seg_count).unwrap_or(i64::MAX);
+    let mut subsectors = Vec::with_capacity(bytes.len() / record_size);
+    for c in bytes.chunks_exact(record_size) {
+        let (count, first): (i64, i64) = match ver {
+            GlVersion::V2 => (
+                i64::from(u16::from_le_bytes([c[0], c[1]])),
+                i64::from(u16::from_le_bytes([c[2], c[3]])),
+            ),
+            GlVersion::V3 | GlVersion::V5 => (
+                i64::from(i32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+                i64::from(i32::from_le_bytes([c[4], c[5], c[6], c[7]])),
+            ),
+        };
+        let end = first + count; // first, count <= i32::MAX, so the sum fits i64.
+        let range = if first >= 0 && count >= 0 && end <= seg_count_i {
+            // Both bounds are non-negative and <= seg_count <= isize::MAX here.
+            usize::try_from(first).unwrap_or(0)..usize::try_from(end).unwrap_or(0)
+        } else {
+            // Mirror the classic subsector normalizer's out-of-range handling.
+            let index = i32::try_from(end).unwrap_or(i32::MAX);
+            match strictness {
+                Strictness::Strict => {
+                    return Err(MapAssembleError::DanglingReference {
+                        referent: "gl seg",
+                        index,
+                        from: "gl subsector",
+                        count: seg_count,
+                    });
+                }
+                Strictness::Lenient => {
+                    warnings.push(MapWarning::DanglingReference {
+                        referent: "gl seg",
+                        index,
+                        from: "gl subsector",
+                        count: seg_count,
+                    });
+                    let clamped_first =
+                        usize::try_from(first.clamp(0, seg_count_i)).unwrap_or(0);
+                    clamped_first..seg_count
+                }
+            }
+        };
+        subsectors.push(GlSubsector { segs: range });
+    }
+
+    Ok(subsectors)
+}
+
+/// Resolves one `GL_NODES` child word into a [`GlNodeChild`].
+///
+/// `flag`/`mask` carry the version's subsector-leaf convention: `flag` set →
+/// a subsector leaf whose index is `raw & mask`; `flag` clear → an interior node
+/// whose index is the whole `raw`. Both branches share [`resolve_required`]'s
+/// range-check discipline, mirroring `resolve_node_child` /
+/// `resolve_deepbsp_child` in [`assemble`](crate::map::assemble) /
+/// [`deepbsp`](crate::map::deepbsp).
+fn resolve_gl_node_child(
+    raw: u32,
+    flag: u32,
+    mask: u32,
+    node_count: usize,
+    subsector_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<GlNodeChild, MapAssembleError> {
+    if raw & flag == 0 {
+        // Node index: `raw` has the flag bit clear, so it fits `i32` losslessly
+        // for every width used here (u16 always; u32 <= 0x7FFF_FFFF).
+        let index = i32::try_from(raw).unwrap_or(i32::MAX);
+        Ok(GlNodeChild::Node(GlNodeIdx(resolve_required(
+            index,
+            node_count,
+            "gl node",
+            "gl node",
+            strictness,
+            warnings,
+        )?)))
+    } else {
+        let index = i32::try_from(raw & mask).unwrap_or(i32::MAX);
+        Ok(GlNodeChild::Subsector(GlSubsectorIdx(resolve_required(
+            index,
+            subsector_count,
+            "gl subsector",
+            "gl node",
+            strictness,
+            warnings,
+        )?)))
+    }
+}
+
+/// Assembles one [`GlNode`] from decoded partition/bbox fields and raw child
+/// words, resolving both children against the node/subsector counts.
+///
+/// Field, bbox (`[top, bottom, left, right]`), and child (right/front before
+/// left/back) ordering mirror the classic `common::Node` → `MapNode` mapping in
+/// `normalize_bsp`. `flag`/`mask` are the version's child convention.
+#[allow(clippy::too_many_arguments)]
+fn build_gl_node(
+    x: i16,
+    y: i16,
+    dx: i16,
+    dy: i16,
+    right_bbox: [i16; 4],
+    left_bbox: [i16; 4],
+    right_raw: u32,
+    left_raw: u32,
+    flag: u32,
+    mask: u32,
+    node_count: usize,
+    subsector_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<GlNode, MapAssembleError> {
+    let right = resolve_gl_node_child(
+        right_raw,
+        flag,
+        mask,
+        node_count,
+        subsector_count,
+        strictness,
+        warnings,
+    )?;
+    let left = resolve_gl_node_child(
+        left_raw,
+        flag,
+        mask,
+        node_count,
+        subsector_count,
+        strictness,
+        warnings,
+    )?;
+    Ok(GlNode {
+        x: i32::from(x),
+        y: i32::from(y),
+        dx: i32::from(dx),
+        dy: i32::from(dy),
+        right_bbox: right_bbox.map(i32::from),
+        left_bbox: left_bbox.map(i32::from),
+        right,
+        left,
+    })
+}
+
+/// Decodes a `GL_NODES` lump (V2, V3, or V5 layout) into [`GlNode`] records.
+///
+/// The partition line (`x`, `y`, `dx`, `dy`), the two child bounding boxes
+/// (`[top, bottom, left, right]`), and the right-then-left child order all mirror
+/// [`MapNode`](crate::map::graph::MapNode). Record widths and the child-index
+/// convention are version-dependent (all little-endian):
+///
+/// - **V2/V3:** 28-byte records, **byte-identical to the classic Doom `NODES`
+///   record** — decoded by reusing [`parse_records`] over
+///   [`common::Node`](crate::map::common::Node). Children are `u16`; bit `0x8000`
+///   set selects a subsector leaf (index `child & 0x7FFF`).
+/// - **V5:** 32-byte records (gzdoom `gl5_mapnode_t`) — `i16 x,y,dx,dy`, two
+///   `i16[4]` bboxes, then `u32 right_child, u32 left_child`; bit `0x8000_0000`
+///   set selects a subsector leaf (index `child & 0x7FFF_FFFF`).
+///
+/// Children are resolved against the self-count of node records in this lump and
+/// the supplied `subsector_count`, using the same [`resolve_required`] discipline
+/// as `resolve_node_child`: in range → the typed child; out of range → strict
+/// error / lenient clamp-to-0 plus a [`MapWarning::DanglingReference`].
+///
+/// Bounded and panic-safe: V2/V3 goes through [`parse_records`] and V5 iterates
+/// fixed-size chunks (`chunks_exact`), so memory use is `O(bytes.len())` with no
+/// capacity taken from an untrusted count.
+///
+/// # Errors
+///
+/// Returns [`MapAssembleError::Records`] (fatal in **both** strictness modes,
+/// matching [`decode_gl_segs`]) when `bytes.len()` is not an exact multiple of the
+/// version's record width (a partial trailing record). Returns
+/// [`MapAssembleError::DanglingReference`] from an out-of-range child in strict
+/// mode.
+///
+/// Not yet called outside tests: assembly wiring lands in a later task (#324), so
+/// `dead_code` is explicitly allowed here until that call site lands.
+#[allow(dead_code)]
+pub(crate) fn decode_gl_nodes(
+    bytes: &[u8],
+    ver: GlVersion,
+    subsector_count: usize,
+    strictness: Strictness,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<Vec<GlNode>, MapAssembleError> {
+    match ver {
+        // V2/V3 GL_NODES is byte-identical to the classic 28-byte NODES record,
+        // so reuse `common::Node` rather than re-deriving the layout.
+        GlVersion::V2 | GlVersion::V3 => {
+            // VERIFIED gzdoom glnodes.cpp: V2/V3 child flag NF_SUBSECTOR = 0x8000,
+            // index mask = 0x7FFF.
+            const FLAG_16: u32 = 0x8000;
+            const MASK_16: u32 = 0x7FFF;
+            let raw: Vec<ClassicNode> = parse_records(bytes).map_err(|source| {
+                MapAssembleError::Records {
+                    lump: "GL_NODES",
+                    source,
+                }
+            })?;
+            let node_count = raw.len();
+            let mut nodes = Vec::with_capacity(node_count);
+            for nd in raw {
+                nodes.push(build_gl_node(
+                    nd.x,
+                    nd.y,
+                    nd.dx,
+                    nd.dy,
+                    nd.right_bbox,
+                    nd.left_bbox,
+                    u32::from(nd.right_child),
+                    u32::from(nd.left_child),
+                    FLAG_16,
+                    MASK_16,
+                    node_count,
+                    subsector_count,
+                    strictness,
+                    warnings,
+                )?);
+            }
+            Ok(nodes)
+        }
+        GlVersion::V5 => {
+            // VERIFIED gzdoom glnodes.cpp gl5_mapnode_t: 32-byte record.
+            const RECORD_SIZE: usize = 32;
+            // VERIFIED gzdoom glnodes.cpp: V5 child flag GL5_NF_SUBSECTOR =
+            // 0x8000_0000, index mask = 0x7FFF_FFFF.
+            const FLAG_32: u32 = 0x8000_0000;
+            const MASK_32: u32 = 0x7FFF_FFFF;
+            if !bytes.len().is_multiple_of(RECORD_SIZE) {
+                return Err(MapAssembleError::Records {
+                    lump: "GL_NODES",
+                    source: MapParseError::TrailingBytes {
+                        offset: (bytes.len() / RECORD_SIZE * RECORD_SIZE) as u64,
+                    },
+                });
+            }
+            let node_count = bytes.len() / RECORD_SIZE;
+            let rd_i16 = |c: &[u8], off: usize| i16::from_le_bytes([c[off], c[off + 1]]);
+            let mut nodes = Vec::with_capacity(node_count);
+            for c in bytes.chunks_exact(RECORD_SIZE) {
+                let x = rd_i16(c, 0);
+                let y = rd_i16(c, 2);
+                let dx = rd_i16(c, 4);
+                let dy = rd_i16(c, 6);
+                let right_bbox = [rd_i16(c, 8), rd_i16(c, 10), rd_i16(c, 12), rd_i16(c, 14)];
+                let left_bbox = [rd_i16(c, 16), rd_i16(c, 18), rd_i16(c, 20), rd_i16(c, 22)];
+                let right_raw = u32::from_le_bytes([c[24], c[25], c[26], c[27]]);
+                let left_raw = u32::from_le_bytes([c[28], c[29], c[30], c[31]]);
+                nodes.push(build_gl_node(
+                    x,
+                    y,
+                    dx,
+                    dy,
+                    right_bbox,
+                    left_bbox,
+                    right_raw,
+                    left_raw,
+                    FLAG_32,
+                    MASK_32,
+                    node_count,
+                    subsector_count,
+                    strictness,
+                    warnings,
+                )?);
+            }
+            Ok(nodes)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{GlVersion, decode_gl_segs, decode_gl_vertices, detect_gl_version};
+    use super::{
+        GlVersion, decode_gl_nodes, decode_gl_segs, decode_gl_subsectors, decode_gl_vertices,
+        detect_gl_version,
+    };
     use crate::Strictness;
     use crate::map::MapParseError;
     use crate::map::assemble::MapAssembleError;
     use crate::map::graph::{
-        GlSegIdx, GlVertexIdx, GlVertexRef, LinedefIdx, MapWarning, VertexIdx,
+        GlNodeChild, GlNodeIdx, GlSegIdx, GlSubsectorIdx, GlVertexIdx, GlVertexRef, LinedefIdx,
+        MapWarning, VertexIdx,
     };
 
     #[test]
@@ -668,6 +1005,263 @@ mod tests {
             w.as_slice(),
             [MapWarning::DanglingReference {
                 referent: "vertex",
+                ..
+            }]
+        ));
+    }
+
+    // ---- GL_SSECT ----
+
+    /// Builds a single 4-byte V2 `GL_SSECT` record (`u16 count, u16 first`).
+    fn v2_ssect(count: u16, first: u16) -> Vec<u8> {
+        let mut b = Vec::with_capacity(4);
+        b.extend_from_slice(&count.to_le_bytes());
+        b.extend_from_slice(&first.to_le_bytes());
+        b
+    }
+
+    /// Builds a single 8-byte V3/V5 `GL_SSECT` record (`i32 count, i32 first`).
+    fn v3_ssect(count: i32, first: i32) -> Vec<u8> {
+        let mut b = Vec::with_capacity(8);
+        b.extend_from_slice(&count.to_le_bytes());
+        b.extend_from_slice(&first.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn v2_ssect_run_resolves() {
+        let bytes = v2_ssect(3, 0);
+        let mut w = Vec::new();
+        let ss = decode_gl_subsectors(&bytes, GlVersion::V2, 3, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(ss.len(), 1);
+        assert_eq!(ss[0].segs, 0..3);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v3_and_v5_ssect_are_byte_identical() {
+        // 8-byte record; first=2, count=4 -> 2..6 against seg_count 6.
+        let bytes = v3_ssect(4, 2);
+        for ver in [GlVersion::V3, GlVersion::V5] {
+            let mut w = Vec::new();
+            let ss = decode_gl_subsectors(&bytes, ver, 6, Strictness::Strict, &mut w).unwrap();
+            assert_eq!(ss.len(), 1);
+            assert_eq!(ss[0].segs, 2..6);
+            assert!(w.is_empty());
+        }
+    }
+
+    #[test]
+    fn ssect_bad_length_is_framing_error() {
+        // 6 bytes: not a whole multiple of the 4-byte V2 record.
+        let bytes = vec![0u8; 6];
+        for strictness in [Strictness::Strict, Strictness::Lenient] {
+            let err =
+                decode_gl_subsectors(&bytes, GlVersion::V2, 4, strictness, &mut Vec::new())
+                    .unwrap_err();
+            assert!(matches!(
+                err,
+                MapAssembleError::Records {
+                    lump: "GL_SSECT",
+                    source: MapParseError::TrailingBytes { offset: 4 },
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn ssect_out_of_range_run_strict_errors_lenient_clamps() {
+        // count 5 from first 0 overruns the 2 available segs.
+        let bytes = v2_ssect(5, 0);
+        let err = decode_gl_subsectors(&bytes, GlVersion::V2, 2, Strictness::Strict, &mut Vec::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "gl seg",
+                from: "gl subsector",
+                ..
+            }
+        ));
+
+        let mut w = Vec::new();
+        let ss =
+            decode_gl_subsectors(&bytes, GlVersion::V2, 2, Strictness::Lenient, &mut w).unwrap();
+        // Lenient clamp mirrors the classic normalizer: first.min(seg_count)..seg_count.
+        assert_eq!(ss[0].segs, 0..2);
+        assert!(matches!(
+            w.as_slice(),
+            [MapWarning::DanglingReference {
+                referent: "gl seg",
+                from: "gl subsector",
+                ..
+            }]
+        ));
+    }
+
+    // ---- GL_NODES ----
+
+    /// Builds a single 28-byte V2/V3 `GL_NODES` record (byte-identical to the
+    /// classic Doom `NODES` record; `u16` children).
+    #[allow(clippy::too_many_arguments)]
+    fn v2_node(
+        x: i16,
+        y: i16,
+        dx: i16,
+        dy: i16,
+        right_bbox: [i16; 4],
+        left_bbox: [i16; 4],
+        right_child: u16,
+        left_child: u16,
+    ) -> Vec<u8> {
+        let mut b = Vec::with_capacity(28);
+        for v in [x, y, dx, dy] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in right_bbox.into_iter().chain(left_bbox) {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(&right_child.to_le_bytes());
+        b.extend_from_slice(&left_child.to_le_bytes());
+        b
+    }
+
+    /// Builds a single 32-byte V5 `GL_NODES` record (`u32` children).
+    #[allow(clippy::too_many_arguments)]
+    fn v5_node(
+        x: i16,
+        y: i16,
+        dx: i16,
+        dy: i16,
+        right_bbox: [i16; 4],
+        left_bbox: [i16; 4],
+        right_child: u32,
+        left_child: u32,
+    ) -> Vec<u8> {
+        let mut b = Vec::with_capacity(32);
+        for v in [x, y, dx, dy] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in right_bbox.into_iter().chain(left_bbox) {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(&right_child.to_le_bytes());
+        b.extend_from_slice(&left_child.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn v5_node_children_and_fields() {
+        // node0 under test; nodes 1 and 2 are filler pointing at subsector 0.
+        let mut bytes = v5_node(
+            1,
+            -2,
+            3,
+            -4,
+            [10, -20, -30, 40],
+            [50, 60, 70, 80],
+            0x8000_0001, // VERIFIED leaf: bit31 set -> Subsector(1)
+            0x0000_0002, // interior: bit31 clear -> Node(2)
+        );
+        bytes.extend(v5_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000_0000, 0x8000_0000));
+        bytes.extend(v5_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000_0000, 0x8000_0000));
+        let mut w = Vec::new();
+        // subsector_count 2, node self-count 3.
+        let nodes = decode_gl_nodes(&bytes, GlVersion::V5, 2, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0].x, 1);
+        assert_eq!(nodes[0].y, -2);
+        assert_eq!(nodes[0].dx, 3);
+        assert_eq!(nodes[0].dy, -4);
+        assert_eq!(nodes[0].right_bbox, [10, -20, -30, 40]);
+        assert_eq!(nodes[0].left_bbox, [50, 60, 70, 80]);
+        assert_eq!(nodes[0].right, GlNodeChild::Subsector(GlSubsectorIdx(1)));
+        assert_eq!(nodes[0].left, GlNodeChild::Node(GlNodeIdx(2)));
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn v2_and_v3_node_children_and_fields() {
+        // right leaf (0x8000 -> Subsector 0), left interior (0x0000 -> Node 0).
+        let bytes = v2_node(
+            5,
+            6,
+            -7,
+            8,
+            [100, -100, -50, 50],
+            [1, 2, 3, 4],
+            0x8000, // VERIFIED leaf: bit15 set -> Subsector(0)
+            0x0000, // interior: bit15 clear -> Node(0)
+        );
+        for ver in [GlVersion::V2, GlVersion::V3] {
+            let mut w = Vec::new();
+            let nodes = decode_gl_nodes(&bytes, ver, 1, Strictness::Strict, &mut w).unwrap();
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].x, 5);
+            assert_eq!(nodes[0].y, 6);
+            assert_eq!(nodes[0].dx, -7);
+            assert_eq!(nodes[0].dy, 8);
+            assert_eq!(nodes[0].right_bbox, [100, -100, -50, 50]);
+            assert_eq!(nodes[0].left_bbox, [1, 2, 3, 4]);
+            assert_eq!(nodes[0].right, GlNodeChild::Subsector(GlSubsectorIdx(0)));
+            assert_eq!(nodes[0].left, GlNodeChild::Node(GlNodeIdx(0)));
+            assert!(w.is_empty());
+        }
+    }
+
+    #[test]
+    fn node_bad_length_is_framing_error() {
+        // 15 bytes: not a whole multiple of the 28-byte V2 record.
+        let bytes = vec![0u8; 15];
+        for strictness in [Strictness::Strict, Strictness::Lenient] {
+            let err =
+                decode_gl_nodes(&bytes, GlVersion::V2, 1, strictness, &mut Vec::new()).unwrap_err();
+            assert!(matches!(
+                err,
+                MapAssembleError::Records {
+                    lump: "GL_NODES",
+                    source: MapParseError::TrailingBytes { offset: 0 },
+                }
+            ));
+        }
+        // V5's 32-byte record: 40 bytes leaves a 8-byte partial tail.
+        let bytes = vec![0u8; 40];
+        let err =
+            decode_gl_nodes(&bytes, GlVersion::V5, 1, Strictness::Strict, &mut Vec::new())
+                .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::Records {
+                lump: "GL_NODES",
+                source: MapParseError::TrailingBytes { offset: 32 },
+            }
+        ));
+    }
+
+    #[test]
+    fn node_dangling_child_strict_errors_lenient_clamps() {
+        // left_child Node(5) overruns the single node in the lump.
+        let bytes = v2_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000, 0x0005);
+        let err = decode_gl_nodes(&bytes, GlVersion::V2, 1, Strictness::Strict, &mut Vec::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "gl node",
+                from: "gl node",
+                ..
+            }
+        ));
+
+        let mut w = Vec::new();
+        let nodes = decode_gl_nodes(&bytes, GlVersion::V2, 1, Strictness::Lenient, &mut w).unwrap();
+        // Lenient resolve_required clamps to index 0.
+        assert_eq!(nodes[0].left, GlNodeChild::Node(GlNodeIdx(0)));
+        assert!(matches!(
+            w.as_slice(),
+            [MapWarning::DanglingReference {
+                referent: "gl node",
+                from: "gl node",
                 ..
             }]
         ));
