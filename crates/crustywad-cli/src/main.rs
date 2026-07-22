@@ -1059,17 +1059,17 @@ fn run(cli: Cli) -> Result<i32> {
             // A `--map NAME` that matches nothing is a usage error: without this
             // the command would happily write a verbatim copy of the input and
             // report "converted 0 maps", making a typo look like success.
-            if let Some(name) = map.as_deref() {
-                if !groups.iter().any(|g| g.name == name) {
-                    eprintln!("error: map {name:?} not found in {}", input.display());
-                    if groups.is_empty() {
-                        eprintln!("note: {} contains no maps", input.display());
-                    } else {
-                        let available: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
-                        eprintln!("note: available maps: {}", available.join(", "));
-                    }
-                    return Ok(3);
+            if let Some(name) = map.as_deref()
+                && !groups.iter().any(|g| g.name == name)
+            {
+                eprintln!("error: map {name:?} not found in {}", input.display());
+                if groups.is_empty() {
+                    eprintln!("note: {} contains no maps", input.display());
+                } else {
+                    let available: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+                    eprintln!("note: available maps: {}", available.join(", "));
                 }
+                return Ok(3);
             }
 
             // Directory index -> the group that starts there, for the groups we

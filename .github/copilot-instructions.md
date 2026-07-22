@@ -2,7 +2,7 @@
 
 ## Project overview
 
-`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is dual-licensed under MIT OR Apache-2.0.
+`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.94.0 and is dual-licensed under MIT OR Apache-2.0.
 
 The repository currently implements:
 - Safe WAD header and lump-directory reading, plus typed scaffolding for classic Doom map-record lumps (`THINGS`, `LINEDEFS`, `SIDEDEFS`, `VERTEXES`, `SEGS`, `SSECTORS`, `NODES`, `SECTORS`)
@@ -80,7 +80,7 @@ Install [just](https://github.com/casey/just) then run these recipes:
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
-**Match your local toolchain to CI.** CI's Rust jobs install the current `stable` toolchain via `dtolnay/rust-toolchain` (the `msrv` job pins Rust 1.85.0 instead), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version — with a stale local toolchain these checks can pass locally yet fail in CI on the same code. Run `rustup update stable` before trusting a local pass, and treat `gh pr checks` (all required checks green on the PR) as the source of truth, not local results.
+**Match your local toolchain to CI.** CI's Rust jobs install the current `stable` toolchain via `dtolnay/rust-toolchain` (the `msrv` job pins Rust 1.94.0 instead), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version — with a stale local toolchain these checks can pass locally yet fail in CI on the same code. Run `rustup update stable` before trusting a local pass, and treat `gh pr checks` (all required checks green on the PR) as the source of truth, not local results.
 
 Core Rust commands run by CI:
 
@@ -234,7 +234,7 @@ The main CI pipeline (`.github/workflows/ci.yml`) runs:
 - `fmt` — formatting check
 - `clippy` — lint check
 - `test` — test matrix on ubuntu, macos, windows
-- `msrv` — MSRV build + test (Rust 1.85.0)
+- `msrv` — MSRV build + test (Rust 1.94.0)
 - `docs` — doc build with `-D warnings`
 - `coverage` — llvm-cov upload to Codecov
 - `security-deny` — `cargo deny check`

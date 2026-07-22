@@ -2,7 +2,7 @@
 
 ## Project overview
 
-`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.85.0 and is dual-licensed under MIT OR Apache-2.0.
+`crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.94.0 and is dual-licensed under MIT OR Apache-2.0.
 
 **Current state:** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, WAD serialization (`write` feature), zero-copy memory-mapped loading (`mmap` feature), a `cwad` CLI with `info`/`list`/`validate`/`merge`/`diff`/`extract`/`convert`/`build` subcommands, `cargo-fuzz` targets, and Criterion benchmarking infrastructure.
 
@@ -86,7 +86,7 @@ Install [just](https://github.com/casey/just), then:
 
 **Always run `just ci` before pushing.** It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
 
-**Match your local toolchain to CI, and treat CI as the source of truth.** CI's Rust jobs install the current `stable` toolchain via `dtolnay/rust-toolchain` (the `msrv` job pins Rust 1.85.0 instead), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version. A lagging local toolchain can make `just ci` pass locally while CI's `fmt`/`clippy` fail on the same code — run `rustup update stable` before trusting a local pass. A change is not green until `gh pr checks` shows every required check passing on the PR; local results are a fast pre-filter, not the verdict.
+**Match your local toolchain to CI, and treat CI as the source of truth.** CI's Rust jobs install the current `stable` toolchain via `dtolnay/rust-toolchain` (the `msrv` job pins Rust 1.94.0 instead), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version. A lagging local toolchain can make `just ci` pass locally while CI's `fmt`/`clippy` fail on the same code — run `rustup update stable` before trusting a local pass. A change is not green until `gh pr checks` shows every required check passing on the PR; local results are a fast pre-filter, not the verdict.
 
 Core Rust commands run by CI:
 
@@ -352,7 +352,7 @@ The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:
 | `fmt` | `cargo fmt --all --check` |
 | `clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` |
 | `test` | `cargo test --workspace --all-features` on ubuntu, macos, windows (no fixtures fetched; freedoom-tests are skipped unless `CRUSTYWAD_FREEDOOM_DIR` is set) |
-| `msrv` | build + test on Rust 1.85.0 |
+| `msrv` | build + test on Rust 1.94.0 |
 | `docs` | `cargo doc` with `RUSTDOCFLAGS=-D warnings` |
 | `coverage` | `cargo llvm-cov` + Codecov upload |
 | `security-deny` | `cargo deny check` |

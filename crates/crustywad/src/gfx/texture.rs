@@ -473,10 +473,10 @@ impl TextureSet {
         let mut referenced = vec![false; pnames.len()];
         for def in &textures {
             for patch_ref in &def.patches {
-                if let Ok(i) = usize::try_from(patch_ref.patch) {
-                    if i < pnames.len() {
-                        referenced[i] = true;
-                    }
+                if let Ok(i) = usize::try_from(patch_ref.patch)
+                    && i < pnames.len()
+                {
+                    referenced[i] = true;
                 }
             }
         }
@@ -616,11 +616,11 @@ impl TextureSet {
                             + i32::try_from(i).unwrap_or(i32::MAX);
                         // Rows outside the canvas silently clip (vanilla
                         // R_DrawColumnInCache behavior — not an anomaly).
-                        if let Ok(yu) = usize::try_from(y) {
-                            if yu < h {
-                                pixels[yu * w + xu] = value;
-                                mask[yu * w + xu] = true;
-                            }
+                        if let Ok(yu) = usize::try_from(y)
+                            && yu < h
+                        {
+                            pixels[yu * w + xu] = value;
+                            mask[yu * w + xu] = true;
                         }
                     }
                 }

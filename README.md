@@ -8,7 +8,7 @@
 [![docs.rs](https://img.shields.io/docsrs/crustywad)](https://docs.rs/crustywad)
 [![crates.io](https://img.shields.io/crates/v/crustywad.svg)](https://crates.io/crates/crustywad)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
-[![MSRV](https://img.shields.io/badge/MSRV-1.85.0-blue)](https://www.rust-lang.org)
+[![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue)](https://www.rust-lang.org)
 
 Performant, safe, typed Doom WAD file I/O in Rust.
 
@@ -220,7 +220,7 @@ Enable the optional fixture coverage with `just test-freedoom`, or by passing `-
 
 ## MSRV
 
-The minimum supported Rust version is **1.85.0**, matching the first stable release with Rust edition 2024 support.
+The minimum supported Rust version is **1.94.0**. The project follows a rolling **N-3** MSRV policy — MSRV tracks _(latest stable Rust minor at release time) − 3_, guaranteeing builds on the last four stable Rust releases (~6 months). An MSRV raise is a minor version bump. See the [versioning guide](https://masriamir.github.io/crustywad/versioning.html#msrv-policy) for details.
 
 ## Roadmap
 

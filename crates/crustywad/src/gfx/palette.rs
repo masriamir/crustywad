@@ -35,7 +35,7 @@ impl Playpal {
     /// warns (a zero-palette result also warns) and never fails.
     pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<Self, GfxError> {
         let mut warnings = Vec::new();
-        if bytes.is_empty() || bytes.len() % 768 != 0 {
+        if bytes.is_empty() || !bytes.len().is_multiple_of(768) {
             match options.strictness {
                 Strictness::Strict => {
                     return Err(GfxError::PlaypalSize { len: bytes.len() });
@@ -96,7 +96,7 @@ impl Colormap {
     /// and never fails.
     pub fn parse(bytes: &[u8], options: &ParseOptions) -> Result<Self, GfxError> {
         let mut warnings = Vec::new();
-        if bytes.len() % 256 != 0 || bytes.len() < 8192 {
+        if !bytes.len().is_multiple_of(256) || bytes.len() < 8192 {
             match options.strictness {
                 Strictness::Strict => {
                     return Err(GfxError::ColormapSize { len: bytes.len() });

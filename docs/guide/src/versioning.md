@@ -71,7 +71,7 @@ Examples of breaking changes:
 
 ## MSRV Policy
 
-The current minimum supported Rust version (MSRV) is **1.85.0**, set via `rust-version` in
+The current minimum supported Rust version (MSRV) is **1.94.0**, set via `rust-version` in
 `Cargo.toml`. The project targets the Rust 2024 edition.
 
 Rules:
@@ -79,9 +79,16 @@ Rules:
 - **An MSRV bump is a minor version change**, never a patch. A caller pinned to the old
   compiler will fail to build after an MSRV bump, so it is treated as a backward-incompatible
   change to the build environment even though the public API is unchanged.
-- **MSRV bumps are need-driven.** The MSRV will only be raised when there is a concrete need
-  (for example, a required dependency or language feature), and only to a toolchain version
-  that has been stable for a reasonable period.
+- **Rolling N-3 target.** The MSRV tracks a bounded window: at each release it is
+  **(latest stable Rust minor at release time) − 3**, so the crates are guaranteed to build on
+  the **last four stable Rust releases** (roughly the most recent six months). This replaces the
+  former need-driven policy — the window makes the compatibility promise explicit rather than
+  leaving it implicit, and keeps the toolchain modern enough for the current dependency
+  ecosystem.
+- **Revisited each release.** The MSRV is reviewed at every release and raised when the rolling
+  window advances, or earlier when a required dependency or language feature demands a newer
+  toolchain. Raising it stays a **minor** version bump (see the first rule); dropping support for
+  releases below the new floor is the deliberate, semver-signaled cost of a bounded window.
 - **CI enforces the declared MSRV.** The `msrv` job in CI builds and tests the workspace on
   the declared MSRV on every PR. The toolchain version is pinned explicitly in
   `.github/workflows/ci.yml` and does not auto-track `[workspace.package].rust-version`. A

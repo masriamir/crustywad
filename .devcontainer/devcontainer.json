@@ -1,6 +1,6 @@
 {
   "name": "crustywad",
-  "image": "mcr.microsoft.com/devcontainers/rust:1-1.85-bullseye",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
   "postCreateCommand": "cargo install --locked just cargo-llvm-cov cargo-deny cargo-lefthook",
   "postStartCommand": "cargo lefthook install",
   "customizations": {

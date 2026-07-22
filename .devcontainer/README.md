@@ -5,17 +5,24 @@ Provides a consistent Rust development environment for VS Code and GitHub Codesp
 ## Base image
 
 ```
-mcr.microsoft.com/devcontainers/rust:1-1.85-bullseye
+mcr.microsoft.com/devcontainers/rust:1-bookworm
 ```
 
-The tag `1-1.85-bullseye` tracks Rust 1.85.x (the project MSRV) on Debian Bullseye. It is a
-floating tag maintained by Microsoft and receives security patches without requiring a tag bump.
-The `1-1.85` prefix ensures that minor Rust updates within the 1.85 series are picked up, but
-a major upgrade (e.g., to 1.86) requires an explicit tag change here and in `devcontainer.json`.
+`1-bookworm` is a floating tag (devcontainer image v1 on Debian 12 "Bookworm"), maintained by
+Microsoft, that receives security and toolchain updates without a tag bump. What the tag encodes
+is the **devcontainer image version and the Debian base** — it does not select a specific Rust
+minor. The image ships a recent stable Rust toolchain that tracks ahead of the project MSRV, so it
+satisfies the rolling N-3 floor without any pin.
 
-**When to update the tag:** bump the tag here and in `devcontainer.json` when the project MSRV
-is raised. Pin to a digest (`@sha256:…`) in the image field if you need fully reproducible
-builds; the floating tag is intentional for this development container.
+**Rust toolchain:** the image ships a recent stable Rust that should sit comfortably above the
+project's rolling N-3 MSRV floor — but because `1-bookworm` is a floating tag, treat that as an
+expectation, not a hard guarantee. For a strictly pinned or reproducible toolchain, add a
+`rust-toolchain.toml` or the `ghcr.io/devcontainers/features/rust` feature — the image tag itself
+does not select a Rust version.
+
+**When to update the tag:** only to change the Debian base (e.g. a future `1-trixie`) or the
+devcontainer image major version — **not** when the MSRV is raised, since the tag carries no Rust
+version. Pin to a digest (`@sha256:…`) in the image field if you need fully reproducible builds.
 
 ## Tools installed on creation
 

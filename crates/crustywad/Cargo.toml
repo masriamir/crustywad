@@ -51,7 +51,7 @@ png = { version = "0.18.1", optional = true, default-features = false }
 thiserror.workspace = true
 
 [dev-dependencies]
-criterion = { version = "0.7", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 # Used by the `extended_nodes` integration test to build zlib-compressed `Z*`
 # fixtures for the `extended-nodes-zlib` decode-path tests. Always present (dev
 # builds only); the test bodies that use it are `#[cfg(feature = ...)]`-gated.
