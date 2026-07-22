@@ -503,13 +503,33 @@ one gates the whole BSP normalization step — strict mode fails with
 `MapAssembleError::UnsupportedNodeEncoding`; lenient mode leaves `map.segs()`, `map.subsectors()`,
 and `map.nodes()` empty and records one `MapWarning::UnsupportedNodeEncoding` for the gated lump
 (a map's extended stream lives in a single lump, so assembly stops at the first signature it finds
-and warns once). DeePBSP's `xNd4` is not yet detected as an extended encoding on the **binary**
-`NODES`/`SSECTORS` path: a lump beginning with that tag falls through to the classic record
-decoder rather than tripping this gate, pending a later stage
-([#328](https://github.com/masriamir/crustywad/issues/328)). On the UDMF `ZNODES` path there is no
-classic decoder to fall through to, so any unrecognized tag there (including `xNd4`) is gated —
-strict error, or lenient warning with empty BSP arenas. The staged extended-node design lives
-under the [#199](https://github.com/masriamir/crustywad/issues/199) umbrella; see ADR-0025.
+and warns once).
+
+**DeePBSP v4 (`xNd4`)** is decoded on the **binary** `SEGS`/`SSECTORS`/`NODES` path
+([#328](https://github.com/masriamir/crustywad/issues/328)). It is a *classic-widened* node
+format, not a ZDoom extended variant: it keeps the three separate `SEGS`/`SSECTORS`/`NODES` lumps
+but widens the records to 32-bit vertex/seg/child indices, and heads its `NODES` lump with an
+8-byte `xNd4\0\0\0\0` signature (distinct from the 4-byte `X*`/`Z*` signatures). Assembly detects
+that 8-byte signature **first** — ahead of the 4-byte extended-signature check — and decodes the
+three lumps into the same `segs()`/`subsectors()`/`nodes()` arenas. DeePBSP adds no new vertices
+(the map's `VERTEXES` lump is used unchanged) and has no minisegs (every seg is linedef-backed). A
+`NODES` lump **without** the `xNd4` signature falls through to the 4-byte extended check, then to
+the classic decoder, unchanged.
+
+DeePBSP's malformed-input contract differs from the ZDoom readers' **by design**: a
+structurally-malformed DeePBSP lump — records whose length is not a whole multiple of the record
+size, or a `NODES` lump shorter than its 8-byte signature — is a hard `MapAssembleError::Records`
+in **both** strictness modes, mirroring the classic `SEGS`/`SSECTORS`/`NODES` path DeePBSP
+structurally resembles. Lenient recovery still applies to *cross-references* (an out-of-range
+vertex, linedef, or child index clamps and warns, and a reference into an empty arena degrades the
+whole BSP to empty with one warning), but not to unparseable bytes. This is unlike the ZDoom
+`X*`/`Z*` readers, whose whole self-describing stream degrades to empty on any structural fault in
+lenient mode.
+
+On the UDMF `ZNODES` path there is no classic decoder to fall through to, so any unrecognized tag
+there (including `xNd4`, which never legitimately appears in UDMF) is gated — strict error, or
+lenient warning with empty BSP arenas. The staged extended-node design lives under the
+[#199](https://github.com/masriamir/crustywad/issues/199) umbrella; see ADR-0025.
 
 The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent

@@ -30,6 +30,9 @@ jobs:
       - name: Fuzz fuzz_extended_nodes
         run: cargo fuzz run fuzz_extended_nodes -- -max_total_time=60
         working-directory: fuzz
+      - name: Fuzz fuzz_deepbsp
+        run: cargo fuzz run fuzz_deepbsp -- -max_total_time=60
+        working-directory: fuzz
       - name: Fuzz fuzz_parse_udmf
         run: cargo fuzz run fuzz_parse_udmf -- -max_total_time=60
         working-directory: fuzz

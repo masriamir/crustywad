@@ -1,5 +1,6 @@
 //! Assembling normalized [`Map`]s from a WAD's flat records (ADR-0015 §3–5).
 
+use crate::map::deepbsp::{decode_deepbsp, is_deepbsp};
 use crate::map::doom64::Doom64TextureNames;
 #[cfg(feature = "extended-nodes-zlib")]
 use crate::map::extended::decode_compressed_extended_nodes;
@@ -85,9 +86,12 @@ pub enum MapAssembleError {
     /// extended node-encoding signature this build cannot decode (strict mode).
     /// The uncompressed `X*` family always decodes into the BSP arenas (#326);
     /// the compressed `Z*` twins decode only with the `extended-nodes-zlib`
-    /// feature (#327) and otherwise gate here; any other signature (e.g.
-    /// `DeePBSP`'s `xNd4`, #328) is unsupported. The classic record decoder must never
-    /// misread a gated stream as garbage classic records.
+    /// feature (#327) and otherwise gate here; any other 4-byte signature is
+    /// unsupported. `DeePBSP`'s `xNd4` is decoded on the binary path (its 8-byte
+    /// signature is detected ahead of this 4-byte gate, #328), but on the UDMF
+    /// `ZNODES` path — where `DeePBSP` never legitimately appears — an `xNd4`
+    /// tag is an unrecognized signature and gates here. The classic record
+    /// decoder must never misread a gated stream as garbage classic records.
     #[error(
         "{lump} uses an unsupported extended node encoding {}",
         String::from_utf8_lossy(signature).escape_default()
@@ -739,7 +743,10 @@ impl MapBlockmap {
 /// binary formats (whose non-negative `u16` indices widen losslessly); a negative
 /// index is treated as out of range, taking the same dangling-reference path. The
 /// raw signed `index` is preserved in the diagnostic (error/warning).
-fn resolve_required(
+///
+/// `pub(crate)` so the `DeePBSP` v4 normalizer ([`crate::map::deepbsp`]) shares the
+/// exact strict-error / lenient-clamp discipline used by the classic BSP path.
+pub(crate) fn resolve_required(
     index: i32,
     count: usize,
     referent: &'static str,
@@ -1046,6 +1053,99 @@ fn resolve_node_child(
             strictness,
             warnings,
         )?)))
+    }
+}
+
+/// Assembles the classic-family BSP arenas (`SEGS`/`SSECTORS`/`NODES`) for a
+/// binary map that is **not** `DeePBSP` v4 — the caller detects and routes
+/// `xNd4` ahead of this helper.
+///
+/// This is the ZDoom-extended and classic dispatch, unchanged from its former
+/// inline form: extended node encodings (ZDBSP/GL) live in a single
+/// self-describing blob (zdbsp writes the non-GL `XNOD`/`ZNOD` into `NODES` and
+/// the GL `XGL*`/`ZGL*` family into `SSECTORS`, gzdoom
+/// `ML_ZNODES`/`ML_GLZNODES`), so at most one of the two lumps carries a 4-byte
+/// signature. An uncompressed `X*` stream is decoded in place (ADR-0025, #326);
+/// a zlib `Z*` inflates and decodes through the same parser (ADR-0025 §5, #327);
+/// a still-gated `Z*` (feature off) or unrecognized signature keeps #199's
+/// extended-encoding gate (strict refuses, lenient skips the BSP arenas and
+/// warns). Absent any signature, the classic 12/4/28-byte decoders run.
+///
+/// `vertices` is `&mut` because an extended `X*`/`Z*` stream can append GL
+/// vertices; the classic and `DeePBSP` paths append none.
+///
+/// # Errors
+///
+/// Propagates the record-decode and normalization errors of the underlying
+/// classic/extended decoders, and (strict mode) `UnsupportedNodeEncoding` for a
+/// gated signature.
+#[allow(clippy::type_complexity)]
+fn assemble_binary_bsp(
+    wad: &Wad,
+    group: &MapGroup,
+    vertices: &mut Vec<MapVertex>,
+    linedefs: &[MapLinedef],
+    options: &ParseOptions,
+    warnings: &mut Vec<MapWarning>,
+) -> Result<(Vec<MapSeg>, Vec<MapSubsector>, Vec<MapNode>), MapAssembleError> {
+    let s = options.strictness;
+    let extended = ["NODES", "SSECTORS"].into_iter().find_map(|lump| {
+        let bytes = lump_bytes(wad, group, lump)?;
+        let head: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+        EXTENDED_NODE_SIGNATURES
+            .contains(&&head)
+            .then_some((lump, head, bytes))
+    });
+    if let Some((lump, signature, bytes)) = extended {
+        match classify_signature(signature) {
+            Some((kind, NodeCompression::Uncompressed)) => {
+                let decoded = decode_extended_nodes(bytes, kind, vertices, linedefs, s, warnings)?;
+                vertices.extend(decoded.new_vertices);
+                Ok((decoded.segs, decoded.subsectors, decoded.nodes))
+            }
+            // A zlib-compressed `Z*` stream inflates to its uncompressed twin's
+            // body and decodes through the same parser, bounded by
+            // `Limits::max_decoded_node_bytes` (ADR-0025 §5, #327).
+            #[cfg(feature = "extended-nodes-zlib")]
+            Some((kind, NodeCompression::Zlib)) => {
+                let decoded = decode_compressed_extended_nodes(
+                    bytes,
+                    kind,
+                    vertices,
+                    linedefs,
+                    options.limits.max_decoded_node_bytes,
+                    s,
+                    warnings,
+                )?;
+                vertices.extend(decoded.new_vertices);
+                Ok((decoded.segs, decoded.subsectors, decoded.nodes))
+            }
+            // A `Z*` stream without the `extended-nodes-zlib` feature, and any
+            // unrecognized signature, keep #199's extended-encoding gate: strict
+            // refuses, lenient skips the BSP arenas and warns.
+            _ => match s {
+                Strictness::Strict => {
+                    Err(MapAssembleError::UnsupportedNodeEncoding { lump, signature })
+                }
+                Strictness::Lenient => {
+                    warnings.push(MapWarning::UnsupportedNodeEncoding { lump });
+                    Ok((Vec::new(), Vec::new(), Vec::new()))
+                }
+            },
+        }
+    } else {
+        let raw_segs = decode_optional::<common::Seg>(wad, group, "SEGS")?;
+        let raw_subsectors = decode_optional::<common::Subsector>(wad, group, "SSECTORS")?;
+        let raw_nodes = decode_optional::<common::Node>(wad, group, "NODES")?;
+        normalize_bsp_or_degrade(
+            &raw_segs,
+            &raw_subsectors,
+            &raw_nodes,
+            vertices.len(),
+            linedefs.len(),
+            s,
+            warnings,
+        )
     }
 }
 
@@ -1544,9 +1644,13 @@ impl Map {
     /// encoding (the zlib-wrapped `Z*` twins, #327) is
     /// [`MapAssembleError::UnsupportedNodeEncoding`] in strict mode, or skipped
     /// in lenient mode with **all three** BSP arenas left empty plus one
-    /// warning per gated lump. `DeePBSP`'s `xNd4` is not yet detected as an
-    /// extended encoding at all (#328) and falls through to the classic
-    /// record decoder instead of hitting this gate. The gate does not apply
+    /// warning per gated lump. A **classic binary** map whose `NODES` lump
+    /// begins with the 8-byte `DeePBSP` v4 signature (`xNd4`) is instead
+    /// decoded as `DeePBSP` into the BSP arenas ahead of this gate (ADR-0025
+    /// Stage 3, #328); a structurally malformed `DeePBSP` lump is a
+    /// [`MapAssembleError::Records`] in **both** strictness modes (the
+    /// framing-defect policy — `DeePBSP` mirrors the classic path it resembles,
+    /// not the `ZDoom` readers' lenient degrade). The gate does not apply
     /// to Doom 64 nested
     /// sub-lumps, whose records were already decoded by
     /// [`doom64::read_doom64_map`]. Lenient mode likewise degrades the whole
@@ -1616,79 +1720,33 @@ impl Map {
                     MapFormat::Doom64 => return assemble_doom64(wad, group, options, warnings),
                 };
 
-                // Extended node encodings (ZDBSP/GL) live in a single self-describing
-                // blob: zdbsp writes the non-GL `XNOD`/`ZNOD` into `NODES` and the GL
-                // `XGL*`/`ZGL*` family into `SSECTORS` (gzdoom `ML_ZNODES`/`ML_GLZNODES`),
-                // so at most one of the two lumps carries a signature. An uncompressed
-                // `X*` stream is decoded in place (ADR-0025, #326); a still-gated `Z*`
-                // keeps #199's extended-encoding gate: strict refuses, lenient skips the
-                // BSP arenas entirely and warns (never garbage-decode).
-                let extended = ["NODES", "SSECTORS"].into_iter().find_map(|lump| {
-                    let bytes = lump_bytes(wad, group, lump)?;
-                    let head: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
-                    EXTENDED_NODE_SIGNATURES
-                        .contains(&&head)
-                        .then_some((lump, head, bytes))
-                });
-                let (segs, subsectors, nodes) = if let Some((lump, signature, bytes)) = extended {
-                    match classify_signature(signature) {
-                        Some((kind, NodeCompression::Uncompressed)) => {
-                            let decoded = decode_extended_nodes(
-                                bytes,
-                                kind,
-                                &vertices,
-                                &linedefs,
-                                s,
-                                &mut warnings,
-                            )?;
-                            vertices.extend(decoded.new_vertices);
-                            (decoded.segs, decoded.subsectors, decoded.nodes)
-                        }
-                        // A zlib-compressed `Z*` stream inflates to its uncompressed
-                        // twin's body and decodes through the same parser, bounded by
-                        // `Limits::max_decoded_node_bytes` (ADR-0025 §5, #327).
-                        #[cfg(feature = "extended-nodes-zlib")]
-                        Some((kind, NodeCompression::Zlib)) => {
-                            let decoded = decode_compressed_extended_nodes(
-                                bytes,
-                                kind,
-                                &vertices,
-                                &linedefs,
-                                options.limits.max_decoded_node_bytes,
-                                s,
-                                &mut warnings,
-                            )?;
-                            vertices.extend(decoded.new_vertices);
-                            (decoded.segs, decoded.subsectors, decoded.nodes)
-                        }
-                        // A `Z*` stream without the `extended-nodes-zlib` feature, and
-                        // any unrecognized signature, keep #199's extended-encoding
-                        // gate: strict refuses, lenient skips the BSP arenas and warns.
-                        _ => match s {
-                            Strictness::Strict => {
-                                return Err(MapAssembleError::UnsupportedNodeEncoding {
-                                    lump,
-                                    signature,
-                                });
-                            }
-                            Strictness::Lenient => {
-                                warnings.push(MapWarning::UnsupportedNodeEncoding { lump });
-                                (Vec::new(), Vec::new(), Vec::new())
-                            }
-                        },
-                    }
-                } else {
-                    let raw_segs = decode_optional::<common::Seg>(wad, group, "SEGS")?;
-                    let raw_subsectors =
-                        decode_optional::<common::Subsector>(wad, group, "SSECTORS")?;
-                    let raw_nodes = decode_optional::<common::Node>(wad, group, "NODES")?;
-                    normalize_bsp_or_degrade(
-                        &raw_segs,
-                        &raw_subsectors,
-                        &raw_nodes,
+                // `DeePBSP` v4 (`xNd4`) is a classic-widened node format: it keeps the
+                // three separate `SEGS`/`SSECTORS`/`NODES` lumps but widens the records,
+                // and heads its `NODES` lump with an 8-byte `xNd4\0\0\0\0` signature
+                // (distinct from the 4-byte ZDoom signatures below). Detect it FIRST and
+                // decode in place (ADR-0025 Stage 3, #328); it adds no new vertices. A
+                // malformed `DeePBSP` lump is a hard `Records` error in both modes, like
+                // the classic path it structurally resembles (ADR-0025 framing-defect
+                // policy). A `NODES` lump without the `xNd4` signature falls through to
+                // the 4-byte extended check, then classic — unchanged.
+                let deepbsp_nodes = lump_bytes(wad, group, "NODES").filter(|b| is_deepbsp(b));
+                let (segs, subsectors, nodes) = if let Some(nodes_bytes) = deepbsp_nodes {
+                    decode_deepbsp(
+                        lump_bytes(wad, group, "SEGS").unwrap_or_default(),
+                        lump_bytes(wad, group, "SSECTORS").unwrap_or_default(),
+                        nodes_bytes,
                         vertices.len(),
                         linedefs.len(),
                         s,
+                        &mut warnings,
+                    )?
+                } else {
+                    assemble_binary_bsp(
+                        wad,
+                        group,
+                        &mut vertices,
+                        &linedefs,
+                        &options,
                         &mut warnings,
                     )?
                 };
