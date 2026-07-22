@@ -1223,6 +1223,35 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn seg_dangling_linedef_strict_errors_lenient_clamps() {
+        // linedef 5 is a real (non-miniseg) reference but out of range
+        // (linedef_count 1); the vertices resolve fine, so the linedef `?`
+        // propagates in strict mode and clamps to 0 (with a warning) in lenient.
+        let bytes = v2_seg(0x0000, 0x0001, 0x0005, 0x0000, 0xFFFF);
+        let err = decode_gl_segs(&bytes, GlVersion::V2, 2, 0, 1, Strictness::Strict, &mut Vec::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "linedef",
+                ..
+            }
+        ));
+
+        let mut w = Vec::new();
+        let segs =
+            decode_gl_segs(&bytes, GlVersion::V2, 2, 0, 1, Strictness::Lenient, &mut w).unwrap();
+        assert_eq!(segs[0].linedef, Some(LinedefIdx(0)));
+        assert!(matches!(
+            w.as_slice(),
+            [MapWarning::DanglingReference {
+                referent: "linedef",
+                ..
+            }]
+        ));
+    }
+
     // ---- GL_SSECT ----
 
     /// Builds a single 4-byte V2 `GL_SSECT` record (`u16 count, u16 first`).
@@ -1509,6 +1538,38 @@ mod tests {
             w.as_slice(),
             [MapWarning::DanglingReference {
                 referent: "gl node",
+                from: "gl node",
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn v5_node_dangling_subsector_child_strict_errors_lenient_clamps() {
+        // right child is a subsector (V5 flag 0x8000_0000) with index 5, but only
+        // 1 subsector exists. This drives the subsector branch of the child
+        // resolver on the V5 `build_gl_node` path (the V2/V3 dangling test above
+        // exercises only the node-child branch).
+        let bytes = v5_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000_0005, 0x0000_0000);
+        let err = decode_gl_nodes(&bytes, GlVersion::V5, 1, Strictness::Strict, &mut Vec::new())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MapAssembleError::DanglingReference {
+                referent: "gl subsector",
+                from: "gl node",
+                ..
+            }
+        ));
+
+        let mut w = Vec::new();
+        let nodes = decode_gl_nodes(&bytes, GlVersion::V5, 1, Strictness::Lenient, &mut w).unwrap();
+        // Lenient resolve_required clamps the subsector child to index 0.
+        assert_eq!(nodes[0].right, GlNodeChild::Subsector(GlSubsectorIdx(0)));
+        assert!(matches!(
+            w.as_slice(),
+            [MapWarning::DanglingReference {
+                referent: "gl subsector",
                 from: "gl node",
                 ..
             }]
