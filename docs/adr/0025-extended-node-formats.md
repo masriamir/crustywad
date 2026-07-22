@@ -359,6 +359,104 @@ now complete (Stages 1–3). This records the concrete decisions §1/§3 left op
   DeePBSP v4 (#328) node formats is done; writing (`#323`) remains a separate
   follow-up (§6).
 
+## Amendment — Classic GL nodes shipped (2026-07-22, #324)
+
+Classic GL nodes (`gNd2`…`gNd5`, the `GL_*` lumps) — explicitly **out of scope** for the
+staged #199 work (§1) and tracked as a backlog item — are now implemented. This section
+records the concrete decisions that backlog note left open.
+
+- **Separate, additive arenas — not a merge into the classic BSP.** Unlike the ZDoom
+  extended family and DeePBSP v4, which decode into the *existing* `MapSeg`/`MapSubsector`/
+  `MapNode` arenas (§2, Stage 3 amendment), classic GL nodes get their **own** arena set on
+  `Map`: `gl_vertices: Vec<GlVertex>`, `gl_segs: Vec<GlSeg>`, `gl_subsectors: Vec<GlSubsector>`,
+  `gl_nodes: Vec<GlNode>` (`map/graph.rs`), exposed read-only via `Map::gl_vertices()`/
+  `gl_segs()`/`gl_subsectors()`/`gl_nodes()`. This differs from the ZDoom/DeePBSP precedent
+  because a `GL_*` group is a genuinely *second*, independent BSP built by glBSP over the same
+  geometry — not an alternate encoding of the vanilla one — so merging it into
+  `map.segs()`/`map.nodes()` would silently discard whichever BSP didn't win, when a map can
+  legitimately ship both. `GlVertex { x: f64, y: f64 }` widens the on-disk 16.16 fixed-point
+  losslessly (`raw as f64 / 65536.0`), mirroring `MapVertex`'s `i16` widening; `GlSeg` carries a
+  `GlVertexRef` (`Normal(VertexIdx)` or `Gl(GlVertexIdx)`) per endpoint, an optional `linedef`
+  (`None` for a GL miniseg), `side`, and an optional `partner` seg; `GlSubsector` is a validated
+  `gl_segs` range; `GlNode` mirrors `MapNode`'s partition/bbox/child shape but its children
+  (`GlNodeChild`) index the GL arenas. A map with no `GL_*` group has all four arenas empty,
+  identically to one whose GL group was refused or degraded.
+- **V2, V3, and V5 decode; V1 and V4 are refused**, matching gzdoom's own policy (`glnodes.cpp`):
+  V1 carries no version signature and no split-vertex convention (undecodable without one), and
+  V4 dropped partner-seg information needed to rebuild subsector winding. `detect_gl_version`
+  classifies the group from the `GL_VERT` magic — `gNd5` → V5, `gNd4` → refused (4), `gNd2` → V2
+  or V3, anything else (including a `GL_VERT` lump too short to hold a 4-byte magic) → refused
+  (1) — with the V2/V3 split resolved by a second check: `gNd2` **and** a `gNd3` magic at the
+  head of `GL_SEGS` is V3 (the documented quirk of V3 carrying its version marker on the segs
+  lump instead of the verts lump); `gNd2` alone is V2. On a refused version, strict mode returns
+  `MapAssembleError::UnsupportedGlNodeVersion { magic }` (the first four `GL_VERT` bytes,
+  zero-padded if the lump is shorter); lenient mode pushes one `MapWarning::GlNodesRefused
+  { version }` and returns the empty arenas — the caller sees "no GL data" exactly as for an
+  absent group.
+- **V3's `gNd3` header is stripped during orchestration, not by the lump decoders.** The four
+  per-lump decoders (`decode_gl_vertices`/`decode_gl_segs`/`decode_gl_subsectors`/
+  `decode_gl_nodes`) are header-agnostic — pure fixed-size record readers. `decode_gl_group`
+  strips `GL_VERT`'s leading magic (all versions) and, for V3 only, the 4-byte `gNd3` header from
+  `GL_SEGS` and `GL_SSECT` before handing bytes to the decoders; `GL_NODES` never carries a
+  header in any version.
+- **Location: in-WAD `GL_<mapname>` marker groups only.** `gl_group_for` (`map/group.rs`) scans
+  for a `GL_<mapname>` marker lump, then collects the first occurrence of each of the four
+  required lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`) within the contiguous run of
+  lumps whose names start with `GL_` that follows it, stopping at the first non-`GL_` lump or
+  end of directory. Returns `None` (no GL data, not an error) if the marker name would exceed
+  the 8-byte WAD lump-name limit, no marker is found, or any of the four required lumps is
+  missing from its run. **`.gwa` sibling-file correlation — the historical glBSP convention of
+  writing GL nodes to a same-named external `.gwa` WAD instead of the source WAD — is
+  deliberately deferred**, tracked separately: it needs a multi-source assembly API (GL lumps
+  supplied from a caller-provided second `Wad`), which is a larger surface change than this
+  in-WAD reader and is out of scope here.
+- **No feature flag.** Like DeePBSP v4 (Stage 3 amendment), classic GL decoding is pure parsing
+  with no external dependency, so it is unconditional core: the `gl` module (`map/gl.rs`) is
+  always compiled, and `Map::assemble_with_options` always attempts the decode when a `GL_*`
+  group is present. It is wired into the **binary** Doom/Hexen assembly path only (the `format
+  => { … }` arm in `assemble_with_options`, after the vanilla BSP and `REJECT`/`BLOCKMAP`
+  decode) — UDMF and Doom 64 maps are routed to their own assembly functions before that arm and
+  never reach the GL step, so they always report empty GL arenas.
+- **Reuse, not reinvention.** V2/V3's 28-byte `GL_NODES` record is **byte-identical to the
+  classic `NODES` record**, so `decode_gl_nodes` parses it via the existing
+  `parse_records::<common::Node>` rather than re-deriving the layout, then remaps fields into
+  `GlNode`. Cross-reference resolution reuses `resolve_required` throughout (vertex, linedef,
+  node, and subsector references all go through it). The lenient degrade posture mirrors
+  `normalize_bsp_or_degrade`: a structural cross-reference fault that cannot be recovered by
+  clamping (a reference into an *empty* arena) rolls back any warnings pushed during the
+  attempt, pushes one `MapWarning::GlNodesDegraded`, and returns the empty arenas — the same
+  whole-BSP-degrades-as-one-unit contract the classic and DeePBSP paths use, so a partially
+  broken GL BSP does not surface a pile of per-element diagnostics. Framing defects (a lump
+  length that isn't a whole multiple of its record size, or a V3 lump too short to hold its
+  `gNd3` header) are hard `MapAssembleError::Records` errors in **both** modes, matching every
+  other classic-shaped decoder in this ADR.
+- **Bit masks, verified against gzdoom `src/maploader/glnodes.cpp`:** the `GL_SEGS`
+  GL-vertex-endpoint flag is `0x8000` (V2, 15-bit index) or `0xC000_0000` (V3/V5, 30-bit index,
+  `checkGLVertex3`); the `GL_NODES` subsector-child flag is `0x8000` (V2/V3, 15-bit index, same
+  convention as the classic `NF_SUBSECTOR` bit) or `0x8000_0000` (V5, 31-bit index).
+- **ADR-0016 hardening (all four items satisfied):**
+  1. **Bounded allocation.** Every decoder computes its record count from `bytes.len() /
+     record_size` (or, for V2/V3 `GL_NODES`, from `parse_records`'s own length-derived count) —
+     never from an untrusted in-stream count — so memory use is `O(input length)`.
+  2. **No unbounded recursion.** Decoding is a strictly sequential, iterative pipeline
+     (`detect_gl_version`, then four `chunks_exact`/`parse_records` passes in dependency order);
+     the resulting GL BSP tree is stored as a flat arena, never walked during decode, so no
+     crafted input can force recursion.
+  3. **A `cargo-fuzz` target**, `fuzz_gl_nodes`, reaches the decoder through the public
+     assembly API (a synthetic Doom map with an empty vanilla BSP and a fully fuzzer-controlled
+     `GL_*` group), asserts no panic and an `O(input)` decoded-element-count bound in both
+     `Strictness` modes, and ships a committed seed corpus
+     (`fuzz/corpus/fuzz_gl_nodes/seed_v2_square.bin`, `seed_refused_v4.bin`); it is wired into
+     `.github/workflows/fuzz.yml`.
+  4. **Both `Strictness` modes reject or recover without panicking.** Framing defects are hard
+     errors in both modes; a refused version and a cross-reference fault each follow the
+     Strict-errors/Lenient-recovers split described above.
+
+The ADR-0015 revisit condition item (a) below — "classic-GL reading (#324) is scheduled" — is
+now **discharged**: classic GL nodes are read, joining the ZDoom (#326/#327) and DeePBSP
+(#328) stages to make every node format this ADR identified either decoded or (for the ZDoom
+`Z*` family without the `extended-nodes-zlib` feature) gated with an unchanged contract.
+
 ## Pros and cons of the options
 
 ### Option 2 — staged, ZDoom-first, skip classic GL (chosen)
@@ -400,10 +498,11 @@ now complete (Stages 1–3). This records the concrete decisions §1/§3 left op
   1552-1554), `map/graph.rs` (the `usize` index newtypes 27-57, `MapSeg`/
   `MapSubsector`/`MapNode`/`NodeChild` 285-382), `map/build/nodes.rs`
   (`BuiltNodes` 70-88), `tests/sweep.rs` (the `RETAIL-EXT` gate sweep 113-179).
-- **Related backlog issues:** classic-GL reading (#324) and the extended-node
-  writer (#323), both tracked and both depending on #199's read stages.
-- **Revisit conditions:** reopen when (a) classic-GL reading (#324) is
-  scheduled — it reuses this ADR's scaffolding and settles the `gNd*` detection
-  and v1/v4 policy; (b) the extended-node *writer* (#323) is scheduled (it
-  reuses these codecs and `BuiltNodes`); or (c) a node format beyond these (a
-  future ZDoom `XGL4`, GL PVS data) needs representation.
+- **Related backlog issues:** classic-GL reading (#324, landed — see its
+  amendment above) and the extended-node writer (#323), both depending on
+  #199's read stages.
+- **Revisit conditions:** reopen when (a) the extended-node *writer* (#323) is
+  scheduled (it reuses these codecs and `BuiltNodes`); (b) `.gwa` sibling-file
+  correlation for classic GL nodes is scheduled (it needs a multi-source
+  assembly API, deferred by the #324 amendment above); or (c) a node format
+  beyond these (a future ZDoom `XGL4`, GL PVS data) needs representation.

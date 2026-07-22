@@ -17,9 +17,19 @@
 //! ([`decode_gl_nodes`], which resolves BSP-child references). The orchestrator
 //! [`decode_gl_group`] ties them together — detecting the version, refusing
 //! V1/V4, stripping the V3-only `gNd3` header, decoding in dependency order,
-//! and degrading the whole group cleanly on a structural fault. The assembly
-//! wiring that stores the resulting [`DecodedGl`] arenas on the map graph lands
-//! in a later task in the classic-GL read effort (#324).
+//! and degrading the whole group cleanly on a structural fault.
+//!
+//! [`crate::map::group::gl_group_for`] locates a map's `GL_<mapname>` group in
+//! the WAD directory (in-WAD only — a `.gwa` sibling file is a deferred
+//! follow-up), and [`Map::assemble_with_options`](crate::map::graph::Map::assemble_with_options)
+//! decodes it via [`decode_gl_group`] and stores the resulting [`DecodedGl`]
+//! arenas on the map graph as `Map::gl_vertices()`/`gl_segs()`/`gl_subsectors()`/
+//! `gl_nodes()` — additive to, and independent from, the vanilla
+//! `SEGS`/`SSECTORS`/`NODES` BSP. This is unconditional core (no feature flag)
+//! on the binary Doom/Hexen assembly path; UDMF and Doom 64 maps never reach
+//! it and always report empty GL arenas. See the ADR-0025 amendment for the
+//! settled design decisions (separate arenas, `.gwa` deferral, bit masks,
+//! hardening).
 
 use crate::Strictness;
 use crate::map::assemble::{MapAssembleError, resolve_required};

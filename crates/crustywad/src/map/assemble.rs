@@ -1656,7 +1656,13 @@ impl Map {
     /// Stage 3, #328); a structurally malformed `DeePBSP` lump is a
     /// [`MapAssembleError::Records`] in **both** strictness modes (the
     /// framing-defect policy — `DeePBSP` mirrors the classic path it resembles,
-    /// not the `ZDoom` readers' lenient degrade). The gate does not apply
+    /// not the `ZDoom` readers' lenient degrade). Separately, a classic
+    /// **binary** map carrying an in-WAD `GL_<mapname>` classic-GL node group
+    /// (ADR-0025 amendment, #324) has that group decoded into its own,
+    /// additive `gl_vertices`/`gl_segs`/`gl_subsectors`/`gl_nodes` arenas
+    /// alongside (not instead of) the vanilla BSP above; a refused GL version
+    /// (V1/V4) is [`MapAssembleError::UnsupportedGlNodeVersion`] in strict
+    /// mode, or a warning with empty GL arenas in lenient mode. The gate does not apply
     /// to Doom 64 nested
     /// sub-lumps, whose records were already decoded by
     /// [`doom64::read_doom64_map`]. Lenient mode likewise degrades the whole

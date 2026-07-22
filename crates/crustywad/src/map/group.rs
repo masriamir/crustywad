@@ -438,6 +438,32 @@ mod tests {
     }
 
     #[test]
+    fn gl_group_run_terminates_at_non_gl_lump_mid_directory() {
+        // The GL_ run is followed by a non-GL_ lump (THINGS) mid-directory,
+        // with more lumps after it — the contiguous-run loop in `gl_group_for`
+        // must stop at the `!starts_with("GL_")` break, not run to end of
+        // directory. An unrecognized `GL_`-prefixed lump (`GL_PVS`) is also
+        // included in the run, exercising the wildcard match arm.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("GL_MAP01", b""),
+            ("GL_VERT", b"gNd2"),
+            ("GL_PVS", b""),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+            ("THINGS", b""),
+            ("LINEDEFS", b""),
+        ]))
+        .unwrap();
+        let g = gl_group_for(&wad, "MAP01").expect("gl group");
+        assert_eq!(wad.lumps()[g.vert].name(), "GL_VERT");
+        assert_eq!(wad.lumps()[g.segs].name(), "GL_SEGS");
+        assert_eq!(wad.lumps()[g.ssect].name(), "GL_SSECT");
+        assert_eq!(wad.lumps()[g.nodes].name(), "GL_NODES");
+    }
+
+    #[test]
     fn gl_group_absent_returns_none() {
         let wad = crate::Wad::from_bytes(build_pwad(&[
             ("MAP01", b"" as &[u8]),

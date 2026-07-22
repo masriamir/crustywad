@@ -402,8 +402,7 @@ pub struct MapNode {
 
 /// A GL vertex from a `GL_VERT` lump. Coordinates are `f64` world units,
 /// converted losslessly from the on-disk 16.16 fixed-point (`raw / 65536.0`,
-/// mirroring [`MapVertex`]'s widening) in a later task — Task 1 only defines
-/// the type (#324).
+/// mirroring [`MapVertex`]'s widening; #324).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlVertex {
     /// The vertex's X coordinate, in map units.
@@ -942,33 +941,38 @@ impl Map {
         &self.nodes
     }
 
-    /// Returns the map's GL vertex arena, decoded from `GL_VERT`. Empty for
-    /// a map assembled without classic GL nodes (#324) — the type-plumbing
-    /// stage lands in Task 1; decoding follows in later tasks.
+    /// Returns the map's GL vertex arena, decoded from `GL_VERT`. Additive to
+    /// (not a replacement for) [`Map::vertices`]. Empty for a map assembled
+    /// without a classic GL-node group (#324, ADR-0025) — an absent group, a
+    /// refused version (V1/V4), or a lenient-mode whole-group degrade.
     #[must_use]
     pub fn gl_vertices(&self) -> &[GlVertex] {
         &self.gl_vertices
     }
 
-    /// Returns the map's GL seg arena, decoded from `GL_SEGS`. Empty for a
-    /// map assembled without classic GL nodes (#324) — the type-plumbing
-    /// stage lands in Task 1; decoding follows in later tasks.
+    /// Returns the map's GL seg arena, decoded from `GL_SEGS`. Additive to
+    /// (not a replacement for) [`Map::segs`]. Empty for a map assembled
+    /// without a classic GL-node group (#324, ADR-0025) — an absent group, a
+    /// refused version (V1/V4), or a lenient-mode whole-group degrade.
     #[must_use]
     pub fn gl_segs(&self) -> &[GlSeg] {
         &self.gl_segs
     }
 
-    /// Returns the map's GL subsector arena, decoded from `GL_SSECT`. Empty
-    /// for a map assembled without classic GL nodes (#324) — the
-    /// type-plumbing stage lands in Task 1; decoding follows in later tasks.
+    /// Returns the map's GL subsector arena, decoded from `GL_SSECT`.
+    /// Additive to (not a replacement for) [`Map::subsectors`]. Empty for a
+    /// map assembled without a classic GL-node group (#324, ADR-0025) — an
+    /// absent group, a refused version (V1/V4), or a lenient-mode whole-group
+    /// degrade.
     #[must_use]
     pub fn gl_subsectors(&self) -> &[GlSubsector] {
         &self.gl_subsectors
     }
 
-    /// Returns the map's GL BSP node arena, decoded from `GL_NODES`. Empty
-    /// for a map assembled without classic GL nodes (#324) — the
-    /// type-plumbing stage lands in Task 1; decoding follows in later tasks.
+    /// Returns the map's GL BSP node arena, decoded from `GL_NODES`. Additive
+    /// to (not a replacement for) [`Map::nodes`]. Empty for a map assembled
+    /// without a classic GL-node group (#324, ADR-0025) — an absent group, a
+    /// refused version (V1/V4), or a lenient-mode whole-group degrade.
     #[must_use]
     pub fn gl_nodes(&self) -> &[GlNode] {
         &self.gl_nodes

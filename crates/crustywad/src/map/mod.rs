@@ -43,8 +43,10 @@ pub mod doom64;
 /// surfaced by [`MapAssembleError`] / [`MapWarning`].
 mod extended;
 /// Decoding classic GL node lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`,
-/// #324). Crate-internal so far: version detection only, decoders land in
-/// later tasks of the classic-GL read effort.
+/// ADR-0025 amendment, #324). Crate-internal: version detection (V2/V3/V5;
+/// V1/V4 refused) plus the four lump decoders, wired into binary Doom/Hexen
+/// map assembly. Decodes into separate `gl_*` arenas on [`Map`], additive to
+/// the vanilla BSP.
 mod gl;
 pub mod graph;
 pub mod group;

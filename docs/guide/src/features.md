@@ -458,8 +458,10 @@ With the feature **off**, a recognized `Z*` signature keeps the extended-encodin
 mode returns `MapAssembleError::UnsupportedNodeEncoding`, lenient mode skips the BSP arenas and
 records a warning — the geometry still assembles.
 
-The classic-format GL node lumps (`GL_VERT`/`GL_SEGS`/…) and the `xNd4`-compressed variant
-remain out of scope (tracked separately, #324/#328).
+This feature is unrelated to two other node formats that decode as **always-on core** (no
+feature flag, since neither needs a decompressor): `DeePBSP` v4 (`xNd4`) and classic GL node
+lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`) — see
+[Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide.
 
 ### Usage
 

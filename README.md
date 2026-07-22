@@ -156,6 +156,7 @@ table. A Doom 64-sourced `Map` writes back out (`write_doom_map` / `write_udmf`)
 references resolve to names; the remaining unrepresentable colored lighting follows the same
 three-tier policy as every other conversion (strict refuses, lenient drops it and warns).
 `REJECT` and `BLOCKMAP` decode into typed, queryable structures (`MapReject` sector-visibility lookups, `MapBlockmap` per-block linedef lists) during map assembly, and Doom 64's `LEAFS` render leaves decode into a per-subsector `MapLeaf` arena. `MACROS` scripts decode read-only into `MapMacro` action lists.
+Beyond the classic `SEGS`/`SSECTORS`/`NODES` BSP, assembly reads the ZDoom uncompressed extended node formats (`XNOD`/`XGLN`/`XGL2`/`XGL3`, and their zlib-compressed `Z*` twins behind the `extended-nodes-zlib` feature) and DeePBSP v4 (`xNd4`) into the same `segs()`/`subsectors()`/`nodes()` arenas, plus **classic GL nodes** (`GL_<mapname>` groups: V2/V3/V5; V1/V4 refused) into separate, additive `gl_vertices()`/`gl_segs()`/`gl_subsectors()`/`gl_nodes()` arenas — in-WAD groups only, `.gwa` sibling files not yet supported.
 UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out with
 `write_udmf` / `add_udmf_map` (the `write` feature). The same `Map` graph converts a UDMF
 map to the classic Doom binary lumps with `write_doom_map` / `add_doom_map` — see
