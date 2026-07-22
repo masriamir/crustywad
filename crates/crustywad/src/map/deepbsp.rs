@@ -9,10 +9,12 @@
 //! `VERTEXES` lump is used unchanged). The lumps are uncompressed, so this
 //! decoder is always-on core (no feature flag).
 //!
-//! Byte layout source-verified against gzdoom (`src/doomdata.h` structs,
-//! `src/maploader/maploader.cpp` loader) — see
-//! `docs/superpowers/plans/2026-07-21-328-deepbsp-formatspec.md`. Only the
-//! detection signature and the record widths differ from classic; the
+//! Byte layout source-verified against gzdoom's `mapseg4_t`/`mapsubsector4_t`/
+//! `mapnode4_t` structs (`src/doomdata.h`) and their loader
+//! (`src/maploader/maploader.cpp`); the format and staging are recorded in
+//! [ADR-0025](https://github.com/masriamir/crustywad/blob/main/docs/adr/0025-extended-node-formats.md)
+//! (§1–§3 and the Stage 3 amendment). Only the detection signature and the
+//! record widths differ from classic; the
 //! cross-reference normalization reuses the classic discipline from
 //! [`assemble`](crate::map::assemble): [`resolve_required`] for strict-error /
 //! lenient-clamp handling of out-of-range references, and the same whole-BSP
