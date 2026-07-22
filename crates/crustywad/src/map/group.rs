@@ -143,6 +143,83 @@ pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
     None
 }
 
+/// Directory indices of one classic GL-node group's four data lumps, located
+/// via [`gl_group_for`].
+///
+/// Not yet constructed outside tests: [`gl_group_for`] is `pub(crate)`
+/// plumbing that later tasks (#324) wire into map assembly, so `dead_code`
+/// is explicitly allowed here until that call site lands.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GlGroup {
+    /// Directory index of the `GL_VERT` lump.
+    pub(crate) vert: usize,
+    /// Directory index of the `GL_SEGS` lump.
+    pub(crate) segs: usize,
+    /// Directory index of the `GL_SSECT` lump.
+    pub(crate) ssect: usize,
+    /// Directory index of the `GL_NODES` lump.
+    pub(crate) nodes: usize,
+}
+
+/// Locates the classic `GL_<map_name>` node group for `map_name` in `wad`.
+///
+/// Classic GL nodes live under a `GL_<mapname>` marker lump (e.g. `GL_MAP01`),
+/// followed by a contiguous run of `GL_*` lumps that includes `GL_VERT`,
+/// `GL_SEGS`, `GL_SSECT`, and `GL_NODES` in any order. This scans for that
+/// marker, then collects the first occurrence of each of the four required
+/// lumps within the run of lumps whose names start with `GL_`, stopping at
+/// the first lump outside that prefix (or end of directory).
+///
+/// Returns `None` if the marker name would exceed the 8-byte WAD lump-name
+/// limit (no such lump could exist), if no `GL_<map_name>` marker is found,
+/// or if any of the four required lumps is missing from its run.
+///
+/// Not yet called outside tests: assembly wiring (`Map::assemble`) lands in
+/// a later task (#324), so `dead_code` is explicitly allowed here until that
+/// call site lands.
+#[allow(dead_code)]
+pub(crate) fn gl_group_for(wad: &Wad, map_name: &str) -> Option<GlGroup> {
+    let marker_name = format!("GL_{map_name}");
+    if marker_name.len() > 8 {
+        return None;
+    }
+
+    let lumps = wad.lumps();
+    let marker_index = lumps.iter().position(|l| l.name() == marker_name)?;
+
+    let (mut vert, mut segs, mut ssect, mut nodes) = (None, None, None, None);
+    let mut i = marker_index + 1;
+    while let Some(lump) = lumps.get(i) {
+        if !lump.name().starts_with("GL_") {
+            break;
+        }
+        match lump.name() {
+            "GL_VERT" => {
+                vert.get_or_insert(i);
+            }
+            "GL_SEGS" => {
+                segs.get_or_insert(i);
+            }
+            "GL_SSECT" => {
+                ssect.get_or_insert(i);
+            }
+            "GL_NODES" => {
+                nodes.get_or_insert(i);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    Some(GlGroup {
+        vert: vert?,
+        segs: segs?,
+        ssect: ssect?,
+        nodes: nodes?,
+    })
+}
+
 /// Classifies the map format of `group` from its lump names (ADR-0014).
 ///
 /// The marker lump is checked first, under the same dual condition grouping
@@ -331,5 +408,61 @@ mod tests {
         let g = map_group(&wad, "MAP01").unwrap();
         assert!(group_has_lump(&wad, &g, "REJECT"));
         assert!(group_has_lump(&wad, &g, "BLOCKMAP"));
+    }
+
+    #[test]
+    fn locates_in_wad_gl_group() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("THINGS", b""),
+            ("LINEDEFS", b""),
+            ("SIDEDEFS", b""),
+            ("VERTEXES", b""),
+            ("SEGS", b""),
+            ("SSECTORS", b""),
+            ("NODES", b""),
+            ("SECTORS", b""),
+            ("REJECT", b""),
+            ("BLOCKMAP", b""),
+            ("GL_MAP01", b""),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        let g = gl_group_for(&wad, "MAP01").expect("gl group");
+        assert_eq!(wad.lumps()[g.vert].name(), "GL_VERT");
+        assert_eq!(wad.lumps()[g.segs].name(), "GL_SEGS");
+        assert_eq!(wad.lumps()[g.ssect].name(), "GL_SSECT");
+        assert_eq!(wad.lumps()[g.nodes].name(), "GL_NODES");
+        assert!(gl_group_for(&wad, "MAP02").is_none());
+    }
+
+    #[test]
+    fn gl_group_absent_returns_none() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("THINGS", b""),
+            ("LINEDEFS", b""),
+            ("SIDEDEFS", b""),
+            ("VERTEXES", b""),
+            ("SEGS", b""),
+            ("SSECTORS", b""),
+            ("NODES", b""),
+            ("SECTORS", b""),
+            ("REJECT", b""),
+            ("BLOCKMAP", b""),
+        ]))
+        .unwrap();
+        assert!(gl_group_for(&wad, "MAP01").is_none());
+    }
+
+    #[test]
+    fn gl_group_for_overlong_name_returns_none() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[("MAP01", b"" as &[u8])])).unwrap();
+        // "GL_" + "TOOLONGNAME" exceeds the 8-byte lump name limit, so no such
+        // lump can exist — must short-circuit to `None` without scanning.
+        assert!(gl_group_for(&wad, "TOOLONGNAME").is_none());
     }
 }
