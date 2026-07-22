@@ -189,10 +189,13 @@ dispatch:
   `MapWarning::UnsupportedNodeEncoding` + empty arenas.
 
 So after Stage 1 the four `X*` signatures decode while the four `Z*` still
-gate (until Stage 2), and `xNd4` gates until Stage 3. `EXTENDED_NODE_SIGNATURES`
-gains `xNd4` (an 8-byte signature — the detector must special-case its length)
-when Stage 3 lands; `gNd*` is never added. The strictness contract is unchanged
-for everything still gated: this is incremental narrowing, not a new policy.
+gate (until Stage 2). `xNd4` was expected here to join `EXTENDED_NODE_SIGNATURES`
+as an 8-byte signature when Stage 3 lands — but the **Stage 3 amendment below
+revised this**: `xNd4` is detected by a *separate* 8-byte check (not added to the
+4-byte `EXTENDED_NODE_SIGNATURES` table), and before Stage 3 an `xNd4` lump is
+undetected and falls through to the classic decoder rather than gating. `gNd*` is
+never added. The strictness contract is unchanged for everything still gated:
+this is incremental narrowing, not a new policy.
 
 ### 4. UDMF `ZNODES` lump routing
 
