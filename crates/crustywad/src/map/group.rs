@@ -444,6 +444,12 @@ mod tests {
         // must stop at the `!starts_with("GL_")` break, not run to end of
         // directory. An unrecognized `GL_`-prefixed lump (`GL_PVS`) is also
         // included in the run, exercising the wildcard match arm.
+        //
+        // Note: this fixture places all four required lumps *before* THINGS,
+        // so it does not by itself distinguish the `break` from a mutant that
+        // removes it (both reach the same `Some(GlGroup)`); see
+        // `gl_group_run_break_excludes_lump_past_non_gl_boundary` below for a
+        // fixture where the two diverge.
         let wad = crate::Wad::from_bytes(build_pwad(&[
             ("MAP01", b"" as &[u8]),
             ("GL_MAP01", b""),
@@ -461,6 +467,41 @@ mod tests {
         assert_eq!(wad.lumps()[g.segs].name(), "GL_SEGS");
         assert_eq!(wad.lumps()[g.ssect].name(), "GL_SSECT");
         assert_eq!(wad.lumps()[g.nodes].name(), "GL_NODES");
+    }
+
+    /// Real regression guard for the `!starts_with("GL_")` `break` in
+    /// `gl_group_for`'s contiguous-run loop.
+    ///
+    /// Places only 3 of the 4 required lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`)
+    /// before a non-`GL_` boundary lump (`THINGS`), with the 4th
+    /// (`GL_NODES`) *after* it. With the `break` intact, the loop stops at
+    /// `THINGS` and never observes `GL_NODES`, so `nodes` stays `None` and
+    /// `gl_group_for` correctly returns `None` (the run is incomplete).
+    ///
+    /// If the `break` is deleted, the loop instead keeps scanning past
+    /// `THINGS`, reaches `GL_NODES`, and `gl_group_for` wrongly returns
+    /// `Some(GlGroup { .. })` — so this test fails without the `break`,
+    /// unlike `gl_group_run_terminates_at_non_gl_lump_mid_directory` above
+    /// (where all four required lumps already precede the boundary, so
+    /// `get_or_insert` fills them the same way whether or not the loop
+    /// stops there).
+    #[test]
+    fn gl_group_run_break_excludes_lump_past_non_gl_boundary() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("MAP01", b"" as &[u8]),
+            ("GL_MAP01", b""),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("THINGS", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        assert!(
+            gl_group_for(&wad, "MAP01").is_none(),
+            "GL_NODES lies past the THINGS boundary, so the run must be \
+             treated as missing it"
+        );
     }
 
     #[test]
