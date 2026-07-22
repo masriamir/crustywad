@@ -42,6 +42,10 @@ pub mod doom64;
 /// ADR-0025). Crate-internal decoder plus the public [`ExtendedNodeError`]
 /// surfaced by [`MapAssembleError`] / [`MapWarning`].
 mod extended;
+/// Decoding classic GL node lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`,
+/// #324). Crate-internal so far: version detection only, decoders land in
+/// later tasks of the classic-GL read effort.
+mod gl;
 pub mod graph;
 pub mod group;
 pub mod hexen;
