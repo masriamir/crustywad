@@ -1766,6 +1766,34 @@ impl Map {
                     &mut warnings,
                 )?;
 
+                // Classic GL nodes (`GL_<mapname>`) are additive: they augment
+                // the vanilla `SEGS`/`SSECTORS`/`NODES` graph above with glBSP's
+                // higher-precision minisegs and BSP (#324, ADR-0025). Decode them
+                // when present, leaving the arenas empty otherwise. In strict
+                // mode a refusal (V1/V4) or framing defect propagates; in lenient
+                // mode `decode_gl_group` returns empty arenas plus a warning.
+                let (gl_vertices, gl_segs, gl_subsectors, gl_nodes) =
+                    if let Some(g) = crate::map::group::gl_group_for(wad, &group.name) {
+                        let decoded = crate::map::gl::decode_gl_group(
+                            wad.lump_bytes(g.vert).unwrap_or_default(),
+                            wad.lump_bytes(g.segs).unwrap_or_default(),
+                            wad.lump_bytes(g.ssect).unwrap_or_default(),
+                            wad.lump_bytes(g.nodes).unwrap_or_default(),
+                            vertices.len(),
+                            linedefs.len(),
+                            s,
+                            &mut warnings,
+                        )?;
+                        (
+                            decoded.vertices,
+                            decoded.segs,
+                            decoded.subsectors,
+                            decoded.nodes,
+                        )
+                    } else {
+                        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                    };
+
                 Ok(Map {
                     name: group.name.clone(),
                     format,
@@ -1779,10 +1807,10 @@ impl Map {
                     segs,
                     subsectors,
                     nodes,
-                    gl_vertices: Vec::new(),
-                    gl_segs: Vec::new(),
-                    gl_subsectors: Vec::new(),
-                    gl_nodes: Vec::new(),
+                    gl_vertices,
+                    gl_segs,
+                    gl_subsectors,
+                    gl_nodes,
                     leafs: Vec::new(),
                     macros: Vec::new(),
                     reject,

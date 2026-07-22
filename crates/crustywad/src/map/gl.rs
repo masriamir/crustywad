@@ -717,10 +717,9 @@ pub(crate) fn decode_gl_nodes(
 /// so callers observe "no GL data" identically to a group that was never
 /// present.
 ///
-/// Not yet constructed outside tests: the assembly wiring that stores these
-/// arenas on the map graph lands in a later task (#324), so `dead_code` is
-/// explicitly allowed here until that call site lands.
-#[allow(dead_code)]
+/// Stored on the assembled [`Map`](crate::map::graph::Map) by
+/// [`assemble_with_options`](crate::map::graph::Map::assemble_with_options),
+/// which decodes the group via [`decode_gl_group`] (#324).
 #[derive(Debug, Default)]
 pub(crate) struct DecodedGl {
     /// Decoded `GL_VERT` vertices (extra glBSP vertices in world units).
@@ -822,9 +821,9 @@ fn decode_gl_group_records(
 /// [`MapAssembleError::DanglingReference`] (Strict structural fault). See the
 /// strictness posture above.
 ///
-/// Not yet called outside tests: assembly wiring lands in a later task (#324),
-/// so `dead_code` is explicitly allowed here until that call site lands.
-#[allow(dead_code)]
+/// Called by [`assemble_with_options`](crate::map::graph::Map::assemble_with_options)
+/// on the binary-map path, which stores the resulting [`DecodedGl`] arenas on
+/// the assembled map (#324).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn decode_gl_group(
     vert: &[u8],

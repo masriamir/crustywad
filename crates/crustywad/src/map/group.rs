@@ -146,10 +146,9 @@ pub(crate) fn map_group(wad: &Wad, name: &str) -> Option<MapGroup> {
 /// Directory indices of one classic GL-node group's four data lumps, located
 /// via [`gl_group_for`].
 ///
-/// Not yet constructed outside tests: [`gl_group_for`] is `pub(crate)`
-/// plumbing that later tasks (#324) wire into map assembly, so `dead_code`
-/// is explicitly allowed here until that call site lands.
-#[allow(dead_code)]
+/// Consumed by
+/// [`assemble_with_options`](crate::map::graph::Map::assemble_with_options),
+/// which reads the four lumps' bytes by these indices and decodes them (#324).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GlGroup {
     /// Directory index of the `GL_VERT` lump.
@@ -175,10 +174,9 @@ pub(crate) struct GlGroup {
 /// limit (no such lump could exist), if no `GL_<map_name>` marker is found,
 /// or if any of the four required lumps is missing from its run.
 ///
-/// Not yet called outside tests: assembly wiring (`Map::assemble`) lands in
-/// a later task (#324), so `dead_code` is explicitly allowed here until that
-/// call site lands.
-#[allow(dead_code)]
+/// Called by
+/// [`assemble_with_options`](crate::map::graph::Map::assemble_with_options) on
+/// the binary-map path to locate the group before decoding it (#324).
 pub(crate) fn gl_group_for(wad: &Wad, map_name: &str) -> Option<GlGroup> {
     let marker_name = format!("GL_{map_name}");
     if marker_name.len() > 8 {
