@@ -242,7 +242,10 @@ fn read_seg_record(c: &[u8], ver: GlVersion) -> (u32, u32, u16, u8, Option<u32>)
             let v1 = u32::from(u16::from_le_bytes([c[0], c[1]]));
             let v2 = u32::from(u16::from_le_bytes([c[2], c[3]]));
             let linedef = u16::from_le_bytes([c[4], c[5]]);
-            let side = c[6]; // low byte of the 2-byte side field (value is 0 or 1)
+            // The 2-byte side field is a 0/1 flag; read the full u16 and treat any
+            // non-zero value as 1 (back/left), matching gzdoom's boolean side use
+            // and the extended-nodes decoder — so a malformed high byte can't alias to 0.
+            let side = u8::from(u16::from_le_bytes([c[6], c[7]]) != 0);
             let partner_raw = u16::from_le_bytes([c[8], c[9]]);
             // VERIFIED gzdoom glnodes.cpp: V2 partner sentinel is 0xFFFF.
             let partner = (partner_raw != 0xFFFF).then_some(u32::from(partner_raw));
@@ -253,7 +256,10 @@ fn read_seg_record(c: &[u8], ver: GlVersion) -> (u32, u32, u16, u8, Option<u32>)
             let v1 = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
             let v2 = u32::from_le_bytes([c[4], c[5], c[6], c[7]]);
             let linedef = u16::from_le_bytes([c[8], c[9]]);
-            let side = c[10]; // low byte of the 2-byte side field (value is 0 or 1)
+            // The 2-byte side field is a 0/1 flag; read the full u16 and treat any
+            // non-zero value as 1 (back/left), matching gzdoom's boolean side use
+            // and the extended-nodes decoder — so a malformed high byte can't alias to 0.
+            let side = u8::from(u16::from_le_bytes([c[10], c[11]]) != 0);
             let partner_raw = u32::from_le_bytes([c[12], c[13], c[14], c[15]]);
             // VERIFIED gzdoom glnodes.cpp: V3/V5 partner sentinel is 0xFFFF_FFFF.
             let partner = (partner_raw != 0xFFFF_FFFF).then_some(partner_raw);
@@ -1046,6 +1052,21 @@ mod tests {
         assert_eq!(segs[0].side, 0);
         assert_eq!(segs[0].partner, None);
         assert!(w.is_empty());
+    }
+
+    #[test]
+    fn seg_side_high_byte_maps_to_back_side() {
+        // A malformed `side` whose low byte is 0 but high byte is non-zero
+        // (0x0100) must still decode as 1 (back/left), not alias to 0 — the full
+        // u16 is read and any non-zero value clamps to 1 (both V2 and V3/V5).
+        let mut w = Vec::new();
+        let v2 = v2_seg(0x0000, 0x0001, 0x0000, 0x0100, 0xFFFF);
+        let segs = decode_gl_segs(&v2, GlVersion::V2, 2, 0, 1, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(segs[0].side, 1);
+
+        let v5 = v5_seg(0x0000_0000, 0x0000_0001, 0x0000, 0x0100, 0xFFFF_FFFF);
+        let segs = decode_gl_segs(&v5, GlVersion::V5, 2, 0, 1, Strictness::Strict, &mut w).unwrap();
+        assert_eq!(segs[0].side, 1);
     }
 
     #[test]
