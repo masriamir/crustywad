@@ -483,7 +483,10 @@ pub(crate) fn decode_gl_subsectors(
             usize::try_from(first).unwrap_or(0)..usize::try_from(end).unwrap_or(0)
         } else {
             // Mirror the classic subsector normalizer's out-of-range handling.
-            let index = i32::try_from(end).unwrap_or(i32::MAX);
+            // `end` is an i64 sum of two i32-range values, so it can fall outside
+            // i32 range for corrupt input; saturate toward the correct sign so the
+            // diagnostic index stays meaningful (a large negative stays negative).
+            let index = i32::try_from(end).unwrap_or(if end < 0 { i32::MIN } else { i32::MAX });
             match strictness {
                 Strictness::Strict => {
                     return Err(MapAssembleError::DanglingReference {
