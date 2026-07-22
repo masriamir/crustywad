@@ -204,6 +204,12 @@ pub enum MapAssembleError {
         /// The element kind carrying the reference (`"sidedef"` or `"sector"`).
         from: &'static str,
     },
+    /// A `GL_*` node group used an unreadable/refused GL version (V1 or V4).
+    #[error("unsupported or refused GL node version (magic {magic:02x?})")]
+    UnsupportedGlNodeVersion {
+        /// The 4-byte `GL_VERT`/`gNd?` magic that identified the refused version.
+        magic: [u8; 4],
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.

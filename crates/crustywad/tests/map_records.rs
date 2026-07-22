@@ -401,3 +401,12 @@ fn gl_vertex_ref_variants_compose() {
     let r = GlVertexRef::Gl(GlVertexIdx(3));
     assert!(matches!(r, GlVertexRef::Gl(GlVertexIdx(3))));
 }
+
+// #324 Task 2: GL-node error/warning variants exist and display sensibly.
+// No decoding logic yet — later tasks (4, 8, 9) raise these.
+#[test]
+fn gl_refused_warning_displays() {
+    use crustywad::map::MapWarning;
+    let w = MapWarning::GlNodesRefused { version: 1 };
+    assert!(w.to_string().contains("GL node"));
+}

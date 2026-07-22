@@ -814,6 +814,15 @@ pub enum MapWarning {
         /// The element kind carrying the reference (`"sidedef"` or `"sector"`).
         from: &'static str,
     },
+    /// GL nodes were present but refused (V1/V4); GL arenas left empty.
+    #[error("GL node version {version} refused (deprecated/insufficient); GL data skipped")]
+    GlNodesRefused {
+        /// The refused GL node version number.
+        version: u8,
+    },
+    /// GL nodes were malformed; GL arenas degraded to empty (Lenient).
+    #[error("GL nodes malformed; GL data skipped")]
+    GlNodesDegraded,
 }
 
 /// An assembled Doom map graph: normalized elements addressed by index,
