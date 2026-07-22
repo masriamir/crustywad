@@ -1151,8 +1151,8 @@ mod tests {
 
     #[test]
     fn non_gl_map_has_empty_gl_arenas() {
-        // A map assembled without GL lumps has empty GL arenas (#324 Task 1:
-        // the arenas exist but nothing decodes into them yet).
+        // A map assembled without GL lumps has empty GL arenas — the GL decoder
+        // only populates them when a `GL_<mapname>` group is present (#324).
         let m = tiny_map();
         assert!(m.gl_vertices().is_empty());
         assert!(m.gl_segs().is_empty());

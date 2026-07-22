@@ -390,10 +390,10 @@ proptest! {
     }
 }
 
-// Type-level smoke test for the classic-GL-node graph types (#324 Task 1):
-// this only asserts that `GlVertexRef` composes over `GlVertexIdx` as
-// expected. It does not exercise assembly or a `Map`'s GL arenas — those are
-// covered once decoding lands in a later task.
+// Type-level smoke test for the classic-GL-node graph types (#324): this only
+// asserts that `GlVertexRef` composes over `GlVertexIdx` as expected. End-to-end
+// GL decoding is exercised by the decoder unit tests in `map/gl.rs` and the
+// integration tests in `tests/gl_nodes.rs`.
 #[test]
 fn gl_vertex_ref_variants_compose() {
     use crustywad::map::graph::{GlVertexIdx, GlVertexRef};
@@ -402,8 +402,8 @@ fn gl_vertex_ref_variants_compose() {
     assert!(matches!(r, GlVertexRef::Gl(GlVertexIdx(3))));
 }
 
-// #324 Task 2: GL-node error/warning variants exist and display sensibly.
-// No decoding logic yet — later tasks (4, 8, 9) raise these.
+// #324: GL-node error/warning variants exist and display sensibly. They are
+// raised by the GL decoder during assembly (see `map/gl.rs`).
 #[test]
 fn gl_refused_warning_displays() {
     use crustywad::map::MapWarning;
