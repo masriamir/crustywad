@@ -110,11 +110,11 @@ inheriting from `[workspace.package]`. `release-plz` manages each package indepe
 proposing version bumps only for crates whose content has changed since the last release.
 
 **Dependency constraint:** `crates/crustywad-cli/Cargo.toml` pins the library with an explicit
-caret requirement (currently `crustywad = { version = "0.7.0", ... }`), required by
+caret requirement (currently `crustywad = { version = "0.8.0", ... }`), required by
 `cargo-deny`'s `wildcards = "deny"` setting (which disallows `*` version requirements).
-`version = "0.7.0"` resolves as `^0.7.0` (`>=0.7.0, <0.8.0`), so patch bumps to `crustywad`
+`version = "0.8.0"` resolves as `^0.8.0` (`>=0.8.0, <0.9.0`), so patch bumps to `crustywad`
 within the same minor series are satisfied automatically. When `crustywad`'s version moves
-outside that range (e.g., to `0.8.0`), this field must be updated manually before merging —
+outside that range (e.g., to `0.9.0`), this field must be updated manually before merging —
 otherwise `cargo build` and crates.io publishing will fail.
 
 ---
