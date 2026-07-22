@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.3.4...crustywad-cli-v0.4.0) - 2026-07-22
+
+### Other
+
+- [**breaking**] adopt rolling N-3 MSRV policy — raise MSRV to 1.94.0, criterion 0.8 ([#338](https://github.com/masriamir/crustywad/pull/338))
+
 ## [0.3.4](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.3.3...crustywad-cli-v0.3.4) - 2026-07-22
 
 ### Other
