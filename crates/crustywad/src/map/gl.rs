@@ -1229,8 +1229,16 @@ mod tests {
         // (linedef_count 1); the vertices resolve fine, so the linedef `?`
         // propagates in strict mode and clamps to 0 (with a warning) in lenient.
         let bytes = v2_seg(0x0000, 0x0001, 0x0005, 0x0000, 0xFFFF);
-        let err = decode_gl_segs(&bytes, GlVersion::V2, 2, 0, 1, Strictness::Strict, &mut Vec::new())
-            .unwrap_err();
+        let err = decode_gl_segs(
+            &bytes,
+            GlVersion::V2,
+            2,
+            0,
+            1,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             MapAssembleError::DanglingReference {
@@ -1551,8 +1559,14 @@ mod tests {
         // resolver on the V5 `build_gl_node` path (the V2/V3 dangling test above
         // exercises only the node-child branch).
         let bytes = v5_node(0, 0, 0, 0, [0; 4], [0; 4], 0x8000_0005, 0x0000_0000);
-        let err = decode_gl_nodes(&bytes, GlVersion::V5, 1, Strictness::Strict, &mut Vec::new())
-            .unwrap_err();
+        let err = decode_gl_nodes(
+            &bytes,
+            GlVersion::V5,
+            1,
+            Strictness::Strict,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             MapAssembleError::DanglingReference {
