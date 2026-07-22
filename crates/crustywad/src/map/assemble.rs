@@ -205,7 +205,10 @@ pub enum MapAssembleError {
         from: &'static str,
     },
     /// A `GL_*` node group used an unreadable/refused GL version (V1 or V4).
-    #[error("unsupported or refused GL node version (magic {magic:02x?})")]
+    #[error(
+        "unsupported or refused GL node version (magic {})",
+        String::from_utf8_lossy(magic).escape_default()
+    )]
     UnsupportedGlNodeVersion {
         /// The 4-byte `GL_VERT`/`gNd?` magic that identified the refused version.
         magic: [u8; 4],

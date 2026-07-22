@@ -445,7 +445,7 @@ pub struct GlSubsector {
 }
 
 /// A GL BSP node child: an interior node or a subsector leaf.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GlNodeChild {
     /// An internal GL BSP node, indexed into [`Map::gl_nodes`].
     Node(GlNodeIdx),

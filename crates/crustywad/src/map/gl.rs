@@ -1539,6 +1539,63 @@ mod tests {
     }
 
     #[test]
+    fn decode_gl_group_v5_end_to_end() {
+        // The only whole-pipeline test for V5: v2_group_orchestrates_full_decode
+        // covers V2 end-to-end and the per-decoder tests above cover V5 in
+        // isolation, but nothing previously drove V5 through decode_gl_group
+        // itself.
+        //
+        // GL_VERT: gNd5 + 1 GL vertex.
+        let mut vert = b"gNd5".to_vec();
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        // GL_SEGS: one 16-byte V5 record. start exercises the 0xC000_0000
+        // GL-vertex mask (-> Gl(0)); end is a plain normal-vertex index (-> Normal(0));
+        // linedef 0 is in range (-> Some(LinedefIdx(0))); partner is the V3/V5
+        // one-sided sentinel 0xFFFF_FFFF (-> None). No gNd3 header on V5.
+        let segs = v5_seg(0xC000_0000, 0x0000_0000, 0x0000, 0x0000, 0xFFFF_FFFF);
+        // GL_SSECT: one 8-byte V3/V5 record (count=1, first=0), no gNd3 header.
+        let ssect = v3_ssect(1, 0);
+        // GL_NODES: one 32-byte V5 node whose children both exercise the
+        // 0x8000_0000 subsector-leaf mask (-> Subsector(0)).
+        let nodes = v5_node(
+            1,
+            2,
+            3,
+            4,
+            [10, 20, 30, 40],
+            [50, 60, 70, 80],
+            0x8000_0000,
+            0x8000_0000,
+        );
+
+        let mut w = Vec::new();
+        let gl = decode_gl_group(
+            &vert,
+            &segs,
+            &ssect,
+            &nodes,
+            1,
+            1,
+            Strictness::Strict,
+            &mut w,
+        )
+        .unwrap();
+        assert_eq!(gl.vertices.len(), 1);
+        assert_eq!(gl.segs.len(), 1);
+        assert_eq!(gl.segs[0].start, GlVertexRef::Gl(GlVertexIdx(0)));
+        assert_eq!(gl.segs[0].end, GlVertexRef::Normal(VertexIdx(0)));
+        assert_eq!(gl.segs[0].linedef, Some(LinedefIdx(0)));
+        assert_eq!(gl.segs[0].partner, None);
+        assert_eq!(gl.subsectors.len(), 1);
+        assert_eq!(gl.subsectors[0].segs, 0..1);
+        assert_eq!(gl.nodes.len(), 1);
+        assert_eq!(gl.nodes[0].right, GlNodeChild::Subsector(GlSubsectorIdx(0)));
+        assert_eq!(gl.nodes[0].left, GlNodeChild::Subsector(GlSubsectorIdx(0)));
+        assert!(w.is_empty());
+    }
+
+    #[test]
     fn v3_group_strips_gnd3_header_on_segs_and_ssect() {
         // GL_VERT: gNd2 + 1 GL vertex (V3 shares V2's vert magic).
         let mut vert = b"gNd2".to_vec();
