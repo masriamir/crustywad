@@ -875,21 +875,28 @@ pub(crate) fn decode_gl_group(
     // header-agnostic decoders see them. A lump too short to hold its header is a
     // framing defect -> a hard error in both modes (propagated by `?`).
     let (segs_rec, ssect_rec) = if ver == GlVersion::V3 {
-        // Defensively unreachable: `detect_gl_version` only returns `V3` when
-        // `segs[0..4] == b"gNd3"`, which already requires `segs.len() >= 4` — so
-        // this `None` arm can never fire for a properly-detected V3 group. Kept
-        // (and the `?` kept) as defense in depth rather than an `unwrap`; there is
-        // no dedicated test for this arm because it is unreachable, unlike the
-        // `ssect` arm below, which `detect_gl_version` never inspects and so can
-        // genuinely be too short (see `v3_group_short_ssect_lump_is_framing_error`).
+        // `GL_SEGS`'s `gNd3` header is guaranteed by `detect_gl_version` (V3 is
+        // only returned when `segs[0..4] == b"gNd3"`), so stripping 4 bytes here is
+        // always valid; the `?` is defense-in-depth (hence no dedicated test for
+        // this unreachable `None` arm).
         let segs_rec = segs.get(4..).ok_or(MapAssembleError::Records {
             lump: "GL_SEGS",
             source: MapParseError::TrailingBytes { offset: 0 },
         })?;
-        let ssect_rec = ssect.get(4..).ok_or(MapAssembleError::Records {
-            lump: "GL_SSECT",
-            source: MapParseError::TrailingBytes { offset: 0 },
-        })?;
+        // `GL_SSECT`'s `gNd3` header is NOT verified by `detect_gl_version` (which
+        // only inspects GL_VERT + GL_SEGS), so verify the magic here rather than
+        // stripping blindly: a V3 group whose `GL_SSECT` is too short or lacks the
+        // `gNd3` header is a framing defect (hard error, both modes), not something
+        // to strip-and-mis-decode (see the `v3_group_*_ssect_*framing` tests).
+        let ssect_rec = match ssect.get(0..4) {
+            Some(b"gNd3") => &ssect[4..],
+            _ => {
+                return Err(MapAssembleError::Records {
+                    lump: "GL_SSECT",
+                    source: MapParseError::TrailingBytes { offset: 0 },
+                });
+            }
+        };
         (segs_rec, ssect_rec)
     } else {
         (segs, ssect)
@@ -1676,6 +1683,34 @@ mod tests {
         // `detect_gl_version` never inspects GL_SSECT, so this is the one lump
         // that can genuinely trip the post-detection framing check.
         let ssect = b"gN".to_vec();
+        let nodes: Vec<u8> = Vec::new();
+
+        for strictness in [Strictness::Strict, Strictness::Lenient] {
+            let mut w = Vec::new();
+            let err = decode_gl_group(&vert, &segs, &ssect, &nodes, 1, 1, strictness, &mut w)
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                MapAssembleError::Records {
+                    lump: "GL_SSECT",
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn v3_group_ssect_without_gnd3_header_is_framing_error() {
+        // GL_VERT: gNd2 + 1 vert; GL_SEGS: bare gNd3 header -> detected as V3.
+        let mut vert = b"gNd2".to_vec();
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        vert.extend_from_slice(&0i32.to_le_bytes());
+        let segs = b"gNd3".to_vec();
+        // GL_SSECT: >= 4 bytes but does NOT start with `gNd3` (here a bare 8-byte
+        // V3 subsector record with no header). Stripping 4 bytes blindly would
+        // mis-decode it; instead the magic check makes it a hard framing error.
+        let mut ssect = b"XXXX".to_vec();
+        ssect.extend_from_slice(&0u32.to_le_bytes());
         let nodes: Vec<u8> = Vec::new();
 
         for strictness in [Strictness::Strict, Strictness::Lenient] {

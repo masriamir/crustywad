@@ -393,12 +393,14 @@ records the concrete decisions that backlog note left open.
   zero-padded if the lump is shorter); lenient mode pushes one `MapWarning::GlNodesRefused
   { version }` and returns the empty arenas — the caller sees "no GL data" exactly as for an
   absent group.
-- **V3's `gNd3` header is stripped during orchestration, not by the lump decoders.** The four
-  per-lump decoders (`decode_gl_vertices`/`decode_gl_segs`/`decode_gl_subsectors`/
-  `decode_gl_nodes`) are header-agnostic — pure fixed-size record readers. `decode_gl_group`
-  strips `GL_VERT`'s leading magic (all versions) and, for V3 only, the 4-byte `gNd3` header from
-  `GL_SEGS` and `GL_SSECT` before handing bytes to the decoders; `GL_NODES` never carries a
-  header in any version.
+- **V3's `gNd3` header is stripped during orchestration; `GL_VERT`'s magic is handled by the
+  vertex decoder.** `decode_gl_segs`/`decode_gl_subsectors`/`decode_gl_nodes` are header-agnostic —
+  pure fixed-size record readers. For V3 only, `decode_gl_group` strips (after verifying the
+  `gNd3` magic) the 4-byte header from `GL_SEGS` and `GL_SSECT` before handing bytes to those
+  decoders. `GL_VERT`'s leading magic (`gNd2`/`gNd5`, all decoded versions) is read by
+  `detect_gl_version` and then skipped internally by `decode_gl_vertices` itself, so the
+  orchestrator passes `GL_VERT` through unmodified. `GL_NODES` never carries a header in any
+  version.
 - **Location: in-WAD `GL_<mapname>` marker groups only.** `gl_group_for` (`map/group.rs`) scans
   for a `GL_<mapname>` marker lump, then collects the first occurrence of each of the four
   required lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`) within the contiguous run of
