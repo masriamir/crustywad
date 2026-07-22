@@ -63,10 +63,11 @@ pub use doom64::{
 };
 pub use extended::ExtendedNodeError;
 pub use graph::{
-    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
-    MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,
-    MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx, SegIdx, SidedefIdx, Special,
-    SubsectorIdx, TextureRef, VertexIdx,
+    GlNode, GlNodeChild, GlNodeIdx, GlSeg, GlSegIdx, GlSubsector, GlSubsectorIdx, GlVertex,
+    GlVertexIdx, GlVertexRef, LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight,
+    MapLinedef, MapMacro, MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef,
+    MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx, SegIdx,
+    SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
 pub use udmf::{UdmfParseError, parse_udmf};
