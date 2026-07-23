@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784698280380,
+  "lastUpdate": 1784782254211,
   "repoUrl": "https://github.com/masriamir/crustywad",
   "entries": {
     "Benchmark": [
@@ -25583,6 +25583,288 @@ window.BENCHMARK_DATA = {
             "name": "write/udmf_to_doom/write_doom_map",
             "value": 50613,
             "range": "± 243",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "masriamir@users.noreply.github.com",
+            "name": "Amir Masri",
+            "username": "masriamir"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8f13b99d2890fec50b9d051798be273861edd243",
+          "message": "feat(map): read classic GL nodes (gNd2/gNd3/gNd5) into separate additive arenas (#324) (#340)",
+          "timestamp": "2026-07-23T00:41:14-04:00",
+          "tree_id": "7ac9cb7d45389a3794405cfa96eefa0a0c67ec7d",
+          "url": "https://github.com/masriamir/crustywad/commit/8f13b99d2890fec50b9d051798be273861edd243"
+        },
+        "date": 1784782252750,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "build/nodes/build_nodes",
+            "value": 331547,
+            "range": "± 1178",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "build/blockmap/build_blockmap",
+            "value": 17173,
+            "range": "± 113",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "build/one_shot/add_doom_map_with_nodes",
+            "value": 378142,
+            "range": "± 3207",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/small",
+            "value": 384,
+            "range": "± 24",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/medium",
+            "value": 4251,
+            "range": "± 76",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/large",
+            "value": 37401,
+            "range": "± 1078",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/small",
+            "value": 398,
+            "range": "± 10",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/medium",
+            "value": 4287,
+            "range": "± 89",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/large",
+            "value": 37407,
+            "range": "± 1998",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict",
+            "value": 28300,
+            "range": "± 462",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient",
+            "value": 27719,
+            "range": "± 471",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict_mmap",
+            "value": 20363,
+            "range": "± 169",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient_mmap",
+            "value": 20428,
+            "range": "± 189",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_index",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit",
+            "value": 6,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit_last",
+            "value": 43,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_miss",
+            "value": 41,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_bytes",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_data",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lumps_iter_count",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/clone",
+            "value": 15867,
+            "range": "± 325",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/into_bytes",
+            "value": 1070,
+            "range": "± 81",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Thing_x1000",
+            "value": 10525,
+            "range": "± 46",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Linedef_x1000",
+            "value": 17717,
+            "range": "± 796",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sidedef_x1000",
+            "value": 31658,
+            "range": "± 2111",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Vertex_x1000",
+            "value": 4731,
+            "range": "± 131",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Seg_x1000",
+            "value": 10763,
+            "range": "± 161",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Subsector_x1000",
+            "value": 4693,
+            "range": "± 10",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Node_x1000",
+            "value": 20935,
+            "range": "± 564",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sector_x1000",
+            "value": 23774,
+            "range": "± 1770",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/small",
+            "value": 320,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/medium",
+            "value": 16967,
+            "range": "± 143",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/large",
+            "value": 791597,
+            "range": "± 31470",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/small",
+            "value": 325,
+            "range": "± 7",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/medium",
+            "value": 15871,
+            "range": "± 232",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/large",
+            "value": 777823,
+            "range": "± 18168",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/10_lumps_256b",
+            "value": 958,
+            "range": "± 8",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/100_lumps_4kib",
+            "value": 34074,
+            "range": "± 207",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/small",
+            "value": 1359,
+            "range": "± 12",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/medium",
+            "value": 47062,
+            "range": "± 231",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/large",
+            "value": 2522041,
+            "range": "± 41665",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/doom_map/write_doom_map",
+            "value": 49394,
+            "range": "± 1063",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/udmf_to_doom/write_doom_map",
+            "value": 51168,
+            "range": "± 1479",
             "unit": "ns/iter"
           }
         ]
