@@ -231,6 +231,117 @@ impl BuiltNodes {
             nodes: encode(&nodes),
         })
     }
+
+    /// Serializes this BSP tree as a `ZDoom` **non-GL** extended-node stream
+    /// (ADR-0025, #323): `XNOD` when `compressed` is false, or its zlib twin
+    /// `ZNOD` when true (the latter requires the `extended-nodes-zlib` feature).
+    /// This reverses the #326 read codec, so a stream it produces re-reads to an
+    /// equivalent [`Map`](crate::map::Map) BSP.
+    ///
+    /// `orig_vertex_count` is the map's own vertex count — the number of records
+    /// in its `VERTEXES` lump. Seg vertex indices below it address map vertices;
+    /// at or above it they address [`split_vertices`](Self::split_vertices),
+    /// which are written into the stream header (not appended to `VERTEXES`).
+    ///
+    /// Unlike the classic [`to_lump_bytes`](Self::to_lump_bytes), the counts and
+    /// vertex/seg indices are 32-bit, so a past-vanilla map (more than 32,768
+    /// subsectors/nodes or 65,536 segs/vertices) serializes here. The seg
+    /// `linedef` reference is still 16-bit, so a map with more than 65,534
+    /// linedefs cannot be encoded (that needs the GL `XGL2` format, #345).
+    ///
+    /// # Errors
+    ///
+    /// - [`NodeBuildError::MinisegUnsupported`] when a seg has no linedef — XNOD
+    ///   segs carry a mandatory linedef reference (GL minisegs are #345).
+    /// - [`NodeBuildError::TooManyElements`] (`kind: "linedefs"`) when a seg's
+    ///   linedef index exceeds `u16::MAX` (Global Constraint 1).
+    /// - [`NodeBuildError::TooManyElements`] (`kind: "subsectors"`/`"nodes"`) when
+    ///   a child index does not fit the 31 bits left free by the leaf flag, or
+    ///   (`kind: "vertices"`/`"segs"`/`"subsectors"`/`"nodes"`) when a count
+    ///   exceeds the 32-bit `MAX_EXTENDED_INDEX` cap.
+    /// - [`NodeBuildError::Write`] wrapping [`DoomWriteError::ValueOutOfRange`]
+    ///   when a node partition/bbox coordinate does not fit the on-disk `i16`, or
+    ///   a split-vertex coordinate overflows the 16.16 `i32` — guards only
+    ///   hand-constructed values (`build_nodes` produces in-range ones).
+    /// - [`NodeBuildError::CompressionUnavailable`] when `compressed` is true but
+    ///   the `extended-nodes-zlib` feature is disabled.
+    pub fn to_extended_lump_bytes(
+        &self,
+        orig_vertex_count: usize,
+        compressed: bool,
+    ) -> Result<Vec<u8>, NodeBuildError> {
+        let body = self.build_xnod_body(orig_vertex_count)?;
+        if compressed {
+            #[cfg(feature = "extended-nodes-zlib")]
+            {
+                let mut lump = b"ZNOD".to_vec();
+                lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
+                return Ok(lump);
+            }
+            #[cfg(not(feature = "extended-nodes-zlib"))]
+            {
+                return Err(NodeBuildError::CompressionUnavailable);
+            }
+        }
+        let mut lump = Vec::with_capacity(4 + body.len());
+        lump.extend_from_slice(b"XNOD");
+        lump.extend_from_slice(&body);
+        Ok(lump)
+    }
+
+    /// Builds the tag-less XNOD body (the bytes after the 4-byte signature),
+    /// reversing `extended.rs`'s `decode_body`: vertex header, subsector block,
+    /// seg block, node block. Shared by the `XNOD` and `ZNOD` paths.
+    fn build_xnod_body(&self, orig_vertex_count: usize) -> Result<Vec<u8>, NodeBuildError> {
+        let mut out = Vec::new();
+
+        // --- Vertex header: origVerts, newVerts, then split coords (16.16). ---
+        out.extend_from_slice(&encode_u32("vertices", orig_vertex_count)?.to_le_bytes());
+        out.extend_from_slice(&encode_u32("vertices", self.split_vertices.len())?.to_le_bytes());
+        for (i, v) in self.split_vertices.iter().enumerate() {
+            out.extend_from_slice(&fixed_16_16(v.x, "x", i)?.to_le_bytes());
+            out.extend_from_slice(&fixed_16_16(v.y, "y", i)?.to_le_bytes());
+        }
+
+        // --- Subsector block: numSubs, then each run length. ---
+        out.extend_from_slice(&encode_u32("subsectors", self.subsectors.len())?.to_le_bytes());
+        for ss in &self.subsectors {
+            let count = ss.segs.end.saturating_sub(ss.segs.start);
+            out.extend_from_slice(&encode_u32("subsector segs", count)?.to_le_bytes());
+        }
+
+        // --- Seg block: numSegs, then u32 v1, u32 v2, u16 linedef, u8 side. ---
+        out.extend_from_slice(&encode_u32("segs", self.segs.len())?.to_le_bytes());
+        for (i, s) in self.segs.iter().enumerate() {
+            out.extend_from_slice(&encode_u32("vertices", s.start.0)?.to_le_bytes());
+            out.extend_from_slice(&encode_u32("vertices", s.end.0)?.to_le_bytes());
+            let linedef = s
+                .linedef
+                .ok_or(NodeBuildError::MinisegUnsupported { seg: i })?;
+            out.extend_from_slice(&encode_index(linedef.0, "linedefs")?.to_le_bytes());
+            // The reader treats side != 0 as direction 1; mirror that on write.
+            out.push(u8::from(s.direction != 0));
+        }
+
+        // --- Node block: numNodes, then i16 partition + 2x i16 bbox + children. ---
+        out.extend_from_slice(&encode_u32("nodes", self.nodes.len())?.to_le_bytes());
+        for (i, n) in self.nodes.iter().enumerate() {
+            out.extend_from_slice(&narrow_coord(n.x, "x", i)?.to_le_bytes());
+            out.extend_from_slice(&narrow_coord(n.y, "y", i)?.to_le_bytes());
+            out.extend_from_slice(&narrow_coord(n.dx, "dx", i)?.to_le_bytes());
+            out.extend_from_slice(&narrow_coord(n.dy, "dy", i)?.to_le_bytes());
+            for value in narrow_bbox(n.right_bbox, "right_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            for value in narrow_bbox(n.left_bbox, "left_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&encode_extended_child(n.right)?.to_le_bytes());
+            out.extend_from_slice(&encode_extended_child(n.left)?.to_le_bytes());
+        }
+
+        Ok(out)
+    }
 }
 
 /// Narrows a split-vertex `f64` coordinate to the on-disk `i16`, rounding half
@@ -350,6 +461,60 @@ fn encode_child(child: NodeChild) -> Result<u16, NodeBuildError> {
         return Err(too_many());
     }
     Ok(if leaf { NF_SUBSECTOR | value } else { value })
+}
+
+/// Encodes a count or index as the extended stream's `u32`, or a
+/// [`NodeBuildError::TooManyElements`] naming `kind` if it exceeds
+/// [`MAX_EXTENDED_INDEX`] (which keeps every index within the low 31 bits the
+/// child leaf flag leaves free).
+fn encode_u32(kind: &'static str, value: usize) -> Result<u32, NodeBuildError> {
+    if value > MAX_EXTENDED_INDEX {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count: value,
+            max: MAX_EXTENDED_INDEX,
+        });
+    }
+    // `value <= MAX_EXTENDED_INDEX` (0x8000_0000) always fits `u32`.
+    Ok(u32::try_from(value).expect("value <= MAX_EXTENDED_INDEX fits u32"))
+}
+
+/// Encodes a [`NodeChild`] as the extended stream's 32-bit child word: a
+/// subsector leaf sets bit 31 (`0x8000_0000`) over the index, an internal node
+/// stores the bare index. The index must fit the low 31 bits.
+fn encode_extended_child(child: NodeChild) -> Result<u32, NodeBuildError> {
+    let (idx, leaf) = match child {
+        NodeChild::Node(n) => (n.0, false),
+        NodeChild::Subsector(s) => (s.0, true),
+    };
+    let kind = if leaf { "subsectors" } else { "nodes" };
+    if idx >= 0x8000_0000 {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count: idx.saturating_add(1),
+            max: MAX_EXTENDED_INDEX,
+        });
+    }
+    let value = u32::try_from(idx).expect("idx < 0x8000_0000 fits u32");
+    Ok(if leaf { 0x8000_0000 | value } else { value })
+}
+
+/// Narrows a whole-unit split-vertex coordinate to the extended stream's 16.16
+/// fixed-point `i32` (`coord * 65536`), reversing the reader's `x / 65536.0`.
+/// `build_nodes` creates split vertices as whole `i16`-range map units, so the
+/// product always fits `i32`; a hand-constructed out-of-range value is a
+/// defensive [`DoomWriteError::ValueOutOfRange`].
+fn fixed_16_16(value: f64, field: &'static str, index: usize) -> Result<i32, NodeBuildError> {
+    let whole = i64::from(round_half_away(value));
+    let fixed = whole * 65536;
+    i32::try_from(fixed).map_err(|_| {
+        NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+            block: "vertex",
+            field,
+            index,
+            value: fixed,
+        })
+    })
 }
 
 /// Serializes a slice of [`binrw::BinWrite`] records into a lump byte buffer,
@@ -2143,5 +2308,98 @@ mod tests {
                 max: MAX_BSP_INDEX,
             }
         );
+    }
+
+    #[test]
+    fn fixed_16_16_encodes_whole_units() {
+        assert_eq!(fixed_16_16(32.0, "x", 0).unwrap(), 32 * 65536);
+        assert_eq!(fixed_16_16(-1.0, "y", 0).unwrap(), -65536);
+        // i16::MAX * 65536 is the largest that fits i32.
+        assert_eq!(
+            fixed_16_16(f64::from(i16::MAX), "x", 0).unwrap(),
+            32767 * 65536
+        );
+    }
+
+    #[test]
+    fn extended_child_sets_bit_31_for_leaves() {
+        assert_eq!(
+            encode_extended_child(NodeChild::Node(NodeIdx(5))).unwrap(),
+            5
+        );
+        assert_eq!(
+            encode_extended_child(NodeChild::Subsector(SubsectorIdx(5))).unwrap(),
+            0x8000_0000 | 5
+        );
+    }
+
+    #[test]
+    fn to_extended_lump_bytes_rejects_miniseg_and_oversized_linedef() {
+        // A miniseg (linedef == None) cannot be an XNOD seg.
+        let mut miniseg = square_room();
+        miniseg.segs[0].linedef = None;
+        assert!(matches!(
+            miniseg.to_extended_lump_bytes(4, false),
+            Err(NodeBuildError::MinisegUnsupported { seg: 0 })
+        ));
+
+        // A linedef index past u16 is unrepresentable in XNOD (needs XGL2/#345).
+        let mut big_line = square_room();
+        big_line.segs[0].linedef = Some(LinedefIdx(MAX_U16_INDEXED));
+        assert!(matches!(
+            big_line.to_extended_lump_bytes(4, false),
+            Err(NodeBuildError::TooManyElements {
+                kind: "linedefs",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn to_extended_lump_bytes_lifts_the_classic_subsector_ceiling() {
+        // 32,769 empty subsectors exceeds the classic 0x8000 hard ceiling but is
+        // fine for XNOD (u32 counts). One node points both children at ss 0.
+        let subsectors = vec![
+            MapSubsector {
+                segs: 0..0,
+                leafs: 0..0
+            };
+            MAX_BSP_INDEX + 1
+        ];
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: Vec::new(),
+            subsectors,
+            nodes: vec![MapNode {
+                x: 0,
+                y: 0,
+                dx: 1,
+                dy: 0,
+                right_bbox: [0, 0, 0, 0],
+                left_bbox: [0, 0, 0, 0],
+                right: NodeChild::Subsector(SubsectorIdx(0)),
+                left: NodeChild::Subsector(SubsectorIdx(0)),
+            }],
+        };
+        assert!(
+            built.to_extended_lump_bytes(4, false).is_ok(),
+            "XNOD serializes past the classic ceiling"
+        );
+        assert!(matches!(
+            built.to_lump_bytes(),
+            Err(NodeBuildError::TooManyElements {
+                kind: "subsectors",
+                ..
+            })
+        ));
+    }
+
+    #[cfg(not(feature = "extended-nodes-zlib"))]
+    #[test]
+    fn compressed_without_feature_errors() {
+        assert!(matches!(
+            square_room().to_extended_lump_bytes(4, true),
+            Err(NodeBuildError::CompressionUnavailable)
+        ));
     }
 }

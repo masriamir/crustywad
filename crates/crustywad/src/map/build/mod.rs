@@ -273,6 +273,14 @@ pub enum NodeBuildError {
         /// partition.
         set_segs: usize,
     },
+    /// [`NodeFormat::Znod`] output was requested (`compressed`) but the crate was
+    /// built without the `extended-nodes-zlib` feature, so no zlib compressor is
+    /// available. Reachable only through
+    /// [`BuiltNodes::to_extended_lump_bytes`](crate::map::build::BuiltNodes::to_extended_lump_bytes)
+    /// with `compressed = true` and the feature off — the `NodeFormat::Znod`
+    /// variant that drives it does not exist without the feature.
+    #[error("zlib compression requires the `extended-nodes-zlib` feature")]
+    CompressionUnavailable,
 }
 
 impl NodeBuildError {
@@ -312,7 +320,8 @@ impl NodeBuildError {
             | Self::BlockmapOverflow { .. }
             | Self::TooManyElements { .. }
             | Self::MinisegUnsupported { .. }
-            | Self::DegeneratePartition { .. } => false,
+            | Self::DegeneratePartition { .. }
+            | Self::CompressionUnavailable => false,
         }
     }
 }
