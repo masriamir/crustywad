@@ -162,6 +162,25 @@ fn v2_gl_lumps() -> GlLumps {
     }
 }
 
+/// A minimal valid V2 GL group's four lumps with a single, one-sided seg
+/// that references only normal vertices (no `GL_VERT` entries needed). Used
+/// alongside [`v2_gl_lumps`] (2 segs) to give two GL groups a distinct,
+/// assertable seg count — so a precedence test can tell which source's
+/// group was actually used (#342).
+fn v2_gl_lumps_single_seg() -> GlLumps {
+    let vert = b"gNd2".to_vec(); // no GL vertices referenced by the seg below.
+
+    // One one-sided seg: normal vertex 0 -> normal vertex 1, on linedef 0, no partner.
+    let segs = gl_seg_v2(0, 1, 0, 0, 0xFFFF);
+
+    GlLumps {
+        vert,
+        segs,
+        ssect: gl_ssect_v2(1, 0), // 1 seg starting at 0
+        nodes: node_28(0, 0),     // single child = GL subsector 0
+    }
+}
+
 /// Builds a Doom-format WAD for `name` with the vanilla BSP present and,
 /// optionally, a `GL_<name>` group whose four lumps are `gl`.
 fn build_wad_bytes(name: &str, gl: Option<&GlLumps>) -> Vec<u8> {
@@ -444,4 +463,45 @@ fn gwa_and_in_wad_both_absent_leaves_gl_arenas_empty() {
     assert!(map.gl_segs().is_empty());
     assert!(map.gl_subsectors().is_empty());
     assert!(map.gl_nodes().is_empty());
+}
+
+/// When BOTH the main WAD's in-WAD `GL_MAP01` group and the `.gwa` carry a
+/// matching group, the `.gwa` must win — this is the actual conflict case,
+/// distinct from the fallback direction covered by
+/// `gwa_without_matching_group_falls_back_to_in_wad_gl` above (where the
+/// in-WAD group is absent). The two groups are built with different seg
+/// counts — main WAD: 1 (`v2_gl_lumps_single_seg`), `.gwa`: 2
+/// (`v2_gl_lumps`) — so `gl_segs().len()` unambiguously identifies which
+/// source's group made it into the assembled map (#342).
+#[test]
+fn gwa_gl_group_takes_precedence_over_in_wad_when_both_present() {
+    let main_bytes = build_wad_bytes("MAP01", Some(&v2_gl_lumps_single_seg())); // N = 1 seg
+    let gwa_bytes = build_gwa_bytes("GL_MAP01", &[], &v2_gl_lumps()); // M = 2 segs
+
+    let main = Wad::from_bytes(main_bytes).expect("valid main wad");
+    let group = main.map_group("MAP01").expect("map group");
+    let gwa = Wad::from_bytes(gwa_bytes).expect("valid gwa wad");
+
+    let map = Map::assemble_with_gl_source(&main, &group, Some(&gwa), ParseOptions::strict())
+        .expect("assembles");
+
+    // M = 2: the .gwa's GL_MAP01 group won, not the main WAD's N = 1 group.
+    assert_eq!(
+        map.gl_segs().len(),
+        2,
+        ".gwa's GL_MAP01 group (2 segs) must take precedence over the main WAD's in-WAD \
+         GL_MAP01 group (1 seg)"
+    );
+    assert_eq!(map.gl_vertices().len(), 1, "one GL vertex from .gwa group");
+    assert_eq!(
+        map.gl_subsectors().len(),
+        1,
+        "one GL subsector from .gwa group"
+    );
+    assert_eq!(map.gl_nodes().len(), 1, "one GL node from .gwa group");
+
+    // Vanilla BSP (from the main WAD) is unaffected either way.
+    assert_eq!(map.segs().len(), 1, "vanilla segs unchanged");
+    assert_eq!(map.subsectors().len(), 1, "vanilla subsectors unchanged");
+    assert_eq!(map.nodes().len(), 1, "vanilla nodes unchanged");
 }
