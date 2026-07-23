@@ -504,6 +504,99 @@ to an in-WAD `GL_<mapname>` group.
   allocation is one small `format!("GL_{name}")` for the marker name — sized to the map name, not
   the input).
 
+## Amendment — Extended-node writer shipped (2026-07-23, #323)
+
+The writer this ADR's §6 and ADR-0024's revisit condition (a) deferred is now implemented:
+`nodebuild` can emit a `ZDoom` non-GL extended-node stream (`XNOD`, or `ZNOD` behind
+`extended-nodes-zlib`) in addition to the classic three-lump `SEGS`/`SSECTORS`/`NODES` pass.
+
+- **Scope: non-GL only; GL is #345.** The writer emits `XNOD` and (feature-gated) `ZNOD` —
+  the non-GL ZDoom family (§ "Fourteen format names collapse to a few readers" above). It
+  **cannot** emit the GL formats (`XGLN`/`XGL2`/`XGL3`) by reversing the #326 read codec,
+  because `BuiltNodes` (`map/build/nodes.rs:81-97`) carries only classic BSP data: `MapSeg`
+  (`map/graph.rs:311-330`) has no partner-seg field, and a `linedef: None` seg (the GL-miniseg
+  case #326 added to the read-side type) is rejected by the writer
+  (`NodeBuildError::MinisegUnsupported`) rather than serialized — `build_nodes` never produces
+  one, so today `BuiltNodes` is structurally classic-shaped data wearing a type that happens to
+  be shared with the GL reader. There is also no retained fractional-splitter precision beyond
+  the `i32` map units `build_nodes` already rounds to. Emitting GL streams needs a GL-aware
+  node-building pass (partner-seg computation, implicit-`v2` GL seg emission, `XGL3`'s
+  `int32` partition coordinates) — out of scope here, tracked as **#345**.
+- **API.** `NodeFormat` (`map/build/mod.rs:76-86`) is `#[non_exhaustive]` with three variants:
+  `Classic` (`#[default]`), `Xnod`, and `Znod` (`#[cfg(feature = "extended-nodes-zlib")]`). It
+  lives on `NodeBuildOptions::format` (`mod.rs:145-149`), which defaults to `Classic` in both
+  `NodeBuildOptions::strict()` and `::lenient()` — an existing caller's output is byte-for-byte
+  unchanged unless it opts in. The serializer is
+  `BuiltNodes::to_extended_lump_bytes(&self, orig_vertex_count: usize, compressed: bool) ->
+  Result<Vec<u8>, NodeBuildError>` (`nodes.rs:290-312`), and `add_doom_map_with_nodes`
+  (`oneshot.rs:114-132`) branches on `build_opts.format.is_extended()`: an extended format emits
+  a single stream in `NODES`, leaves `SEGS`/`SSECTORS` empty, and leaves the split vertices out
+  of `VERTEXES` (they live in the stream's own vertex header, not the classic lump); `Classic`
+  is unchanged — the vanilla three-lump layout with split vertices appended to `VERTEXES`.
+  `BuiltNodes` also gained a public constructor, `BuiltNodes::new(split_vertices:
+  Vec<MapVertex>, segs: Vec<MapSeg>, subsectors: Vec<MapSubsector>, nodes: Vec<MapNode>) -> Self`
+  (`nodes.rs:129-141`): the type is `#[non_exhaustive]`, so this is the only way a downstream
+  crate can build one from hand-built or alternatively-built node data (e.g. a future GL
+  builder, or a test fixture) rather than only from `build_nodes`'s own output — `build_nodes`
+  itself still constructs `BuiltNodes` directly, in-crate.
+- **Ceiling relaxation is format-gated, with one deliberate exception.** A BSP child reference
+  reserves one bit as the subsector/leaf flag — bit 15 (`NF_SUBSECTOR`, `0x8000`) for `Classic`,
+  bit 31 (`0x8000_0000`) for the extended stream — so `Xnod`/`Znod` widen the addressable
+  subsector, node, seg, and vertex counts from the vanilla 15/16-bit ceilings to the 31-bit
+  `MAX_EXTENDED_INDEX` (`0x8000_0000`, `nodes.rs:48-55`). This is enforced identically in both
+  `build_nodes` (`check_hard_index_ceiling`/`check_subsector_seg_count`/`soft_ceiling`, gated on
+  `self.format`, `nodes.rs:1340-1345, 1426, 1453-1456, 1511-1526`) and the serializer
+  (`encode_u32`/`encode_extended_child`, `nodes.rs:492-522`) — the same `NodeFormat` decides both.
+  The **one ceiling that does not relax**: a seg's `linedef` reference is a `u16` in the `XNOD`
+  seg record exactly as in the classic `Seg` record (§ "The ZDoom family shares a framing" —
+  XNOD is the `u16`-linedef, non-GL variant), so a map with more than 65,534 linedefs is
+  unrepresentable by this writer regardless of `NodeFormat`. `check_linedef_count`
+  (`nodes.rs:1651-1660`) enforces this in **both** modes and is called unconditionally in
+  `build_nodes` (`nodes.rs:647`) before the format-gated checks run — extending it to `XGL2`'s
+  32-bit linedef field is deferred to #345 along with GL emission generally.
+- **`ZNOD`: `[b"ZNOD"][zlib(tagless XNOD body)]` via `miniz_oxide` at level 6.**
+  `to_extended_lump_bytes` builds the tag-less `XNOD` body once (`build_xnod_body`,
+  `nodes.rs:317-366`, the exact reverse of `extended.rs`'s `decode_body`), then for
+  `compressed = true` prepends the plaintext `ZNOD` tag and appends
+  `miniz_oxide::deflate::compress_to_vec_zlib(&body, 6)` (`nodes.rs:299-300`) — the same
+  `miniz_oxide` dependency the Stage 2 amendment above added for the *reader*, reused here as
+  the compressor. Level 6 is `miniz_oxide`'s own default compression level, chosen without
+  further tuning; nothing in this ADR claims it matches `zdbsp`'s own compressor settings.
+  Requesting `compressed = true` without the `extended-nodes-zlib` feature — reachable only
+  because `NodeFormat::Znod` itself does not exist as a variant without the feature, so this
+  path is hit only by a caller passing `compressed: true` directly to
+  `to_extended_lump_bytes` — returns `NodeBuildError::CompressionUnavailable`
+  (`mod.rs:275-282`, `nodes.rs:303-306`), not a panic.
+- **ADR-0016 posture: output-only, so the DoS threat model does not apply here.** The writer
+  serializes an already-built, already-in-bounds `BuiltNodes` — every count and index it emits
+  was already checked against `MAX_EXTENDED_INDEX` or `MAX_U16_INDEXED` by `build_nodes` (or, for
+  a hand-built `BuiltNodes` via the new `::new` constructor, by the serializer's own defensive
+  `encode_u32`/`encode_index`/`encode_extended_child` checks, which fail cleanly rather than
+  panic on an out-of-range value). Output size is `O(input)` — one pass over `split_vertices`,
+  `segs`, `subsectors`, `nodes`, each producing a fixed number of bytes per element, and (for
+  `ZNOD`) one bounded zlib compression pass over that output. There is no recursion (the
+  serializer is a sequence of `for` loops over flat arenas) and no `unsafe` (the writer is core
+  library code, outside `mmap.rs`, under the crate's `#![deny(unsafe_code)]`). Both `Strictness`
+  modes reject malformed input identically here — `to_extended_lump_bytes` takes no
+  `Strictness` parameter at all, mirroring the existing classic `to_lump_bytes`, because every
+  failure mode (`MinisegUnsupported`, a ceiling overflow, `CompressionUnavailable`) is a hard
+  structural error regardless of strictness; the strict/lenient split lives upstream, in
+  `build_nodes` deciding *whether* to hand this serializer an in-bounds `BuiltNodes` at all.
+  Consequently, the *read* side that parses untrusted `XNOD`/`ZNOD` bytes off a hostile WAD is
+  the surface ADR-0016 actually targets, and it is already covered by the `fuzz_extended_nodes`
+  target from the Stage 1 amendment. The high-value new check for the writer is therefore not a
+  fuzz target but the build→write→read round trip: `to_extended_lump_bytes_matches_the_xnod_reader_fixture`
+  (a byte-for-byte golden test against a hand-derived `XNOD` fixture) plus a proptest,
+  `xnod_seg_and_subsector_arenas_survive_round_trip`, that builds random geometry, serializes it,
+  re-reads it through the Stage 1 decoder, and asserts the seg/subsector arenas match
+  (`tests/extended_nodes.rs:606, 714-756`). **No new fuzz target is added** for this reason.
+- **Cross-reference to ADR-0024's revisit condition (a).** That condition anticipated reopening
+  this area "when extended/GL *generation* gains a concrete consumer … that work lands in
+  `Extended nodes` with this ADR's `BuiltNodes` as input." This amendment discharges the
+  non-GL half: `BuiltNodes` is now a concrete writer input, unchanged in shape (no new fields
+  were needed — the existing classic arenas were sufficient for the non-GL streams). The GL half
+  of that condition remains open, carried forward by #345.
+
 ## Pros and cons of the options
 
 ### Option 2 — staged, ZDoom-first, skip classic GL (chosen)
@@ -547,11 +640,15 @@ to an in-WAD `GL_<mapname>` group.
   (`BuiltNodes` 70-88), `tests/sweep.rs` (the `RETAIL-EXT` gate sweep 113-179).
 - **Related backlog issues:** classic-GL reading (#324, landed — see its
   amendment above), `.gwa` sibling-file GL reading (#342, landed — see its
-  amendment above), and the extended-node writer (#323), all depending on
-  #199's read stages.
-- **Revisit conditions:** reopen when (a) the extended-node *writer* (#323) is
-  scheduled (it reuses these codecs and `BuiltNodes`); or (b) a node format
-  beyond these (a future ZDoom `XGL4`, GL PVS data) needs representation.
-  Revisit condition (b) as originally written — `.gwa` sibling-file
-  correlation for classic GL nodes — is **discharged**; see the #342
-  amendment above.
+  amendment above), the extended-node writer (#323, landed for the non-GL
+  `XNOD`/`ZNOD` streams — see its amendment above), and GL node emission
+  (#345, the writer amendment's deferred remainder), all depending on #199's
+  read stages.
+- **Revisit conditions:** reopen when (a) GL node *generation* (`XGLN`/`XGL2`/
+  `XGL3`, #345) is scheduled — it needs a GL-aware node-building pass beyond
+  today's classic-shaped `BuiltNodes`; or (b) a node format beyond these (a
+  future ZDoom `XGL4`, GL PVS data) needs representation. Revisit condition
+  (b) as originally written — `.gwa` sibling-file correlation for classic GL
+  nodes — is **discharged**; see the #342 amendment above. The non-GL
+  extended-node *writer* (#323) that condition (a) originally named is now
+  **discharged**; see the writer amendment above.
