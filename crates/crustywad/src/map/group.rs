@@ -185,6 +185,12 @@ fn collect_gl_run(wad: &Wad, marker_index: usize) -> Option<GlGroup> {
     let mut j = marker_index + 1;
     while let Some(lump) = lumps.get(j) {
         let name = lump.name();
+        // Deliberate boundary (#342 review fix): stop at the next group
+        // marker, whether that's a non-`GL_` lump or a `GL_`-prefixed lump
+        // not in `GL_DATA_LUMPS` (e.g. a following `GL_<name>`/`GL_LEVEL`
+        // marker). Either way a group's run must not borrow the next
+        // group's lumps — this applies to both `gl_group_for` (in-WAD) and
+        // `gl_group_in_gl_wad` (`.gwa`).
         if !GL_DATA_LUMPS.contains(&name) {
             break;
         }
@@ -621,6 +627,34 @@ mod tests {
             gl_group_for(&wad, &group).is_none(),
             "GL_NODES lies past the THINGS boundary, so the run must be \
              treated as missing it"
+        );
+    }
+
+    /// Regression guard for the tightened `collect_gl_run` boundary shared by
+    /// `gl_group_for` (#342 review fix): the run must stop at an
+    /// *unrecognized* `GL_`-prefixed lump — a following group's marker — not
+    /// just at a non-`GL_` lump. A stray `GL_MAP02` marker sits mid-run,
+    /// before `GL_SSECT`/`GL_NODES`, so the run is incomplete and
+    /// `gl_group_for` must return `None` rather than reach past the boundary
+    /// into what would be MAP02's own GL data.
+    #[test]
+    fn gl_group_for_stops_at_unrecognized_gl_marker_mid_run() {
+        let mut lumps: Vec<(&str, &[u8])> = vec![("MAP01", b"" as &[u8])];
+        lumps.extend_from_slice(MIN_MAP_DATA_LUMPS);
+        lumps.extend_from_slice(&[
+            ("GL_MAP01", b""),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_MAP02", b""), // unrecognized GL_ lump: the next group's marker
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]);
+        let wad = crate::Wad::from_bytes(build_pwad(&lumps)).unwrap();
+        let group = map_group(&wad, "MAP01").expect("MAP01 group");
+        assert!(
+            gl_group_for(&wad, &group).is_none(),
+            "GL_SSECT/GL_NODES lie past the GL_MAP02 boundary, so the run \
+             must be treated as missing them"
         );
     }
 
