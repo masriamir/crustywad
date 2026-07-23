@@ -161,6 +161,59 @@ pub(crate) struct GlGroup {
     pub(crate) nodes: usize,
 }
 
+/// Recognized GL data-lump names within a group's run. Any other
+/// `GL_`-prefixed lump is a group marker (`GL_<name>` / `GL_LEVEL`) and ends
+/// the run — this is what keeps adjacent groups (an in-WAD map's own
+/// `GL_<name2>` marker, or back-to-back `.gwa` groups) from bleeding into
+/// each other.
+const GL_DATA_LUMPS: &[&str] = &["GL_VERT", "GL_SEGS", "GL_SSECT", "GL_NODES", "GL_PVS"];
+
+/// Collects a classic GL-node group's four required data lumps from the
+/// contiguous run starting at `marker_index + 1`. Recognizes `GL_VERT`,
+/// `GL_SEGS`, `GL_SSECT`, and `GL_NODES` in any order (first occurrence
+/// wins), and tolerates an interleaved `GL_PVS` lump without using it. The
+/// run stops at the first lump whose name is not in [`GL_DATA_LUMPS`] —
+/// whether because it isn't `GL_`-prefixed at all, or because it's a
+/// different group's marker.
+///
+/// Shared by [`gl_group_for`] (anchored, in-WAD lookup) and
+/// [`gl_group_in_gl_wad`] (by-name, `.gwa` lookup, #342) so both honor the
+/// same run-termination rule.
+fn collect_gl_run(wad: &Wad, marker_index: usize) -> Option<GlGroup> {
+    let lumps = wad.lumps();
+    let (mut vert, mut segs, mut ssect, mut nodes) = (None, None, None, None);
+    let mut j = marker_index + 1;
+    while let Some(lump) = lumps.get(j) {
+        let name = lump.name();
+        if !GL_DATA_LUMPS.contains(&name) {
+            break;
+        }
+        match name {
+            "GL_VERT" => {
+                vert.get_or_insert(j);
+            }
+            "GL_SEGS" => {
+                segs.get_or_insert(j);
+            }
+            "GL_SSECT" => {
+                ssect.get_or_insert(j);
+            }
+            "GL_NODES" => {
+                nodes.get_or_insert(j);
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+
+    Some(GlGroup {
+        vert: vert?,
+        segs: segs?,
+        ssect: ssect?,
+        nodes: nodes?,
+    })
+}
+
 /// Locates the classic `GL_<map_name>` node group belonging to the specific
 /// `map` instance in `wad`.
 ///
@@ -213,35 +266,64 @@ pub(crate) fn gl_group_for(wad: &Wad, map: &MapGroup) -> Option<GlGroup> {
         }
     };
 
-    let (mut vert, mut segs, mut ssect, mut nodes) = (None, None, None, None);
-    let mut j = marker_index + 1;
-    while let Some(lump) = lumps.get(j) {
-        if !lump.name().starts_with("GL_") {
+    collect_gl_run(wad, marker_index)
+}
+
+/// Locates the classic GL-node group for `map_name` inside a sibling `.gwa`
+/// `Wad`.
+///
+/// A `.gwa` has no map groups of its own — it is a flat sequence of GL
+/// groups, each introduced by one of two marker forms and immediately
+/// followed by its data-lump run:
+///
+/// 1. `GL_<map_name>` — a lump named e.g. `GL_MAP01`, matched by name. Only
+///    possible when `GL_` + the map name is at most 8 bytes.
+/// 2. `GL_LEVEL` — a lump literally named `GL_LEVEL` whose text contents
+///    carry a `LEVEL=<map_name>` line (glBSP's `KEYWORD=VALUE` form, used
+///    when the map name doesn't fit form 1).
+///
+/// Unlike [`gl_group_for`], this is a plain by-name scan of the whole
+/// directory rather than one anchored to a specific map instance — a `.gwa`
+/// has no map markers to anchor to in the first place.
+///
+/// Returns `None` if no marker matching `map_name` is found, or if any of
+/// the four required data lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`)
+/// is missing from the matched marker's run before the next group marker
+/// (or end of directory).
+///
+/// This is the locator half of the `.gwa` read path (#342); it has no
+/// non-test caller yet — the public API that opens a sibling `.gwa` `Wad`
+/// and wires this lookup into map assembly lands in a follow-up task on the
+/// same issue — hence the explicit `allow` below.
+#[allow(dead_code)]
+pub(crate) fn gl_group_in_gl_wad(gl_wad: &Wad, map_name: &str) -> Option<GlGroup> {
+    let lumps = gl_wad.lumps();
+    let gl_name = format!("GL_{map_name}");
+    let mut marker_index = None;
+    for (i, lump) in lumps.iter().enumerate() {
+        let name = lump.name();
+        let is_match = (gl_name.len() <= 8 && name == gl_name)
+            || (name == "GL_LEVEL"
+                && gl_wad
+                    .lump_bytes(i)
+                    .is_some_and(|bytes| gl_level_matches(bytes, map_name)));
+        if is_match {
+            marker_index = Some(i);
             break;
         }
-        match lump.name() {
-            "GL_VERT" => {
-                vert.get_or_insert(j);
-            }
-            "GL_SEGS" => {
-                segs.get_or_insert(j);
-            }
-            "GL_SSECT" => {
-                ssect.get_or_insert(j);
-            }
-            "GL_NODES" => {
-                nodes.get_or_insert(j);
-            }
-            _ => {}
-        }
-        j += 1;
     }
+    collect_gl_run(gl_wad, marker_index?)
+}
 
-    Some(GlGroup {
-        vert: vert?,
-        segs: segs?,
-        ssect: ssect?,
-        nodes: nodes?,
+/// True if a `GL_LEVEL` marker's text contents contain a `LEVEL=<map_name>`
+/// line (glBSP's `KEYWORD=VALUE` form). The comparison is case-sensitive,
+/// matching glBSP's uppercase output. Never panics: non-UTF-8 contents parse
+/// to an empty string rather than erroring.
+fn gl_level_matches(marker_bytes: &[u8], map_name: &str) -> bool {
+    let text = core::str::from_utf8(marker_bytes).unwrap_or("");
+    text.lines().any(|line| {
+        line.strip_prefix("LEVEL=")
+            .is_some_and(|value| value.trim_end_matches(['\r', '\0']).trim() == map_name)
     })
 }
 
@@ -561,6 +643,94 @@ mod tests {
             .unwrap();
         let group = map_group(&wad, "ABCDEF").expect("ABCDEF group");
         assert!(gl_group_for(&wad, &group).is_none());
+    }
+
+    #[test]
+    fn gwa_locator_gl_name_marker() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("GL_MAP01", b"" as &[u8]),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        let g = gl_group_in_gl_wad(&wad, "MAP01").expect("gl group");
+        assert_eq!(wad.lumps()[g.vert].name(), "GL_VERT");
+        assert_eq!(wad.lumps()[g.segs].name(), "GL_SEGS");
+        assert_eq!(wad.lumps()[g.ssect].name(), "GL_SSECT");
+        assert_eq!(wad.lumps()[g.nodes].name(), "GL_NODES");
+    }
+
+    #[test]
+    fn gwa_locator_gl_level_marker() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("GL_LEVEL", b"LEVEL=MAP01\n" as &[u8]),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        let g = gl_group_in_gl_wad(&wad, "MAP01").expect("gl group");
+        assert_eq!(wad.lumps()[g.vert].name(), "GL_VERT");
+        assert!(
+            gl_group_in_gl_wad(&wad, "MAP02").is_none(),
+            "LEVEL=MAP01 must not match a different requested map name"
+        );
+    }
+
+    #[test]
+    fn gwa_locator_stops_at_next_group_marker() {
+        // Two back-to-back .gwa groups: MAP01's own GL_NODES must be found,
+        // not borrowed from MAP02's run.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("GL_MAP01", b"" as &[u8]),
+            ("GL_VERT", b"AAAA"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+            ("GL_MAP02", b""),
+            ("GL_VERT", b"BBBBBBBB"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        let g1 = gl_group_in_gl_wad(&wad, "MAP01").expect("MAP01 gl group");
+        let g2 = gl_group_in_gl_wad(&wad, "MAP02").expect("MAP02 gl group");
+        assert_eq!(wad.lump_bytes(g1.vert), Some(b"AAAA".as_slice()));
+        assert_eq!(wad.lump_bytes(g2.vert), Some(b"BBBBBBBB".as_slice()));
+        assert_ne!(g1.vert, g2.vert);
+        assert_ne!(g1.nodes, g2.nodes);
+    }
+
+    #[test]
+    fn gwa_locator_missing_nodes_before_next_marker_returns_none() {
+        // MAP01's run is missing GL_NODES before MAP02's marker begins — the
+        // scan must not cross into MAP02's run and borrow ITS GL_NODES.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("GL_MAP01", b"" as &[u8]),
+            ("GL_VERT", b"AAAA"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_MAP02", b""),
+            ("GL_VERT", b"BBBBBBBB"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        assert!(
+            gl_group_in_gl_wad(&wad, "MAP01").is_none(),
+            "run must stop at MAP02's marker rather than borrowing its GL_NODES"
+        );
+    }
+
+    #[test]
+    fn gwa_locator_absent_returns_none() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[("GL_MAP01", b"" as &[u8])])).unwrap();
+        assert!(gl_group_in_gl_wad(&wad, "MAP02").is_none());
     }
 
     #[test]
