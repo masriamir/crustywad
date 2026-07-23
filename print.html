@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-79a2de6d.js";
+            window.path_to_searchindex_js = "searchindex-be8c2141.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -3004,32 +3004,61 @@ they never write to the branch simultaneously.</p>
 cadence for <code>crustywad</code> and <code>crustywad-cli</code>.</p>
 <hr>
 <h2 id="semantic-versioning"><a class="header" href="#semantic-versioning">Semantic Versioning</a></h2>
-<p>Both crates follow <a href="https://semver.org/">Semantic Versioning 2.0.0</a>. While the crates are
-currently at <code>0.y.z</code> — which SemVer treats as explicitly unstable — this project uses
-patch, minor, and major increments as compatibility signals as documented on this page.
-A <code>0.y.z</code> version is not a license to make arbitrary breaking changes in patches.</p>
+<p>Both crates follow <a href="https://semver.org/">Semantic Versioning 2.0.0</a>, adapted to the pre-1.0
+phase. While the crates are at <code>0.y.z</code> — which SemVer treats as explicitly unstable — this
+project uses version increments as deliberate compatibility signals; a <code>0.y.z</code> version is not a
+license to make arbitrary breaking changes in patches.</p>
+<h3 id="pre-10-version-mapping-current"><a class="header" href="#pre-10-version-mapping-current">Pre-1.0 version mapping (current)</a></h3>
+<p>Cargo reads a <code>0.MINOR</code> caret requirement (a <code>"0.8"</code> dependency means <code>^0.8</code>, i.e.
+<code>&gt;=0.8.0, &lt;0.9.0</code>) as allowing patch updates but <strong>not</strong> a minor bump. So while at <code>0.y.z</code>, <strong>the
+minor bump is the breaking-change boundary</strong> — the opposite of the post-1.0 intuition where a
+minor release is a safe feature drop. To keep that boundary meaningful, the scheme collapses to
+two levels until 1.0:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Change</th><th>Bump while at 0.x</th><th>Does a <code>0.MINOR</code> caret pin auto-upgrade?</th></tr>
+</thead>
+<tbody>
+<tr><td>Breaking change (or MSRV raise)</td><td><strong>minor</strong> — <code>0.8.0</code> → <code>0.9.0</code></td><td>No — the consumer must opt in.</td></tr>
+<tr><td>New backward-compatible API or feature</td><td><strong>patch</strong> — <code>0.8.0</code> → <code>0.8.1</code></td><td>Yes.</td></tr>
+<tr><td>Bug fix</td><td><strong>patch</strong> — <code>0.8.0</code> → <code>0.8.1</code></td><td>Yes.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every backward-compatible change — new public types/functions/methods, new off-by-default feature
+flags, <em>and</em> bug fixes — ships as a <strong>patch</strong>; the <strong>minor</strong> bump is reserved for breaking changes
+(and MSRV raises, which break the build environment). This maximizes what a <code>0.MINOR</code> consumer
+receives automatically while still giving them a hard signal — the minor bump — before anything
+can break them. <code>release-plz</code> derives the bump from
+<a href="https://www.conventionalcommits.org/">Conventional Commits</a> accordingly: a <code>!</code> / <code>BREAKING CHANGE</code>
+commit bumps the minor; every other releasable commit (<code>feat</code>, <code>fix</code>, …) bumps the patch.</p>
+<p><strong>At <code>1.0.0</code> this expands to standard <code>MAJOR.MINOR.PATCH</code></strong>, and the per-channel meanings below
+apply literally (backward-compatible new API → minor, breaking → major).</p>
 <h3 id="patch-releases-0minorpatch"><a class="header" href="#patch-releases-0minorpatch">Patch releases (<code>0.MINOR.PATCH</code>)</a></h3>
-<p>A patch release fixes a bug without changing any public API. It is safe for all existing
-callers to upgrade without modification.</p>
+<p>Canonically (at 1.0+), a patch release fixes a bug without changing any public API, and is safe
+for all existing callers to upgrade without modification. <strong>While at 0.x, a patch release carries
+every backward-compatible change</strong> — bug fixes <em>and</em> new additive API/features (per the pre-1.0
+mapping above), since all of them are safe for a <code>0.MINOR</code> caret consumer to receive.</p>
 <p>Examples of patch changes:</p>
 <ul>
 <li>Correcting incorrect byte offsets in a parser</li>
 <li>Fixing a panic or incorrect error variant in an existing code path</li>
+<li>Adding a new public type, function, or method <em>(0.x — a minor change at 1.0+)</em></li>
+<li>Adding a new off-by-default feature flag, or a variant to a <code>#[non_exhaustive]</code> enum <em>(0.x)</em></li>
 <li>Updating documentation without changing behavior</li>
 <li>Updating a dependency to a compatible patch version</li>
 </ul>
 <h3 id="minor-releases-0minor0"><a class="header" href="#minor-releases-0minor0">Minor releases (<code>0.MINOR.0</code>)</a></h3>
-<p>A minor release adds new functionality in a backward-compatible way. Existing callers
-compile and run without modification on the same or a newer supported toolchain. (MSRV
-bumps are also minor releases — callers on a compiler older than the new MSRV will need
-to upgrade their toolchain.)</p>
-<p>Examples of minor changes:</p>
-<ul>
-<li>Adding a new public type, function, or method</li>
-<li>Adding a new feature flag that is off by default</li>
-<li>Adding a new variant to a non-exhaustive enum</li>
-<li>Raising the MSRV (see <a href="#msrv-policy">MSRV policy</a> below)</li>
-</ul>
+<p><strong>While at 0.x, a minor bump signals a breaking change</strong> — it is the boundary a <code>0.MINOR</code> caret
+consumer must opt into (see the <a href="#pre-10-version-mapping-current">pre-1.0 mapping</a> above and the
+breaking-change list below). An <strong>MSRV raise is also a minor bump</strong>: a caller on an older compiler
+can no longer build, so it is treated as a build-environment break (see
+<a href="#msrv-policy">MSRV policy</a>).</p>
+<p>Canonically (at 1.0+), the minor channel instead carries backward-compatible new functionality —
+adding a public type, function, or method; a new off-by-default feature flag; a new
+<code>#[non_exhaustive]</code> enum variant. Until 1.0 those ship as <strong>patches</strong> (above); only breaking
+changes and MSRV raises bump the minor.</p>
 <h3 id="major-releases-major00"><a class="header" href="#major-releases-major00">Major releases (<code>MAJOR.0.0</code>)</a></h3>
 <p>A major release contains at least one breaking change. Callers may need to update their
 code after upgrading.</p>
