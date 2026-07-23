@@ -42,6 +42,12 @@ pub mod doom64;
 /// ADR-0025). Crate-internal decoder plus the public [`ExtendedNodeError`]
 /// surfaced by [`MapAssembleError`] / [`MapWarning`].
 mod extended;
+/// Decoding classic GL node lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`,
+/// ADR-0025 amendment, #324). Crate-internal: version detection (V2/V3/V5;
+/// V1/V4 refused) plus the four lump decoders, wired into binary Doom/Hexen
+/// map assembly. Decodes into separate `gl_*` arenas on [`Map`], additive to
+/// the vanilla BSP.
+mod gl;
 pub mod graph;
 pub mod group;
 pub mod hexen;
@@ -57,10 +63,11 @@ pub use doom64::{
 };
 pub use extended::ExtendedNodeError;
 pub use graph::{
-    LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight, MapLinedef, MapMacro,
-    MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef, MapSubsector, MapThing,
-    MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx, SegIdx, SidedefIdx, Special,
-    SubsectorIdx, TextureRef, VertexIdx,
+    GlNode, GlNodeChild, GlNodeIdx, GlSeg, GlSegIdx, GlSubsector, GlSubsectorIdx, GlVertex,
+    GlVertexIdx, GlVertexRef, LightIdx, LinedefIdx, Map, MapBlockmap, MapFormat, MapLeaf, MapLight,
+    MapLinedef, MapMacro, MapMacroAction, MapNode, MapReject, MapSector, MapSeg, MapSidedef,
+    MapSubsector, MapThing, MapVertex, MapWarning, NodeChild, NodeIdx, SectorIdx, SegIdx,
+    SidedefIdx, Special, SubsectorIdx, TextureRef, VertexIdx,
 };
 pub use group::{MapGroup, detect_map_format};
 pub use udmf::{UdmfParseError, parse_udmf};

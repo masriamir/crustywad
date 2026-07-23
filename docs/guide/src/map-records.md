@@ -531,6 +531,40 @@ there (including `xNd4`, which never legitimately appears in UDMF) is gated — 
 lenient warning with empty BSP arenas. The staged extended-node design lives under the
 [#199](https://github.com/masriamir/crustywad/issues/199) umbrella; see ADR-0025.
 
+#### Classic GL nodes
+
+A **classic binary** (Doom/Hexen) map can additionally ship its own `GL_<mapname>` marker lump
+(e.g. `GL_MAP01`) followed by a `GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES` run — glBSP's
+precursor to the ZDoom extended-node family above, computed for faster in-engine rendering
+([#324](https://github.com/masriamir/crustywad/issues/324), ADR-0025 amendment). Unlike the
+extended/DeePBSP formats, which decode into the *existing* `segs()`/`subsectors()`/`nodes()`
+arenas, classic GL data is **additive**: it decodes into its own arenas —
+`map.gl_vertices()`, `map.gl_segs()`, `map.gl_subsectors()`, and `map.gl_nodes()` — alongside
+(never instead of) the vanilla BSP, because a `GL_*` group is a genuinely separate BSP glBSP
+built over the same geometry, not an alternate encoding of the classic one. `GlVertex`
+coordinates are `f64` world units, widened losslessly from the on-disk 16.16 fixed-point. A
+`GlSeg`'s endpoints are a `GlVertexRef` (`Normal` into the map's own `VERTEXES`, or `Gl` into
+`gl_vertices()`); `linedef` is `None` for a GL **miniseg** (a synthetic seg running along a BSP
+partition line, not backed by a linedef); a resolved `partner` links the seg on the far side of
+the same edge. `GlNode` mirrors `MapNode`'s partition/bbox/child shape, but its children
+(`GlNodeChild`) index the GL arenas instead.
+
+Three on-disk versions decode — **V2**, **V3**, and **V5** — detected from the `GL_VERT`
+(and, for the V2/V3 split, `GL_SEGS`) magic signature. **V1** (no signature) and **V4** (which
+dropped the partner-seg information needed to rebuild subsector winding) are **refused**,
+matching gzdoom's own policy: strict mode fails with `MapAssembleError::UnsupportedGlNodeVersion`;
+lenient mode records one `MapWarning::GlNodesRefused` and leaves all four GL arenas empty — the
+same "no GL data" shape as a map with no `GL_*` group at all. A structural cross-reference fault
+that cannot be recovered by clamping degrades the *whole* GL group the same way the classic BSP
+does (`MapWarning::GlNodesDegraded`, empty arenas), while a framing defect (a lump whose length
+isn't a whole multiple of its record size) is a hard error in both modes.
+
+Classic GL nodes are decoded unconditionally — **no feature flag** — on the binary Doom/Hexen
+assembly path only; UDMF and Doom 64 maps always report empty `gl_*` arenas. **Only the in-WAD
+`GL_<mapname>` group is read.** The historical glBSP convention of writing GL nodes to a
+same-named external `.gwa` sibling WAD instead is **not yet supported** — that needs a
+multi-source assembly API and is tracked separately.
+
 The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent
 `SSECTORS` arena) drops all three arenas, records the dangling reference as a warning, and the

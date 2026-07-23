@@ -101,8 +101,10 @@ The clean-room builder targets the **classic 16-bit tier only** — vanilla-layo
 encodings (`XNOD`/`ZNOD`, GL variants). For those, the long-standing recipe
 still applies: run an external nodebuilder (`zdbsp`, `bsp`, …) over the output.
 
-`crustywad` tracks GL/extended node *reading* separately under the
-`Extended nodes` milestone (issue #199); extended *generation* belongs there too
-if and when something needs it. A `cwad build --nodes` for authoring a WAD from
-loose lumps is deferred to issue #320 — today the node-building CLI surface is
-`cwad convert --nodes`.
+`crustywad` *reads* both the ZDoom extended family and classic GL nodes (ADR-0025 and its
+amendments, `Extended nodes` milestone, #199/#324) — see
+[Extended node encodings](map-records.md#extended-node-encodings) and
+[Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide. *Generating*
+GL/extended nodes is a separate, still-open follow-up (issue #323) that this clean-room
+builder does not cover. A `cwad build --nodes` for authoring a WAD from loose lumps is
+deferred to issue #320 — today the node-building CLI surface is `cwad convert --nodes`.

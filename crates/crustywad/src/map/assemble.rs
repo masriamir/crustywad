@@ -204,6 +204,15 @@ pub enum MapAssembleError {
         /// The element kind carrying the reference (`"sidedef"` or `"sector"`).
         from: &'static str,
     },
+    /// A `GL_*` node group used an unreadable/refused GL version (V1 or V4).
+    #[error(
+        "unsupported or refused GL node version (magic {})",
+        String::from_utf8_lossy(magic).escape_default()
+    )]
+    UnsupportedGlNodeVersion {
+        /// The 4-byte `GL_VERT`/`gNd?` magic that identified the refused version.
+        magic: [u8; 4],
+    },
 }
 
 /// Finds the bytes of the data lump named `lump` within `group`.
@@ -1650,7 +1659,13 @@ impl Map {
     /// Stage 3, #328); a structurally malformed `DeePBSP` lump is a
     /// [`MapAssembleError::Records`] in **both** strictness modes (the
     /// framing-defect policy — `DeePBSP` mirrors the classic path it resembles,
-    /// not the `ZDoom` readers' lenient degrade). The gate does not apply
+    /// not the `ZDoom` readers' lenient degrade). Separately, a classic
+    /// **binary** map carrying an in-WAD `GL_<mapname>` classic-GL node group
+    /// (ADR-0025 amendment, #324) has that group decoded into its own,
+    /// additive `gl_vertices`/`gl_segs`/`gl_subsectors`/`gl_nodes` arenas
+    /// alongside (not instead of) the vanilla BSP above; a refused GL version
+    /// (V1/V4) is [`MapAssembleError::UnsupportedGlNodeVersion`] in strict
+    /// mode, or a warning with empty GL arenas in lenient mode. The gate does not apply
     /// to Doom 64 nested
     /// sub-lumps, whose records were already decoded by
     /// [`doom64::read_doom64_map`]. Lenient mode likewise degrades the whole
@@ -1760,6 +1775,34 @@ impl Map {
                     &mut warnings,
                 )?;
 
+                // Classic GL nodes (`GL_<mapname>`) are additive: they augment
+                // the vanilla `SEGS`/`SSECTORS`/`NODES` graph above with glBSP's
+                // higher-precision minisegs and BSP (#324, ADR-0025). Decode them
+                // when present, leaving the arenas empty otherwise. In strict
+                // mode a refusal (V1/V4) or framing defect propagates; in lenient
+                // mode `decode_gl_group` returns empty arenas plus a warning.
+                let (gl_vertices, gl_segs, gl_subsectors, gl_nodes) =
+                    if let Some(g) = crate::map::group::gl_group_for(wad, group) {
+                        let decoded = crate::map::gl::decode_gl_group(
+                            wad.lump_bytes(g.vert).unwrap_or_default(),
+                            wad.lump_bytes(g.segs).unwrap_or_default(),
+                            wad.lump_bytes(g.ssect).unwrap_or_default(),
+                            wad.lump_bytes(g.nodes).unwrap_or_default(),
+                            vertices.len(),
+                            linedefs.len(),
+                            s,
+                            &mut warnings,
+                        )?;
+                        (
+                            decoded.vertices,
+                            decoded.segs,
+                            decoded.subsectors,
+                            decoded.nodes,
+                        )
+                    } else {
+                        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                    };
+
                 Ok(Map {
                     name: group.name.clone(),
                     format,
@@ -1773,6 +1816,10 @@ impl Map {
                     segs,
                     subsectors,
                     nodes,
+                    gl_vertices,
+                    gl_segs,
+                    gl_subsectors,
+                    gl_nodes,
                     leafs: Vec::new(),
                     macros: Vec::new(),
                     reject,
@@ -2137,6 +2184,10 @@ fn assemble_doom64(
         segs,
         subsectors,
         nodes,
+        gl_vertices: Vec::new(),
+        gl_segs: Vec::new(),
+        gl_subsectors: Vec::new(),
+        gl_nodes: Vec::new(),
         leafs: leaf_arena,
         macros,
         reject,
@@ -2146,6 +2197,7 @@ fn assemble_doom64(
 }
 
 /// Assembles a UDMF (`TEXTMAP`) map group into a [`Map`] (ADR-0017 §3).
+#[allow(clippy::too_many_lines)]
 fn assemble_udmf(
     wad: &Wad,
     group: &MapGroup,
@@ -2261,6 +2313,10 @@ fn assemble_udmf(
         segs,
         subsectors,
         nodes,
+        gl_vertices: Vec::new(),
+        gl_segs: Vec::new(),
+        gl_subsectors: Vec::new(),
+        gl_nodes: Vec::new(),
         leafs: Vec::new(),
         macros: Vec::new(),
         reject,
