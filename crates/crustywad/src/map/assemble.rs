@@ -1711,11 +1711,6 @@ impl Map {
             MapFormat::Doom64 => assemble_doom64(wad, group, options, warnings),
             format => {
                 let s = options.strictness;
-                // Accepted-but-not-yet-consulted: the `.gwa` lookup/precedence
-                // that reads from `gl_wad` lands in Task 3 (#342); the GL
-                // wiring below still resolves only the in-WAD `GL_<mapname>`
-                // group via `gl_group_for`.
-                let _ = gl_wad;
 
                 // Records shared by both binary formats.
                 let raw_verts = decode_required::<common::Vertex>(wad, group, "VERTEXES")?;
@@ -1809,13 +1804,23 @@ impl Map {
                 // when present, leaving the arenas empty otherwise. In strict
                 // mode a refusal (V1/V4) or framing defect propagates; in lenient
                 // mode `decode_gl_group` returns empty arenas plus a warning.
+                //
+                // #342: prefer a GL group from the caller-supplied `.gwa`
+                // (`gl_wad`), else fall back to an in-WAD group. The GL lump
+                // BYTES come from whichever Wad won, but the normal-vertex/
+                // linedef reference bounds are always the MAIN map's arenas.
+                let gl_group = gl_wad
+                    .and_then(|g| {
+                        crate::map::group::gl_group_in_gl_wad(g, &group.name).map(|grp| (g, grp))
+                    })
+                    .or_else(|| crate::map::group::gl_group_for(wad, group).map(|grp| (wad, grp)));
                 let (gl_vertices, gl_segs, gl_subsectors, gl_nodes) =
-                    if let Some(g) = crate::map::group::gl_group_for(wad, group) {
+                    if let Some((src, g)) = gl_group {
                         let decoded = crate::map::gl::decode_gl_group(
-                            wad.lump_bytes(g.vert).unwrap_or_default(),
-                            wad.lump_bytes(g.segs).unwrap_or_default(),
-                            wad.lump_bytes(g.ssect).unwrap_or_default(),
-                            wad.lump_bytes(g.nodes).unwrap_or_default(),
+                            src.lump_bytes(g.vert).unwrap_or_default(),
+                            src.lump_bytes(g.segs).unwrap_or_default(),
+                            src.lump_bytes(g.ssect).unwrap_or_default(),
+                            src.lump_bytes(g.nodes).unwrap_or_default(),
                             vertices.len(),
                             linedefs.len(),
                             s,

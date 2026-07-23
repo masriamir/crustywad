@@ -297,11 +297,9 @@ pub(crate) fn gl_group_for(wad: &Wad, map: &MapGroup) -> Option<GlGroup> {
 /// is missing from the matched marker's run before the next group marker
 /// (or end of directory).
 ///
-/// This is the locator half of the `.gwa` read path (#342); it has no
-/// non-test caller yet — the public API that opens a sibling `.gwa` `Wad`
-/// and wires this lookup into map assembly lands in a follow-up task on the
-/// same issue — hence the explicit `allow` below.
-#[allow(dead_code)]
+/// This is the locator half of the `.gwa` read path (#342); it is consulted
+/// by [`Map::assemble_with_gl_source`](crate::map::Map::assemble_with_gl_source)
+/// ahead of any in-WAD `GL_<mapname>` group.
 pub(crate) fn gl_group_in_gl_wad(gl_wad: &Wad, map_name: &str) -> Option<GlGroup> {
     let lumps = gl_wad.lumps();
     let gl_name = format!("GL_{map_name}");
