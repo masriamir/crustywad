@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-da471664.js";
+            window.path_to_searchindex_js = "searchindex-79a2de6d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -267,11 +267,13 @@ builder could fix.</p>
 (ADR-0024 §1). It does <strong>not</strong> generate GL nodes or the extended/compressed
 encodings (<code>XNOD</code>/<code>ZNOD</code>, GL variants). For those, the long-standing recipe
 still applies: run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output.</p>
-<p><code>crustywad</code> tracks GL/extended node <em>reading</em> separately under the
-<code>Extended nodes</code> milestone (issue #199); extended <em>generation</em> belongs there too
-if and when something needs it. A <code>cwad build --nodes</code> for authoring a WAD from
-loose lumps is deferred to issue #320 — today the node-building CLI surface is
-<code>cwad convert --nodes</code>.</p>
+<p><code>crustywad</code> <em>reads</em> both the ZDoom extended family and classic GL nodes (ADR-0025 and its
+amendments, <code>Extended nodes</code> milestone, #199/#324) — see
+<a href="map-records.html#extended-node-encodings">Extended node encodings</a> and
+<a href="map-records.html#classic-gl-nodes">Classic GL nodes</a> in the map-records guide. <em>Generating</em>
+GL/extended nodes is a separate, still-open follow-up (issue #323) that this clean-room
+builder does not cover. A <code>cwad build --nodes</code> for authoring a WAD from loose lumps is
+deferred to issue #320 — today the node-building CLI surface is <code>cwad convert --nodes</code>.</p>
 
                     </main>
 

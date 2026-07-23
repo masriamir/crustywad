@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-da471664.js";
+            window.path_to_searchindex_js = "searchindex-79a2de6d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -529,8 +529,10 @@ and the UDMF <code>ZNODES</code> lump.</p>
 <p>With the feature <strong>off</strong>, a recognized <code>Z*</code> signature keeps the extended-encoding gate: strict
 mode returns <code>MapAssembleError::UnsupportedNodeEncoding</code>, lenient mode skips the BSP arenas and
 records a warning — the geometry still assembles.</p>
-<p>The classic-format GL node lumps (<code>GL_VERT</code>/<code>GL_SEGS</code>/…) and the <code>xNd4</code>-compressed variant
-remain out of scope (tracked separately, #324/#328).</p>
+<p>This feature is unrelated to two other node formats that decode as <strong>always-on core</strong> (no
+feature flag, since neither needs a decompressor): <code>DeePBSP</code> v4 (<code>xNd4</code>) and classic GL node
+lumps (<code>GL_VERT</code>/<code>GL_SEGS</code>/<code>GL_SSECT</code>/<code>GL_NODES</code>) — see
+<a href="map-records.html#classic-gl-nodes">Classic GL nodes</a> in the map-records guide.</p>
 <h3 id="usage-4"><a class="header" href="#usage-4">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.8.0", features = ["extended-nodes-zlib"] }
