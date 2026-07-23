@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/masriamir/crustywad/compare/crustywad-v0.8.0...crustywad-v0.8.1) - 2026-07-23
+
+### Added
+
+- *(map)* emit XNOD/ZNOD extended-node streams from built nodes ([#323](https://github.com/masriamir/crustywad/pull/323)) ([#346](https://github.com/masriamir/crustywad/pull/346))
+- *(map)* read classic GL nodes from .gwa sibling files ([#342](https://github.com/masriamir/crustywad/pull/342)) ([#344](https://github.com/masriamir/crustywad/pull/344))
+- *(map)* read classic GL nodes (gNd2/gNd3/gNd5) into separate additive arenas ([#324](https://github.com/masriamir/crustywad/pull/324)) ([#340](https://github.com/masriamir/crustywad/pull/340))
+
 ## [0.8.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.7.1...crustywad-v0.8.0) - 2026-07-22
 
 ### Other

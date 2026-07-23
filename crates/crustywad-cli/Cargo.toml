@@ -1,6 +1,6 @@
 [package]
 name = "crustywad-cli"
-version = "0.4.0"
+version = "0.4.1"
 description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,7 +27,7 @@ clap.workspace = true
 # versioned independently) — cargo-deny enforces wildcards = "deny"
 # write feature required for WadBuilder; nodebuild (implies write) powers
 # `convert --nodes`
-crustywad = { path = "../crustywad", version = "0.8.0", features = [
+crustywad = { path = "../crustywad", version = "0.8.1", features = [
     "write",
     "nodebuild",
 ] }
