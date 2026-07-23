@@ -1638,6 +1638,27 @@ impl Map {
 
     /// Assembles a map under explicit options (ADR-0015 §3).
     ///
+    /// Equivalent to [`Map::assemble_with_gl_source`] with `gl_wad: None`.
+    ///
+    /// # Errors
+    /// See [`Map::assemble_with_gl_source`].
+    pub fn assemble_with_options(
+        wad: &Wad,
+        group: &MapGroup,
+        options: ParseOptions,
+    ) -> Result<Map, MapAssembleError> {
+        Self::assemble_with_gl_source(wad, group, None, options)
+    }
+
+    /// Assembles a map under explicit options, with an optional external
+    /// source of classic GL-node lumps (ADR-0015 §3; `gl_wad` added for the
+    /// `.gwa` sidecar reader, #342).
+    ///
+    /// `gl_wad` is an optional sibling [`Wad`] (e.g. a loaded `.gwa`)
+    /// supplying the map's classic GL-node lumps; preferred over any in-WAD
+    /// GL group, with in-WAD as fallback. `None` reads GL nodes from `wad`
+    /// only (as [`Map::assemble_with_options`] does).
+    ///
     /// A Doom 64 group (detected via the marker's nested `IWAD`/`PWAD` magic,
     /// ADR-0021 §1) is read via [`doom64::read_doom64_map`] and normalized
     /// separately from the classic binary/UDMF paths below (ADR-0021 §2).
@@ -1660,12 +1681,13 @@ impl Map {
     /// [`MapAssembleError::Records`] in **both** strictness modes (the
     /// framing-defect policy — `DeePBSP` mirrors the classic path it resembles,
     /// not the `ZDoom` readers' lenient degrade). Separately, a classic
-    /// **binary** map carrying an in-WAD `GL_<mapname>` classic-GL node group
-    /// (ADR-0025 amendment, #324) has that group decoded into its own,
-    /// additive `gl_vertices`/`gl_segs`/`gl_subsectors`/`gl_nodes` arenas
-    /// alongside (not instead of) the vanilla BSP above; a refused GL version
-    /// (V1/V4) is [`MapAssembleError::UnsupportedGlNodeVersion`] in strict
-    /// mode, or a warning with empty GL arenas in lenient mode. The gate does not apply
+    /// **binary** map carrying classic-GL node lumps — from `gl_wad` when
+    /// supplied, or an in-WAD `GL_<mapname>` group otherwise (ADR-0025
+    /// amendment, #324) — has that group decoded into its own, additive
+    /// `gl_vertices`/`gl_segs`/`gl_subsectors`/`gl_nodes` arenas alongside
+    /// (not instead of) the vanilla BSP above; a refused GL version (V1/V4) is
+    /// [`MapAssembleError::UnsupportedGlNodeVersion`] in strict mode, or a
+    /// warning with empty GL arenas in lenient mode. The gate does not apply
     /// to Doom 64 nested
     /// sub-lumps, whose records were already decoded by
     /// [`doom64::read_doom64_map`]. Lenient mode likewise degrades the whole
@@ -1676,9 +1698,10 @@ impl Map {
     /// marker's nested WAD (both modes) or a missing/undecodable sub-lump
     /// (strict mode; ADR-0021 §2).
     #[allow(clippy::too_many_lines)]
-    pub fn assemble_with_options(
+    pub fn assemble_with_gl_source(
         wad: &Wad,
         group: &MapGroup,
+        gl_wad: Option<&Wad>,
         options: ParseOptions,
     ) -> Result<Map, MapAssembleError> {
         let mut warnings = Vec::new();
@@ -1781,13 +1804,23 @@ impl Map {
                 // when present, leaving the arenas empty otherwise. In strict
                 // mode a refusal (V1/V4) or framing defect propagates; in lenient
                 // mode `decode_gl_group` returns empty arenas plus a warning.
+                //
+                // #342: prefer a GL group from the caller-supplied `.gwa`
+                // (`gl_wad`), else fall back to an in-WAD group. The GL lump
+                // BYTES come from whichever Wad won, but the normal-vertex/
+                // linedef reference bounds are always the MAIN map's arenas.
+                let gl_group = gl_wad
+                    .and_then(|gw| {
+                        crate::map::group::gl_group_in_gl_wad(gw, &group.name).map(|grp| (gw, grp))
+                    })
+                    .or_else(|| crate::map::group::gl_group_for(wad, group).map(|grp| (wad, grp)));
                 let (gl_vertices, gl_segs, gl_subsectors, gl_nodes) =
-                    if let Some(g) = crate::map::group::gl_group_for(wad, group) {
+                    if let Some((src, g)) = gl_group {
                         let decoded = crate::map::gl::decode_gl_group(
-                            wad.lump_bytes(g.vert).unwrap_or_default(),
-                            wad.lump_bytes(g.segs).unwrap_or_default(),
-                            wad.lump_bytes(g.ssect).unwrap_or_default(),
-                            wad.lump_bytes(g.nodes).unwrap_or_default(),
+                            src.lump_bytes(g.vert).unwrap_or_default(),
+                            src.lump_bytes(g.segs).unwrap_or_default(),
+                            src.lump_bytes(g.ssect).unwrap_or_default(),
+                            src.lump_bytes(g.nodes).unwrap_or_default(),
                             vertices.len(),
                             linedefs.len(),
                             s,

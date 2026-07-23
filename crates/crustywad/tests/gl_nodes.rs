@@ -1,15 +1,20 @@
-//! Integration tests for classic GL-node reading during map assembly (#324).
+//! Integration tests for classic GL-node reading during map assembly
+//! (#324), including the `.gwa` sidecar source (#342).
 //!
 //! These exercise the public API end to end: `Wad::from_bytes` →
-//! `Map::assemble`/`assemble_with_options` → the `gl_*` accessors. A Doom-format
-//! map carrying a `GL_<name>` group must populate the additive GL arenas without
-//! disturbing the vanilla `SEGS`/`SSECTORS`/`NODES` graph; a refused version (V4)
-//! must leave the GL arenas empty (warning in Lenient, error in Strict); and a
-//! map with no GL group must leave the arenas empty with no GL warnings.
+//! `Map::assemble`/`assemble_with_options`/`assemble_with_gl_source` → the
+//! `gl_*` accessors. A Doom-format map carrying a `GL_<name>` group must
+//! populate the additive GL arenas without disturbing the vanilla
+//! `SEGS`/`SSECTORS`/`NODES` graph; a refused version (V4) must leave the GL
+//! arenas empty (warning in Lenient, error in Strict); a map with no GL
+//! group must leave the arenas empty with no GL warnings; and a `.gwa`
+//! passed via `assemble_with_gl_source` is preferred over an in-WAD GL
+//! group, falling back to the in-WAD group when the `.gwa` has no matching
+//! group.
 
 mod common;
 
-use common::build_doom_map_wad_with_lumps;
+use common::{build_doom_map_wad_with_lumps, build_named_lumps};
 use crustywad::map::{Map, MapWarning};
 use crustywad::{ParseOptions, Strictness, Wad};
 
@@ -157,6 +162,25 @@ fn v2_gl_lumps() -> GlLumps {
     }
 }
 
+/// A minimal valid V2 GL group's four lumps with a single, one-sided seg
+/// that references only normal vertices (no `GL_VERT` entries needed). Used
+/// alongside [`v2_gl_lumps`] (2 segs) to give two GL groups a distinct,
+/// assertable seg count — so a precedence test can tell which source's
+/// group was actually used (#342).
+fn v2_gl_lumps_single_seg() -> GlLumps {
+    let vert = b"gNd2".to_vec(); // no GL vertices referenced by the seg below.
+
+    // One one-sided seg: normal vertex 0 -> normal vertex 1, on linedef 0, no partner.
+    let segs = gl_seg_v2(0, 1, 0, 0, 0xFFFF);
+
+    GlLumps {
+        vert,
+        segs,
+        ssect: gl_ssect_v2(1, 0), // 1 seg starting at 0
+        nodes: node_28(0, 0),     // single child = GL subsector 0
+    }
+}
+
 /// Builds a Doom-format WAD for `name` with the vanilla BSP present and,
 /// optionally, a `GL_<name>` group whose four lumps are `gl`.
 fn build_wad_bytes(name: &str, gl: Option<&GlLumps>) -> Vec<u8> {
@@ -185,6 +209,27 @@ fn build_wad_bytes(name: &str, gl: Option<&GlLumps>) -> Vec<u8> {
         map.sectors.clone(),
         &extra,
     )
+}
+
+/// Builds a standalone `.gwa` WAD: no map lumps, just one GL group —
+/// `marker` (e.g. `"GL_MAP01"` or `"GL_LEVEL"`) with `marker_bytes` as its
+/// contents, immediately followed by `gl`'s four data lumps. Mirrors the
+/// real glBSP `.gwa` layout: a flat sequence of GL groups with no map
+/// markers to anchor to (#342).
+fn build_gwa_bytes(marker: &str, marker_bytes: &[u8], gl: &GlLumps) -> Vec<u8> {
+    build_named_lumps(&[
+        (marker, marker_bytes.to_vec()),
+        ("GL_VERT", gl.vert.clone()),
+        ("GL_SEGS", gl.segs.clone()),
+        ("GL_SSECT", gl.ssect.clone()),
+        ("GL_NODES", gl.nodes.clone()),
+    ])
+}
+
+/// An empty `.gwa`: a valid PWAD with zero lumps, used for the "no GL
+/// anywhere" and "no matching group in the `.gwa`" fallback cases.
+fn empty_gwa_bytes() -> Vec<u8> {
+    build_named_lumps(&[])
 }
 
 fn assemble(
@@ -298,4 +343,165 @@ fn no_gl_group_leaves_arenas_empty() {
         )),
         "no GL warnings expected"
     );
+}
+
+/// `Map::assemble_with_gl_source(.., gl_wad: None, ..)` must be byte-identical
+/// to `Map::assemble_with_options` (#342 Task 2 — the new `gl_wad` parameter
+/// is threaded through but not yet consulted; Task 3 wires the `.gwa`
+/// lookup/precedence). Reuses the same in-WAD V2 GL group fixture as
+/// `v2_gl_group_populates_additive_arenas` above.
+#[test]
+fn assemble_with_gl_source_none_matches_assemble_with_options() {
+    let bytes = build_wad_bytes("MAP01", Some(&v2_gl_lumps()));
+    let wad = Wad::from_bytes(bytes).expect("valid wad");
+    let group = wad.map_group("MAP01").expect("map group");
+
+    let a = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).expect("assembles");
+    let b = Map::assemble_with_gl_source(&wad, &group, None, ParseOptions::strict())
+        .expect("assembles");
+
+    assert_eq!(a.gl_segs(), b.gl_segs());
+    assert_eq!(a.gl_nodes().len(), b.gl_nodes().len());
+    assert_eq!(a.nodes().len(), b.nodes().len());
+}
+
+/// A `.gwa` with a `GL_MAP01` marker is preferred over an (absent) in-WAD GL
+/// group: the main WAD carries no `GL_MAP01` group of its own, so the GL
+/// arenas can only have come from the `.gwa` (#342 Task 3).
+#[test]
+fn gwa_gl_name_marker_populates_gl_arenas() {
+    let main_bytes = build_wad_bytes("MAP01", None);
+    let gwa_bytes = build_gwa_bytes("GL_MAP01", &[], &v2_gl_lumps());
+
+    let main = Wad::from_bytes(main_bytes).expect("valid main wad");
+    let group = main.map_group("MAP01").expect("map group");
+    let gwa = Wad::from_bytes(gwa_bytes).expect("valid gwa wad");
+
+    let map = Map::assemble_with_gl_source(&main, &group, Some(&gwa), ParseOptions::strict())
+        .expect("assembles");
+
+    assert_eq!(map.gl_vertices().len(), 1, "one GL vertex from .gwa");
+    assert_eq!(map.gl_segs().len(), 2, "two GL segs from .gwa");
+    assert_eq!(map.gl_subsectors().len(), 1, "one GL subsector from .gwa");
+    assert_eq!(map.gl_nodes().len(), 1, "one GL node from .gwa");
+
+    // Vanilla BSP (from the main WAD) is unaffected by the .gwa.
+    assert_eq!(map.segs().len(), 1, "vanilla segs unchanged");
+    assert_eq!(map.subsectors().len(), 1, "vanilla subsectors unchanged");
+    assert_eq!(map.nodes().len(), 1, "vanilla nodes unchanged");
+}
+
+/// A `.gwa` using the long-name `GL_LEVEL`/`LEVEL=` marker form is resolved
+/// through the same end-to-end assembly path as the `GL_<name>` form above
+/// (#342 Task 3).
+#[test]
+fn gwa_gl_level_marker_populates_gl_arenas() {
+    let main_bytes = build_wad_bytes("MAP01", None);
+    let gwa_bytes = build_gwa_bytes("GL_LEVEL", b"LEVEL=MAP01\n", &v2_gl_lumps());
+
+    let main = Wad::from_bytes(main_bytes).expect("valid main wad");
+    let group = main.map_group("MAP01").expect("map group");
+    let gwa = Wad::from_bytes(gwa_bytes).expect("valid gwa wad");
+
+    let map = Map::assemble_with_gl_source(&main, &group, Some(&gwa), ParseOptions::strict())
+        .expect("assembles");
+
+    assert_eq!(map.gl_vertices().len(), 1, "one GL vertex from .gwa");
+    assert_eq!(map.gl_segs().len(), 2, "two GL segs from .gwa");
+    assert_eq!(map.gl_subsectors().len(), 1, "one GL subsector from .gwa");
+    assert_eq!(map.gl_nodes().len(), 1, "one GL node from .gwa");
+
+    assert_eq!(map.segs().len(), 1, "vanilla segs unchanged");
+    assert_eq!(map.subsectors().len(), 1, "vanilla subsectors unchanged");
+    assert_eq!(map.nodes().len(), 1, "vanilla nodes unchanged");
+}
+
+/// When the `.gwa` has no group matching the map, an in-WAD `GL_<name>`
+/// group is used instead — the `.gwa`'s absence of a match falls back
+/// rather than winning by presence alone (#342 Task 3).
+#[test]
+fn gwa_without_matching_group_falls_back_to_in_wad_gl() {
+    let main_bytes = build_wad_bytes("MAP01", Some(&v2_gl_lumps()));
+    let gwa_bytes = empty_gwa_bytes();
+
+    let main = Wad::from_bytes(main_bytes).expect("valid main wad");
+    let group = main.map_group("MAP01").expect("map group");
+    let gwa = Wad::from_bytes(gwa_bytes).expect("valid gwa wad");
+
+    let map = Map::assemble_with_gl_source(&main, &group, Some(&gwa), ParseOptions::strict())
+        .expect("assembles");
+
+    assert_eq!(
+        map.gl_vertices().len(),
+        1,
+        "one GL vertex from in-WAD group"
+    );
+    assert_eq!(map.gl_segs().len(), 2, "two GL segs from in-WAD group");
+    assert_eq!(
+        map.gl_subsectors().len(),
+        1,
+        "one GL subsector from in-WAD group"
+    );
+    assert_eq!(map.gl_nodes().len(), 1, "one GL node from in-WAD group");
+}
+
+/// Neither the `.gwa` nor the main WAD carries a GL group: assembly still
+/// succeeds, with all GL arenas left empty (#342 Task 3).
+#[test]
+fn gwa_and_in_wad_both_absent_leaves_gl_arenas_empty() {
+    let main_bytes = build_wad_bytes("MAP01", None);
+    let gwa_bytes = empty_gwa_bytes();
+
+    let main = Wad::from_bytes(main_bytes).expect("valid main wad");
+    let group = main.map_group("MAP01").expect("map group");
+    let gwa = Wad::from_bytes(gwa_bytes).expect("valid gwa wad");
+
+    let map = Map::assemble_with_gl_source(&main, &group, Some(&gwa), ParseOptions::strict())
+        .expect("assembles");
+
+    assert!(map.gl_vertices().is_empty());
+    assert!(map.gl_segs().is_empty());
+    assert!(map.gl_subsectors().is_empty());
+    assert!(map.gl_nodes().is_empty());
+}
+
+/// When BOTH the main WAD's in-WAD `GL_MAP01` group and the `.gwa` carry a
+/// matching group, the `.gwa` must win — this is the actual conflict case,
+/// distinct from the fallback direction covered by
+/// `gwa_without_matching_group_falls_back_to_in_wad_gl` above (where the
+/// in-WAD group is absent). The two groups are built with different seg
+/// counts — main WAD: 1 (`v2_gl_lumps_single_seg`), `.gwa`: 2
+/// (`v2_gl_lumps`) — so `gl_segs().len()` unambiguously identifies which
+/// source's group made it into the assembled map (#342).
+#[test]
+fn gwa_gl_group_takes_precedence_over_in_wad_when_both_present() {
+    let main_bytes = build_wad_bytes("MAP01", Some(&v2_gl_lumps_single_seg())); // N = 1 seg
+    let gwa_bytes = build_gwa_bytes("GL_MAP01", &[], &v2_gl_lumps()); // M = 2 segs
+
+    let main = Wad::from_bytes(main_bytes).expect("valid main wad");
+    let group = main.map_group("MAP01").expect("map group");
+    let gwa = Wad::from_bytes(gwa_bytes).expect("valid gwa wad");
+
+    let map = Map::assemble_with_gl_source(&main, &group, Some(&gwa), ParseOptions::strict())
+        .expect("assembles");
+
+    // M = 2: the .gwa's GL_MAP01 group won, not the main WAD's N = 1 group.
+    assert_eq!(
+        map.gl_segs().len(),
+        2,
+        ".gwa's GL_MAP01 group (2 segs) must take precedence over the main WAD's in-WAD \
+         GL_MAP01 group (1 seg)"
+    );
+    assert_eq!(map.gl_vertices().len(), 1, "one GL vertex from .gwa group");
+    assert_eq!(
+        map.gl_subsectors().len(),
+        1,
+        "one GL subsector from .gwa group"
+    );
+    assert_eq!(map.gl_nodes().len(), 1, "one GL node from .gwa group");
+
+    // Vanilla BSP (from the main WAD) is unaffected either way.
+    assert_eq!(map.segs().len(), 1, "vanilla segs unchanged");
+    assert_eq!(map.subsectors().len(), 1, "vanilla subsectors unchanged");
+    assert_eq!(map.nodes().len(), 1, "vanilla nodes unchanged");
 }
