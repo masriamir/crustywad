@@ -344,8 +344,8 @@ impl BuiltNodes {
         // --- Seg block: numSegs, then u32 v1, u32 v2, u16 linedef, u8 side. ---
         out.extend_from_slice(&encode_u32("segs", self.segs.len())?.to_le_bytes());
         for (i, s) in self.segs.iter().enumerate() {
-            out.extend_from_slice(&encode_u32("vertices", s.start.0)?.to_le_bytes());
-            out.extend_from_slice(&encode_u32("vertices", s.end.0)?.to_le_bytes());
+            out.extend_from_slice(&encode_index_u32("vertices", s.start.0)?.to_le_bytes());
+            out.extend_from_slice(&encode_index_u32("vertices", s.end.0)?.to_le_bytes());
             let linedef = s
                 .linedef
                 .ok_or(NodeBuildError::MinisegUnsupported { seg: i })?;
@@ -508,6 +508,26 @@ fn encode_u32(kind: &'static str, value: usize) -> Result<u32, NodeBuildError> {
     }
     // `value <= MAX_EXTENDED_INDEX` (0x8000_0000) always fits `u32`.
     Ok(u32::try_from(value).expect("value <= MAX_EXTENDED_INDEX fits u32"))
+}
+
+/// Encodes a u32 arena **index** (not a count) into an extended stream. Unlike
+/// [`encode_u32`], the value `MAX_EXTENDED_INDEX` (`0x8000_0000`) itself is
+/// rejected: a valid index is strictly below the count ceiling, so the largest
+/// legal index is `0x7FFF_FFFF` (bit 31 clear). An index of `0x8000_0000` would
+/// require a `> 2^31`-entry arena, which the count ceiling forbids — so this
+/// gives a clean write-time [`NodeBuildError::TooManyElements`] rather than
+/// emitting a stream the reader would reject. Guards a hand-built [`BuiltNodes`]
+/// (via [`BuiltNodes::new`]); `build_nodes` never produces such an index.
+fn encode_index_u32(kind: &'static str, idx: usize) -> Result<u32, NodeBuildError> {
+    if idx >= MAX_EXTENDED_INDEX {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count: idx.saturating_add(1),
+            max: MAX_EXTENDED_INDEX,
+        });
+    }
+    // `idx < MAX_EXTENDED_INDEX` (0x8000_0000) always fits `u32`.
+    Ok(u32::try_from(idx).expect("idx < MAX_EXTENDED_INDEX fits u32"))
 }
 
 /// Encodes a [`NodeChild`] as the extended stream's 32-bit child word: a
@@ -2362,6 +2382,25 @@ mod tests {
             encode_extended_child(NodeChild::Subsector(SubsectorIdx(5))).unwrap(),
             0x8000_0000 | 5
         );
+    }
+
+    #[test]
+    fn to_extended_lump_bytes_rejects_bit31_vertex_index() {
+        // A seg vertex index of MAX_EXTENDED_INDEX (bit 31 set) can never be a
+        // valid index (the largest legal index is 0x7FFF_FFFF), so the writer
+        // rejects it at write time rather than emitting a reader-rejected stream.
+        // Reachable only via a hand-built BuiltNodes (BuiltNodes::new).
+        let mut b = square_room();
+        b.segs[0].start = VertexIdx(MAX_EXTENDED_INDEX);
+        assert!(matches!(
+            b.to_extended_lump_bytes(4, false),
+            Err(NodeBuildError::TooManyElements {
+                kind: "vertices",
+                ..
+            })
+        ));
+        // The unmodified square (indices well below the ceiling) still serializes.
+        assert!(square_room().to_extended_lump_bytes(4, false).is_ok());
     }
 
     #[test]
