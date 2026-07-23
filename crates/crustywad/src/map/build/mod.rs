@@ -69,7 +69,7 @@ const DEFAULT_AA_PREFERENCE: u32 = 16;
 /// non-GL node stream — `Xnod`, or its zlib twin `Znod` — that widens the
 /// subsector/node/seg/vertex counts to 32 bits, letting a past-vanilla map
 /// serialize. The seg `linedef` reference stays 16-bit in every format, so a map
-/// with more than 65,534 linedefs is unrepresentable here (that needs the GL
+/// with more than 65,536 linedefs is unrepresentable here (that needs the GL
 /// `XGL2` format, tracked in #345).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]

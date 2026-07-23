@@ -549,7 +549,7 @@ The writer this ADR's §6 and ADR-0024's revisit condition (a) deferred is now i
   (`encode_u32`/`encode_extended_child`, `nodes.rs:492-522`) — the same `NodeFormat` decides both.
   The **one ceiling that does not relax**: a seg's `linedef` reference is a `u16` in the `XNOD`
   seg record exactly as in the classic `Seg` record (§ "The ZDoom family shares a framing" —
-  XNOD is the `u16`-linedef, non-GL variant), so a map with more than 65,534 linedefs is
+  XNOD is the `u16`-linedef, non-GL variant), so a map with more than 65,536 linedefs is
   unrepresentable by this writer regardless of `NodeFormat`. `check_linedef_count`
   (`nodes.rs:1651-1660`) enforces this in **both** modes and is called unconditionally in
   `build_nodes` (`nodes.rs:647`) before the format-gated checks run — extending it to `XGL2`'s
@@ -573,7 +573,7 @@ The writer this ADR's §6 and ADR-0024's revisit condition (a) deferred is now i
   a hand-built `BuiltNodes` via the new `::new` constructor, by the serializer's own defensive
   `encode_u32`/`encode_index`/`encode_extended_child` checks, which fail cleanly rather than
   panic on an out-of-range value). Output size is `O(input)` — one pass over `split_vertices`,
-  `segs`, `subsectors`, `nodes`, each producing a fixed number of bytes per element, and (for
+  `segs`, `subsectors`, `subsector segs`, `nodes`, each producing a fixed number of bytes per element, and (for
   `ZNOD`) one bounded zlib compression pass over that output. There is no recursion (the
   serializer is a sequence of `for` loops over flat arenas) and no `unsafe` (the writer is core
   library code, outside `mmap.rs`, under the crate's `#![deny(unsafe_code)]`). Both `Strictness`

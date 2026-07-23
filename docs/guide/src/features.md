@@ -14,9 +14,9 @@ allowing callers to opt in to additional capabilities.
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`guide-doctests`](#guide-doctests) | no | **Internal, CI-only.** Compiles this guide's Rust code samples as crate doctests (enabled by `--all-features`); not a runtime capability |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
-| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; also emits the `XNOD`/`ZNOD` extended-node stream via `NodeFormat`; powers `cwad convert --nodes` |
+| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; also emits the `XNOD`/`ZNOD` extended-node stream via `NodeFormat` (ADR-0025); powers `cwad convert --nodes` |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
-| [`extended-nodes-zlib`](#extended-nodes-zlib) | no | Decode the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) via `miniz_oxide`, bounded by `Limits::max_decoded_node_bytes`; also enables the `nodebuild` `ZNOD` writer |
+| [`extended-nodes-zlib`](#extended-nodes-zlib) | no | Decode the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) via `miniz_oxide`, bounded by `Limits::max_decoded_node_bytes`; with `nodebuild` also enabled, also powers the `nodebuild` `ZNOD` writer |
 
 ---
 
@@ -328,7 +328,7 @@ with `extended-nodes-zlib`, `NodeFormat::Znod`) instead serializes a single `ZDo
 extended-node stream in `NODES` via `BuiltNodes::to_extended_lump_bytes`, leaving `SEGS`/
 `SSECTORS` empty. The extended formats widen the subsector/node/seg/vertex ceilings from the
 vanilla 15/16-bit limits to a 31-bit structural cap, so a past-vanilla map can serialize — but a
-seg's linedef reference stays a 16-bit field in every format, so a map with more than 65,534
+seg's linedef reference stays a 16-bit field in every format, so a map with more than 65,536
 linedefs is still unrepresentable here (that needs the GL `XGL2` format, tracked separately).
 Only the non-GL `XNOD`/`ZNOD` streams are covered; GL extended-node emission is out of scope for
 this writer.

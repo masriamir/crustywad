@@ -268,7 +268,7 @@ impl BuiltNodes {
     /// Unlike the classic [`to_lump_bytes`](Self::to_lump_bytes), the counts and
     /// vertex/seg indices are 32-bit, so a past-vanilla map (more than 32,768
     /// subsectors/nodes or 65,536 segs/vertices) serializes here. The seg
-    /// `linedef` reference is still 16-bit, so a map with more than 65,534
+    /// `linedef` reference is still 16-bit, so a map with more than 65,536
     /// linedefs cannot be encoded (that needs the GL `XGL2` format, #345).
     ///
     /// # Errors
