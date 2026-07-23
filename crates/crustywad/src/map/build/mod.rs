@@ -95,7 +95,6 @@ impl NodeFormat {
 
     /// Whether this format's stream is zlib-compressed (`Znod`).
     #[must_use]
-    #[allow(dead_code)] // used by #323 Task 3/4
     pub(crate) fn compressed(self) -> bool {
         #[cfg(feature = "extended-nodes-zlib")]
         {

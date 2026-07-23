@@ -37,6 +37,15 @@ use super::{
 /// `SECTORS`, `REJECT`, `BLOCKMAP`. The split vertices **must** be appended to
 /// `VERTEXES` (done here) or the seg vertex indices would dangle.
 ///
+/// When [`build_opts.format`](NodeBuildOptions::format) selects an extended
+/// format (ADR-0025, #323) — [`Xnod`](super::NodeFormat::Xnod) or
+/// [`Znod`](super::NodeFormat::Znod) — the node data is instead emitted as a
+/// single `XNOD`/`ZNOD` stream in `NODES`, with `SEGS`/`SSECTORS` left empty
+/// and the split vertices left out of `VERTEXES` entirely (they live in the
+/// stream header, not the classic lump). The default
+/// [`Classic`](super::NodeFormat::Classic) writes the vanilla three-lump
+/// layout described above.
+///
 /// Warnings are returned in a deterministic order (Global Constraint 6): the
 /// write-path warnings first (excluding `NodesNotBuilt`), then the
 /// `BLOCKMAP`-build warnings, then the BSP-build warnings.
@@ -46,9 +55,10 @@ use super::{
 ///
 /// # Errors
 ///
-/// Returns a [`NodeBuildError`] if any of the three builders or the shared write
-/// pass fails; the builder is left unmodified in that case (every build runs
-/// before the first lump is added). Reachable variants:
+/// Returns a [`NodeBuildError`] if any of the three builders, the shared write
+/// pass, or the node-lump serialization fails; the builder is left unmodified
+/// in that case (every build runs before the first lump is added). Reachable
+/// variants:
 ///
 /// - [`NodeBuildError::EmptyGeometry`] (**both** modes) — the map has no geometry
 ///   to build nodes or a blockmap from (zero vertices, linedefs, sidedefs, or
@@ -64,6 +74,10 @@ use super::{
 ///   subsector spans multiple sectors with no separating partition.
 /// - [`NodeBuildError::DegeneratePartition`] (**both** modes) — a hardening guard
 ///   for adversarial geometry a selected partition cannot separate.
+/// - For an extended format, the errors documented on
+///   [`BuiltNodes::to_extended_lump_bytes`](super::BuiltNodes::to_extended_lump_bytes)
+///   propagate as well (e.g. [`NodeBuildError::MinisegUnsupported`],
+///   [`NodeBuildError::CompressionUnavailable`]).
 pub fn add_doom_map_with_nodes(
     builder: &mut WadBuilder,
     name: &str,
@@ -85,7 +99,6 @@ pub fn add_doom_map_with_nodes(
 
     // 4. SEGS/SSECTORS/NODES — collect its build warnings.
     let (nodes, node_ws) = build_nodes(map, build_opts)?;
-    let node_lumps = nodes.to_lump_bytes()?;
 
     // Deterministic warning order: write (minus NodesNotBuilt), blockmap, nodes.
     // `NodesNotBuilt` describes the empty-lump write path and is a lie here — we
@@ -98,8 +111,29 @@ pub fn add_doom_map_with_nodes(
     warnings.extend(blockmap_ws);
     warnings.extend(node_ws);
 
-    // 5. Append the split vertices so the seg vertex indices resolve
-    //    (Global Constraint 5).
+    // 5. Emit the node lumps per the target format (ADR-0025, #323).
+    if build_opts.format.is_extended() {
+        // Extended: a single XNOD/ZNOD stream in NODES; SEGS/SSECTORS empty; the
+        // split vertices live in the stream header, NOT appended to VERTEXES.
+        let stream =
+            nodes.to_extended_lump_bytes(map.vertices().len(), build_opts.format.compressed())?;
+        builder.add_lump(name, b"");
+        builder.add_lump("THINGS", data.things);
+        builder.add_lump("LINEDEFS", data.linedefs);
+        builder.add_lump("SIDEDEFS", data.sidedefs);
+        builder.add_lump("VERTEXES", data.vertexes);
+        builder.add_lump("SEGS", b"");
+        builder.add_lump("SSECTORS", b"");
+        builder.add_lump("NODES", stream);
+        builder.add_lump("SECTORS", data.sectors);
+        builder.add_lump("REJECT", reject);
+        builder.add_lump("BLOCKMAP", blockmap);
+        return Ok(warnings);
+    }
+
+    // Classic: the vanilla three-lump layout with split verts appended to
+    // VERTEXES so the seg vertex indices resolve (Global Constraint 5).
+    let node_lumps = nodes.to_lump_bytes()?;
     data.vertexes.extend_from_slice(&node_lumps.split_vertexes);
 
     // 6. Add the eleven lumps in canonical order (Global Constraint 5).

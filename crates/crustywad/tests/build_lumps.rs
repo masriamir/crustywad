@@ -10,8 +10,8 @@
 mod common;
 
 use crustywad::map::build::{
-    BuiltNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, add_doom_map_with_nodes,
-    build_blockmap, build_nodes, build_reject,
+    BuiltNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat,
+    add_doom_map_with_nodes, build_blockmap, build_nodes, build_reject,
 };
 use crustywad::map::{
     DoomWriteError, DoomWriteWarning, Map, MapBlockmap, MapReject, MapWarning, NodeChild,
@@ -1817,5 +1817,87 @@ fn add_doom_map_with_nodes_orders_write_before_build_warnings() {
         warnings[1],
         NodeBuildWarning::MixedSectorSubsector { subsector_segs: 2 },
         "the build warning comes second"
+    );
+}
+
+/// Extended-format layout (ADR-0025, #323): `build_opts.format = Xnod` puts a
+/// single `XNOD` stream in `NODES`, leaves `SEGS`/`SSECTORS` empty, and does
+/// NOT append split vertices to `VERTEXES` — the map still assembles with a
+/// populated BSP arena via the extended-node reader.
+#[test]
+fn add_doom_map_with_nodes_emits_xnod_layout_for_extended_format() {
+    let map = l_room_map();
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Xnod;
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings =
+        add_doom_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+            .expect("one-shot builds");
+    assert!(
+        warnings.is_empty(),
+        "a clean map builds warning-free: {warnings:?}"
+    );
+
+    let bytes = builder.build().expect("WAD serializes");
+    let wad = Wad::from_bytes(bytes).expect("built WAD parses");
+
+    let names: Vec<&str> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(
+        names,
+        [
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP",
+        ],
+        "canonical lump order still holds for the extended layout (Global Constraint 5)"
+    );
+
+    let lump_bytes = |name: &str| {
+        let idx = wad
+            .lumps()
+            .iter()
+            .position(|l| l.name() == name)
+            .expect("lump present");
+        wad.lump_bytes(idx).expect("lump bytes present")
+    };
+
+    // NODES holds a single XNOD stream; SEGS/SSECTORS are empty.
+    let nodes_bytes = lump_bytes("NODES");
+    assert_eq!(
+        &nodes_bytes[..4],
+        b"XNOD",
+        "NODES carries the XNOD stream signature"
+    );
+    assert!(
+        lump_bytes("SEGS").is_empty(),
+        "SEGS is empty for the extended layout"
+    );
+    assert!(
+        lump_bytes("SSECTORS").is_empty(),
+        "SSECTORS is empty for the extended layout"
+    );
+
+    // VERTEXES holds only the map's own vertices — split verts are NOT appended.
+    assert_eq!(
+        lump_bytes("VERTEXES").len(),
+        map.vertices().len() * 4,
+        "split vertices are not appended to VERTEXES for the extended layout"
+    );
+
+    // The map re-assembles with a populated BSP arena via the extended reader.
+    let group = wad.map_group("MAP01").expect("map group present");
+    let assembled = Map::assemble(&wad, &group).expect("strict assembly");
+    assert!(
+        assembled.warnings().is_empty(),
+        "the playable WAD assembles strict-clean: {:?}",
+        assembled.warnings()
+    );
+    assert!(
+        !assembled.subsectors().is_empty(),
+        "the L-room yields at least one subsector"
+    );
+    assert!(
+        !assembled.nodes().is_empty(),
+        "the L-room yields at least one node"
     );
 }
