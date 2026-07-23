@@ -7,36 +7,64 @@ cadence for `crustywad` and `crustywad-cli`.
 
 ## Semantic Versioning
 
-Both crates follow [Semantic Versioning 2.0.0](https://semver.org/). While the crates are
-currently at `0.y.z` — which SemVer treats as explicitly unstable — this project uses
-patch, minor, and major increments as compatibility signals as documented on this page.
-A `0.y.z` version is not a license to make arbitrary breaking changes in patches.
+Both crates follow [Semantic Versioning 2.0.0](https://semver.org/), adapted to the pre-1.0
+phase. While the crates are at `0.y.z` — which SemVer treats as explicitly unstable — this
+project uses version increments as deliberate compatibility signals; a `0.y.z` version is not a
+license to make arbitrary breaking changes in patches.
+
+### Pre-1.0 version mapping (current)
+
+Cargo reads a `0.MINOR` caret requirement (a `"0.8"` dependency means `^0.8`, i.e.
+`>=0.8.0, <0.9.0`) as allowing patch updates but **not** a minor bump. So while at `0.y.z`, **the
+minor bump is the breaking-change boundary** — the opposite of the post-1.0 intuition where a
+minor release is a safe feature drop. To keep that boundary meaningful, the scheme collapses to
+two levels until 1.0:
+
+| Change | Bump while at 0.x | Does a `0.MINOR` caret pin auto-upgrade? |
+|---|---|---|
+| Breaking change (or MSRV raise) | **minor** — `0.8.0` → `0.9.0` | No — the consumer must opt in. |
+| New backward-compatible API or feature | **patch** — `0.8.0` → `0.8.1` | Yes. |
+| Bug fix | **patch** — `0.8.0` → `0.8.1` | Yes. |
+
+Every backward-compatible change — new public types/functions/methods, new off-by-default feature
+flags, *and* bug fixes — ships as a **patch**; the **minor** bump is reserved for breaking changes
+(and MSRV raises, which break the build environment). This maximizes what a `0.MINOR` consumer
+receives automatically while still giving them a hard signal — the minor bump — before anything
+can break them. `release-plz` derives the bump from
+[Conventional Commits](https://www.conventionalcommits.org/) accordingly: a `!` / `BREAKING CHANGE`
+commit bumps the minor; every other releasable commit (`feat`, `fix`, …) bumps the patch.
+
+**At `1.0.0` this expands to standard `MAJOR.MINOR.PATCH`**, and the per-channel meanings below
+apply literally (backward-compatible new API → minor, breaking → major).
 
 ### Patch releases (`0.MINOR.PATCH`)
 
-A patch release fixes a bug without changing any public API. It is safe for all existing
-callers to upgrade without modification.
+Canonically (at 1.0+), a patch release fixes a bug without changing any public API, and is safe
+for all existing callers to upgrade without modification. **While at 0.x, a patch release carries
+every backward-compatible change** — bug fixes *and* new additive API/features (per the pre-1.0
+mapping above), since all of them are safe for a `0.MINOR` caret consumer to receive.
 
 Examples of patch changes:
 
 - Correcting incorrect byte offsets in a parser
 - Fixing a panic or incorrect error variant in an existing code path
+- Adding a new public type, function, or method _(0.x — a minor change at 1.0+)_
+- Adding a new off-by-default feature flag, or a variant to a `#[non_exhaustive]` enum _(0.x)_
 - Updating documentation without changing behavior
 - Updating a dependency to a compatible patch version
 
 ### Minor releases (`0.MINOR.0`)
 
-A minor release adds new functionality in a backward-compatible way. Existing callers
-compile and run without modification on the same or a newer supported toolchain. (MSRV
-bumps are also minor releases — callers on a compiler older than the new MSRV will need
-to upgrade their toolchain.)
+**While at 0.x, a minor bump signals a breaking change** — it is the boundary a `0.MINOR` caret
+consumer must opt into (see the [pre-1.0 mapping](#pre-10-version-mapping-current) above and the
+breaking-change list below). An **MSRV raise is also a minor bump**: a caller on an older compiler
+can no longer build, so it is treated as a build-environment break (see
+[MSRV policy](#msrv-policy)).
 
-Examples of minor changes:
-
-- Adding a new public type, function, or method
-- Adding a new feature flag that is off by default
-- Adding a new variant to a non-exhaustive enum
-- Raising the MSRV (see [MSRV policy](#msrv-policy) below)
+Canonically (at 1.0+), the minor channel instead carries backward-compatible new functionality —
+adding a public type, function, or method; a new off-by-default feature flag; a new
+`#[non_exhaustive]` enum variant. Until 1.0 those ship as **patches** (above); only breaking
+changes and MSRV raises bump the minor.
 
 ### Major releases (`MAJOR.0.0`)
 
