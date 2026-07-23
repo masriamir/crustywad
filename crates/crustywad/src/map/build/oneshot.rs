@@ -39,7 +39,7 @@ use super::{
 ///
 /// When [`build_opts.format`](NodeBuildOptions::format) selects an extended
 /// format (ADR-0025, #323) — [`Xnod`](super::NodeFormat::Xnod) or
-/// [`Znod`](super::NodeFormat::Znod) — the node data is instead emitted as a
+/// `Znod` — the node data is instead emitted as a
 /// single `XNOD`/`ZNOD` stream in `NODES`, with `SEGS`/`SSECTORS` left empty
 /// and the split vertices left out of `VERTEXES` entirely (they live in the
 /// stream header, not the classic lump). The default

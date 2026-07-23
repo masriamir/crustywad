@@ -87,10 +87,20 @@ pub enum NodeFormat {
 
 impl NodeFormat {
     /// Whether this is an extended (non-`Classic`) format, i.e. one that uses the
-    /// 32-bit `MAX_EXTENDED_INDEX` ceilings rather than the vanilla 16-bit ones.
+    /// wider `MAX_EXTENDED_INDEX` ceilings rather than the vanilla 16-bit ones.
+    ///
+    /// Written as an exhaustive match rather than `!matches!(_, Classic)` so a
+    /// future `NodeFormat` variant that is *not* an extended format cannot
+    /// silently inherit the extended ceilings — adding one is a compile error
+    /// here until it is classified.
     #[must_use]
     pub(crate) fn is_extended(self) -> bool {
-        !matches!(self, NodeFormat::Classic)
+        match self {
+            NodeFormat::Classic => false,
+            NodeFormat::Xnod => true,
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod => true,
+        }
     }
 
     /// Whether this format's stream is zlib-compressed (`Znod`).
@@ -144,7 +154,7 @@ pub struct NodeBuildOptions {
     pub aa_preference: u32,
     /// The on-disk node format to target (ADR-0025, #323). Defaults to
     /// [`NodeFormat::Classic`]. Set to [`NodeFormat::Xnod`] (or, with the
-    /// `extended-nodes-zlib` feature, [`NodeFormat::Znod`]) to emit a `ZDoom`
+    /// `extended-nodes-zlib` feature, `NodeFormat::Znod`) to emit a `ZDoom`
     /// non-GL extended stream that lifts the vanilla 16-bit node ceilings.
     pub format: NodeFormat,
 }
@@ -272,7 +282,7 @@ pub enum NodeBuildError {
         /// partition.
         set_segs: usize,
     },
-    /// [`NodeFormat::Znod`] output was requested (`compressed`) but the crate was
+    /// `NodeFormat::Znod` output was requested (`compressed`) but the crate was
     /// built without the `extended-nodes-zlib` feature, so no zlib compressor is
     /// available. Reachable only through
     /// [`BuiltNodes::to_extended_lump_bytes`](crate::map::build::BuiltNodes::to_extended_lump_bytes)

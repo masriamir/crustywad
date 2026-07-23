@@ -315,7 +315,16 @@ impl BuiltNodes {
     /// reversing `extended.rs`'s `decode_body`: vertex header, subsector block,
     /// seg block, node block. Shared by the `XNOD` and `ZNOD` paths.
     fn build_xnod_body(&self, orig_vertex_count: usize) -> Result<Vec<u8>, NodeBuildError> {
-        let mut out = Vec::new();
+        // Presize from the arena counts — every record is fixed-size, so the
+        // total is exact: 8-byte vertex header + 8/split vertex + 4-byte
+        // subsector count + 4/subsector + 4-byte seg count + 11/seg + 4-byte
+        // node count + 32/node. Keeps allocation O(input) with no reallocation.
+        let mut out = Vec::with_capacity(
+            20 + 8 * self.split_vertices.len()
+                + 4 * self.subsectors.len()
+                + 11 * self.segs.len()
+                + 32 * self.nodes.len(),
+        );
 
         // --- Vertex header: origVerts, newVerts, then split coords (16.16). ---
         out.extend_from_slice(&encode_u32("vertices", orig_vertex_count)?.to_le_bytes());
