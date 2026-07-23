@@ -299,3 +299,23 @@ fn no_gl_group_leaves_arenas_empty() {
         "no GL warnings expected"
     );
 }
+
+/// `Map::assemble_with_gl_source(.., gl_wad: None, ..)` must be byte-identical
+/// to `Map::assemble_with_options` (#342 Task 2 — the new `gl_wad` parameter
+/// is threaded through but not yet consulted; Task 3 wires the `.gwa`
+/// lookup/precedence). Reuses the same in-WAD V2 GL group fixture as
+/// `v2_gl_group_populates_additive_arenas` above.
+#[test]
+fn assemble_with_gl_source_none_matches_assemble_with_options() {
+    let bytes = build_wad_bytes("MAP01", Some(&v2_gl_lumps()));
+    let wad = Wad::from_bytes(bytes).expect("valid wad");
+    let group = wad.map_group("MAP01").expect("map group");
+
+    let a = Map::assemble_with_options(&wad, &group, ParseOptions::strict()).expect("assembles");
+    let b = Map::assemble_with_gl_source(&wad, &group, None, ParseOptions::strict())
+        .expect("assembles");
+
+    assert_eq!(a.gl_segs(), b.gl_segs());
+    assert_eq!(a.gl_nodes().len(), b.gl_nodes().len());
+    assert_eq!(a.nodes().len(), b.nodes().len());
+}
