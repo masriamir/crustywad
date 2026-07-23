@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-be8c2141.js";
+            window.path_to_searchindex_js = "searchindex-be7173ef.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -678,10 +678,35 @@ that cannot be recovered by clamping degrades the <em>whole</em> GL group the sa
 does (<code>MapWarning::GlNodesDegraded</code>, empty arenas), while a framing defect (a lump whose length
 isn’t a whole multiple of its record size) is a hard error in both modes.</p>
 <p>Classic GL nodes are decoded unconditionally — <strong>no feature flag</strong> — on the binary Doom/Hexen
-assembly path only; UDMF and Doom 64 maps always report empty <code>gl_*</code> arenas. <strong>Only the in-WAD
-<code>GL_&lt;mapname&gt;</code> group is read.</strong> The historical glBSP convention of writing GL nodes to a
-same-named external <code>.gwa</code> sibling WAD instead is <strong>not yet supported</strong> — that needs a
-multi-source assembly API and is tracked separately.</p>
+assembly path only; UDMF and Doom 64 maps always report empty <code>gl_*</code> arenas.</p>
+<p>GL nodes can come from an in-WAD <code>GL_&lt;mapname&gt;</code> group or from a same-named external <code>.gwa</code>
+sibling WAD — the historical glBSP convention — via
+<a href="https://docs.rs/crustywad/latest/crustywad/map/struct.Map.html#method.assemble_with_gl_source"><code>Map::assemble_with_gl_source</code></a>,
+which takes an optional <code>gl_wad: Option&lt;&amp;Wad&gt;</code> for an already-loaded <code>.gwa</code>
+(<a href="https://github.com/masriamir/crustywad/issues/342">#342</a>, ADR-0025 amendment). <code>Map::assemble</code>
+and <code>Map::assemble_with_options</code> are unchanged — they are equivalent to <code>gl_wad: None</code>, reading
+GL nodes from the main WAD only. When a <code>.gwa</code> is supplied, its group is preferred; if it has no
+matching group, the reader falls back to an in-WAD <code>GL_&lt;mapname&gt;</code> group. A <code>.gwa</code> has no map
+markers of its own, so its groups are located by a flat scan for either marker form glBSP emits:</p>
+<ul>
+<li><code>GL_&lt;mapname&gt;</code> — a lump named e.g. <code>GL_MAP01</code>, matched by name (only possible when the name
+fits the 8-byte lump-name limit); or</li>
+<li><code>GL_LEVEL</code> — a lump literally named <code>GL_LEVEL</code> whose text contents carry a <code>LEVEL=&lt;mapname&gt;</code>
+line, glBSP’s long-name form for maps whose name doesn’t fit the first form.</li>
+</ul>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::map::Map;
+use crustywad::{ParseOptions, Wad};
+
+<span class="boring">let main = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span><span class="boring">let gwa = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>if let Some(group) = main.map_group("MAP01") {
+    let map = Map::assemble_with_gl_source(&amp;main, &amp;group, Some(&amp;gwa), ParseOptions::default())?;
+    println!("GL nodes: {}", map.gl_nodes().len());
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
 <p>The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent
 <code>SSECTORS</code> arena) drops all three arenas, records the dangling reference as a warning, and the
