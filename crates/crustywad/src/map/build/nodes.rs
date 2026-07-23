@@ -118,6 +118,28 @@ pub struct BuiltNodeLumps {
 }
 
 impl BuiltNodes {
+    /// Assembles a `BuiltNodes` from its four arenas.
+    ///
+    /// `#[non_exhaustive]` blocks plain struct-literal construction of this
+    /// type from outside this crate — this is the public constructor a
+    /// downstream crate (e.g. a hand-built test fixture, or a nodebuilder
+    /// alternative to [`build_nodes`]) uses instead. [`build_nodes`] itself
+    /// constructs `BuiltNodes` directly, in-crate.
+    #[must_use]
+    pub fn new(
+        split_vertices: Vec<MapVertex>,
+        segs: Vec<MapSeg>,
+        subsectors: Vec<MapSubsector>,
+        nodes: Vec<MapNode>,
+    ) -> Self {
+        Self {
+            split_vertices,
+            segs,
+            subsectors,
+            nodes,
+        }
+    }
+
     /// Serializes this BSP tree to its four on-disk lumps (ADR-0024 §2, §D).
     ///
     /// Each arena is mapped into the matching [`common`](crate::map::common)
