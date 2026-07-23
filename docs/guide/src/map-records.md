@@ -560,10 +560,35 @@ does (`MapWarning::GlNodesDegraded`, empty arenas), while a framing defect (a lu
 isn't a whole multiple of its record size) is a hard error in both modes.
 
 Classic GL nodes are decoded unconditionally — **no feature flag** — on the binary Doom/Hexen
-assembly path only; UDMF and Doom 64 maps always report empty `gl_*` arenas. **Only the in-WAD
-`GL_<mapname>` group is read.** The historical glBSP convention of writing GL nodes to a
-same-named external `.gwa` sibling WAD instead is **not yet supported** — that needs a
-multi-source assembly API and is tracked separately.
+assembly path only; UDMF and Doom 64 maps always report empty `gl_*` arenas.
+
+GL nodes can come from an in-WAD `GL_<mapname>` group or from a same-named external `.gwa`
+sibling WAD — the historical glBSP convention — via
+[`Map::assemble_with_gl_source`](https://docs.rs/crustywad/latest/crustywad/map/struct.Map.html#method.assemble_with_gl_source),
+which takes an optional `gl_wad: Option<&Wad>` for an already-loaded `.gwa`
+([#342](https://github.com/masriamir/crustywad/issues/342), ADR-0025 amendment). `Map::assemble`
+and `Map::assemble_with_options` are unchanged — they are equivalent to `gl_wad: None`, reading
+GL nodes from the main WAD only. When a `.gwa` is supplied, its group is preferred; if it has no
+matching group, the reader falls back to an in-WAD `GL_<mapname>` group. A `.gwa` has no map
+markers of its own, so its groups are located by a flat scan for either marker form glBSP emits:
+
+- `GL_<mapname>` — a lump named e.g. `GL_MAP01`, matched by name (only possible when the name
+  fits the 8-byte lump-name limit); or
+- `GL_LEVEL` — a lump literally named `GL_LEVEL` whose text contents carry a `LEVEL=<mapname>`
+  line, glBSP's long-name form for maps whose name doesn't fit the first form.
+
+```rust
+use crustywad::map::Map;
+use crustywad::{ParseOptions, Wad};
+
+# let main = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+# let gwa = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+if let Some(group) = main.map_group("MAP01") {
+    let map = Map::assemble_with_gl_source(&main, &group, Some(&gwa), ParseOptions::default())?;
+    println!("GL nodes: {}", map.gl_nodes().len());
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
 
 The same whole-BSP posture applies when BSP data is internally unrecoverable in lenient mode:
 a reference that cannot be clamped (for example, a node child pointing into an absent

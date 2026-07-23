@@ -393,6 +393,7 @@ fn gwa_gl_level_marker_populates_gl_arenas() {
     assert_eq!(map.gl_nodes().len(), 1, "one GL node from .gwa");
 
     assert_eq!(map.segs().len(), 1, "vanilla segs unchanged");
+    assert_eq!(map.subsectors().len(), 1, "vanilla subsectors unchanged");
     assert_eq!(map.nodes().len(), 1, "vanilla nodes unchanged");
 }
 

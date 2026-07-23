@@ -408,10 +408,9 @@ records the concrete decisions that backlog note left open.
   end of directory. Returns `None` (no GL data, not an error) if the marker name would exceed
   the 8-byte WAD lump-name limit, no marker is found, or any of the four required lumps is
   missing from its run. **`.gwa` sibling-file correlation — the historical glBSP convention of
-  writing GL nodes to a same-named external `.gwa` WAD instead of the source WAD — is
-  deliberately deferred**, tracked separately: it needs a multi-source assembly API (GL lumps
-  supplied from a caller-provided second `Wad`), which is a larger surface change than this
-  in-WAD reader and is out of scope here.
+  writing GL nodes to a same-named external `.gwa` WAD instead of the source WAD — is now also
+  read** (#342, shipped 2026-07-23); see the amendment below for the multi-source API and the
+  two marker forms it recognizes.
 - **No feature flag.** Like DeePBSP v4 (Stage 3 amendment), classic GL decoding is pure parsing
   with no external dependency, so it is unconditional core: the `gl` module (`map/gl.rs`) is
   always compiled, and `Map::assemble_with_options` always attempts the decode when a `GL_*`
@@ -459,6 +458,52 @@ now **discharged**: classic GL nodes are read, joining the ZDoom (#326/#327) and
 (#328) stages to make every node format this ADR identified either decoded or (for the ZDoom
 `Z*` family without the `extended-nodes-zlib` feature) gated with an unchanged contract.
 
+## Amendment — `.gwa` sibling-file GL reading shipped (2026-07-23, #342)
+
+The `.gwa` deferral called out in the amendment above is discharged: classic GL nodes can now be
+read from a same-named external `.gwa` `Wad` — glBSP's historical output location — in addition
+to an in-WAD `GL_<mapname>` group.
+
+- **Multi-source API.** `Map::assemble_with_gl_source(wad: &Wad, group: &MapGroup, gl_wad:
+  Option<&Wad>, options: ParseOptions) -> Result<Map, MapAssembleError>` (`map/assemble.rs`)
+  supersedes `assemble_with_options` as the primitive: `assemble_with_options` is now defined in
+  terms of it (`Self::assemble_with_gl_source(wad, group, None, options)`), so `gl_wad: None`
+  behaves identically to the pre-#342 API — no behavior change for existing callers. `gl_wad` is
+  the caller's already-loaded `.gwa` file (crustywad does not derive or open a sibling path
+  itself; the caller supplies the second `Wad`).
+- **Two marker forms, matching glBSP's own output.** `gl_group_in_gl_wad(gl_wad: &Wad, map_name:
+  &str) -> Option<GlGroup>` (`map/group.rs`) is a flat, unanchored scan of the `.gwa` directory
+  (a `.gwa` has no map markers to anchor to, unlike the in-WAD `gl_group_for`) for either:
+  1. `GL_<map_name>` — a lump named e.g. `GL_MAP01`, matched by name, only possible when
+     `GL_` + the map name fits the 8-byte lump-name limit; or
+  2. `GL_LEVEL` — a lump literally named `GL_LEVEL` whose text contents carry a
+     `LEVEL=<map_name>` line (glBSP's `KEYWORD=VALUE` form, used when the map name doesn't fit
+     form 1). `gl_level_matches` does the text match: it decodes the marker's bytes as UTF-8,
+     falling back to an empty string (never panicking) on invalid UTF-8, then checks each line
+     for a `LEVEL=` prefix whose trimmed value equals `map_name` exactly (case-sensitive,
+     matching glBSP's uppercase output).
+
+  Both forms terminate their data-lump run the same way as the in-WAD reader: `collect_gl_run`
+  (the run-collection logic shared by `gl_group_for` and `gl_group_in_gl_wad`) stops at the
+  first lump not in `GL_DATA_LUMPS`, so back-to-back `.gwa` groups cannot bleed into each other.
+  `gl_group_in_gl_wad` returns `None` — not an error — when no marker matches `map_name`, or a
+  matched marker's run is missing one of the four required data lumps before the next marker (or
+  end of directory); this mirrors `gl_group_for`'s existing "no GL data" contract.
+- **`.gwa`-then-in-WAD precedence, byte source only.** In `assemble_with_gl_source`, `gl_wad` is
+  tried first (`gl_group_in_gl_wad(gw, &group.name)`); if it yields no group, the in-WAD
+  `gl_group_for(wad, group)` is tried as fallback. Whichever source wins supplies the four GL
+  lumps' *bytes* only — the normal-vertex and linedef reference bounds used to validate the GL
+  group's cross-references always come from the **main** map's own arenas (`vertices.len()`,
+  `linedefs.len()`), never from `gl_wad`. This keeps the `.gwa` path exempt from having to
+  reconcile two independent `VERTEXES`/`LINEDEFS` counts — it supplies only the GL-specific lumps
+  (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`), which is exactly what glBSP itself writes to a
+  `.gwa`.
+- **No new hardening surface.** `.gwa` bytes flow through the same `decode_gl_group` codec as the
+  in-WAD path (ADR-0016 items 1–4 above apply unchanged); `gl_group_in_gl_wad`/`gl_level_matches`
+  add only a bounded directory scan and string comparison ahead of that decode (the sole
+  allocation is one small `format!("GL_{name}")` for the marker name — sized to the map name, not
+  the input).
+
 ## Pros and cons of the options
 
 ### Option 2 — staged, ZDoom-first, skip classic GL (chosen)
@@ -501,10 +546,12 @@ now **discharged**: classic GL nodes are read, joining the ZDoom (#326/#327) and
   `MapSubsector`/`MapNode`/`NodeChild` 285-382), `map/build/nodes.rs`
   (`BuiltNodes` 70-88), `tests/sweep.rs` (the `RETAIL-EXT` gate sweep 113-179).
 - **Related backlog issues:** classic-GL reading (#324, landed — see its
-  amendment above) and the extended-node writer (#323), both depending on
+  amendment above), `.gwa` sibling-file GL reading (#342, landed — see its
+  amendment above), and the extended-node writer (#323), all depending on
   #199's read stages.
 - **Revisit conditions:** reopen when (a) the extended-node *writer* (#323) is
-  scheduled (it reuses these codecs and `BuiltNodes`); (b) `.gwa` sibling-file
-  correlation for classic GL nodes is scheduled (it needs a multi-source
-  assembly API, deferred by the #324 amendment above); or (c) a node format
+  scheduled (it reuses these codecs and `BuiltNodes`); or (b) a node format
   beyond these (a future ZDoom `XGL4`, GL PVS data) needs representation.
+  Revisit condition (b) as originally written — `.gwa` sibling-file
+  correlation for classic GL nodes — is **discharged**; see the #342
+  amendment above.

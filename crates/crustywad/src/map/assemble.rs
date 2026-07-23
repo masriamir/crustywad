@@ -1810,8 +1810,8 @@ impl Map {
                 // BYTES come from whichever Wad won, but the normal-vertex/
                 // linedef reference bounds are always the MAIN map's arenas.
                 let gl_group = gl_wad
-                    .and_then(|g| {
-                        crate::map::group::gl_group_in_gl_wad(g, &group.name).map(|grp| (g, grp))
+                    .and_then(|gw| {
+                        crate::map::group::gl_group_in_gl_wad(gw, &group.name).map(|grp| (gw, grp))
                     })
                     .or_else(|| crate::map::group::gl_group_for(wad, group).map(|grp| (wad, grp)));
                 let (gl_vertices, gl_segs, gl_subsectors, gl_nodes) =

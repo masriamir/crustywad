@@ -766,6 +766,63 @@ mod tests {
     }
 
     #[test]
+    fn gl_level_matches_non_utf8_contents_does_not_panic_and_does_not_match() {
+        // Invalid UTF-8 bytes must fall back to an empty string (never panic),
+        // so no LEVEL= line is found and the marker cannot match any name.
+        let non_utf8: &[u8] = &[0xFF, 0xFE, b'L', b'E', b'V', b'E', b'L', b'='];
+        assert!(!gl_level_matches(non_utf8, "MAP01"));
+    }
+
+    #[test]
+    fn gwa_locator_gl_level_marker_non_utf8_returns_none() {
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("GL_LEVEL", [0xFF, 0xFE, 0x00, 0x01].as_slice()),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        assert!(
+            gl_group_in_gl_wad(&wad, "MAP01").is_none(),
+            "non-UTF-8 GL_LEVEL contents must not panic and must not match"
+        );
+    }
+
+    #[test]
+    fn gwa_locator_gl_level_marker_without_level_line_returns_none() {
+        // GL_LEVEL contents lacking any `LEVEL=` line at all (e.g. only other
+        // glBSP metadata keys) must not match — `gl_level_matches` should find
+        // no matching line rather than mis-parsing an unrelated one.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("GL_LEVEL", b"BUILDER=glBSP 2.24\nOPTIONS=-v5\n" as &[u8]),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        assert!(gl_group_in_gl_wad(&wad, "MAP01").is_none());
+    }
+
+    #[test]
+    fn gwa_locator_name_too_long_for_gl_name_form_falls_through_to_none_without_level_marker() {
+        // "GL_" + an over-long map name exceeds the 8-byte lump-name limit, so
+        // the `GL_<name>` form can never match (no such lump could exist) and,
+        // absent a `GL_LEVEL` marker, the whole lookup must return `None`
+        // rather than panicking or matching some unrelated lump.
+        let wad = crate::Wad::from_bytes(build_pwad(&[
+            ("GL_MAP01", b"" as &[u8]),
+            ("GL_VERT", b"gNd2"),
+            ("GL_SEGS", b""),
+            ("GL_SSECT", b""),
+            ("GL_NODES", b""),
+        ]))
+        .unwrap();
+        assert!(gl_group_in_gl_wad(&wad, "TOOLONGMAPNAME").is_none());
+    }
+
+    #[test]
     fn gl_group_anchored_to_map_instance_with_duplicate_names() {
         // Two MAP01 map instances, each followed by its OWN GL group with
         // distinct contents (different GL_VERT byte lengths). Under the old
