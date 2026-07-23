@@ -390,6 +390,19 @@ mod tests {
         assert!(NodeFormat::Xnod.is_extended());
         assert!(!NodeFormat::Xnod.compressed());
     }
+
+    #[test]
+    fn node_format_predicates_cover_every_variant() {
+        assert!(!NodeFormat::Classic.is_extended());
+        assert!(NodeFormat::Xnod.is_extended());
+        assert!(!NodeFormat::Classic.compressed());
+        assert!(!NodeFormat::Xnod.compressed());
+        #[cfg(feature = "extended-nodes-zlib")]
+        {
+            assert!(NodeFormat::Znod.is_extended());
+            assert!(NodeFormat::Znod.compressed());
+        }
+    }
 }
 
 /// A non-fatal condition recovered while building a map's node lumps in lenient

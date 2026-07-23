@@ -2385,6 +2385,35 @@ mod tests {
     }
 
     #[test]
+    fn extended_encoders_enforce_their_ceilings() {
+        // `encode_u32` (counts): MAX_EXTENDED_INDEX is a legal count, one past is not.
+        assert_eq!(encode_u32("c", MAX_EXTENDED_INDEX).unwrap(), 0x8000_0000);
+        assert!(matches!(
+            encode_u32("c", MAX_EXTENDED_INDEX + 1),
+            Err(NodeBuildError::TooManyElements { max, .. }) if max == MAX_EXTENDED_INDEX
+        ));
+        // `encode_index_u32` (indices): must be strictly below the ceiling.
+        assert_eq!(
+            encode_index_u32("i", MAX_EXTENDED_INDEX - 1).unwrap(),
+            0x7FFF_FFFF
+        );
+        assert!(matches!(
+            encode_index_u32("i", MAX_EXTENDED_INDEX),
+            Err(NodeBuildError::TooManyElements { .. })
+        ));
+        // `encode_extended_child`: a leaf/node index must fit the low 31 bits.
+        assert!(matches!(
+            encode_extended_child(NodeChild::Subsector(SubsectorIdx(MAX_EXTENDED_INDEX))),
+            Err(NodeBuildError::TooManyElements { .. })
+        ));
+        // `fixed_16_16`: a coordinate whose 16.16 form overflows `i32` is rejected.
+        assert!(matches!(
+            fixed_16_16(f64::from(i32::MAX), "x", 0),
+            Err(NodeBuildError::Write(_))
+        ));
+    }
+
+    #[test]
     fn to_extended_lump_bytes_rejects_bit31_vertex_index() {
         // A seg vertex index of MAX_EXTENDED_INDEX (bit 31 set) can never be a
         // valid index (the largest legal index is 0x7FFF_FFFF), so the writer
