@@ -62,6 +62,61 @@ const DEFAULT_SPLIT_COST: u32 = 8;
 /// nodebuilder-standard axis-aligned preference divisor.
 const DEFAULT_AA_PREFERENCE: u32 = 16;
 
+/// The on-disk node format `build_nodes` targets (ADR-0025, #323).
+///
+/// `Classic` (the default) emits the vanilla `SEGS`/`SSECTORS`/`NODES` lumps
+/// with the 16-bit index ceilings. The extended formats emit a single `ZDoom`
+/// non-GL node stream — `Xnod`, or its zlib twin `Znod` — that widens the
+/// subsector/node/seg/vertex counts to 32 bits, letting a past-vanilla map
+/// serialize. The seg `linedef` reference stays 16-bit in every format, so a map
+/// with more than 65,536 linedefs is unrepresentable here (that needs the GL
+/// `XGL2` format, tracked in #345).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum NodeFormat {
+    /// Vanilla `SEGS`/`SSECTORS`/`NODES` with 16-bit indices (the default).
+    #[default]
+    Classic,
+    /// The uncompressed `ZDoom` non-GL extended stream (`XNOD`).
+    Xnod,
+    /// The zlib-compressed non-GL extended stream (`ZNOD`); requires the
+    /// `extended-nodes-zlib` feature.
+    #[cfg(feature = "extended-nodes-zlib")]
+    Znod,
+}
+
+impl NodeFormat {
+    /// Whether this is an extended (non-`Classic`) format, i.e. one that uses the
+    /// wider `MAX_EXTENDED_INDEX` ceilings rather than the vanilla 16-bit ones.
+    ///
+    /// Written as an exhaustive match rather than `!matches!(_, Classic)` so a
+    /// future `NodeFormat` variant that is *not* an extended format cannot
+    /// silently inherit the extended ceilings — adding one is a compile error
+    /// here until it is classified.
+    #[must_use]
+    pub(crate) fn is_extended(self) -> bool {
+        match self {
+            NodeFormat::Classic => false,
+            NodeFormat::Xnod => true,
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod => true,
+        }
+    }
+
+    /// Whether this format's stream is zlib-compressed (`Znod`).
+    #[must_use]
+    pub(crate) fn compressed(self) -> bool {
+        #[cfg(feature = "extended-nodes-zlib")]
+        {
+            matches!(self, NodeFormat::Znod)
+        }
+        #[cfg(not(feature = "extended-nodes-zlib"))]
+        {
+            false
+        }
+    }
+}
+
 /// Options controlling node-lump building (ADR-0024 §5).
 ///
 /// Mirrors [`WriteOptions`](crate::WriteOptions): a strict build rejects any
@@ -97,6 +152,11 @@ pub struct NodeBuildOptions {
     /// to `16`. `0` is treated as "no diagonal penalty" — the build path guards
     /// the division and skips the term entirely rather than dividing by zero.
     pub aa_preference: u32,
+    /// The on-disk node format to target (ADR-0025, #323). Defaults to
+    /// [`NodeFormat::Classic`]. Set to [`NodeFormat::Xnod`] (or, with the
+    /// `extended-nodes-zlib` feature, `NodeFormat::Znod`) to emit a `ZDoom`
+    /// non-GL extended stream that lifts the vanilla 16-bit node ceilings.
+    pub format: NodeFormat,
 }
 
 impl Default for NodeBuildOptions {
@@ -115,6 +175,7 @@ impl NodeBuildOptions {
             strictness: Strictness::Strict,
             split_cost: DEFAULT_SPLIT_COST,
             aa_preference: DEFAULT_AA_PREFERENCE,
+            format: NodeFormat::Classic,
         }
     }
 
@@ -126,6 +187,7 @@ impl NodeBuildOptions {
             strictness: Strictness::Lenient,
             split_cost: DEFAULT_SPLIT_COST,
             aa_preference: DEFAULT_AA_PREFERENCE,
+            format: NodeFormat::Classic,
         }
     }
 }
@@ -220,6 +282,14 @@ pub enum NodeBuildError {
         /// partition.
         set_segs: usize,
     },
+    /// `NodeFormat::Znod` output was requested (`compressed`) but the crate was
+    /// built without the `extended-nodes-zlib` feature, so no zlib compressor is
+    /// available. Reachable only through
+    /// [`BuiltNodes::to_extended_lump_bytes`](crate::map::build::BuiltNodes::to_extended_lump_bytes)
+    /// with `compressed = true` and the feature off — the `NodeFormat::Znod`
+    /// variant that drives it does not exist without the feature.
+    #[error("zlib compression requires the `extended-nodes-zlib` feature")]
+    CompressionUnavailable,
 }
 
 impl NodeBuildError {
@@ -259,7 +329,8 @@ impl NodeBuildError {
             | Self::BlockmapOverflow { .. }
             | Self::TooManyElements { .. }
             | Self::MinisegUnsupported { .. }
-            | Self::DegeneratePartition { .. } => false,
+            | Self::DegeneratePartition { .. }
+            | Self::CompressionUnavailable => false,
         }
     }
 }
@@ -307,6 +378,30 @@ mod tests {
             })
             .is_lenient_recoverable()
         );
+    }
+
+    #[test]
+    fn node_build_options_default_to_classic_format() {
+        assert_eq!(NodeBuildOptions::default().format, NodeFormat::Classic);
+        assert_eq!(NodeBuildOptions::strict().format, NodeFormat::Classic);
+        assert_eq!(NodeBuildOptions::lenient().format, NodeFormat::Classic);
+        assert_eq!(NodeFormat::default(), NodeFormat::Classic);
+        assert!(!NodeFormat::Classic.is_extended());
+        assert!(NodeFormat::Xnod.is_extended());
+        assert!(!NodeFormat::Xnod.compressed());
+    }
+
+    #[test]
+    fn node_format_predicates_cover_every_variant() {
+        assert!(!NodeFormat::Classic.is_extended());
+        assert!(NodeFormat::Xnod.is_extended());
+        assert!(!NodeFormat::Classic.compressed());
+        assert!(!NodeFormat::Xnod.compressed());
+        #[cfg(feature = "extended-nodes-zlib")]
+        {
+            assert!(NodeFormat::Znod.is_extended());
+            assert!(NodeFormat::Znod.compressed());
+        }
     }
 }
 

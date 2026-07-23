@@ -14,9 +14,9 @@ allowing callers to opt in to additional capabilities.
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`guide-doctests`](#guide-doctests) | no | **Internal, CI-only.** Compiles this guide's Rust code samples as crate doctests (enabled by `--all-features`); not a runtime capability |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
-| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; powers `cwad convert --nodes` |
+| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; also emits the `XNOD`/`ZNOD` extended-node stream via `NodeFormat` (ADR-0025); powers `cwad convert --nodes` |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
-| [`extended-nodes-zlib`](#extended-nodes-zlib) | no | Decode the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) via `miniz_oxide`, bounded by `Limits::max_decoded_node_bytes` |
+| [`extended-nodes-zlib`](#extended-nodes-zlib) | no | Decode the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) via `miniz_oxide`, bounded by `Limits::max_decoded_node_bytes`; with `nodebuild` also enabled, also powers the `nodebuild` `ZNOD` writer |
 
 ---
 
@@ -289,7 +289,8 @@ let rebuilt = wad.to_builder().build().unwrap();
 `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass),
 `add_doom_map_with_nodes` (the engine-playable one-shot), and the
 `nodebuild`-gated `to_lump_bytes` serializers on the read-side lump types (`MapBlockmap`,
-`MapReject`, and `BuiltNodes`)
+`MapReject`, and `BuiltNodes`) — plus `BuiltNodes::to_extended_lump_bytes`, which serializes an
+`XNOD`/`ZNOD` `ZDoom` extended-node stream instead of the classic three-lump layout
 
 **Adds dependency:** none — implies `write`
 
@@ -319,6 +320,18 @@ a `WadBuilder` — the same path `cwad convert --to doom --nodes` runs. See the
 [Building nodes](building-nodes.md) guide page for when you need built nodes, the
 tolerated mixed-sector fan, and when GL/extended nodes still call for an external
 tool.
+
+`NodeBuildOptions::format` (a `NodeFormat`, ADR-0025 §Amendment #323) selects the on-disk node
+encoding `build_nodes`/`add_doom_map_with_nodes` target: `NodeFormat::Classic` (the default,
+unchanged from above) writes the vanilla `SEGS`/`SSECTORS`/`NODES` lumps; `NodeFormat::Xnod` (or,
+with `extended-nodes-zlib`, `NodeFormat::Znod`) instead serializes a single `ZDoom` non-GL
+extended-node stream in `NODES` via `BuiltNodes::to_extended_lump_bytes`, leaving `SEGS`/
+`SSECTORS` empty. The extended formats widen the subsector/node/seg/vertex ceilings from the
+vanilla 15/16-bit limits to a 31-bit structural cap, so a past-vanilla map can serialize — but a
+seg's linedef reference stays a 16-bit field in every format, so a map with more than 65,536
+linedefs is still unrepresentable here (that needs the GL `XGL2` format, tracked separately).
+Only the non-GL `XNOD`/`ZNOD` streams are covered; GL extended-node emission is out of scope for
+this writer.
 
 ### Usage
 
@@ -462,6 +475,13 @@ This feature is unrelated to two other node formats that decode as **always-on c
 feature flag, since neither needs a decompressor): `DeePBSP` v4 (`xNd4`) and classic GL node
 lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`) — see
 [Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide.
+
+With `nodebuild` also enabled, this feature gates the write side too: `NodeFormat::Znod`
+(ADR-0025 §Amendment #323) only exists as a variant when `extended-nodes-zlib` is on, and
+`BuiltNodes::to_extended_lump_bytes(_, compressed: true)` compresses the `XNOD` body with
+`miniz_oxide::deflate::compress_to_vec_zlib` before prepending the `ZNOD` tag. Requesting
+compressed output without this feature returns `NodeBuildError::CompressionUnavailable` rather
+than panicking.
 
 ### Usage
 

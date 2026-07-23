@@ -21,7 +21,7 @@ use binrw::BinWriterExt;
 
 use crate::Strictness;
 use crate::map::DoomWriteError;
-use crate::map::build::{NodeBuildError, NodeBuildOptions, NodeBuildWarning};
+use crate::map::build::{NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat};
 use crate::map::common::{Node, Seg, Subsector, Vertex};
 use crate::map::doom::{DoomWriteWarning, Narrower, narrow_vertices};
 use crate::map::graph::{
@@ -44,6 +44,15 @@ const MAX_BSP_INDEX: usize = 0x8000;
 /// linedef, and seg references narrow to `u16`, so their indices must be below
 /// this (`0..=0xFFFF`).
 const MAX_U16_INDEXED: usize = 0x1_0000;
+
+/// The extended-format index ceiling (ADR-0025, #323). Subsector and node child
+/// references reserve bit 31 (`0x8000_0000`) as the leaf flag, so those indices
+/// must fit the low 31 bits; a count of `0x8000_0000` yields a maximum index of
+/// `0x7FFF_FFFF`, which is the tightest bound and is reused as the uniform cap
+/// for the `u32` seg/vertex counts. Vastly above any real map (the largest
+/// retail map is ~7k linedefs); it exists only as the runaway backstop and the
+/// structural format limit for `NodeFormat::Xnod`/`Znod`.
+const MAX_EXTENDED_INDEX: usize = 0x8000_0000;
 
 /// The assembled output of the classic BSP pass (ADR-0024 §2): the vertices the
 /// pass created by splitting straddling segs, plus the finished `SEGS`,
@@ -109,6 +118,28 @@ pub struct BuiltNodeLumps {
 }
 
 impl BuiltNodes {
+    /// Assembles a `BuiltNodes` from its four arenas.
+    ///
+    /// `#[non_exhaustive]` blocks plain struct-literal construction of this
+    /// type from outside this crate — this is the public constructor a
+    /// downstream crate (e.g. a hand-built test fixture, or a nodebuilder
+    /// alternative to [`build_nodes`]) uses instead. [`build_nodes`] itself
+    /// constructs `BuiltNodes` directly, in-crate.
+    #[must_use]
+    pub fn new(
+        split_vertices: Vec<MapVertex>,
+        segs: Vec<MapSeg>,
+        subsectors: Vec<MapSubsector>,
+        nodes: Vec<MapNode>,
+    ) -> Self {
+        Self {
+            split_vertices,
+            segs,
+            subsectors,
+            nodes,
+        }
+    }
+
     /// Serializes this BSP tree to its four on-disk lumps (ADR-0024 §2, §D).
     ///
     /// Each arena is mapped into the matching [`common`](crate::map::common)
@@ -221,6 +252,126 @@ impl BuiltNodes {
             ssectors: encode(&subsectors),
             nodes: encode(&nodes),
         })
+    }
+
+    /// Serializes this BSP tree as a `ZDoom` **non-GL** extended-node stream
+    /// (ADR-0025, #323): `XNOD` when `compressed` is false, or its zlib twin
+    /// `ZNOD` when true (the latter requires the `extended-nodes-zlib` feature).
+    /// This reverses the #326 read codec, so a stream it produces re-reads to an
+    /// equivalent [`Map`](crate::map::Map) BSP.
+    ///
+    /// `orig_vertex_count` is the map's own vertex count — the number of records
+    /// in its `VERTEXES` lump. Seg vertex indices below it address map vertices;
+    /// at or above it they address [`split_vertices`](Self::split_vertices),
+    /// which are written into the stream header (not appended to `VERTEXES`).
+    ///
+    /// Unlike the classic [`to_lump_bytes`](Self::to_lump_bytes), the counts and
+    /// vertex/seg indices are 32-bit, so a past-vanilla map (more than 32,768
+    /// subsectors/nodes or 65,536 segs/vertices) serializes here. The seg
+    /// `linedef` reference is still 16-bit, so a map with more than 65,536
+    /// linedefs cannot be encoded (that needs the GL `XGL2` format, #345).
+    ///
+    /// # Errors
+    ///
+    /// - [`NodeBuildError::MinisegUnsupported`] when a seg has no linedef — XNOD
+    ///   segs carry a mandatory linedef reference (GL minisegs are #345).
+    /// - [`NodeBuildError::TooManyElements`] (`kind: "linedefs"`) when a seg's
+    ///   linedef index exceeds `u16::MAX` (Global Constraint 1).
+    /// - [`NodeBuildError::TooManyElements`] (`kind: "subsectors"`/`"nodes"`) when
+    ///   a child index does not fit the 31 bits left free by the leaf flag, or
+    ///   (`kind: "vertices"`/`"segs"`/`"subsectors"`/`"nodes"`) when a count
+    ///   exceeds the 32-bit `MAX_EXTENDED_INDEX` cap.
+    /// - [`NodeBuildError::Write`] wrapping [`DoomWriteError::ValueOutOfRange`]
+    ///   when a node partition/bbox coordinate does not fit the on-disk `i16`, or
+    ///   a split-vertex coordinate overflows the 16.16 `i32` — guards only
+    ///   hand-constructed values (`build_nodes` produces in-range ones).
+    /// - [`NodeBuildError::CompressionUnavailable`] when `compressed` is true but
+    ///   the `extended-nodes-zlib` feature is disabled.
+    pub fn to_extended_lump_bytes(
+        &self,
+        orig_vertex_count: usize,
+        compressed: bool,
+    ) -> Result<Vec<u8>, NodeBuildError> {
+        let body = self.build_xnod_body(orig_vertex_count)?;
+        if compressed {
+            #[cfg(feature = "extended-nodes-zlib")]
+            {
+                let mut lump = b"ZNOD".to_vec();
+                lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
+                return Ok(lump);
+            }
+            #[cfg(not(feature = "extended-nodes-zlib"))]
+            {
+                return Err(NodeBuildError::CompressionUnavailable);
+            }
+        }
+        let mut lump = Vec::with_capacity(4 + body.len());
+        lump.extend_from_slice(b"XNOD");
+        lump.extend_from_slice(&body);
+        Ok(lump)
+    }
+
+    /// Builds the tag-less XNOD body (the bytes after the 4-byte signature),
+    /// reversing `extended.rs`'s `decode_body`: vertex header, subsector block,
+    /// seg block, node block. Shared by the `XNOD` and `ZNOD` paths.
+    fn build_xnod_body(&self, orig_vertex_count: usize) -> Result<Vec<u8>, NodeBuildError> {
+        // Presize from the arena counts — every record is fixed-size, so the
+        // total is exact: 8-byte vertex header + 8/split vertex + 4-byte
+        // subsector count + 4/subsector + 4-byte seg count + 11/seg + 4-byte
+        // node count + 32/node. Keeps allocation O(input) with no reallocation.
+        let mut out = Vec::with_capacity(
+            20 + 8 * self.split_vertices.len()
+                + 4 * self.subsectors.len()
+                + 11 * self.segs.len()
+                + 32 * self.nodes.len(),
+        );
+
+        // --- Vertex header: origVerts, newVerts, then split coords (16.16). ---
+        out.extend_from_slice(&encode_u32("vertices", orig_vertex_count)?.to_le_bytes());
+        out.extend_from_slice(&encode_u32("vertices", self.split_vertices.len())?.to_le_bytes());
+        for (i, v) in self.split_vertices.iter().enumerate() {
+            out.extend_from_slice(&fixed_16_16(v.x, "x", i)?.to_le_bytes());
+            out.extend_from_slice(&fixed_16_16(v.y, "y", i)?.to_le_bytes());
+        }
+
+        // --- Subsector block: numSubs, then each run length. ---
+        out.extend_from_slice(&encode_u32("subsectors", self.subsectors.len())?.to_le_bytes());
+        for ss in &self.subsectors {
+            let count = ss.segs.end.saturating_sub(ss.segs.start);
+            out.extend_from_slice(&encode_u32("subsector segs", count)?.to_le_bytes());
+        }
+
+        // --- Seg block: numSegs, then u32 v1, u32 v2, u16 linedef, u8 side. ---
+        out.extend_from_slice(&encode_u32("segs", self.segs.len())?.to_le_bytes());
+        for (i, s) in self.segs.iter().enumerate() {
+            out.extend_from_slice(&encode_index_u32("vertices", s.start.0)?.to_le_bytes());
+            out.extend_from_slice(&encode_index_u32("vertices", s.end.0)?.to_le_bytes());
+            let linedef = s
+                .linedef
+                .ok_or(NodeBuildError::MinisegUnsupported { seg: i })?;
+            out.extend_from_slice(&encode_index(linedef.0, "linedefs")?.to_le_bytes());
+            // The reader treats side != 0 as direction 1; mirror that on write.
+            out.push(u8::from(s.direction != 0));
+        }
+
+        // --- Node block: numNodes, then i16 partition + 2x i16 bbox + children. ---
+        out.extend_from_slice(&encode_u32("nodes", self.nodes.len())?.to_le_bytes());
+        for (i, n) in self.nodes.iter().enumerate() {
+            out.extend_from_slice(&narrow_coord(n.x, "x", i)?.to_le_bytes());
+            out.extend_from_slice(&narrow_coord(n.y, "y", i)?.to_le_bytes());
+            out.extend_from_slice(&narrow_coord(n.dx, "dx", i)?.to_le_bytes());
+            out.extend_from_slice(&narrow_coord(n.dy, "dy", i)?.to_le_bytes());
+            for value in narrow_bbox(n.right_bbox, "right_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            for value in narrow_bbox(n.left_bbox, "left_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&encode_extended_child(n.right)?.to_le_bytes());
+            out.extend_from_slice(&encode_extended_child(n.left)?.to_le_bytes());
+        }
+
+        Ok(out)
     }
 }
 
@@ -341,6 +492,80 @@ fn encode_child(child: NodeChild) -> Result<u16, NodeBuildError> {
         return Err(too_many());
     }
     Ok(if leaf { NF_SUBSECTOR | value } else { value })
+}
+
+/// Encodes a count or index as the extended stream's `u32`, or a
+/// [`NodeBuildError::TooManyElements`] naming `kind` if it exceeds
+/// [`MAX_EXTENDED_INDEX`] (which keeps every index within the low 31 bits the
+/// child leaf flag leaves free).
+fn encode_u32(kind: &'static str, value: usize) -> Result<u32, NodeBuildError> {
+    if value > MAX_EXTENDED_INDEX {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count: value,
+            max: MAX_EXTENDED_INDEX,
+        });
+    }
+    // `value <= MAX_EXTENDED_INDEX` (0x8000_0000) always fits `u32`.
+    Ok(u32::try_from(value).expect("value <= MAX_EXTENDED_INDEX fits u32"))
+}
+
+/// Encodes a u32 arena **index** (not a count) into an extended stream. Unlike
+/// [`encode_u32`], the value `MAX_EXTENDED_INDEX` (`0x8000_0000`) itself is
+/// rejected: a valid index is strictly below the count ceiling, so the largest
+/// legal index is `0x7FFF_FFFF` (bit 31 clear). An index of `0x8000_0000` would
+/// require a `> 2^31`-entry arena, which the count ceiling forbids — so this
+/// gives a clean write-time [`NodeBuildError::TooManyElements`] rather than
+/// emitting a stream the reader would reject. Guards a hand-built [`BuiltNodes`]
+/// (via [`BuiltNodes::new`]); `build_nodes` never produces such an index.
+fn encode_index_u32(kind: &'static str, idx: usize) -> Result<u32, NodeBuildError> {
+    if idx >= MAX_EXTENDED_INDEX {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count: idx.saturating_add(1),
+            max: MAX_EXTENDED_INDEX,
+        });
+    }
+    // `idx < MAX_EXTENDED_INDEX` (0x8000_0000) always fits `u32`.
+    Ok(u32::try_from(idx).expect("idx < MAX_EXTENDED_INDEX fits u32"))
+}
+
+/// Encodes a [`NodeChild`] as the extended stream's 32-bit child word: a
+/// subsector leaf sets bit 31 (`0x8000_0000`) over the index, an internal node
+/// stores the bare index. The index must fit the low 31 bits.
+fn encode_extended_child(child: NodeChild) -> Result<u32, NodeBuildError> {
+    let (idx, leaf) = match child {
+        NodeChild::Node(n) => (n.0, false),
+        NodeChild::Subsector(s) => (s.0, true),
+    };
+    let kind = if leaf { "subsectors" } else { "nodes" };
+    if idx >= 0x8000_0000 {
+        return Err(NodeBuildError::TooManyElements {
+            kind,
+            count: idx.saturating_add(1),
+            max: MAX_EXTENDED_INDEX,
+        });
+    }
+    let value = u32::try_from(idx).expect("idx < 0x8000_0000 fits u32");
+    Ok(if leaf { 0x8000_0000 | value } else { value })
+}
+
+/// Narrows a whole-unit split-vertex coordinate to the extended stream's 16.16
+/// fixed-point `i32` (`coord * 65536`), reversing the reader's `x / 65536.0`.
+/// `build_nodes` creates split vertices as whole `i16`-range map units, so the
+/// product always fits `i32`; a hand-constructed out-of-range value is a
+/// defensive [`DoomWriteError::ValueOutOfRange`].
+fn fixed_16_16(value: f64, field: &'static str, index: usize) -> Result<i32, NodeBuildError> {
+    let whole = i64::from(round_half_away(value));
+    let fixed = whole * 65536;
+    i32::try_from(fixed).map_err(|_| {
+        NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+            block: "vertex",
+            field,
+            index,
+            value: fixed,
+        })
+    })
 }
 
 /// Serializes a slice of [`binrw::BinWrite`] records into a lump byte buffer,
@@ -638,6 +863,8 @@ struct Bsp<'a> {
     live_segs: usize,
     /// Strict or lenient (drives narrowing, ceilings, and the mixed-sector rule).
     strictness: Strictness,
+    /// The target node format — gates the index/count ceilings (ADR-0025, #323).
+    format: NodeFormat,
     /// Partition heuristic: weight per straddling split (§B.3).
     split_cost: u32,
     /// Partition heuristic: axis-aligned preference divisor (`0` = no penalty).
@@ -690,6 +917,7 @@ impl<'a> Bsp<'a> {
             segs: Vec::new(),
             live_segs: 0,
             strictness: opts.strictness,
+            format: opts.format,
             split_cost: opts.split_cost,
             aa_preference: opts.aa_preference,
             warnings,
@@ -1135,13 +1363,19 @@ impl<'a> Bsp<'a> {
         self.segs.push(frag_b);
 
         // Each split nets one live seg (parent replaced by two fragments); this
-        // is the runaway backstop (Global Constraint 9).
+        // is the runaway backstop (Global Constraint 9). Classic caps at the
+        // u16 seg ceiling; extended formats cap at the 31-bit structural limit.
         self.live_segs += 1;
-        if self.live_segs > MAX_U16_INDEXED {
+        let cap = if self.format.is_extended() {
+            MAX_EXTENDED_INDEX
+        } else {
+            MAX_U16_INDEXED
+        };
+        if self.live_segs > cap {
             return Err(NodeBuildError::TooManyElements {
                 kind: "segs",
                 count: self.live_segs,
-                max: MAX_U16_INDEXED,
+                max: cap,
             });
         }
 
@@ -1218,7 +1452,7 @@ impl<'a> Bsp<'a> {
             // Finding 1 (PR #319): a subsector's `seg_count` is a `u16` on disk,
             // so a convex leaf of > 65,535 segs is structurally unencodable —
             // reject here (both modes), not only later in `to_lump_bytes`.
-            check_subsector_seg_count(segs.len() - start)?;
+            check_subsector_seg_count(segs.len() - start, self.format)?;
             subsectors.push(MapSubsector {
                 segs: start..segs.len(),
                 leafs: 0..0,
@@ -1247,8 +1481,8 @@ impl<'a> Bsp<'a> {
         let vertex_count = self.map_vertex_count + self.split_vertices.len();
         self.check_soft_ceiling("vertices", vertex_count)?;
         self.check_soft_ceiling("segs", segs.len())?;
-        check_hard_index_ceiling("subsectors", subsectors.len())?;
-        check_hard_index_ceiling("nodes", nodes.len())?;
+        check_hard_index_ceiling("subsectors", subsectors.len(), self.format)?;
+        check_hard_index_ceiling("nodes", nodes.len(), self.format)?;
 
         let built = BuiltNodes {
             split_vertices: self.split_vertices,
@@ -1289,7 +1523,7 @@ impl<'a> Bsp<'a> {
         kind: &'static str,
         count: usize,
     ) -> Result<(), NodeBuildError> {
-        if let Some(warning) = soft_ceiling(kind, count, self.strictness)? {
+        if let Some(warning) = soft_ceiling(kind, count, self.strictness, self.format)? {
             self.warnings.push(warning);
         }
         Ok(())
@@ -1300,12 +1534,25 @@ impl<'a> Bsp<'a> {
 /// is a structural [`NodeBuildError::TooManyElements`] in **both** modes; above
 /// 32,768 (the vanilla array limit) is a strict [`NodeBuildError::TooManyElements`]
 /// and a lenient [`NodeBuildWarning::VanillaCeilingExceeded`] (returned for the
-/// caller to record). Below both, `Ok(None)`.
+/// caller to record). Below both, `Ok(None)`. Extended formats (ADR-0025, #323)
+/// index with `u32`, so only the structural 31-bit cap applies (in both modes);
+/// the vanilla soft ceiling does not.
 fn soft_ceiling(
     kind: &'static str,
     count: usize,
     strictness: Strictness,
+    format: NodeFormat,
 ) -> Result<Option<NodeBuildWarning>, NodeBuildError> {
+    if format.is_extended() {
+        if count > MAX_EXTENDED_INDEX {
+            return Err(NodeBuildError::TooManyElements {
+                kind,
+                count,
+                max: MAX_EXTENDED_INDEX,
+            });
+        }
+        return Ok(None);
+    }
     if count > MAX_U16_INDEXED {
         return Err(NodeBuildError::TooManyElements {
             kind,
@@ -1382,29 +1629,43 @@ fn child_of_ref(child: TreeRef) -> NodeChild {
 
 /// The structural subsector/node index ceiling (Global Constraint 6): a BSP
 /// child reference reserves bit 15, so at most 32,768 elements are addressable —
-/// a hard [`NodeBuildError::TooManyElements`] in **both** modes.
-fn check_hard_index_ceiling(kind: &'static str, count: usize) -> Result<(), NodeBuildError> {
-    if count > MAX_BSP_INDEX {
-        return Err(NodeBuildError::TooManyElements {
-            kind,
-            count,
-            max: MAX_BSP_INDEX,
-        });
+/// a hard [`NodeBuildError::TooManyElements`] in **both** modes. Extended formats
+/// (ADR-0025, #323) reserve bit 31 instead, relaxing the ceiling to
+/// [`MAX_EXTENDED_INDEX`].
+fn check_hard_index_ceiling(
+    kind: &'static str,
+    count: usize,
+    format: NodeFormat,
+) -> Result<(), NodeBuildError> {
+    let max = if format.is_extended() {
+        MAX_EXTENDED_INDEX
+    } else {
+        MAX_BSP_INDEX
+    };
+    if count > max {
+        return Err(NodeBuildError::TooManyElements { kind, count, max });
     }
     Ok(())
 }
 
-/// A subsector's on-disk `seg_count` is a `u16`, so a convex leaf of more than
-/// 65,535 segs is structurally unencodable — a [`NodeBuildError::TooManyElements`]
-/// (`kind: "subsector segs"`) in **both** modes (Finding 1, PR #319). Reachable
-/// only at the seg-ceiling boundary: up to 65,536 segs collapsed into a single
-/// convex leaf in lenient mode.
-fn check_subsector_seg_count(count: usize) -> Result<(), NodeBuildError> {
-    if count > usize::from(u16::MAX) {
+/// A subsector's on-disk `seg_count` is a `u16` in the classic format, so a
+/// convex leaf of more than 65,535 segs is structurally unencodable — a
+/// [`NodeBuildError::TooManyElements`] (`kind: "subsector segs"`) in **both**
+/// modes (Finding 1, PR #319). Reachable only at the seg-ceiling boundary: up
+/// to 65,536 segs collapsed into a single convex leaf in lenient mode. The
+/// extended subsector block (ADR-0025, #323) stores the count as `u32`, so the
+/// extended cap is the structural 31-bit index limit ([`MAX_EXTENDED_INDEX`]).
+fn check_subsector_seg_count(count: usize, format: NodeFormat) -> Result<(), NodeBuildError> {
+    let max = if format.is_extended() {
+        MAX_EXTENDED_INDEX
+    } else {
+        usize::from(u16::MAX)
+    };
+    if count > max {
         return Err(NodeBuildError::TooManyElements {
             kind: "subsector segs",
             count,
-            max: usize::from(u16::MAX),
+            max,
         });
     }
     Ok(())
@@ -1717,11 +1978,14 @@ mod tests {
     #[test]
     fn soft_ceiling_thresholds() {
         // Under both ceilings: clean.
-        assert_eq!(soft_ceiling("segs", 32_768, Strictness::Strict), Ok(None));
+        assert_eq!(
+            soft_ceiling("segs", 32_768, Strictness::Strict, NodeFormat::Classic),
+            Ok(None)
+        );
 
         // Over the vanilla (32,768) ceiling: strict errors, lenient warns.
         assert_eq!(
-            soft_ceiling("segs", 32_769, Strictness::Strict),
+            soft_ceiling("segs", 32_769, Strictness::Strict, NodeFormat::Classic),
             Err(NodeBuildError::TooManyElements {
                 kind: "segs",
                 count: 32_769,
@@ -1729,7 +1993,7 @@ mod tests {
             })
         );
         assert_eq!(
-            soft_ceiling("vertices", 40_000, Strictness::Lenient),
+            soft_ceiling("vertices", 40_000, Strictness::Lenient, NodeFormat::Classic),
             Ok(Some(NodeBuildWarning::VanillaCeilingExceeded {
                 kind: "vertices",
                 count: 40_000,
@@ -1740,7 +2004,7 @@ mod tests {
         // Over the structural (65,536) ceiling: TooManyElements in BOTH modes.
         for strictness in [Strictness::Strict, Strictness::Lenient] {
             assert_eq!(
-                soft_ceiling("segs", 65_537, strictness),
+                soft_ceiling("segs", 65_537, strictness, NodeFormat::Classic),
                 Err(NodeBuildError::TooManyElements {
                     kind: "segs",
                     count: 65_537,
@@ -1752,9 +2016,12 @@ mod tests {
 
     #[test]
     fn hard_index_ceiling_rejects_over_32768_in_both_conceptual_modes() {
-        assert_eq!(check_hard_index_ceiling("nodes", MAX_BSP_INDEX), Ok(()));
         assert_eq!(
-            check_hard_index_ceiling("subsectors", MAX_BSP_INDEX + 1),
+            check_hard_index_ceiling("nodes", MAX_BSP_INDEX, NodeFormat::Classic),
+            Ok(())
+        );
+        assert_eq!(
+            check_hard_index_ceiling("subsectors", MAX_BSP_INDEX + 1, NodeFormat::Classic),
             Err(NodeBuildError::TooManyElements {
                 kind: "subsectors",
                 count: MAX_BSP_INDEX + 1,
@@ -1767,15 +2034,66 @@ mod tests {
     fn subsector_seg_count_ceiling_rejects_over_u16_max() {
         // The exact boundary: 65,535 is encodable, 65,536 is not (Finding 1).
         let max = usize::from(u16::MAX);
-        assert_eq!(check_subsector_seg_count(max), Ok(()));
+        assert_eq!(check_subsector_seg_count(max, NodeFormat::Classic), Ok(()));
         assert_eq!(
-            check_subsector_seg_count(max + 1),
+            check_subsector_seg_count(max + 1, NodeFormat::Classic),
             Err(NodeBuildError::TooManyElements {
                 kind: "subsector segs",
                 count: max + 1,
                 max,
             })
         );
+    }
+
+    #[test]
+    fn hard_index_ceiling_relaxes_for_extended() {
+        // Classic rejects past the 15-bit BSP ceiling; extended accepts it.
+        assert!(check_hard_index_ceiling("nodes", MAX_BSP_INDEX + 1, NodeFormat::Classic).is_err());
+        assert!(check_hard_index_ceiling("nodes", MAX_BSP_INDEX + 1, NodeFormat::Xnod).is_ok());
+        assert!(check_hard_index_ceiling("nodes", MAX_EXTENDED_INDEX, NodeFormat::Xnod).is_ok());
+        assert!(
+            check_hard_index_ceiling("nodes", MAX_EXTENDED_INDEX + 1, NodeFormat::Xnod).is_err()
+        );
+    }
+
+    #[test]
+    fn soft_ceiling_relaxes_for_extended() {
+        // Classic: past u16 is a hard error in both modes.
+        assert!(
+            soft_ceiling(
+                "segs",
+                MAX_U16_INDEXED + 1,
+                Strictness::Strict,
+                NodeFormat::Classic
+            )
+            .is_err()
+        );
+        // Extended: fine well past u16, up to the 31-bit cap.
+        assert!(matches!(
+            soft_ceiling(
+                "segs",
+                MAX_U16_INDEXED + 1,
+                Strictness::Strict,
+                NodeFormat::Xnod
+            ),
+            Ok(None)
+        ));
+        assert!(
+            soft_ceiling(
+                "segs",
+                MAX_EXTENDED_INDEX + 1,
+                Strictness::Strict,
+                NodeFormat::Xnod
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn subsector_seg_count_relaxes_for_extended() {
+        let over_u16 = usize::from(u16::MAX) + 1;
+        assert!(check_subsector_seg_count(over_u16, NodeFormat::Classic).is_err());
+        assert!(check_subsector_seg_count(over_u16, NodeFormat::Xnod).is_ok());
     }
 
     #[test]
@@ -2041,5 +2359,146 @@ mod tests {
                 max: MAX_BSP_INDEX,
             }
         );
+    }
+
+    #[test]
+    fn fixed_16_16_encodes_whole_units() {
+        assert_eq!(fixed_16_16(32.0, "x", 0).unwrap(), 32 * 65536);
+        assert_eq!(fixed_16_16(-1.0, "y", 0).unwrap(), -65536);
+        // i16::MAX * 65536 is the largest that fits i32.
+        assert_eq!(
+            fixed_16_16(f64::from(i16::MAX), "x", 0).unwrap(),
+            32767 * 65536
+        );
+    }
+
+    #[test]
+    fn extended_child_sets_bit_31_for_leaves() {
+        assert_eq!(
+            encode_extended_child(NodeChild::Node(NodeIdx(5))).unwrap(),
+            5
+        );
+        assert_eq!(
+            encode_extended_child(NodeChild::Subsector(SubsectorIdx(5))).unwrap(),
+            0x8000_0000 | 5
+        );
+    }
+
+    #[test]
+    fn extended_encoders_enforce_their_ceilings() {
+        // `encode_u32` (counts): MAX_EXTENDED_INDEX is a legal count, one past is not.
+        assert_eq!(encode_u32("c", MAX_EXTENDED_INDEX).unwrap(), 0x8000_0000);
+        assert!(matches!(
+            encode_u32("c", MAX_EXTENDED_INDEX + 1),
+            Err(NodeBuildError::TooManyElements { max, .. }) if max == MAX_EXTENDED_INDEX
+        ));
+        // `encode_index_u32` (indices): must be strictly below the ceiling.
+        assert_eq!(
+            encode_index_u32("i", MAX_EXTENDED_INDEX - 1).unwrap(),
+            0x7FFF_FFFF
+        );
+        assert!(matches!(
+            encode_index_u32("i", MAX_EXTENDED_INDEX),
+            Err(NodeBuildError::TooManyElements { .. })
+        ));
+        // `encode_extended_child`: a leaf/node index must fit the low 31 bits.
+        assert!(matches!(
+            encode_extended_child(NodeChild::Subsector(SubsectorIdx(MAX_EXTENDED_INDEX))),
+            Err(NodeBuildError::TooManyElements { .. })
+        ));
+        // `fixed_16_16`: a coordinate whose 16.16 form overflows `i32` is rejected.
+        assert!(matches!(
+            fixed_16_16(f64::from(i32::MAX), "x", 0),
+            Err(NodeBuildError::Write(_))
+        ));
+    }
+
+    #[test]
+    fn to_extended_lump_bytes_rejects_bit31_vertex_index() {
+        // A seg vertex index of MAX_EXTENDED_INDEX (bit 31 set) can never be a
+        // valid index (the largest legal index is 0x7FFF_FFFF), so the writer
+        // rejects it at write time rather than emitting a reader-rejected stream.
+        // Reachable only via a hand-built BuiltNodes (BuiltNodes::new).
+        let mut b = square_room();
+        b.segs[0].start = VertexIdx(MAX_EXTENDED_INDEX);
+        assert!(matches!(
+            b.to_extended_lump_bytes(4, false),
+            Err(NodeBuildError::TooManyElements {
+                kind: "vertices",
+                ..
+            })
+        ));
+        // The unmodified square (indices well below the ceiling) still serializes.
+        assert!(square_room().to_extended_lump_bytes(4, false).is_ok());
+    }
+
+    #[test]
+    fn to_extended_lump_bytes_rejects_miniseg_and_oversized_linedef() {
+        // A miniseg (linedef == None) cannot be an XNOD seg.
+        let mut miniseg = square_room();
+        miniseg.segs[0].linedef = None;
+        assert!(matches!(
+            miniseg.to_extended_lump_bytes(4, false),
+            Err(NodeBuildError::MinisegUnsupported { seg: 0 })
+        ));
+
+        // A linedef index past u16 is unrepresentable in XNOD (needs XGL2/#345).
+        let mut big_line = square_room();
+        big_line.segs[0].linedef = Some(LinedefIdx(MAX_U16_INDEXED));
+        assert!(matches!(
+            big_line.to_extended_lump_bytes(4, false),
+            Err(NodeBuildError::TooManyElements {
+                kind: "linedefs",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn to_extended_lump_bytes_lifts_the_classic_subsector_ceiling() {
+        // 32,769 empty subsectors exceeds the classic 0x8000 hard ceiling but is
+        // fine for XNOD (u32 counts). One node points both children at ss 0.
+        let subsectors = vec![
+            MapSubsector {
+                segs: 0..0,
+                leafs: 0..0
+            };
+            MAX_BSP_INDEX + 1
+        ];
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: Vec::new(),
+            subsectors,
+            nodes: vec![MapNode {
+                x: 0,
+                y: 0,
+                dx: 1,
+                dy: 0,
+                right_bbox: [0, 0, 0, 0],
+                left_bbox: [0, 0, 0, 0],
+                right: NodeChild::Subsector(SubsectorIdx(0)),
+                left: NodeChild::Subsector(SubsectorIdx(0)),
+            }],
+        };
+        assert!(
+            built.to_extended_lump_bytes(4, false).is_ok(),
+            "XNOD serializes past the classic ceiling"
+        );
+        assert!(matches!(
+            built.to_lump_bytes(),
+            Err(NodeBuildError::TooManyElements {
+                kind: "subsectors",
+                ..
+            })
+        ));
+    }
+
+    #[cfg(not(feature = "extended-nodes-zlib"))]
+    #[test]
+    fn compressed_without_feature_errors() {
+        assert!(matches!(
+            square_room().to_extended_lump_bytes(4, true),
+            Err(NodeBuildError::CompressionUnavailable)
+        ));
     }
 }

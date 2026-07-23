@@ -14,7 +14,13 @@
 
 mod common;
 
+#[cfg(feature = "nodebuild")]
+use crustywad::map::build::{BuiltNodes, NodeBuildOptions, NodeFormat, build_nodes};
 use crustywad::map::{ExtendedNodeError, Map, MapAssembleError, MapFormat, MapWarning};
+#[cfg(feature = "nodebuild")]
+use crustywad::map::{
+    LinedefIdx, MapNode, MapSeg, MapSubsector, MapVertex, NodeChild, SubsectorIdx, VertexIdx,
+};
 use crustywad::{ParseOptions, Wad};
 
 // --- A chainable little-endian byte-stream builder for the node streams. ---
@@ -544,4 +550,209 @@ fn corrupt_zgl3_znodes_lump_errors_through_the_udmf_dispatch() {
             reason: ExtendedNodeError::CorruptStream,
         }
     ));
+}
+
+// --- Write path: `BuiltNodes::to_extended_lump_bytes` golden bytes,
+// round-trips through the reader, the full `build_nodes` chain, ZNOD, and a
+// build->write->read proptest (#323 Task 5). ---
+
+/// The `BuiltNodes` equivalent of `xnod_stream()`: 1 split vertex (centre), 1
+/// subsector of 2 segs, 1 node with both children subsector 0. Angle/offset are
+/// arbitrary — XNOD stores neither.
+#[cfg(feature = "nodebuild")]
+fn xnod_built() -> BuiltNodes {
+    // `BuiltNodes` is `#[non_exhaustive]`, so an integration test (a separate
+    // crate) must go through the public `BuiltNodes::new` constructor rather
+    // than a struct literal.
+    BuiltNodes::new(
+        vec![MapVertex { x: 32.0, y: 32.0 }],
+        vec![
+            MapSeg {
+                start: VertexIdx(0),
+                end: VertexIdx(1),
+                angle: 0,
+                linedef: Some(LinedefIdx(0)),
+                direction: 0,
+                offset: 0,
+            },
+            MapSeg {
+                start: VertexIdx(1),
+                end: VertexIdx(4),
+                angle: 0,
+                linedef: Some(LinedefIdx(1)),
+                direction: 0,
+                offset: 0,
+            },
+        ],
+        vec![MapSubsector {
+            segs: 0..2,
+            leafs: 0..0,
+        }],
+        vec![MapNode {
+            x: 32,
+            y: 0,
+            dx: 0,
+            dy: 64,
+            right_bbox: [64, 0, 0, 64],
+            left_bbox: [64, 0, 0, 64],
+            right: NodeChild::Subsector(SubsectorIdx(0)),
+            left: NodeChild::Subsector(SubsectorIdx(0)),
+        }],
+    )
+}
+
+#[cfg(feature = "nodebuild")]
+#[test]
+fn to_extended_lump_bytes_matches_the_xnod_reader_fixture() {
+    let bytes = xnod_built()
+        .to_extended_lump_bytes(4, false)
+        .expect("serializes");
+    assert_eq!(
+        bytes,
+        xnod_stream(),
+        "writer output is byte-identical to the read fixture"
+    );
+}
+
+#[cfg(feature = "nodebuild")]
+#[test]
+fn xnod_writer_output_round_trips_through_the_reader() {
+    let built = xnod_built();
+    let stream = built.to_extended_lump_bytes(4, false).expect("serializes");
+    for options in [ParseOptions::strict(), ParseOptions::lenient()] {
+        let map = assemble_square_with(&[("NODES", &stream)], options).expect("XNOD decodes");
+        // Stored fields survive (angle/offset are re-derived on read, excluded).
+        assert_eq!(map.vertices().len(), 5, "4 orig + 1 split");
+        assert_eq!(map.segs().len(), 2);
+        assert_eq!(map.segs()[0].start, VertexIdx(0));
+        assert_eq!(map.segs()[0].end, VertexIdx(1));
+        assert_eq!(map.segs()[0].linedef, Some(LinedefIdx(0)));
+        assert_eq!(map.segs()[0].direction, 0);
+        assert_eq!(map.segs()[1].end, VertexIdx(4));
+        assert_eq!(map.subsectors().len(), 1);
+        assert_eq!(map.subsectors()[0].segs, 0..2);
+        assert_eq!(map.nodes().len(), 1);
+        assert_eq!(
+            (
+                map.nodes()[0].x,
+                map.nodes()[0].y,
+                map.nodes()[0].dx,
+                map.nodes()[0].dy
+            ),
+            (32, 0, 0, 64)
+        );
+        assert_eq!(map.nodes()[0].right_bbox, [64, 0, 0, 64]);
+        assert!(matches!(
+            map.nodes()[0].right,
+            NodeChild::Subsector(SubsectorIdx(0))
+        ));
+    }
+}
+
+#[cfg(feature = "nodebuild")]
+#[test]
+fn build_nodes_xnod_round_trips_the_square() {
+    let map = assemble_square_with(&[], ParseOptions::strict()).expect("square assembles");
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Xnod;
+    let (built, _warnings) = build_nodes(&map, &opts).expect("builds");
+    let stream = built
+        .to_extended_lump_bytes(map.vertices().len(), false)
+        .expect("serializes");
+
+    let read_back =
+        assemble_square_with(&[("NODES", &stream)], ParseOptions::strict()).expect("reads");
+    assert_eq!(read_back.segs().len(), built.segs.len());
+    assert_eq!(read_back.subsectors().len(), built.subsectors.len());
+    assert_eq!(read_back.nodes().len(), built.nodes.len());
+    for (r, b) in read_back.segs().iter().zip(&built.segs) {
+        assert_eq!(r.start, b.start);
+        assert_eq!(r.end, b.end);
+        assert_eq!(r.linedef, b.linedef);
+        assert_eq!(r.direction, b.direction);
+        // angle/offset are re-derived on read — excluded (Global Constraint 3).
+    }
+
+    // The chosen node format changes no in-bounds `BuiltNodes` output — the
+    // classic and XNOD builds agree on the same square.
+    let classic_opts = NodeBuildOptions::strict();
+    let (classic_built, _classic_warnings) = build_nodes(&map, &classic_opts).expect("builds");
+    assert_eq!(
+        classic_built, built,
+        "NodeFormat only changes serialization, not the built BSP"
+    );
+}
+
+#[cfg(all(feature = "nodebuild", feature = "extended-nodes-zlib"))]
+#[test]
+fn to_extended_lump_bytes_znod_matches_the_zlib_fixture() {
+    let znod = xnod_built()
+        .to_extended_lump_bytes(4, true)
+        .expect("compresses");
+    assert_eq!(
+        znod,
+        zlib_lump(*b"ZNOD", &xnod_stream()),
+        "ZNOD is byte-identical to the fixture"
+    );
+}
+
+#[cfg(all(feature = "nodebuild", feature = "extended-nodes-zlib"))]
+#[test]
+fn znod_writer_output_round_trips_through_the_reader() {
+    let stream = xnod_built()
+        .to_extended_lump_bytes(4, true)
+        .expect("compresses");
+    let map =
+        assemble_square_with(&[("NODES", &stream)], ParseOptions::strict()).expect("ZNOD decodes");
+    assert_eq!(map.vertices().len(), 5);
+    assert_eq!(map.segs().len(), 2);
+    assert_eq!(map.subsectors().len(), 1);
+    assert_eq!(map.nodes().len(), 1);
+}
+
+#[cfg(feature = "nodebuild")]
+proptest::proptest! {
+    #[test]
+    fn xnod_seg_and_subsector_arenas_survive_round_trip(
+        // up to 2 split verts (whole coords in a small window) and up to 4
+        // subsectors of 1..=3 segs each; seg indices resolve against 4 orig
+        // verts + the split verts; linedef indices are 0..4.
+        split_coords in proptest::collection::vec((-64i16..=64, -64i16..=64), 0..=2),
+        runs in proptest::collection::vec(1usize..=3, 1..=4),
+        seed in proptest::array::uniform32(0u8..),
+    ) {
+        let combined = 4 + split_coords.len();
+        let split_vertices: Vec<MapVertex> = split_coords.iter()
+            .map(|&(x, y)| MapVertex { x: f64::from(x), y: f64::from(y) }).collect();
+        // Build segs run by run, deterministically from `seed` (no Date/rand).
+        let mut segs = Vec::new();
+        let mut subsectors = Vec::new();
+        let mut k = 0usize;
+        for &len in &runs {
+            let start = segs.len();
+            for _ in 0..len {
+                let v1 = usize::from(seed[k % 32]) % combined; k += 1;
+                let v2 = usize::from(seed[k % 32]) % combined; k += 1;
+                let line = usize::from(seed[k % 32]) % 4; k += 1;
+                let dir = u16::from(seed[k % 32] & 1); k += 1;
+                segs.push(MapSeg { start: VertexIdx(v1), end: VertexIdx(v2), angle: 0, linedef: Some(LinedefIdx(line)), direction: dir, offset: 0 });
+            }
+            subsectors.push(MapSubsector { segs: start..segs.len(), leafs: 0..0 });
+        }
+        let built = BuiltNodes::new(split_vertices, segs, subsectors, Vec::new());
+        let stream = built.to_extended_lump_bytes(4, false).expect("serializes");
+        let map = assemble_square_with(&[("NODES", &stream)], ParseOptions::strict()).expect("decodes");
+
+        proptest::prop_assert_eq!(map.segs().len(), built.segs.len());
+        proptest::prop_assert_eq!(map.subsectors().len(), built.subsectors.len());
+        for (r, b) in map.segs().iter().zip(&built.segs) {
+            proptest::prop_assert_eq!(r.start, b.start);
+            proptest::prop_assert_eq!(r.end, b.end);
+            proptest::prop_assert_eq!(r.linedef, b.linedef);
+            proptest::prop_assert_eq!(r.direction, b.direction);
+        }
+        for (r, b) in map.subsectors().iter().zip(&built.subsectors) {
+            proptest::prop_assert_eq!(r.segs.clone(), b.segs.clone());
+        }
+    }
 }
