@@ -89,7 +89,6 @@ impl NodeFormat {
     /// Whether this is an extended (non-`Classic`) format, i.e. one that uses the
     /// 32-bit `MAX_EXTENDED_INDEX` ceilings rather than the vanilla 16-bit ones.
     #[must_use]
-    #[allow(dead_code)] // used by #323 Task 3/4
     pub(crate) fn is_extended(self) -> bool {
         !matches!(self, NodeFormat::Classic)
     }
