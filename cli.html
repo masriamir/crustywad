@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b1f4d583.js";
+            window.path_to_searchindex_js = "searchindex-bd200009.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -309,9 +309,20 @@ effect (UDMF has no binary node lumps) and prints a note to stderr:</p>
 <pre><code class="language-text">$ cwad convert doom.wad -o out.wad --to udmf --nodes
 note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
 </code></pre>
-<p>GL nodes and extended/compressed node formats are out of scope for <code>--nodes</code> —
-for those, still run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the
-output. See <a href="building-nodes.html">Building nodes</a> for the full picture.</p>
+<p><code>--node-format &lt;classic|xnod|znod&gt;</code> selects the on-disk form of the nodes
+<code>--nodes</code> builds; default <code>classic</code>. It has no effect without <code>--nodes</code>; a
+non-<code>classic</code> value (<code>xnod</code>/<code>znod</code>) passed without <code>--nodes</code> prints a note on
+stderr and is ignored. <code>xnod</code> writes an uncompressed
+ZDoom extended-node stream in <code>NODES</code>; <code>znod</code> writes the zlib-compressed
+form and requires <code>cwad</code> built with the <code>extended-nodes-zlib</code> feature
+(on by default) — without it, <code>znod</code> exits <code>3</code> with a clear error rather than
+a clap parse failure. See
+<a href="building-nodes.html#choosing-the-on-disk-node-format">Choosing the on-disk node format</a>.</p>
+<p>The ZDoom non-GL extended and compressed node formats (<code>xnod</code>/<code>znod</code>) are
+supported via <code>--node-format</code>; GL nodes (<code>XGL2</code>/<code>XGL3</code>) remain out of scope
+for <code>--nodes</code> and are deferred to a future issue — for those, still run an
+external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output. See
+<a href="building-nodes.html">Building nodes</a> for the full picture.</p>
 <p><strong>Strict mode refuses data loss.</strong> Converting a typical ZDoom-namespace UDMF
 map (linedef <code>args</code>, thing <code>height</code>/<code>id</code>/<code>special</code>, …) to <code>doom</code> exits <code>3</code>,
 naming the offending field on stderr:</p>

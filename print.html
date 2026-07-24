@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b1f4d583.js";
+            window.path_to_searchindex_js = "searchindex-bd200009.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -650,8 +650,10 @@ in-crate with the <a href="#nodebuild"><code>nodebuild</code></a> feature — th
 <code>add_doom_map_with_nodes</code> one-shot, or the <code>build_nodes</code> / <code>build_blockmap</code> /
 <code>build_reject</code> builders — or run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …)
 over the output. From the CLI, <code>cwad convert --to doom --nodes</code> is the
-turnkey path. See <a href="#building-nodes">Building nodes</a> for the full picture,
-including the tolerated mixed-sector fan and when GL/extended nodes still
+turnkey path, and <code>--node-format classic|xnod|znod</code> selects the on-disk node
+encoding (classic 16-bit by default, or ZDoom’s uncompressed/compressed
+extended formats). See <a href="#building-nodes">Building nodes</a> for the full
+picture, including the tolerated mixed-sector fan and when GL nodes still
 need an external tool (issue #199).</p>
 </blockquote>
 <h2 id="round-tripping-not-symmetric"><a class="header" href="#round-tripping-not-symmetric">Round-tripping: not symmetric</a></h2>
@@ -898,6 +900,24 @@ cwad validate --deep doom.wad
 stderr) for <code>--to udmf</code>, which has no binary node lumps. The global <code>--lenient</code>
 flag selects lenient mode for both the conversion and the node build. See
 <a href="#convert">CLI Usage</a> for the full flag reference.</p>
+<h3 id="choosing-the-on-disk-node-format"><a class="header" href="#choosing-the-on-disk-node-format">Choosing the on-disk node format</a></h3>
+<p><code>--node-format</code> selects how the built nodes are stored (Doom output only; it
+has no effect without <code>--nodes</code>, and a non-<code>classic</code> value passed without
+<code>--nodes</code> prints a note on stderr and is ignored):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>On-disk form</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>classic</code> (default)</td><td><code>SEGS</code> / <code>SSECTORS</code> / <code>NODES</code> (16-bit)</td><td>Vanilla-compatible; unchanged from plain <code>--nodes</code>.</td></tr>
+<tr><td><code>xnod</code></td><td>A single uncompressed <code>XNOD</code> stream in <code>NODES</code> (<code>SEGS</code>/<code>SSECTORS</code> empty)</td><td>ZDoom non-GL extended nodes; lifts the vanilla 16-bit ceilings.</td></tr>
+<tr><td><code>znod</code></td><td>A zlib-compressed <code>ZNOD</code> stream</td><td>Same as <code>xnod</code>, compressed. Requires <code>cwad</code> built with the <code>extended-nodes-zlib</code> feature (on by default); a <code>--no-default-features</code> build rejects <code>znod</code> with a clear error.</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-bash">cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
+</code></pre>
 <h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
 <p>Real geometry occasionally produces a convex leaf that spans more than one
 sector with no seg line able to separate them — the <strong>mixed-sector fan</strong> (two
@@ -1848,9 +1868,20 @@ effect (UDMF has no binary node lumps) and prints a note to stderr:</p>
 <pre><code class="language-text">$ cwad convert doom.wad -o out.wad --to udmf --nodes
 note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
 </code></pre>
-<p>GL nodes and extended/compressed node formats are out of scope for <code>--nodes</code> —
-for those, still run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the
-output. See <a href="#building-nodes">Building nodes</a> for the full picture.</p>
+<p><code>--node-format &lt;classic|xnod|znod&gt;</code> selects the on-disk form of the nodes
+<code>--nodes</code> builds; default <code>classic</code>. It has no effect without <code>--nodes</code>; a
+non-<code>classic</code> value (<code>xnod</code>/<code>znod</code>) passed without <code>--nodes</code> prints a note on
+stderr and is ignored. <code>xnod</code> writes an uncompressed
+ZDoom extended-node stream in <code>NODES</code>; <code>znod</code> writes the zlib-compressed
+form and requires <code>cwad</code> built with the <code>extended-nodes-zlib</code> feature
+(on by default) — without it, <code>znod</code> exits <code>3</code> with a clear error rather than
+a clap parse failure. See
+<a href="#choosing-the-on-disk-node-format">Choosing the on-disk node format</a>.</p>
+<p>The ZDoom non-GL extended and compressed node formats (<code>xnod</code>/<code>znod</code>) are
+supported via <code>--node-format</code>; GL nodes (<code>XGL2</code>/<code>XGL3</code>) remain out of scope
+for <code>--nodes</code> and are deferred to a future issue — for those, still run an
+external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output. See
+<a href="#building-nodes">Building nodes</a> for the full picture.</p>
 <p><strong>Strict mode refuses data loss.</strong> Converting a typical ZDoom-namespace UDMF
 map (linedef <code>args</code>, thing <code>height</code>/<code>id</code>/<code>special</code>, …) to <code>doom</code> exits <code>3</code>,
 naming the offending field on stderr:</p>

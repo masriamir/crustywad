@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b1f4d583.js";
+            window.path_to_searchindex_js = "searchindex-bd200009.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -247,6 +247,24 @@ cwad validate --deep doom.wad
 stderr) for <code>--to udmf</code>, which has no binary node lumps. The global <code>--lenient</code>
 flag selects lenient mode for both the conversion and the node build. See
 <a href="cli.html#convert">CLI Usage</a> for the full flag reference.</p>
+<h3 id="choosing-the-on-disk-node-format"><a class="header" href="#choosing-the-on-disk-node-format">Choosing the on-disk node format</a></h3>
+<p><code>--node-format</code> selects how the built nodes are stored (Doom output only; it
+has no effect without <code>--nodes</code>, and a non-<code>classic</code> value passed without
+<code>--nodes</code> prints a note on stderr and is ignored):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>On-disk form</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>classic</code> (default)</td><td><code>SEGS</code> / <code>SSECTORS</code> / <code>NODES</code> (16-bit)</td><td>Vanilla-compatible; unchanged from plain <code>--nodes</code>.</td></tr>
+<tr><td><code>xnod</code></td><td>A single uncompressed <code>XNOD</code> stream in <code>NODES</code> (<code>SEGS</code>/<code>SSECTORS</code> empty)</td><td>ZDoom non-GL extended nodes; lifts the vanilla 16-bit ceilings.</td></tr>
+<tr><td><code>znod</code></td><td>A zlib-compressed <code>ZNOD</code> stream</td><td>Same as <code>xnod</code>, compressed. Requires <code>cwad</code> built with the <code>extended-nodes-zlib</code> feature (on by default); a <code>--no-default-features</code> build rejects <code>znod</code> with a clear error.</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-bash">cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
+</code></pre>
 <h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
 <p>Real geometry occasionally produces a convex leaf that spans more than one
 sector with no seg line able to separate them — the <strong>mixed-sector fan</strong> (two
