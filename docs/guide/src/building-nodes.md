@@ -79,9 +79,9 @@ flag selects lenient mode for both the conversion and the node build. See
 
 ### Choosing the on-disk node format
 
-`--node-format` selects how the built nodes are stored (classic Doom output
-only; it has no effect without `--nodes`, and is noted-and-ignored on stderr
-if given alone):
+`--node-format` selects how the built nodes are stored (Doom output only; it
+has no effect without `--nodes`, and a non-`classic` value passed without
+`--nodes` prints a note on stderr and is ignored):
 
 | Value | On-disk form | Notes |
 |---|---|---|

@@ -1047,9 +1047,9 @@ fn run(cli: Cli) -> Result<i32> {
                     "note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring"
                 );
             }
-            // `--node-format` only takes effect when `--nodes` builds classic
-            // Doom node lumps; note-and-ignore rather than silently dropping it
-            // (house style; no auto-implying `--nodes`).
+            // `--node-format` only takes effect when `--nodes` builds Doom node
+            // lumps (`--to doom`); note-and-ignore rather than silently dropping
+            // it (house style; no auto-implying `--nodes`).
             if !matches!(node_format, NodeFormatArg::Classic) && !nodes {
                 eprintln!("note: --node-format has no effect without --nodes; ignoring");
             }

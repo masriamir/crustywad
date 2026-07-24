@@ -200,8 +200,9 @@ note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); igno
 ```
 
 `--node-format <classic|xnod|znod>` selects the on-disk form of the nodes
-`--nodes` builds; default `classic`. It has no effect without `--nodes` and
-is noted-and-ignored on stderr if given alone. `xnod` writes an uncompressed
+`--nodes` builds; default `classic`. It has no effect without `--nodes`; a
+non-`classic` value (`xnod`/`znod`) passed without `--nodes` prints a note on
+stderr and is ignored. `xnod` writes an uncompressed
 ZDoom extended-node stream in `NODES`; `znod` writes the zlib-compressed
 form and requires `cwad` built with the `extended-nodes-zlib` feature
 (on by default) — without it, `znod` exits `3` with a clear error rather than
