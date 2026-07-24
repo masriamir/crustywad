@@ -2097,8 +2097,7 @@ fn build_nodes_skips_hexen_group_with_note() {
         .stderr(predicate::str::contains("#352"));
     // A Hexen map carries a BEHAVIOR lump; it must survive the pass-through.
     assert!(
-        !lump_bytes(out.path(), "BEHAVIOR").is_empty()
-            || lump_names(out.path()).iter().any(|n| n == "BEHAVIOR"),
+        lump_names(out.path()).iter().any(|n| n == "BEHAVIOR"),
         "Hexen BEHAVIOR lump should be preserved"
     );
 }
@@ -2125,6 +2124,60 @@ fn build_without_nodes_leaves_packed_node_lumps_untouched() {
     assert!(
         lump_bytes(out.path(), "SEGS").is_empty(),
         "without --nodes, the packed empty SEGS stays empty"
+    );
+}
+
+#[test]
+fn build_nodes_refuses_mixed_sector_fan_and_hints_lenient() {
+    // Strict: the fan assembles cleanly but `add_doom_map_with_nodes` fails
+    // with `MixedSectorSubsector`; the build refuses (exit 3), names the map,
+    // and — because the error IS lenient-recoverable (#264) — hints `--lenient`.
+    let fixture = write_doom_mixed_sector_fan_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ))
+        .stderr(predicate::str::contains("re-run with --lenient"));
+}
+
+#[test]
+fn build_nodes_lenient_recovers_mixed_sector_fan() {
+    // Lenient: the fan is tolerated (ADR-0024 §7), so the same build succeeds
+    // and produces populated node lumps despite the mixed-sector subsector.
+    let fixture = write_doom_mixed_sector_fan_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "lenient node build populates SEGS despite the fan"
     );
 }
 
@@ -3104,6 +3157,42 @@ fn write_doom_square_room_empty_nodes_wad() -> NamedTempFile {
     )
     .expect("writes empty-node Doom map");
     builder.add_lump("COLORMAP", vec![4_u8, 5, 6]);
+    let bytes = builder.build().expect("builds Doom WAD");
+
+    let out = NamedTempFile::new().unwrap();
+    std::fs::write(out.path(), &bytes).expect("write Doom fixture");
+    out
+}
+
+/// A PWAD holding a single **Doom-format** mixed-sector-fan map (`MAP01`) with
+/// empty node lumps — the fan geometry that assembles cleanly but that a node
+/// build refuses in strict mode (a convex subsector spanning multiple sectors,
+/// ADR-0024 §7). Mirrors [`write_doom_square_room_empty_nodes_wad`] exactly,
+/// only sourcing the fan geometry from [`udmf_mixed_sector_fan`].
+fn write_doom_mixed_sector_fan_empty_nodes_wad() -> NamedTempFile {
+    let textmap = udmf_mixed_sector_fan();
+    let src = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let src_bytes = std::fs::read(src.path()).expect("source WAD readable");
+    let src_wad = crustywad::Wad::from_bytes(src_bytes).expect("source WAD parses");
+    let groups = src_wad.map_groups();
+    let group = groups.first().expect("source has one map group");
+    let map = crustywad::map::Map::assemble(&src_wad, group).expect("fan assembles");
+
+    let mut builder = crustywad::WadBuilder::new(crustywad::WadKind::Pwad);
+    crustywad::map::add_doom_map(
+        &mut builder,
+        "MAP01",
+        &map,
+        &crustywad::WriteOptions::strict(),
+    )
+    .expect("writes empty-node Doom map");
     let bytes = builder.build().expect("builds Doom WAD");
 
     let out = NamedTempFile::new().unwrap();

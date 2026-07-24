@@ -1103,7 +1103,17 @@ fn run(cli: Cli) -> Result<i32> {
             std::fs::write(&output, &final_bytes)
                 .with_context(|| format!("failed to write {}", output.display()))?;
 
-            let lump_count = lumps.len();
+            // Without `--nodes` the output is exactly the packed specs, so
+            // `lumps.len()` is the true count. With `--nodes` the rebuilt
+            // groups replace placeholder lumps with synthesized node lumps, so
+            // report the actual output count by re-reading `final_bytes` (a
+            // parse failure falls back to the input spec count).
+            let lump_count = if nodes {
+                Wad::from_bytes(final_bytes.clone())
+                    .map_or_else(|_| lumps.len(), |w| w.lumps().len())
+            } else {
+                lumps.len()
+            };
             match cli.format {
                 Format::Human | Format::Csv => println!(
                     "wrote {}: kind={:?} lumps: {lump_count}",
