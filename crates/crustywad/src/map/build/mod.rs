@@ -290,6 +290,15 @@ pub enum NodeBuildError {
     /// variant that drives it does not exist without the feature.
     #[error("zlib compression requires the `extended-nodes-zlib` feature")]
     CompressionUnavailable,
+    /// A hand-built [`BuiltNodes`] — assembled via
+    /// [`BuiltNodes::new`](crate::map::build::BuiltNodes::new) or by mutating its
+    /// public fields — violates one of the type's documented structural
+    /// invariants (its index-domain notes). Returned in **both** strictness
+    /// modes; the in-tree [`build_nodes`] is correct by construction and never
+    /// trips it. Unlike the serializers' per-field narrowing guards, this is a
+    /// whole-structure check (subsector partition, seg/child index domains).
+    #[error(transparent)]
+    InvalidStructure(#[from] NodeStructureError),
 }
 
 impl NodeBuildError {
@@ -330,9 +339,69 @@ impl NodeBuildError {
             | Self::TooManyElements { .. }
             | Self::MinisegUnsupported { .. }
             | Self::DegeneratePartition { .. }
+            | Self::InvalidStructure(_)
             | Self::CompressionUnavailable => false,
         }
     }
+}
+
+/// The specific structural invariant a hand-built
+/// [`BuiltNodes`] violated, wrapped by
+/// [`NodeBuildError::InvalidStructure`]. Each invariant is one of the type's
+/// documented index-domain notes; the in-tree [`build_nodes`] upholds them all
+/// by construction.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum NodeStructureError {
+    /// Subsector `subsector`'s seg range `start..end` is malformed (`end < start`)
+    /// or breaks the contiguous partition — its `start` is not the previous
+    /// subsector's `end` (`expected_start`).
+    #[error(
+        "subsector {subsector} seg range {start}..{end} breaks the partition (expected start {expected_start})"
+    )]
+    SubsectorRange {
+        /// Index of the offending subsector in the `BuiltNodes` subsector arena.
+        subsector: usize,
+        /// The subsector's range start.
+        start: usize,
+        /// The subsector's range end.
+        end: usize,
+        /// The start the contiguous partition required (the previous subsector's end).
+        expected_start: usize,
+    },
+    /// The subsector seg ranges cover `covered` segs but the `SEGS` arena holds
+    /// `segs` — the ranges do not partition the arena exactly.
+    #[error("subsector seg ranges cover {covered} segs but the arena has {segs}")]
+    SubsectorPartition {
+        /// Total segs spanned by the subsector ranges.
+        covered: usize,
+        /// The actual `SEGS` arena length.
+        segs: usize,
+    },
+    /// Seg `seg` references vertex index `vertex`, outside the combined
+    /// map-plus-split vertex arena of `bound` entries.
+    #[error("seg {seg} references vertex {vertex} outside the {bound}-vertex arena")]
+    SegVertex {
+        /// Index of the offending seg.
+        seg: usize,
+        /// The out-of-range vertex index it references.
+        vertex: usize,
+        /// The combined vertex arena size (`orig_vertex_count + split_vertices`).
+        bound: usize,
+    },
+    /// Node `node`'s `arena` child references index `child`, out of range for
+    /// that arena (which holds `bound` entries).
+    #[error("node {node} {arena} child {child} is out of range (arena has {bound})")]
+    NodeChild {
+        /// Index of the offending node.
+        node: usize,
+        /// The child arena name — `"node"` or `"subsector"`.
+        arena: &'static str,
+        /// The out-of-range child index.
+        child: usize,
+        /// The size of the referenced arena.
+        bound: usize,
+    },
 }
 
 #[cfg(test)]
@@ -378,6 +447,15 @@ mod tests {
             })
             .is_lenient_recoverable()
         );
+    }
+
+    #[test]
+    fn invalid_structure_is_not_lenient_recoverable() {
+        let err = NodeBuildError::InvalidStructure(NodeStructureError::SubsectorPartition {
+            covered: 3,
+            segs: 4,
+        });
+        assert!(!err.is_lenient_recoverable());
     }
 
     #[test]

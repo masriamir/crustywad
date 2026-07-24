@@ -1511,7 +1511,17 @@ proptest! {
 
         for opts in [NodeBuildOptions::strict(), NodeBuildOptions::lenient()] {
             match build_nodes(&map, &opts) {
-                Ok((built, _warnings)) => validate_bsp(&map, &built),
+                Ok((built, _warnings)) => {
+                    validate_bsp(&map, &built);
+                    // The kernel's output must also satisfy the public structural
+                    // validator (the same invariants validate_bsp asserts).
+                    let validation = built.validate(map.vertices().len());
+                    prop_assert!(
+                        validation.is_ok(),
+                        "build_nodes output failed BuiltNodes::validate: {:?}",
+                        validation.err()
+                    );
+                }
                 Err(e) => prop_assert!(
                     is_plan_known_error(&e),
                     "build_nodes returned an unexpected error variant: {e:?}"

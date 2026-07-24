@@ -21,7 +21,9 @@ use binrw::BinWriterExt;
 
 use crate::Strictness;
 use crate::map::DoomWriteError;
-use crate::map::build::{NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat};
+use crate::map::build::{
+    NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat, NodeStructureError,
+};
 use crate::map::common::{Node, Seg, Subsector, Vertex};
 use crate::map::doom::{DoomWriteWarning, Narrower, narrow_vertices};
 use crate::map::graph::{
@@ -118,26 +120,132 @@ pub struct BuiltNodeLumps {
 }
 
 impl BuiltNodes {
-    /// Assembles a `BuiltNodes` from its four arenas.
+    /// Assembles a `BuiltNodes` from its four arenas and validates the type's
+    /// structural invariants via [`validate`](Self::validate).
     ///
-    /// `#[non_exhaustive]` blocks plain struct-literal construction of this
-    /// type from outside this crate — this is the public constructor a
-    /// downstream crate (e.g. a hand-built test fixture, or a nodebuilder
-    /// alternative to [`build_nodes`]) uses instead. [`build_nodes`] itself
-    /// constructs `BuiltNodes` directly, in-crate.
-    #[must_use]
+    /// `#[non_exhaustive]` blocks plain struct-literal construction of this type
+    /// from outside this crate — this is the public constructor a downstream
+    /// crate (a hand-built test fixture, or an alternative nodebuilder) uses
+    /// instead. [`build_nodes`] itself constructs `BuiltNodes` directly, in-crate,
+    /// and is correct by construction, so it bypasses this check.
+    ///
+    /// `orig_vertex_count` is the owning map's `VERTEXES` record count (see
+    /// [`validate`](Self::validate)).
+    ///
+    /// # Errors
+    ///
+    /// [`NodeBuildError::InvalidStructure`] if the arenas violate a structural
+    /// invariant (both strictness modes).
     pub fn new(
         split_vertices: Vec<MapVertex>,
         segs: Vec<MapSeg>,
         subsectors: Vec<MapSubsector>,
         nodes: Vec<MapNode>,
-    ) -> Self {
-        Self {
+        orig_vertex_count: usize,
+    ) -> Result<Self, NodeBuildError> {
+        let built = Self {
             split_vertices,
             segs,
             subsectors,
             nodes,
+        };
+        built.validate(orig_vertex_count)?;
+        Ok(built)
+    }
+
+    /// Checks this `BuiltNodes` against the type's documented structural
+    /// invariants (its index-domain notes): the subsector seg ranges partition
+    /// [`segs`](Self::segs) exactly and contiguously, every seg vertex index is
+    /// within the combined map-plus-split vertex arena, and every node child
+    /// index is in range for its arena. Format-agnostic — it does not check
+    /// per-format representability (minisegs, count ceilings, coordinate
+    /// narrowing), which the serializers still guard.
+    ///
+    /// It checks only these *index-domain* invariants — it deliberately does
+    /// **not** validate BSP *semantics* (node acyclicity, post-order/root-last
+    /// ordering, or subsector reachability); a `BuiltNodes` that passes may
+    /// still describe a meaningless tree.
+    ///
+    /// `orig_vertex_count` is the owning map's `VERTEXES` record count; the
+    /// combined vertex arena is `orig_vertex_count + split_vertices.len()`.
+    ///
+    /// O(n) over the arenas, iterative, allocation-free. Runs identically in
+    /// both strictness modes. [`build_nodes`] output always passes.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeBuildError::InvalidStructure`] on the first violated invariant,
+    /// naming the offending element and bound.
+    pub fn validate(&self, orig_vertex_count: usize) -> Result<(), NodeBuildError> {
+        // (1) Subsector seg ranges partition `segs` exactly, contiguous from 0.
+        let mut expected_start = 0usize;
+        for (i, ss) in self.subsectors.iter().enumerate() {
+            if ss.segs.start != expected_start || ss.segs.end < ss.segs.start {
+                return Err(NodeStructureError::SubsectorRange {
+                    subsector: i,
+                    start: ss.segs.start,
+                    end: ss.segs.end,
+                    expected_start,
+                }
+                .into());
+            }
+            expected_start = ss.segs.end;
         }
+        if expected_start != self.segs.len() {
+            return Err(NodeStructureError::SubsectorPartition {
+                covered: expected_start,
+                segs: self.segs.len(),
+            }
+            .into());
+        }
+
+        // (2) Seg vertex indices within the combined map+split vertex arena.
+        // `saturating_add` keeps a pathological hand-built `orig_vertex_count`
+        // (e.g. `usize::MAX`) from panicking on overflow in debug builds or
+        // wrapping in release — saturating to `usize::MAX` is correct here, since
+        // every real (Vec-bounded) seg index is then trivially in range.
+        let vertex_arena = orig_vertex_count.saturating_add(self.split_vertices.len());
+        for (i, s) in self.segs.iter().enumerate() {
+            for vertex in [s.start.0, s.end.0] {
+                if vertex >= vertex_arena {
+                    return Err(NodeStructureError::SegVertex {
+                        seg: i,
+                        vertex,
+                        bound: vertex_arena,
+                    }
+                    .into());
+                }
+            }
+        }
+
+        // (3) Node child indices in range for their arena.
+        for (i, n) in self.nodes.iter().enumerate() {
+            for child in [n.right, n.left] {
+                match child {
+                    NodeChild::Node(k) if k.0 >= self.nodes.len() => {
+                        return Err(NodeStructureError::NodeChild {
+                            node: i,
+                            arena: "node",
+                            child: k.0,
+                            bound: self.nodes.len(),
+                        }
+                        .into());
+                    }
+                    NodeChild::Subsector(k) if k.0 >= self.subsectors.len() => {
+                        return Err(NodeStructureError::NodeChild {
+                            node: i,
+                            arena: "subsector",
+                            child: k.0,
+                            bound: self.subsectors.len(),
+                        }
+                        .into());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Serializes this BSP tree to its four on-disk lumps (ADR-0024 §2, §D).
@@ -1770,6 +1878,255 @@ mod tests {
             }],
             nodes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn validate_accepts_a_well_formed_built_nodes() {
+        // square_room: 4 segs referencing map vertices 0..=3, one subsector 0..4,
+        // no nodes, no split vertices. orig_vertex_count = 4.
+        assert!(square_room().validate(4).is_ok());
+    }
+
+    #[test]
+    fn validate_saturates_on_huge_orig_vertex_count() {
+        let mut built = square_room();
+        // A non-empty split arena means `usize::MAX + len` would overflow a plain
+        // add — panicking in debug, wrapping in release. The `saturating_add`
+        // guard must instead saturate, so every real seg index stays in range.
+        built.split_vertices = vec![MapVertex { x: 0.0, y: 0.0 }];
+        assert!(built.validate(usize::MAX).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_a_zero_seg_subsector() {
+        let mut built = square_room();
+        // A zero-seg subsector (2..2) sits between two non-empty ones; the
+        // partition stays contiguous and exact, so it is accepted.
+        built.subsectors = vec![
+            MapSubsector {
+                segs: 0..2,
+                leafs: 0..0,
+            },
+            MapSubsector {
+                segs: 2..2,
+                leafs: 0..0,
+            },
+            MapSubsector {
+                segs: 2..4,
+                leafs: 0..0,
+            },
+        ];
+        assert!(built.validate(4).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_an_inverted_subsector_range() {
+        let mut built = square_room();
+        // Second subsector's range is inverted (end < start), exercising the
+        // `end < start` arm distinctly from the non-contiguity arm.
+        built.segs = vec![seg(0, 1, 0x0000, 0), seg(1, 2, 0x4000, 1)];
+        built.subsectors = vec![
+            MapSubsector {
+                segs: 0..2,
+                leafs: 0..0,
+            },
+            MapSubsector {
+                // Built as an explicit struct literal: the `2..1` range
+                // expression would trip `clippy::reversed_empty_ranges`, but an
+                // inverted range is exactly what this test needs to feed `validate`.
+                segs: std::ops::Range { start: 2, end: 1 },
+                leafs: 0..0,
+            },
+        ];
+        assert_eq!(
+            built.validate(4).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::SubsectorRange {
+                subsector: 1,
+                start: 2,
+                end: 1,
+                expected_start: 2,
+            }),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_partition_that_overshoots_the_seg_arena() {
+        let mut built = square_room();
+        // One subsector claiming 5 segs, but the arena only holds 4.
+        built.subsectors = vec![MapSubsector {
+            segs: 0..5,
+            leafs: 0..0,
+        }];
+        assert_eq!(
+            built.validate(4).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::SubsectorPartition {
+                covered: 5,
+                segs: 4,
+            }),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_non_contiguous_subsector() {
+        let mut built = square_room();
+        // Two subsectors with a gap: 0..2 then 3..4 (seg 2 uncovered).
+        built.subsectors = vec![
+            MapSubsector {
+                segs: 0..2,
+                leafs: 0..0,
+            },
+            MapSubsector {
+                segs: 3..4,
+                leafs: 0..0,
+            },
+        ];
+        assert_eq!(
+            built.validate(4).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::SubsectorRange {
+                subsector: 1,
+                start: 3,
+                end: 4,
+                expected_start: 2,
+            }),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_partition_that_undershoots_the_seg_arena() {
+        let mut built = square_room();
+        // One subsector covering only 3 of the 4 segs.
+        built.subsectors = vec![MapSubsector {
+            segs: 0..3,
+            leafs: 0..0,
+        }];
+        assert_eq!(
+            built.validate(4).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::SubsectorPartition {
+                covered: 3,
+                segs: 4,
+            }),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_seg_vertex_out_of_range() {
+        let mut built = square_room();
+        // Seg 1 references vertex 9, but the arena only has orig(4) + split(0) = 4.
+        built.segs[1].end = VertexIdx(9);
+        assert_eq!(
+            built.validate(4).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::SegVertex {
+                seg: 1,
+                vertex: 9,
+                bound: 4,
+            }),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_node_child_out_of_range() {
+        // One node whose subsector child index (5) exceeds the single subsector.
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: vec![seg(0, 1, 0x0000, 0)],
+            subsectors: vec![MapSubsector {
+                segs: 0..1,
+                leafs: 0..0,
+            }],
+            nodes: vec![MapNode {
+                x: 0,
+                y: 0,
+                dx: 1,
+                dy: 0,
+                right_bbox: [0; 4],
+                left_bbox: [0; 4],
+                right: NodeChild::Subsector(SubsectorIdx(5)),
+                left: NodeChild::Node(NodeIdx(0)),
+            }],
+        };
+        assert_eq!(
+            built.validate(2).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::NodeChild {
+                node: 0,
+                arena: "subsector",
+                child: 5,
+                bound: 1,
+            }),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_node_referencing_a_missing_node_child() {
+        // One node whose node-child index (2) exceeds the single node.
+        let built = BuiltNodes {
+            split_vertices: Vec::new(),
+            segs: vec![seg(0, 1, 0x0000, 0)],
+            subsectors: vec![MapSubsector {
+                segs: 0..1,
+                leafs: 0..0,
+            }],
+            nodes: vec![MapNode {
+                x: 0,
+                y: 0,
+                dx: 1,
+                dy: 0,
+                right_bbox: [0; 4],
+                left_bbox: [0; 4],
+                right: NodeChild::Subsector(SubsectorIdx(0)),
+                left: NodeChild::Node(NodeIdx(2)),
+            }],
+        };
+        assert_eq!(
+            built.validate(2).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::NodeChild {
+                node: 0,
+                arena: "node",
+                child: 2,
+                bound: 1,
+            }),
+        );
+    }
+
+    #[test]
+    fn new_accepts_valid_arenas_and_matches_the_struct_literal() {
+        let expected = square_room();
+        let built = BuiltNodes::new(
+            expected.split_vertices.clone(),
+            expected.segs.clone(),
+            expected.subsectors.clone(),
+            expected.nodes.clone(),
+            4,
+        )
+        .expect("valid arenas construct");
+        assert_eq!(built, expected);
+    }
+
+    #[test]
+    fn new_rejects_a_malformed_partition() {
+        // Subsector covers 3 of 4 segs — the partition undershoots.
+        let err = BuiltNodes::new(
+            Vec::new(),
+            vec![
+                seg(0, 1, 0x0000, 0),
+                seg(1, 2, 0x4000, 1),
+                seg(2, 3, 0x8000, 2),
+                seg(3, 0, 0xC000, 3),
+            ],
+            vec![MapSubsector {
+                segs: 0..3,
+                leafs: 0..0,
+            }],
+            Vec::new(),
+            4,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            NodeBuildError::InvalidStructure(NodeStructureError::SubsectorPartition {
+                covered: 3,
+                segs: 4,
+            }),
+        );
     }
 
     #[test]
