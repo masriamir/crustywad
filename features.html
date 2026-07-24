@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c6244ab9.js";
+            window.path_to_searchindex_js = "searchindex-b5dc08dd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -212,7 +212,7 @@ actually accessed. The tradeoff is a small amount of <code>unsafe</code> code in
 of whether this feature is enabled.</p>
 <h3 id="usage"><a class="header" href="#usage">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.8.0", features = ["mmap"] }
+crustywad = { version = "0.9.0", features = ["mmap"] }
 </code></pre>
 <pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -348,7 +348,7 @@ locally.</p>
 <code>[12-byte header][lump data blobs][16-byte directory entries]</code>.</p>
 <h3 id="usage-1"><a class="header" href="#usage-1">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.8.0", features = ["write"] }
+crustywad = { version = "0.9.0", features = ["write"] }
 </code></pre>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -430,7 +430,7 @@ Only the non-GL <code>XNOD</code>/<code>ZNOD</code> streams are covered; GL exte
 this writer.</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.8.0", features = ["nodebuild"] }
+crustywad = { version = "0.9.0", features = ["nodebuild"] }
 </code></pre>
 <p>Or with <code>cargo add</code>:</p>
 <pre><code class="language-sh">cargo add crustywad --features nodebuild
@@ -490,7 +490,7 @@ convention). The declared <code>width × height</code> is checked against
 strictness modes (the same DoS-cap exception <code>TextureSet::compose</code>’s composite limit uses).</p>
 <h3 id="usage-3"><a class="header" href="#usage-3">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.8.0", features = ["doom64-gfx"] }
+crustywad = { version = "0.9.0", features = ["doom64-gfx"] }
 </code></pre>
 <p>Or with <code>cargo add</code>:</p>
 <pre><code class="language-sh">cargo add crustywad --features doom64-gfx
@@ -553,7 +553,7 @@ compressed output without this feature returns <code>NodeBuildError::Compression
 than panicking.</p>
 <h3 id="usage-4"><a class="header" href="#usage-4">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
-crustywad = { version = "0.8.0", features = ["extended-nodes-zlib"] }
+crustywad = { version = "0.9.0", features = ["extended-nodes-zlib"] }
 </code></pre>
 <p>Or with <code>cargo add</code>:</p>
 <pre><code class="language-sh">cargo add crustywad --features extended-nodes-zlib
