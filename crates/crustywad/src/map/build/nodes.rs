@@ -161,6 +161,11 @@ impl BuiltNodes {
     /// per-format representability (minisegs, count ceilings, coordinate
     /// narrowing), which the serializers still guard.
     ///
+    /// It checks only these *index-domain* invariants — it deliberately does
+    /// **not** validate BSP *semantics* (node acyclicity, post-order/root-last
+    /// ordering, or subsector reachability); a `BuiltNodes` that passes may
+    /// still describe a meaningless tree.
+    ///
     /// `orig_vertex_count` is the owning map's `VERTEXES` record count; the
     /// combined vertex arena is `orig_vertex_count + split_vertices.len()`.
     ///
@@ -195,7 +200,11 @@ impl BuiltNodes {
         }
 
         // (2) Seg vertex indices within the combined map+split vertex arena.
-        let vertex_arena = orig_vertex_count + self.split_vertices.len();
+        // `saturating_add` keeps a pathological hand-built `orig_vertex_count`
+        // (e.g. `usize::MAX`) from panicking on overflow in debug builds or
+        // wrapping in release — saturating to `usize::MAX` is correct here, since
+        // every real (Vec-bounded) seg index is then trivially in range.
+        let vertex_arena = orig_vertex_count.saturating_add(self.split_vertices.len());
         for (i, s) in self.segs.iter().enumerate() {
             for vertex in [s.start.0, s.end.0] {
                 if vertex >= vertex_arena {
@@ -1876,6 +1885,16 @@ mod tests {
         // square_room: 4 segs referencing map vertices 0..=3, one subsector 0..4,
         // no nodes, no split vertices. orig_vertex_count = 4.
         assert!(square_room().validate(4).is_ok());
+    }
+
+    #[test]
+    fn validate_saturates_on_huge_orig_vertex_count() {
+        let mut built = square_room();
+        // A non-empty split arena means `usize::MAX + len` would overflow a plain
+        // add — panicking in debug, wrapping in release. The `saturating_add`
+        // guard must instead saturate, so every real seg index stays in range.
+        built.split_vertices = vec![MapVertex { x: 0.0, y: 0.0 }];
+        assert!(built.validate(usize::MAX).is_ok());
     }
 
     #[test]
