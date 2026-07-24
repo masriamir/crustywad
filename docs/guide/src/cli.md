@@ -166,9 +166,10 @@ $ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
 wrote playable.wad: kind=Pwad lumps: 11
 ```
 
-Any pre-existing node lumps in a rebuilt Doom group (typically empty
-placeholders packed alongside the other map lumps) are overwritten with the
-newly built ones. **Hexen** (#352), **Doom 64** (#353), and **UDMF** (#354)
+All of a rebuilt Doom group's classic node lumps — `SEGS`/`SSECTORS`/`NODES`,
+the `REJECT` visibility table, and the `BLOCKMAP` — are overwritten with the
+newly built ones, whether they were packed as empty placeholders or already
+held data. **Hexen** (#352), **Doom 64** (#353), and **UDMF** (#354)
 map groups are not yet supported by `--nodes` and are passed through
 unchanged with a note on stderr; non-map lumps always pass through
 unchanged; if no Doom map group is found, `--nodes` is a no-op and prints a

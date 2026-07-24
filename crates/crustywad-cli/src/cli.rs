@@ -188,7 +188,7 @@ pub(crate) enum SubCommand {
         #[arg(value_name = "NAME=FILE")]
         lumps: Vec<String>,
         /// After packing, build engine-playable SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
-        /// for each Doom map group in the result. Hexen/Doom64/UDMF groups are
+        /// for each Doom map group in the result. Hexen/Doom 64/UDMF groups are
         /// skipped with a note. Classic node lumps only.
         #[arg(long)]
         nodes: bool,

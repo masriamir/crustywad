@@ -97,9 +97,9 @@ cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
 
 `cwad build --nodes` runs the same one-shot for a WAD assembled from scratch
 out of `NAME=FILE` lump specifications: after packing, it rebuilds every
-Doom-format map group in the result with real, engine-playable node lumps,
-overwriting any empty placeholders that were packed alongside the map's
-other lumps:
+Doom-format map group in the result with real, engine-playable node lumps —
+`SEGS`/`SSECTORS`/`NODES`, `REJECT`, and `BLOCKMAP` — overwriting whatever
+was packed for those lumps, whether empty placeholders or existing data:
 
 ```bash
 cwad build --nodes MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
