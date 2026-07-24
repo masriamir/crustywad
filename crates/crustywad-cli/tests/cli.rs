@@ -2040,6 +2040,18 @@ fn build_nodes_builds_playable_lumps_and_preserves_non_map_lumps() {
         !lump_bytes(out.path(), "BLOCKMAP").is_empty(),
         "BLOCKMAP should be rebuilt non-empty"
     );
+    // REJECT is a 1-byte all-clear table for the single-sector room.
+    assert!(
+        !lump_bytes(out.path(), "REJECT").is_empty(),
+        "REJECT should be rebuilt non-empty"
+    );
+    // NODES is emitted but legitimately empty for a convex single-subsector
+    // room (the engine's `numnodes == 0` path), so assert it is present rather
+    // than non-empty — the full classic node-lump set is synthesized.
+    assert!(
+        lump_names(out.path()).iter().any(|n| n == "NODES"),
+        "NODES lump should be present"
+    );
     // The trailing non-map lump passed through verbatim.
     assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4_u8, 5, 6]);
     // Engine-playable: the output assembles strict-clean.
