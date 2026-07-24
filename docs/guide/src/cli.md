@@ -199,9 +199,20 @@ $ cwad convert doom.wad -o out.wad --to udmf --nodes
 note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
 ```
 
-GL nodes and extended/compressed node formats are out of scope for `--nodes` —
-for those, still run an external nodebuilder (`zdbsp`, `bsp`, ...) over the
-output. See [Building nodes](building-nodes.md) for the full picture.
+`--node-format <classic|xnod|znod>` selects the on-disk form of the nodes
+`--nodes` builds; default `classic`. It has no effect without `--nodes` and
+is noted-and-ignored on stderr if given alone. `xnod` writes an uncompressed
+ZDoom extended-node stream in `NODES`; `znod` writes the zlib-compressed
+form and requires `cwad` built with the `extended-nodes-zlib` feature
+(on by default) — without it, `znod` exits `3` with a clear error rather than
+a clap parse failure. See
+[Choosing the on-disk node format](building-nodes.md#choosing-the-on-disk-node-format).
+
+The ZDoom non-GL extended and compressed node formats (`xnod`/`znod`) are
+supported via `--node-format`; GL nodes (`XGL2`/`XGL3`) remain out of scope
+for `--nodes` and are deferred to a future issue — for those, still run an
+external nodebuilder (`zdbsp`, `bsp`, ...) over the output. See
+[Building nodes](building-nodes.md) for the full picture.
 
 **Strict mode refuses data loss.** Converting a typical ZDoom-namespace UDMF
 map (linedef `args`, thing `height`/`id`/`special`, ...) to `doom` exits `3`,
