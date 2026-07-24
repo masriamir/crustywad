@@ -1004,14 +1004,13 @@ fn run(cli: Cli) -> Result<i32> {
                 } else {
                     NodeBuildOptions::strict()
                 };
-                // Re-read our own freshly-built WAD to detect map groups.
-                let wad = match Wad::from_bytes_with_options(bytes.clone(), parse_opts) {
-                    Ok(w) => w,
-                    Err(e) => {
-                        eprintln!("error: failed to re-read built WAD for node building: {e}");
-                        return Ok(3);
-                    }
-                };
+                // Re-read our own freshly-built WAD to detect map groups. This is
+                // our own serializer output, so a parse failure is an internal
+                // invariant violation (not user error) — propagate it rather than
+                // handle it as a usage error, and move `bytes` in so the no-map
+                // branch can recover the buffer via `into_bytes()` (no clone).
+                let wad = Wad::from_bytes_with_options(bytes, parse_opts)
+                    .context("failed to re-read the freshly built WAD for node building")?;
                 // Classify each map group: Doom groups are rebuilt; others are
                 // passed through with a note. `MapFormat` is `#[non_exhaustive]`,
                 // so an unknown future format falls through to plain pass-through.
@@ -1041,7 +1040,7 @@ fn run(cli: Cli) -> Result<i32> {
                 }
                 if doom_starts.is_empty() {
                     eprintln!("note: no Doom map groups found; --nodes had no effect");
-                    bytes
+                    wad.into_bytes()
                 } else {
                     let mut out = WadBuilder::new(wad_kind);
                     for (i, lump) in wad.lumps().iter().enumerate() {
@@ -1083,18 +1082,17 @@ fn run(cli: Cli) -> Result<i32> {
                             out.add_lump(lump.name(), wad.lump_data(lump));
                         }
                     }
-                    match out.build_with_options(&write_opts) {
-                        Ok((b, ws)) => {
-                            for w in &ws {
-                                eprintln!("warning: {w}");
-                            }
-                            b
-                        }
-                        Err(e) => {
-                            eprintln!("error: failed to build WAD {}: {e}", output.display());
-                            return Ok(3);
-                        }
+                    // The lumps were already validated by `add_doom_map_with_nodes`
+                    // and passed through verbatim, so a rebuild failure here is an
+                    // internal invariant violation — propagate rather than treat as
+                    // a usage error.
+                    let (rebuilt, ws) = out
+                        .build_with_options(&write_opts)
+                        .with_context(|| format!("failed to rebuild {}", output.display()))?;
+                    for w in &ws {
+                        eprintln!("warning: {w}");
                     }
+                    rebuilt
                 }
             } else {
                 bytes
