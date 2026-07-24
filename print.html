@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-bd200009.js";
+            window.path_to_searchindex_js = "searchindex-c6244ab9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -918,6 +918,23 @@ has no effect without <code>--nodes</code>, and a non-<code>classic</code> value
 </div>
 <pre><code class="language-bash">cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
 </code></pre>
+<h3 id="cwad-build---nodes"><a class="header" href="#cwad-build---nodes"><code>cwad build --nodes</code></a></h3>
+<p><code>cwad build --nodes</code> runs the same one-shot for a WAD assembled from scratch
+out of <code>NAME=FILE</code> lump specifications: after packing, it rebuilds every
+Doom-format map group in the result with real, engine-playable node lumps —
+<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>, <code>REJECT</code>, and <code>BLOCKMAP</code> — overwriting whatever
+was packed for those lumps, whether empty placeholders or existing data. The
+packed <code>VERTEXES</code> lump can also grow, since the BSP pass appends any split
+vertices it creates to it:</p>
+<pre><code class="language-bash">cwad build --nodes MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
+</code></pre>
+<p>Hexen, Doom 64, and UDMF map groups are not yet supported by <code>build --nodes</code>
+and are passed through unchanged with a note on stderr (follow-up issues
+#352/#353/#354); non-map lumps always pass through unchanged. Like plain
+<code>--nodes</code>, <code>build --nodes</code> emits <strong>classic</strong> node
+lumps only — there is no <code>--node-format</code> flag on <code>build</code>. Reach for
+<code>--node-format xnod</code>/<code>znod</code> extended-node output through <code>convert --nodes</code>
+instead. See <a href="#build">CLI Usage</a> for the full flag reference.</p>
 <h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
 <p>Real geometry occasionally produces a convex leaf that spans more than one
 sector with no seg line able to separate them — the <strong>mixed-sector fan</strong> (two
@@ -1835,6 +1852,31 @@ wrote custom.wad: kind=Pwad lumps: 2
 </code></pre>
 <p>Use <code>--kind iwad</code> to build an IWAD instead of the default PWAD. Lump-name or
 size validation failures exit <code>3</code>.</p>
+<h4 id="building-nodes-build---nodes"><a class="header" href="#building-nodes-build---nodes">Building nodes: <code>build --nodes</code></a></h4>
+<p>Pass <code>--nodes</code> to rebuild, after packing, every <strong>Doom</strong>-format map group in
+the output with classic engine-playable node lumps via the
+<a href="#building-nodes"><code>add_doom_map_with_nodes</code></a> one-shot — the BSP tree
+(<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the collision <code>BLOCKMAP</code>, and the all-clear
+<code>REJECT</code>:</p>
+<pre><code class="language-text">$ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
+wrote playable.wad: kind=Pwad lumps: 11
+</code></pre>
+<p>All of a rebuilt Doom group’s classic node lumps — <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>,
+the <code>REJECT</code> visibility table, and the <code>BLOCKMAP</code> — are overwritten with the
+newly built ones, whether they were packed as empty placeholders or already
+held data. The map’s packed <code>VERTEXES</code> lump can also grow: the BSP pass
+appends any split vertices it creates to it. <strong>Hexen</strong> (#352), <strong>Doom 64</strong>
+(#353), and <strong>UDMF</strong> (#354)
+map groups are not yet supported by <code>--nodes</code> and are passed through
+unchanged with a note on stderr; non-map lumps always pass through
+unchanged; if no Doom map group is found, <code>--nodes</code> is a no-op and prints a
+note. <code>--nodes</code> builds classic node lumps only — there is no <code>--node-format</code>
+flag on <code>build</code> (unlike <code>convert --nodes</code>, which also supports <code>xnod</code>, and
+<code>znod</code> when <code>cwad</code> is built with the <code>extended-nodes-zlib</code> feature). The
+global <code>--lenient</code> flag applies to the node build too — a strict-mode build
+failure exits <code>3</code>, and, when the error is one lenient mode can recover, hints
+to re-run with <code>--lenient</code>. See <a href="#building-nodes">Building nodes</a> for the
+full picture.</p>
 <h3 id="convert"><a class="header" href="#convert">convert</a></h3>
 <p>Convert every map in a WAD between the classic Doom binary format and UDMF,
 replacing each map’s lump run in place; non-map lumps, and maps already in
@@ -1989,7 +2031,7 @@ true
 <tr><td><code>0</code></td><td>Success</td></tr>
 <tr><td><code>1</code></td><td>Negative result — the two WADs differ (<code>diff</code>), or <code>validate --deep</code> found map validation errors</td></tr>
 <tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.); for <code>extract</code>, also a nonexistent <code>--output</code> directory or a <code>--lump</code> name not found</td></tr>
-<tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for <code>build</code>, <code>merge</code>, or <code>convert</code> — note a non-ASCII lump name decodes under a lenient <em>read</em> but is rejected on <em>write</em> in both strictness modes); for <code>convert</code>, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as <code>BEHAVIOR</code> that the target format cannot carry), or a <code>--map NAME</code> that matches no map in the WAD</td></tr>
+<tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for <code>build</code>, <code>merge</code>, or <code>convert</code> — note a non-ASCII lump name decodes under a lenient <em>read</em> but is rejected on <em>write</em> in both strictness modes); for <code>convert</code>, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as <code>BEHAVIOR</code> that the target format cannot carry), or a <code>--map NAME</code> that matches no map in the WAD; for <code>build --nodes</code>, also a Doom map group that fails to assemble or a node build that fails in strict mode</td></tr>
 </tbody>
 </table>
 </div>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-bd200009.js";
+            window.path_to_searchindex_js = "searchindex-c6244ab9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -265,6 +265,23 @@ has no effect without <code>--nodes</code>, and a non-<code>classic</code> value
 </div>
 <pre><code class="language-bash">cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
 </code></pre>
+<h3 id="cwad-build---nodes"><a class="header" href="#cwad-build---nodes"><code>cwad build --nodes</code></a></h3>
+<p><code>cwad build --nodes</code> runs the same one-shot for a WAD assembled from scratch
+out of <code>NAME=FILE</code> lump specifications: after packing, it rebuilds every
+Doom-format map group in the result with real, engine-playable node lumps —
+<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>, <code>REJECT</code>, and <code>BLOCKMAP</code> — overwriting whatever
+was packed for those lumps, whether empty placeholders or existing data. The
+packed <code>VERTEXES</code> lump can also grow, since the BSP pass appends any split
+vertices it creates to it:</p>
+<pre><code class="language-bash">cwad build --nodes MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
+</code></pre>
+<p>Hexen, Doom 64, and UDMF map groups are not yet supported by <code>build --nodes</code>
+and are passed through unchanged with a note on stderr (follow-up issues
+#352/#353/#354); non-map lumps always pass through unchanged. Like plain
+<code>--nodes</code>, <code>build --nodes</code> emits <strong>classic</strong> node
+lumps only — there is no <code>--node-format</code> flag on <code>build</code>. Reach for
+<code>--node-format xnod</code>/<code>znod</code> extended-node output through <code>convert --nodes</code>
+instead. See <a href="cli.html#build">CLI Usage</a> for the full flag reference.</p>
 <h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
 <p>Real geometry occasionally produces a convex leaf that spans more than one
 sector with no seg line able to separate them — the <strong>mixed-sector fan</strong> (two
