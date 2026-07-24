@@ -1515,9 +1515,11 @@ proptest! {
                     validate_bsp(&map, &built);
                     // The kernel's output must also satisfy the public structural
                     // validator (the same invariants validate_bsp asserts).
+                    let validation = built.validate(map.vertices().len());
                     prop_assert!(
-                        built.validate(map.vertices().len()).is_ok(),
-                        "build_nodes output failed BuiltNodes::validate"
+                        validation.is_ok(),
+                        "build_nodes output failed BuiltNodes::validate: {:?}",
+                        validation.err()
                     );
                 }
                 Err(e) => prop_assert!(

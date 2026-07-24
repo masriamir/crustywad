@@ -534,11 +534,15 @@ The writer this ADR's §6 and ADR-0024's revisit condition (a) deferred is now i
   of `VERTEXES` (they live in the stream's own vertex header, not the classic lump); `Classic`
   is unchanged — the vanilla three-lump layout with split vertices appended to `VERTEXES`.
   `BuiltNodes` also gained a public constructor, `BuiltNodes::new(split_vertices:
-  Vec<MapVertex>, segs: Vec<MapSeg>, subsectors: Vec<MapSubsector>, nodes: Vec<MapNode>) -> Self`
-  (`nodes.rs:129-141`): the type is `#[non_exhaustive]`, so this is the only way a downstream
-  crate can build one from hand-built or alternatively-built node data (e.g. a future GL
-  builder, or a test fixture) rather than only from `build_nodes`'s own output — `build_nodes`
-  itself still constructs `BuiltNodes` directly, in-crate.
+  Vec<MapVertex>, segs: Vec<MapSeg>, subsectors: Vec<MapSubsector>, nodes: Vec<MapNode>,
+  orig_vertex_count: usize) -> Result<Self, NodeBuildError>` (`nodes.rs`): the type is
+  `#[non_exhaustive]`, so this is the only way a downstream crate can build one from hand-built
+  or alternatively-built node data (e.g. a future GL builder, or a test fixture) rather than
+  only from `build_nodes`'s own output — `build_nodes` itself still constructs `BuiltNodes`
+  directly, in-crate. (#348 later made `new` fallible: it runs `BuiltNodes::validate`, which
+  checks the type's structural index-domain invariants and returns
+  `NodeBuildError::InvalidStructure` for a malformed hand-built value; the in-crate
+  `build_nodes` path bypasses the check, so its hot path is unaffected.)
 - **Ceiling relaxation is format-gated, with one deliberate exception.** A BSP child reference
   reserves one bit as the subsector/leaf flag — bit 15 (`NF_SUBSECTOR`, `0x8000`) for `Classic`,
   bit 31 (`0x8000_0000`) for the extended stream — so `Xnod`/`Znod` widen the addressable
