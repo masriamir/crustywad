@@ -15,7 +15,7 @@ use clap::Parser as _;
 use crustywad::audio::{AudioKind, DmxSound, MidiInfo, MusScore, WavSound};
 use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
 
-use cli::{Cli, Format, MapFormatArg, SubCommand, WadKindArg};
+use cli::{Cli, Format, MapFormatArg, NodeFormatArg, SubCommand, WadKindArg};
 
 /// Assembles every map group in `wad` under `options`, reporting per-map
 /// results (#251).
@@ -1009,8 +1009,9 @@ fn run(cli: Cli) -> Result<i32> {
             map,
             kind,
             nodes,
+            node_format,
         } => {
-            use crustywad::map::build::{NodeBuildOptions, add_doom_map_with_nodes};
+            use crustywad::map::build::{NodeBuildOptions, NodeFormat, add_doom_map_with_nodes};
             use crustywad::map::detect_map_format;
             use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
 
@@ -1032,7 +1033,7 @@ fn run(cli: Cli) -> Result<i32> {
             // Node building mirrors the same strict/lenient choice as the write
             // path, so a `--lenient` conversion also recovers node-build
             // overflows into warnings.
-            let build_opts = if cli.lenient {
+            let mut build_opts = if cli.lenient {
                 NodeBuildOptions::lenient()
             } else {
                 NodeBuildOptions::strict()
@@ -1045,6 +1046,31 @@ fn run(cli: Cli) -> Result<i32> {
                 eprintln!(
                     "note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring"
                 );
+            }
+            // `--node-format` only takes effect when `--nodes` builds classic
+            // Doom node lumps; note-and-ignore rather than silently dropping it
+            // (house style; no auto-implying `--nodes`).
+            if !matches!(node_format, NodeFormatArg::Classic) && !nodes {
+                eprintln!("note: --node-format has no effect without --nodes; ignoring");
+            }
+            if nodes && matches!(to, MapFormatArg::Doom) {
+                build_opts.format = match node_format {
+                    NodeFormatArg::Classic => NodeFormat::Classic,
+                    NodeFormatArg::Xnod => NodeFormat::Xnod,
+                    NodeFormatArg::Znod => {
+                        #[cfg(feature = "extended-nodes-zlib")]
+                        {
+                            NodeFormat::Znod
+                        }
+                        #[cfg(not(feature = "extended-nodes-zlib"))]
+                        {
+                            eprintln!(
+                                "error: --node-format znod requires cwad built with the extended-nodes-zlib feature"
+                            );
+                            return Ok(3);
+                        }
+                    }
+                };
             }
             // `target` is only compared against `detect_map_format` (to skip a
             // map already in the target format); the writer is chosen from `to`
