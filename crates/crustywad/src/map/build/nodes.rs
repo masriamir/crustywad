@@ -120,26 +120,37 @@ pub struct BuiltNodeLumps {
 }
 
 impl BuiltNodes {
-    /// Assembles a `BuiltNodes` from its four arenas.
+    /// Assembles a `BuiltNodes` from its four arenas and validates the type's
+    /// structural invariants via [`validate`](Self::validate).
     ///
-    /// `#[non_exhaustive]` blocks plain struct-literal construction of this
-    /// type from outside this crate — this is the public constructor a
-    /// downstream crate (e.g. a hand-built test fixture, or a nodebuilder
-    /// alternative to [`build_nodes`]) uses instead. [`build_nodes`] itself
-    /// constructs `BuiltNodes` directly, in-crate.
-    #[must_use]
+    /// `#[non_exhaustive]` blocks plain struct-literal construction of this type
+    /// from outside this crate — this is the public constructor a downstream
+    /// crate (a hand-built test fixture, or an alternative nodebuilder) uses
+    /// instead. [`build_nodes`] itself constructs `BuiltNodes` directly, in-crate,
+    /// and is correct by construction, so it bypasses this check.
+    ///
+    /// `orig_vertex_count` is the owning map's `VERTEXES` record count (see
+    /// [`validate`](Self::validate)).
+    ///
+    /// # Errors
+    ///
+    /// [`NodeBuildError::InvalidStructure`] if the arenas violate a structural
+    /// invariant (both strictness modes).
     pub fn new(
         split_vertices: Vec<MapVertex>,
         segs: Vec<MapSeg>,
         subsectors: Vec<MapSubsector>,
         nodes: Vec<MapNode>,
-    ) -> Self {
-        Self {
+        orig_vertex_count: usize,
+    ) -> Result<Self, NodeBuildError> {
+        let built = Self {
             split_vertices,
             segs,
             subsectors,
             nodes,
-        }
+        };
+        built.validate(orig_vertex_count)?;
+        Ok(built)
     }
 
     /// Checks this `BuiltNodes` against the type's documented structural
@@ -1901,7 +1912,10 @@ mod tests {
                 leafs: 0..0,
             },
             MapSubsector {
-                segs: 2..1,
+                // Built as an explicit struct literal: the `2..1` range
+                // expression would trip `clippy::reversed_empty_ranges`, but an
+                // inverted range is exactly what this test needs to feed `validate`.
+                segs: std::ops::Range { start: 2, end: 1 },
                 leafs: 0..0,
             },
         ];
@@ -2050,6 +2064,48 @@ mod tests {
                 arena: "node",
                 child: 2,
                 bound: 1,
+            }),
+        );
+    }
+
+    #[test]
+    fn new_accepts_valid_arenas_and_matches_the_struct_literal() {
+        let expected = square_room();
+        let built = BuiltNodes::new(
+            expected.split_vertices.clone(),
+            expected.segs.clone(),
+            expected.subsectors.clone(),
+            expected.nodes.clone(),
+            4,
+        )
+        .expect("valid arenas construct");
+        assert_eq!(built, expected);
+    }
+
+    #[test]
+    fn new_rejects_a_malformed_partition() {
+        // Subsector covers 3 of 4 segs — the partition undershoots.
+        let err = BuiltNodes::new(
+            Vec::new(),
+            vec![
+                seg(0, 1, 0x0000, 0),
+                seg(1, 2, 0x4000, 1),
+                seg(2, 3, 0x8000, 2),
+                seg(3, 0, 0xC000, 3),
+            ],
+            vec![MapSubsector {
+                segs: 0..3,
+                leafs: 0..0,
+            }],
+            Vec::new(),
+            4,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            NodeBuildError::InvalidStructure(NodeStructureError::SubsectorPartition {
+                covered: 3,
+                segs: 4,
             }),
         );
     }

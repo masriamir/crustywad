@@ -290,7 +290,7 @@ pub enum NodeBuildError {
     /// variant that drives it does not exist without the feature.
     #[error("zlib compression requires the `extended-nodes-zlib` feature")]
     CompressionUnavailable,
-    /// A hand-built [`BuiltNodes`](crate::map::build::BuiltNodes) — assembled via
+    /// A hand-built [`BuiltNodes`] — assembled via
     /// [`BuiltNodes::new`](crate::map::build::BuiltNodes::new) or by mutating its
     /// public fields — violates one of the type's documented structural
     /// invariants (its index-domain notes). Returned in **both** strictness
@@ -346,7 +346,7 @@ impl NodeBuildError {
 }
 
 /// The specific structural invariant a hand-built
-/// [`BuiltNodes`](crate::map::build::BuiltNodes) violated, wrapped by
+/// [`BuiltNodes`] violated, wrapped by
 /// [`NodeBuildError::InvalidStructure`]. Each invariant is one of the type's
 /// documented index-domain notes; the in-tree [`build_nodes`] upholds them all
 /// by construction.

@@ -598,7 +598,9 @@ fn xnod_built() -> BuiltNodes {
             right: NodeChild::Subsector(SubsectorIdx(0)),
             left: NodeChild::Subsector(SubsectorIdx(0)),
         }],
+        4,
     )
+    .expect("valid arenas construct")
 }
 
 #[cfg(feature = "nodebuild")]
@@ -739,7 +741,8 @@ proptest::proptest! {
             }
             subsectors.push(MapSubsector { segs: start..segs.len(), leafs: 0..0 });
         }
-        let built = BuiltNodes::new(split_vertices, segs, subsectors, Vec::new());
+        let built = BuiltNodes::new(split_vertices, segs, subsectors, Vec::new(), 4)
+            .expect("valid arenas construct");
         let stream = built.to_extended_lump_bytes(4, false).expect("serializes");
         let map = assemble_square_with(&[("NODES", &stream)], ParseOptions::strict()).expect("decodes");
 
