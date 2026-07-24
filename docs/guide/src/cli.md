@@ -173,10 +173,12 @@ map groups are not yet supported by `--nodes` and are passed through
 unchanged with a note on stderr; non-map lumps always pass through
 unchanged; if no Doom map group is found, `--nodes` is a no-op and prints a
 note. `--nodes` builds classic node lumps only — there is no `--node-format`
-flag on `build` (unlike `convert --nodes`, which also supports
-`xnod`/`znod`). The global `--lenient` flag applies to the node build too —
-a strict-mode build failure exits `3` with a hint to re-run with
-`--lenient`. See [Building nodes](building-nodes.md) for the full picture.
+flag on `build` (unlike `convert --nodes`, which also supports `xnod`, and
+`znod` when `cwad` is built with the `extended-nodes-zlib` feature). The
+global `--lenient` flag applies to the node build too — a strict-mode build
+failure exits `3`, and, when the error is one lenient mode can recover, hints
+to re-run with `--lenient`. See [Building nodes](building-nodes.md) for the
+full picture.
 
 ### convert
 
