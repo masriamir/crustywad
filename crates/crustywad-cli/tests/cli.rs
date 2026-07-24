@@ -2103,6 +2103,37 @@ fn build_nodes_skips_hexen_group_with_note() {
 }
 
 #[test]
+fn build_nodes_refuses_a_map_that_fails_to_assemble() {
+    // Explode a valid Doom map, then blank out VERTEXES so the linedefs
+    // reference out-of-range vertices and strict assembly fails during the
+    // --nodes rebuild (exit 3, before any output is written).
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (mut specs, mut files) = explode_wad_to_build_specs(fixture.path());
+    let empty = write_bytes(&[]);
+    for spec in &mut specs {
+        if spec.starts_with("VERTEXES=") {
+            *spec = format!("VERTEXES={}", empty.path().to_str().unwrap());
+        }
+    }
+    files.push(empty); // keep the backing file alive for the command's duration
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("failed to assemble map"));
+}
+
+#[test]
 fn build_nodes_skips_doom64_group_with_note() {
     // A Doom 64 map: skipped with a note (#353); no classic node build applies.
     let fixture = write_doom64_textured_map_wad();
