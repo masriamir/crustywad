@@ -2103,6 +2103,52 @@ fn build_nodes_skips_hexen_group_with_note() {
 }
 
 #[test]
+fn build_nodes_skips_doom64_group_with_note() {
+    // A Doom 64 map: skipped with a note (#353); no classic node build applies.
+    let fixture = write_doom64_textured_map_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("is a Doom 64 map"))
+        .stderr(predicate::str::contains("#353"));
+}
+
+#[test]
+fn build_nodes_skips_udmf_group_with_note() {
+    // A UDMF map: skipped with a note (#354); its nodes are a GL/ZNODES concern.
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("is a UDMF map"))
+        .stderr(predicate::str::contains("#354"));
+}
+
+#[test]
 fn build_without_nodes_leaves_packed_node_lumps_untouched() {
     // Regression: without --nodes, packed (empty) node lumps are not rebuilt.
     let fixture = write_doom_square_room_empty_nodes_wad();
