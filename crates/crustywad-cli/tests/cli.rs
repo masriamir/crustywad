@@ -2146,6 +2146,39 @@ fn build_nodes_refuses_a_map_that_fails_to_assemble() {
 }
 
 #[test]
+fn build_nodes_lenient_reports_assembly_repair_warnings() {
+    // Truncate a valid Doom map's VERTEXES to a single vertex, so its linedefs
+    // reference out-of-range-but-clampable vertices. In --lenient mode assembly
+    // repairs them and records a warning, which the --nodes rebuild surfaces on
+    // stderr (the node build then fails on the degenerate geometry, so exit code
+    // is not asserted — only that the assembly-repair warning is reported).
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (mut specs, mut files) = explode_wad_to_build_specs(fixture.path());
+    let one_vertex = write_bytes(&[0, 0, 0, 0]); // a single VERTEXES record (x=0, y=0)
+    for spec in &mut specs {
+        if spec.starts_with("VERTEXES=") {
+            *spec = format!("VERTEXES={}", one_vertex.path().to_str().unwrap());
+        }
+    }
+    files.push(one_vertex);
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .stderr(predicate::str::contains("warning:"));
+}
+
+#[test]
 fn build_nodes_skips_doom64_group_with_note() {
     // A Doom 64 map: skipped with a note (#353); no classic node build applies.
     let fixture = write_doom64_textured_map_wad();
