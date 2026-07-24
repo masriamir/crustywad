@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.1...crustywad-cli-v0.4.2) - 2026-07-24
+
+### Added
+
+- *(cli)* build --nodes builds nodes for Doom map groups ([#355](https://github.com/masriamir/crustywad/pull/355))
+- *(cli)* add convert --node-format classic|xnod|znod ([#351](https://github.com/masriamir/crustywad/pull/351))
+
 ## [0.4.1](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.0...crustywad-cli-v0.4.1) - 2026-07-23
 
 ### Added

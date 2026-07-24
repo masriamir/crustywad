@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/masriamir/crustywad/compare/crustywad-v0.8.1...crustywad-v0.9.0) - 2026-07-24
+
+### Added
+
+- *(map)* [**breaking**] validate BuiltNodes structure at construction ([#349](https://github.com/masriamir/crustywad/pull/349))
+
 ## [0.8.1](https://github.com/masriamir/crustywad/compare/crustywad-v0.8.0...crustywad-v0.8.1) - 2026-07-23
 
 ### Added
