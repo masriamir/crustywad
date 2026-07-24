@@ -1082,17 +1082,23 @@ fn run(cli: Cli) -> Result<i32> {
                             out.add_lump(lump.name(), wad.lump_data(lump));
                         }
                     }
-                    // The lumps were already validated by `add_doom_map_with_nodes`
-                    // and passed through verbatim, so a rebuild failure here is an
-                    // internal invariant violation — propagate rather than treat as
-                    // a usage error.
-                    let (rebuilt, ws) = out
-                        .build_with_options(&write_opts)
-                        .with_context(|| format!("failed to rebuild {}", output.display()))?;
-                    for w in &ws {
-                        eprintln!("warning: {w}");
+                    // Node synthesis adds lumps and grows offsets, so a rebuild can
+                    // trip the write-path overflow guards (TooManyLumps,
+                    // LumpTooLarge, OffsetOverflow) — a usage error, handled the
+                    // same way (exit 3) as the initial pack build above and as
+                    // `convert`, not propagated as a generic error.
+                    match out.build_with_options(&write_opts) {
+                        Ok((rebuilt, ws)) => {
+                            for w in &ws {
+                                eprintln!("warning: {w}");
+                            }
+                            rebuilt
+                        }
+                        Err(e) => {
+                            eprintln!("error: failed to rebuild {}: {e}", output.display());
+                            return Ok(3);
+                        }
                     }
-                    rebuilt
                 }
             } else {
                 bytes
