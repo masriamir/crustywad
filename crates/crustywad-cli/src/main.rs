@@ -943,6 +943,7 @@ fn run(cli: Cli) -> Result<i32> {
             output,
             kind,
             lumps,
+            nodes,
         } => {
             let wad_kind = match kind {
                 WadKindArg::Iwad => WadKind::Iwad,
@@ -987,7 +988,119 @@ fn run(cli: Cli) -> Result<i32> {
                 eprintln!("warning: {w}");
             }
 
-            std::fs::write(&output, &bytes)
+            let final_bytes = if nodes {
+                use crustywad::ParseOptions;
+                use crustywad::map::build::{NodeBuildOptions, add_doom_map_with_nodes};
+                use crustywad::map::{Map, MapFormat, MapGroup, detect_map_format};
+                use std::collections::{HashMap, HashSet};
+
+                let parse_opts = if cli.lenient {
+                    ParseOptions::lenient()
+                } else {
+                    ParseOptions::strict()
+                };
+                let build_opts = if cli.lenient {
+                    NodeBuildOptions::lenient()
+                } else {
+                    NodeBuildOptions::strict()
+                };
+                // Re-read our own freshly-built WAD to detect map groups.
+                let wad = match Wad::from_bytes_with_options(bytes.clone(), parse_opts) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        eprintln!("error: failed to re-read built WAD for node building: {e}");
+                        return Ok(3);
+                    }
+                };
+                // Classify each map group: Doom groups are rebuilt; others are
+                // passed through with a note. `MapFormat` is `#[non_exhaustive]`,
+                // so an unknown future format falls through to plain pass-through.
+                let mut doom_starts: HashMap<usize, MapGroup> = HashMap::new();
+                let mut absorbed: HashSet<usize> = HashSet::new();
+                for group in wad.map_groups() {
+                    match detect_map_format(&wad, &group) {
+                        MapFormat::Doom => {
+                            absorbed.insert(group.marker_index);
+                            absorbed.extend(group.data_indices.iter().copied());
+                            doom_starts.insert(group.marker_index, group);
+                        }
+                        MapFormat::Hexen => eprintln!(
+                            "note: {} is a Hexen map; node building for Hexen is not yet supported (skipped; see #352)",
+                            group.name
+                        ),
+                        MapFormat::Doom64 => eprintln!(
+                            "note: {} is a Doom 64 map; node building is not supported (skipped; see #353)",
+                            group.name
+                        ),
+                        MapFormat::Udmf => eprintln!(
+                            "note: {} is a UDMF map; node building needs GL nodes (skipped; see #354)",
+                            group.name
+                        ),
+                        _ => {}
+                    }
+                }
+                if doom_starts.is_empty() {
+                    eprintln!("note: no Doom map groups found; --nodes had no effect");
+                    bytes
+                } else {
+                    let mut out = WadBuilder::new(wad_kind);
+                    for (i, lump) in wad.lumps().iter().enumerate() {
+                        if let Some(group) = doom_starts.get(&i) {
+                            let map = match Map::assemble_with_options(&wad, group, parse_opts) {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    eprintln!("error: failed to assemble map {}: {e}", group.name);
+                                    return Ok(3);
+                                }
+                            };
+                            for w in map.warnings() {
+                                eprintln!("warning: {}: {w}", group.name);
+                            }
+                            match add_doom_map_with_nodes(
+                                &mut out,
+                                &group.name,
+                                &map,
+                                &write_opts,
+                                &build_opts,
+                            ) {
+                                Ok(ws) => {
+                                    for w in &ws {
+                                        eprintln!("warning: {}: {w}", group.name);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "error: failed to build nodes for map {}: {e}",
+                                        group.name
+                                    );
+                                    if e.is_lenient_recoverable() && !cli.lenient {
+                                        eprintln!("note: re-run with --lenient to build anyway");
+                                    }
+                                    return Ok(3);
+                                }
+                            }
+                        } else if !absorbed.contains(&i) {
+                            out.add_lump(lump.name(), wad.lump_data(lump));
+                        }
+                    }
+                    match out.build_with_options(&write_opts) {
+                        Ok((b, ws)) => {
+                            for w in &ws {
+                                eprintln!("warning: {w}");
+                            }
+                            b
+                        }
+                        Err(e) => {
+                            eprintln!("error: failed to build WAD {}: {e}", output.display());
+                            return Ok(3);
+                        }
+                    }
+                }
+            } else {
+                bytes
+            };
+
+            std::fs::write(&output, &final_bytes)
                 .with_context(|| format!("failed to write {}", output.display()))?;
 
             let lump_count = lumps.len();

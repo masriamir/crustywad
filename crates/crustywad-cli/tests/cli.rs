@@ -53,6 +53,23 @@ fn write_bytes(data: &[u8]) -> NamedTempFile {
     file
 }
 
+/// Explodes a WAD file into `NAME=<tempfile>` build specs (one per lump, in
+/// directory order), plus the backing temp files (returned so the caller keeps
+/// them alive for the duration of the `build` invocation).
+fn explode_wad_to_build_specs(path: &std::path::Path) -> (Vec<String>, Vec<NamedTempFile>) {
+    let bytes = std::fs::read(path).expect("wad readable");
+    let wad = crustywad::Wad::from_bytes(bytes).expect("wad parses");
+    let mut specs = Vec::new();
+    let mut files = Vec::new();
+    for lump in wad.lumps() {
+        let f = NamedTempFile::new().expect("tempfile");
+        std::fs::write(f.path(), wad.lump_data(lump)).expect("write lump bytes");
+        specs.push(format!("{}={}", lump.name(), f.path().to_str().unwrap()));
+        files.push(f);
+    }
+    (specs, files)
+}
+
 // ---------------------------------------------------------------------------
 // `cwad info`
 // ---------------------------------------------------------------------------
@@ -1987,6 +2004,128 @@ fn build_lump_name_too_long_exits_3() {
         ])
         .assert()
         .code(3);
+}
+
+#[test]
+fn build_nodes_builds_playable_lumps_and_preserves_non_map_lumps() {
+    // A hand-packed Doom map with empty node lumps + a trailing non-map lump
+    // (COLORMAP), exploded into `NAME=FILE` build specs.
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    // The Doom group was rebuilt with real nodes (overwriting the empty lumps).
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "SEGS should be rebuilt non-empty"
+    );
+    assert!(
+        !lump_bytes(out.path(), "SSECTORS").is_empty(),
+        "SSECTORS should be rebuilt non-empty"
+    );
+    assert!(
+        !lump_bytes(out.path(), "BLOCKMAP").is_empty(),
+        "BLOCKMAP should be rebuilt non-empty"
+    );
+    // The trailing non-map lump passed through verbatim.
+    assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4_u8, 5, 6]);
+    // Engine-playable: the output assembles strict-clean.
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn build_nodes_with_no_map_is_a_noop() {
+    // A single non-map lump: no Doom group, so --nodes does nothing but note it.
+    let lump = write_bytes(&[1_u8, 2, 3]);
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--nodes",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("PLAYPAL={}", lump.path().to_str().unwrap()),
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "no Doom map groups found; --nodes had no effect",
+        ));
+    assert_eq!(lump_bytes(out.path(), "PLAYPAL"), vec![1_u8, 2, 3]);
+    // No map means no SEGS lump was added at all (not merely an empty one) —
+    // `lump_bytes` panics on a missing lump, so check absence via `lump_names`.
+    assert!(
+        !lump_names(out.path()).iter().any(|n| n == "SEGS"),
+        "no map means no node lumps were added"
+    );
+}
+
+#[test]
+fn build_nodes_skips_hexen_group_with_note() {
+    // A Hexen map: skipped with a note; its lumps (incl. BEHAVIOR) pass through.
+    let fixture = write_hexen_map_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("is a Hexen map"))
+        .stderr(predicate::str::contains("#352"));
+    // A Hexen map carries a BEHAVIOR lump; it must survive the pass-through.
+    assert!(
+        !lump_bytes(out.path(), "BEHAVIOR").is_empty()
+            || lump_names(out.path()).iter().any(|n| n == "BEHAVIOR"),
+        "Hexen BEHAVIOR lump should be preserved"
+    );
+}
+
+#[test]
+fn build_without_nodes_leaves_packed_node_lumps_untouched() {
+    // Regression: without --nodes, packed (empty) node lumps are not rebuilt.
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "without --nodes, the packed empty SEGS stays empty"
+    );
 }
 
 // ---------------------------------------------------------------------------
