@@ -169,7 +169,9 @@ wrote playable.wad: kind=Pwad lumps: 11
 All of a rebuilt Doom group's classic node lumps — `SEGS`/`SSECTORS`/`NODES`,
 the `REJECT` visibility table, and the `BLOCKMAP` — are overwritten with the
 newly built ones, whether they were packed as empty placeholders or already
-held data. **Hexen** (#352), **Doom 64** (#353), and **UDMF** (#354)
+held data. The map's packed `VERTEXES` lump can also grow: the BSP pass
+appends any split vertices it creates to it. **Hexen** (#352), **Doom 64**
+(#353), and **UDMF** (#354)
 map groups are not yet supported by `--nodes` and are passed through
 unchanged with a note on stderr; non-map lumps always pass through
 unchanged; if no Doom map group is found, `--nodes` is a no-op and prints a

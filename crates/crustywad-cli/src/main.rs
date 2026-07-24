@@ -1113,8 +1113,9 @@ fn run(cli: Cli) -> Result<i32> {
             // report the actual output count by re-reading `final_bytes` (a
             // parse failure falls back to the input spec count).
             let lump_count = if nodes {
-                Wad::from_bytes(final_bytes.clone())
-                    .map_or_else(|_| lumps.len(), |w| w.lumps().len())
+                // `final_bytes` is already written above and unused afterward, so
+                // move it into the re-read rather than clone the whole buffer.
+                Wad::from_bytes(final_bytes).map_or_else(|_| lumps.len(), |w| w.lumps().len())
             } else {
                 lumps.len()
             };
