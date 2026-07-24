@@ -187,6 +187,11 @@ pub(crate) enum SubCommand {
         /// Lumps are added to the WAD in the order they are listed.
         #[arg(value_name = "NAME=FILE")]
         lumps: Vec<String>,
+        /// After packing, build engine-playable SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
+        /// for each Doom map group in the result. Hexen/Doom 64/UDMF groups are
+        /// skipped with a note. Classic node lumps only.
+        #[arg(long)]
+        nodes: bool,
     },
     /// Convert every map in a WAD between the UDMF and classic Doom formats.
     ///

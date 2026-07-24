@@ -93,6 +93,28 @@ has no effect without `--nodes`, and a non-`classic` value passed without
 cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
 ```
 
+### `cwad build --nodes`
+
+`cwad build --nodes` runs the same one-shot for a WAD assembled from scratch
+out of `NAME=FILE` lump specifications: after packing, it rebuilds every
+Doom-format map group in the result with real, engine-playable node lumps —
+`SEGS`/`SSECTORS`/`NODES`, `REJECT`, and `BLOCKMAP` — overwriting whatever
+was packed for those lumps, whether empty placeholders or existing data. The
+packed `VERTEXES` lump can also grow, since the BSP pass appends any split
+vertices it creates to it:
+
+```bash
+cwad build --nodes MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
+```
+
+Hexen, Doom 64, and UDMF map groups are not yet supported by `build --nodes`
+and are passed through unchanged with a note on stderr (follow-up issues
+#352/#353/#354); non-map lumps always pass through unchanged. Like plain
+`--nodes`, `build --nodes` emits **classic** node
+lumps only — there is no `--node-format` flag on `build`. Reach for
+`--node-format xnod`/`znod` extended-node output through `convert --nodes`
+instead. See [CLI Usage](cli.md#build) for the full flag reference.
+
 ## The tolerated mixed-sector fan
 
 Real geometry occasionally produces a convex leaf that spans more than one

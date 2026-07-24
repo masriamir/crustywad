@@ -53,6 +53,23 @@ fn write_bytes(data: &[u8]) -> NamedTempFile {
     file
 }
 
+/// Explodes a WAD file into `NAME=<tempfile>` build specs (one per lump, in
+/// directory order), plus the backing temp files (returned so the caller keeps
+/// them alive for the duration of the `build` invocation).
+fn explode_wad_to_build_specs(path: &std::path::Path) -> (Vec<String>, Vec<NamedTempFile>) {
+    let bytes = std::fs::read(path).expect("wad readable");
+    let wad = crustywad::Wad::from_bytes(bytes).expect("wad parses");
+    let mut specs = Vec::new();
+    let mut files = Vec::new();
+    for lump in wad.lumps() {
+        let f = NamedTempFile::new().expect("tempfile");
+        std::fs::write(f.path(), wad.lump_data(lump)).expect("write lump bytes");
+        specs.push(format!("{}={}", lump.name(), f.path().to_str().unwrap()));
+        files.push(f);
+    }
+    (specs, files)
+}
+
 // ---------------------------------------------------------------------------
 // `cwad info`
 // ---------------------------------------------------------------------------
@@ -1989,6 +2006,303 @@ fn build_lump_name_too_long_exits_3() {
         .code(3);
 }
 
+#[test]
+fn build_nodes_builds_playable_lumps_and_preserves_non_map_lumps() {
+    // A hand-packed Doom map with empty node lumps + a trailing non-map lump
+    // (COLORMAP), exploded into `NAME=FILE` build specs.
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    // The Doom group was rebuilt with real nodes (overwriting the empty lumps).
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "SEGS should be rebuilt non-empty"
+    );
+    assert!(
+        !lump_bytes(out.path(), "SSECTORS").is_empty(),
+        "SSECTORS should be rebuilt non-empty"
+    );
+    assert!(
+        !lump_bytes(out.path(), "BLOCKMAP").is_empty(),
+        "BLOCKMAP should be rebuilt non-empty"
+    );
+    // REJECT is a 1-byte all-clear table for the single-sector room.
+    assert!(
+        !lump_bytes(out.path(), "REJECT").is_empty(),
+        "REJECT should be rebuilt non-empty"
+    );
+    // NODES is emitted but legitimately empty for a convex single-subsector
+    // room (the engine's `numnodes == 0` path), so assert it is present rather
+    // than non-empty — the full classic node-lump set is synthesized.
+    assert!(
+        lump_names(out.path()).iter().any(|n| n == "NODES"),
+        "NODES lump should be present"
+    );
+    // The trailing non-map lump passed through verbatim.
+    assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4_u8, 5, 6]);
+    // Engine-playable: the output assembles strict-clean.
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn build_nodes_with_no_map_is_a_noop() {
+    // A single non-map lump: no Doom group, so --nodes does nothing but note it.
+    let lump = write_bytes(&[1_u8, 2, 3]);
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "build",
+            "--nodes",
+            "-o",
+            out.path().to_str().unwrap(),
+            &format!("PLAYPAL={}", lump.path().to_str().unwrap()),
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "no Doom map groups found; --nodes had no effect",
+        ));
+    assert_eq!(lump_bytes(out.path(), "PLAYPAL"), vec![1_u8, 2, 3]);
+    // No map means no SEGS lump was added at all (not merely an empty one) —
+    // `lump_bytes` panics on a missing lump, so check absence via `lump_names`.
+    assert!(
+        !lump_names(out.path()).iter().any(|n| n == "SEGS"),
+        "no map means no node lumps were added"
+    );
+}
+
+#[test]
+fn build_nodes_skips_hexen_group_with_note() {
+    // A Hexen map: skipped with a note; its lumps (incl. BEHAVIOR) pass through.
+    let fixture = write_hexen_map_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("is a Hexen map"))
+        .stderr(predicate::str::contains("#352"));
+    // A Hexen map carries a BEHAVIOR lump; it must survive the pass-through.
+    assert!(
+        lump_names(out.path()).iter().any(|n| n == "BEHAVIOR"),
+        "Hexen BEHAVIOR lump should be preserved"
+    );
+}
+
+#[test]
+fn build_nodes_refuses_a_map_that_fails_to_assemble() {
+    // Explode a valid Doom map, then blank out VERTEXES so the linedefs
+    // reference out-of-range vertices and strict assembly fails during the
+    // --nodes rebuild (exit 3, before any output is written).
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (mut specs, mut files) = explode_wad_to_build_specs(fixture.path());
+    let empty = write_bytes(&[]);
+    for spec in &mut specs {
+        if spec.starts_with("VERTEXES=") {
+            *spec = format!("VERTEXES={}", empty.path().to_str().unwrap());
+        }
+    }
+    files.push(empty); // keep the backing file alive for the command's duration
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("failed to assemble map"));
+}
+
+#[test]
+fn build_nodes_lenient_reports_assembly_repair_warnings() {
+    // Truncate a valid Doom map's VERTEXES to a single vertex, so its linedefs
+    // reference out-of-range-but-clampable vertices. In --lenient mode assembly
+    // repairs them and records a warning, which the --nodes rebuild surfaces on
+    // stderr (the node build then fails on the degenerate geometry, so exit code
+    // is not asserted — only that the assembly-repair warning is reported).
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (mut specs, mut files) = explode_wad_to_build_specs(fixture.path());
+    let one_vertex = write_bytes(&[0, 0, 0, 0]); // a single VERTEXES record (x=0, y=0)
+    for spec in &mut specs {
+        if spec.starts_with("VERTEXES=") {
+            *spec = format!("VERTEXES={}", one_vertex.path().to_str().unwrap());
+        }
+    }
+    files.push(one_vertex);
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .stderr(predicate::str::contains("warning:"));
+}
+
+#[test]
+fn build_nodes_skips_doom64_group_with_note() {
+    // A Doom 64 map: skipped with a note (#353); no classic node build applies.
+    let fixture = write_doom64_textured_map_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("is a Doom 64 map"))
+        .stderr(predicate::str::contains("#353"));
+}
+
+#[test]
+fn build_nodes_skips_udmf_group_with_note() {
+    // A UDMF map: skipped with a note (#354); its nodes are a GL/ZNODES concern.
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("is a UDMF map"))
+        .stderr(predicate::str::contains("#354"));
+}
+
+#[test]
+fn build_without_nodes_leaves_packed_node_lumps_untouched() {
+    // Regression: without --nodes, packed (empty) node lumps are not rebuilt.
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "without --nodes, the packed empty SEGS stays empty"
+    );
+}
+
+#[test]
+fn build_nodes_refuses_mixed_sector_fan_and_hints_lenient() {
+    // Strict: the fan assembles cleanly but `add_doom_map_with_nodes` fails
+    // with `MixedSectorSubsector`; the build refuses (exit 3), names the map,
+    // and — because the error IS lenient-recoverable (#264) — hints `--lenient`.
+    let fixture = write_doom_mixed_sector_fan_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ))
+        .stderr(predicate::str::contains("re-run with --lenient"));
+}
+
+#[test]
+fn build_nodes_lenient_recovers_mixed_sector_fan() {
+    // Lenient: the fan is tolerated (ADR-0024 §7), so the same build succeeds
+    // and produces populated node lumps despite the mixed-sector subsector.
+    let fixture = write_doom_mixed_sector_fan_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "lenient node build populates SEGS despite the fan"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Hardening: invalid-file regression tests
 //
@@ -2965,6 +3279,42 @@ fn write_doom_square_room_empty_nodes_wad() -> NamedTempFile {
     )
     .expect("writes empty-node Doom map");
     builder.add_lump("COLORMAP", vec![4_u8, 5, 6]);
+    let bytes = builder.build().expect("builds Doom WAD");
+
+    let out = NamedTempFile::new().unwrap();
+    std::fs::write(out.path(), &bytes).expect("write Doom fixture");
+    out
+}
+
+/// A PWAD holding a single **Doom-format** mixed-sector-fan map (`MAP01`) with
+/// empty node lumps — the fan geometry that assembles cleanly but that a node
+/// build refuses in strict mode (a convex subsector spanning multiple sectors,
+/// ADR-0024 §7). Mirrors [`write_doom_square_room_empty_nodes_wad`] exactly,
+/// only sourcing the fan geometry from [`udmf_mixed_sector_fan`].
+fn write_doom_mixed_sector_fan_empty_nodes_wad() -> NamedTempFile {
+    let textmap = udmf_mixed_sector_fan();
+    let src = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let src_bytes = std::fs::read(src.path()).expect("source WAD readable");
+    let src_wad = crustywad::Wad::from_bytes(src_bytes).expect("source WAD parses");
+    let groups = src_wad.map_groups();
+    let group = groups.first().expect("source has one map group");
+    let map = crustywad::map::Map::assemble(&src_wad, group).expect("fan assembles");
+
+    let mut builder = crustywad::WadBuilder::new(crustywad::WadKind::Pwad);
+    crustywad::map::add_doom_map(
+        &mut builder,
+        "MAP01",
+        &map,
+        &crustywad::WriteOptions::strict(),
+    )
+    .expect("writes empty-node Doom map");
     let bytes = builder.build().expect("builds Doom WAD");
 
     let out = NamedTempFile::new().unwrap();

@@ -153,6 +153,36 @@ wrote custom.wad: kind=Pwad lumps: 2
 Use `--kind iwad` to build an IWAD instead of the default PWAD. Lump-name or
 size validation failures exit `3`.
 
+#### Building nodes: `build --nodes`
+
+Pass `--nodes` to rebuild, after packing, every **Doom**-format map group in
+the output with classic engine-playable node lumps via the
+[`add_doom_map_with_nodes`](building-nodes.md) one-shot — the BSP tree
+(`SEGS`/`SSECTORS`/`NODES`), the collision `BLOCKMAP`, and the all-clear
+`REJECT`:
+
+```text
+$ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
+wrote playable.wad: kind=Pwad lumps: 11
+```
+
+All of a rebuilt Doom group's classic node lumps — `SEGS`/`SSECTORS`/`NODES`,
+the `REJECT` visibility table, and the `BLOCKMAP` — are overwritten with the
+newly built ones, whether they were packed as empty placeholders or already
+held data. The map's packed `VERTEXES` lump can also grow: the BSP pass
+appends any split vertices it creates to it. **Hexen** (#352), **Doom 64**
+(#353), and **UDMF** (#354)
+map groups are not yet supported by `--nodes` and are passed through
+unchanged with a note on stderr; non-map lumps always pass through
+unchanged; if no Doom map group is found, `--nodes` is a no-op and prints a
+note. `--nodes` builds classic node lumps only — there is no `--node-format`
+flag on `build` (unlike `convert --nodes`, which also supports `xnod`, and
+`znod` when `cwad` is built with the `extended-nodes-zlib` feature). The
+global `--lenient` flag applies to the node build too — a strict-mode build
+failure exits `3`, and, when the error is one lenient mode can recover, hints
+to re-run with `--lenient`. See [Building nodes](building-nodes.md) for the
+full picture.
+
 ### convert
 
 Convert every map in a WAD between the classic Doom binary format and UDMF,
@@ -364,7 +394,7 @@ true
 | `0` | Success |
 | `1` | Negative result — the two WADs differ (`diff`), or `validate --deep` found map validation errors |
 | `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found |
-| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`, `merge`, or `convert` — note a non-ASCII lump name decodes under a lenient *read* but is rejected on *write* in both strictness modes); for `convert`, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as `BEHAVIOR` that the target format cannot carry), or a `--map NAME` that matches no map in the WAD |
+| `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`, `merge`, or `convert` — note a non-ASCII lump name decodes under a lenient *read* but is rejected on *write* in both strictness modes); for `convert`, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as `BEHAVIOR` that the target format cannot carry), or a `--map NAME` that matches no map in the WAD; for `build --nodes`, also a Doom map group that fails to assemble or a node build that fails in strict mode |
 
 ## Man page
 
