@@ -2731,6 +2731,162 @@ fn convert_udmf_to_doom_with_nodes_builds_playable_lumps() {
 }
 
 #[test]
+fn convert_with_node_format_xnod_emits_xnod_stream() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "xnod",
+        ])
+        .assert()
+        .code(0);
+
+    // The extended writer packs everything into a single XNOD stream in NODES,
+    // leaving SEGS/SSECTORS zero-length (ADR-0025).
+    let nodes = lump_bytes(out.path(), "NODES");
+    assert!(
+        nodes.starts_with(b"XNOD"),
+        "NODES should be an XNOD stream, got {:?}",
+        &nodes[..nodes.len().min(4)]
+    );
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "extended nodes leave SEGS empty"
+    );
+    // The output re-reads and assembles (the uncompressed XNOD reader is always on).
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn convert_with_node_format_classic_stays_classic() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "classic",
+        ])
+        .assert()
+        .code(0);
+
+    // Classic layout: real (non-empty) SEGS, and NODES is not an extended stream.
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "classic build yields non-empty SEGS"
+    );
+    let nodes = lump_bytes(out.path(), "NODES");
+    assert!(
+        !nodes.starts_with(b"XNOD") && !nodes.starts_with(b"ZNOD"),
+        "classic NODES is not an extended stream"
+    );
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn convert_node_format_without_nodes_is_noted_and_ignored() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--node-format",
+            "xnod", // no --nodes
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "--node-format has no effect without --nodes",
+        ))
+        // Without --nodes, node lumps are zero-length and the NodesNotBuilt warning shows.
+        .stderr(predicate::str::contains("run a nodebuilder"));
+
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "no --nodes: SEGS stays zero-length"
+    );
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn convert_with_node_format_znod_emits_znod_stream() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "znod",
+        ])
+        .assert()
+        .code(0);
+
+    let nodes = lump_bytes(out.path(), "NODES");
+    assert!(nodes.starts_with(b"ZNOD"), "NODES should be a ZNOD stream");
+    // Reading ZNOD back needs the zlib feature, which this test is gated on.
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn convert_node_format_znod_without_feature_errors_clearly() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "znod",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "requires cwad built with the extended-nodes-zlib feature",
+        ));
+}
+
+#[test]
 fn convert_to_doom_with_nodes_refuses_mixed_sector_fan_and_hints_lenient() {
     let wad = write_udmf_mixed_sector_fan_wad();
 

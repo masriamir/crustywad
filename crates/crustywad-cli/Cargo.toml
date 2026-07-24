@@ -16,8 +16,11 @@ name = "cwad"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["extended-nodes-zlib"]
 mmap = ["crustywad/mmap"]
+# `znod` node output; default-on so the standard install / dist binary supports it.
+# A `--no-default-features` build is decompressor-free and rejects `--node-format znod`.
+extended-nodes-zlib = ["crustywad/extended-nodes-zlib"]
 
 [dependencies]
 anyhow.workspace = true

@@ -77,6 +77,22 @@ stderr) for `--to udmf`, which has no binary node lumps. The global `--lenient`
 flag selects lenient mode for both the conversion and the node build. See
 [CLI Usage](cli.md#convert) for the full flag reference.
 
+### Choosing the on-disk node format
+
+`--node-format` selects how the built nodes are stored (Doom output only; it
+has no effect without `--nodes`, and a non-`classic` value passed without
+`--nodes` prints a note on stderr and is ignored):
+
+| Value | On-disk form | Notes |
+|---|---|---|
+| `classic` (default) | `SEGS` / `SSECTORS` / `NODES` (16-bit) | Vanilla-compatible; unchanged from plain `--nodes`. |
+| `xnod` | A single uncompressed `XNOD` stream in `NODES` (`SEGS`/`SSECTORS` empty) | ZDoom non-GL extended nodes; lifts the vanilla 16-bit ceilings. |
+| `znod` | A zlib-compressed `ZNOD` stream | Same as `xnod`, compressed. Requires `cwad` built with the `extended-nodes-zlib` feature (on by default); a `--no-default-features` build rejects `znod` with a clear error. |
+
+```bash
+cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
+```
+
 ## The tolerated mixed-sector fan
 
 Real geometry occasionally produces a convex leaf that spans more than one

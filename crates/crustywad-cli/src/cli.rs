@@ -61,6 +61,19 @@ pub(crate) enum MapFormatArg {
     Udmf,
 }
 
+/// On-disk node format for `convert --nodes`.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub(crate) enum NodeFormatArg {
+    /// Classic SEGS/SSECTORS/NODES (16-bit indices; vanilla-compatible).
+    #[default]
+    Classic,
+    /// `ZDoom` uncompressed extended nodes (an `XNOD` stream in `NODES`).
+    Xnod,
+    /// `ZDoom` zlib-compressed extended nodes (`ZNOD`); requires cwad built with
+    /// the `extended-nodes-zlib` feature.
+    Znod,
+}
+
 /// Available `cwad` subcommands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SubCommand {
@@ -220,5 +233,9 @@ pub(crate) enum SubCommand {
         /// Doom output only; ignored for `--to udmf`).
         #[arg(long)]
         nodes: bool,
+        /// On-disk node format for `--nodes` (classic Doom output only). `znod`
+        /// requires cwad built with the `extended-nodes-zlib` feature.
+        #[arg(long = "node-format", default_value = "classic", value_name = "FORMAT")]
+        node_format: NodeFormatArg,
     },
 }
