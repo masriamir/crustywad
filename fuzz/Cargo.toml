@@ -91,6 +91,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_build_gl_nodes"
+path = "fuzz_targets/fuzz_build_gl_nodes.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_sections"
 path = "fuzz_targets/fuzz_sections.rs"
 test = false
