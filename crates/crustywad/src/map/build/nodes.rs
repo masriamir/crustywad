@@ -19,6 +19,7 @@ use std::io::Cursor;
 
 use binrw::BinWriterExt;
 
+use super::geom;
 use super::geom::{bam_angle, bbox_union, distance, fixed_16_16, round_half_away};
 use crate::Strictness;
 use crate::map::DoomWriteError;
@@ -1185,7 +1186,12 @@ impl<'a> Bsp<'a> {
     /// convention `R_PointOnSide`, `src/doom/r_main.c:145`).
     fn cross(&self, part: &Partition, e: usize) -> i64 {
         let (qx, qy) = self.coord(e);
-        (i64::from(qx) - part.pxi) * part.pdy - (i64::from(qy) - part.pyi) * part.pdx
+        geom::cross_from_start(
+            i64::from(qx) - part.pxi,
+            i64::from(qy) - part.pyi,
+            part.pdx,
+            part.pdy,
+        )
     }
 
     /// Whether cross product `c` places its vertex **less than** 0.5 map units
@@ -1193,7 +1199,7 @@ impl<'a> Bsp<'a> {
     /// exact in `i128`). The inequality is strict: a vertex exactly 0.5 units
     /// off counts as front or back, not on the line.
     fn on_line(part: &Partition, c: i64) -> bool {
-        i128::from(c) * i128::from(c) * 4 < part.len2
+        geom::within_half_unit(c, part.len2)
     }
 
     /// Classifies seg `s` against `part` (§B.2), folding in the §C.3

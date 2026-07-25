@@ -64,6 +64,22 @@ pub(super) fn fixed_16_16(
     })
 }
 
+/// The exact `i64` cross product of the partition direction `(pdx, pdy)` with
+/// the vector `(rx, ry)` from the partition start to a queried point: `> 0`
+/// front, `< 0` back (§B.2, engine convention `R_PointOnSide`,
+/// `src/doom/r_main.c:145`).
+pub(super) fn cross_from_start(rx: i64, ry: i64, pdx: i64, pdy: i64) -> i64 {
+    rx * pdy - ry * pdx
+}
+
+/// Whether cross product `cross` places its vertex **less than** 0.5 map units
+/// from a line with squared length `len2` (`distance² < 1/4 ⇔ cross² < len²/4
+/// ⇔ 4·cross² < len²`; exact in `i128`). The inequality is strict: a vertex
+/// exactly 0.5 units off counts as front or back, not on the line.
+pub(super) fn within_half_unit(cross: i64, len2: i128) -> bool {
+    i128::from(cross) * i128::from(cross) * 4 < len2
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +135,30 @@ mod tests {
             fixed_16_16(f64::from(i16::MAX), "x", 0).unwrap(),
             32767 * 65536
         );
+    }
+
+    /// `cross_from_start` is the exact engine side test: positive = front/right of
+    /// the direction vector, negative = back/left, zero = on the infinite line.
+    #[test]
+    fn cross_from_start_signs_match_the_engine_convention() {
+        // Partition pointing east (pdx=10, pdy=0): a point below the line
+        // (ry = -3) is front (cross = rx*0 - (-3)*10 = 30 > 0).
+        assert_eq!(cross_from_start(5, -3, 10, 0), 30);
+        // A point above (ry = 3) is back.
+        assert_eq!(cross_from_start(5, 3, 10, 0), -30);
+        // On the line: zero.
+        assert_eq!(cross_from_start(7, 0, 10, 0), 0);
+    }
+
+    /// The 0.5-unit epsilon is strict: distance² < 1/4 ⇔ 4·cross² < len².
+    #[test]
+    fn within_half_unit_boundary_is_strict() {
+        // Line of length 10 (len2 = 100). cross = 5 ⇒ distance exactly 0.5:
+        // 4·25 = 100, NOT < 100 → false (counts as a side, not on-line).
+        assert!(!within_half_unit(5, 100));
+        // cross = 4 ⇒ distance 0.4 → true.
+        assert!(within_half_unit(4, 100));
+        // Zero cross is always on-line for any non-degenerate len2.
+        assert!(within_half_unit(0, 1));
     }
 }
