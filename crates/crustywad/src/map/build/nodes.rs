@@ -56,7 +56,7 @@ const MAX_U16_INDEXED: usize = 0x1_0000;
 /// for the `u32` seg/vertex counts. Vastly above any real map (the largest
 /// retail map is ~7k linedefs); it exists only as the runaway backstop and the
 /// structural format limit for `NodeFormat::Xnod`/`Znod`.
-const MAX_EXTENDED_INDEX: usize = 0x8000_0000;
+pub(super) const MAX_EXTENDED_INDEX: usize = 0x8000_0000;
 
 /// The assembled output of the classic BSP pass (ADR-0024 §2): the vertices the
 /// pass created by splitting straddling segs, plus the finished `SEGS`,

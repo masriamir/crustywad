@@ -11,10 +11,10 @@
 //! Bare `§` references in item docs (e.g. §B.2, §D) are ADR-0024 sections,
 //! carried over verbatim from the classic kernel this one mirrors.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use super::geom;
-use super::nodes::SAMPLE_BUDGET;
+use super::nodes::{MAX_EXTENDED_INDEX, SAMPLE_BUDGET};
 use super::{NodeBuildError, NodeBuildOptions, NodeBuildWarning};
 use crate::Strictness;
 use crate::map::doom::{Narrower, narrow_vertices};
@@ -153,6 +153,75 @@ struct GlTreeNode {
     back: TreeRef,
 }
 
+/// One on-partition vertex encountered while routing a set through a partition,
+/// with the colinear segs that touch it. Task 5's loop-closing checks walk the
+/// events in partition order and need, per vertex, which colinear front/back
+/// segs enter it — so their working ids are retained here rather than just a
+/// coverage count.
+#[allow(dead_code)] // The colinear-coverage lists are consumed by Task 5's
+// `branch` loop checks.
+struct EventData {
+    /// The combined-table id of the on-partition vertex.
+    vertex: usize,
+    /// Working ids of [`GlClass::ColinearFront`] segs incident to this vertex.
+    colinear_front: Vec<usize>,
+    /// Working ids of [`GlClass::ColinearBack`] segs incident to this vertex.
+    colinear_back: Vec<usize>,
+}
+
+/// The per-`split_set` accumulator of on-partition events (§Q2, §Implications):
+/// the vertices lying on the current partition, keyed by their **exact `i128`
+/// dot product** along the partition direction. Integer keys replace ZDBSP's
+/// `double` distances, so ordering along the line is exact and collision-free.
+/// One accumulator is cleared and refilled per [`GlBsp::split_set`] call; Task
+/// 5's `branch` consumes it immediately after routing (before the next call
+/// overwrites it).
+struct EventAccumulator {
+    /// On-partition vertices keyed by their exact dot product along the
+    /// partition direction, ordered by that key.
+    events: BTreeMap<i128, EventData>,
+}
+
+impl EventAccumulator {
+    /// A new, empty accumulator.
+    fn new() -> Self {
+        Self {
+            events: BTreeMap::new(),
+        }
+    }
+
+    /// Empties the accumulator for reuse by the next [`GlBsp::split_set`] call.
+    fn clear(&mut self) {
+        self.events.clear();
+    }
+
+    /// Records vertex `vertex` (already known on-partition) at exact dot `key`,
+    /// merging into any existing event at that key. `colinear` optionally tags a
+    /// colinear seg incident here: `Some((true, id))` for a front colinear seg,
+    /// `Some((false, id))` for a back one; `None` for a split point or a
+    /// non-colinear on-line endpoint.
+    fn record(&mut self, key: i128, vertex: usize, colinear: Option<(bool, usize)>) {
+        let entry = self.events.entry(key).or_insert_with(|| EventData {
+            vertex,
+            colinear_front: Vec::new(),
+            colinear_back: Vec::new(),
+        });
+        // Distinct vertices cannot share an exact dot key on the same partition:
+        // the key is the exact projection, so equal keys mean the same point.
+        debug_assert_eq!(
+            entry.vertex, vertex,
+            "two distinct vertices share a partition dot key"
+        );
+        if let Some((front, id)) = colinear {
+            if front {
+                entry.colinear_front.push(id);
+            } else {
+                entry.colinear_back.push(id);
+            }
+        }
+    }
+}
+
 /// The GL BSP builder's working state (ADR-0026 §2), mirroring the classic
 /// [`Bsp`](super::nodes) structurally.
 #[allow(dead_code)] // Several arenas (dedup, spawned, leaves, tree_nodes, root,
@@ -175,8 +244,39 @@ struct GlBsp<'a> {
     dedup: HashMap<(i32, i32), usize>,
     /// The seg arena.
     segs: Vec<GlWorkSeg>,
-    /// Eager co-split fragments awaiting their container seg (Task 4).
+    /// Eager co-split fragments awaiting the set or leaf that still holds the
+    /// seg they came from, keyed by that seg's working id (the Vec-set analog of
+    /// ZDBSP's intrusive `Segs[p].next = p2` splice). When [`split_seg_at`] splits
+    /// a seg it also co-splits the seg's partner; the partner's *new* fragment is
+    /// not part of the set being routed right now, so it is parked here under the
+    /// partner's id until a consumer reaches that partner. Consumers drain it
+    /// transitively at exactly three points:
+    /// (a) [`split_set`](Self::split_set)'s routing queue pushes a key's parked
+    ///     fragments when it pops that key id;
+    /// (b) the recursion driver expands a popped set before classification the
+    ///     same way (Task 6);
+    /// (c) `finish` expands each leaf's seg list before finalization (Task 6).
+    /// Points (b)/(c) land with the driver in Task 6; only (a) is wired here. A
+    /// partner sitting in an already-emitted leaf can still be co-split by a
+    /// later partition in the sibling subtree — subdividing an edge of a convex
+    /// polygon keeps it convex and closed, so a cross-subtree co-split is normal,
+    /// not an error, and (c) is why an emitted leaf is still re-expanded.
+    ///
+    /// [`split_seg_at`]: Self::split_seg_at
     spawned: HashMap<usize, Vec<usize>>,
+    /// Per-vertex incident segs whose current start (`v1`) is this vertex,
+    /// indexed by combined-table vertex id (the Rust analog of ZDBSP's
+    /// `nextforvert` lists). Grown by [`intern_vertex`](Self::intern_vertex) and
+    /// maintained on every seg creation and in-place split. Consumed by Task 5.
+    segs_starting_at: Vec<Vec<usize>>,
+    /// Per-vertex incident segs whose current end (`v2`) is this vertex, the
+    /// end-vertex twin of [`segs_starting_at`](Self::segs_starting_at). An
+    /// in-place split that shortens a seg moves it here from its old end to the
+    /// mid. Consumed by Task 5.
+    segs_ending_at: Vec<Vec<usize>>,
+    /// On-partition events for the current [`split_set`](Self::split_set) call,
+    /// consumed by Task 5's `branch`.
+    events: EventAccumulator,
     /// Live seg count (segs reachable in some pending set or leaf).
     live_segs: usize,
     /// Strict or lenient (drives narrowing and the ceilings).
@@ -242,6 +342,9 @@ impl<'a> GlBsp<'a> {
             dedup,
             segs: Vec::new(),
             spawned: HashMap::new(),
+            segs_starting_at: vec![Vec::new(); map_vertex_count],
+            segs_ending_at: vec![Vec::new(); map_vertex_count],
+            events: EventAccumulator::new(),
             live_segs: 0,
             strictness: opts.strictness,
             split_cost: opts.split_cost,
@@ -273,6 +376,7 @@ impl<'a> GlBsp<'a> {
             let right_id = self.segs.len();
             if let Some(side) = ld.right {
                 let sector = self.map.sidedefs()[side.0].sector.0;
+                let id = self.segs.len();
                 self.segs.push(GlWorkSeg {
                     v1: a,
                     v2: b,
@@ -282,12 +386,14 @@ impl<'a> GlBsp<'a> {
                     // Partner is the back seg, pushed next (Notes §Q1).
                     partner: two_sided.then_some(right_id + 1),
                 });
+                self.register_seg(id, a, b);
             }
             if let Some(side) = ld.left {
                 let sector = self.map.sidedefs()[side.0].sector.0;
                 // Back seg swaps v1/v2 so the pair mirrors span. When two-sided,
                 // its partner is the right seg at `right_id`; a left-only linedef
                 // has no partner.
+                let id = self.segs.len();
                 self.segs.push(GlWorkSeg {
                     v1: b,
                     v2: a,
@@ -296,6 +402,7 @@ impl<'a> GlBsp<'a> {
                     side_sector: sector,
                     partner: two_sided.then_some(right_id),
                 });
+                self.register_seg(id, b, a);
             }
         }
         self.live_segs = self.segs.len();
@@ -471,6 +578,233 @@ impl<'a> GlBsp<'a> {
             );
             None
         }
+    }
+
+    /// Interns a split vertex, reusing any map or split vertex with the same
+    /// **exact** 16.16 coordinate (§C.3): the combined `dedup` table is seeded
+    /// with the map vertices, so interning an existing map vertex's coordinate
+    /// returns its `Normal`-range index and grows nothing. A miss appends to the
+    /// combined table, the split-vertex arena (`GlVertex { x: fixed / 65536.0 }`),
+    /// `dedup`, and the two per-vertex incident lists. Returns the index.
+    #[allow(dead_code)] // Consumed by the split pass (Task 4) and driver (Task 6).
+    fn intern_vertex(&mut self, x: i32, y: i32) -> usize {
+        if let Some(&idx) = self.dedup.get(&(x, y)) {
+            return idx;
+        }
+        let idx = self.verts.len();
+        self.verts.push((x, y));
+        self.gl_vertices.push(GlVertex {
+            x: f64::from(x) / 65536.0,
+            y: f64::from(y) / 65536.0,
+        });
+        self.dedup.insert((x, y), idx);
+        // Keep the incident lists index-aligned with `verts`.
+        self.segs_starting_at.push(Vec::new());
+        self.segs_ending_at.push(Vec::new());
+        idx
+    }
+
+    /// Records a newly created seg `id` spanning `v1`→`v2` in the per-vertex
+    /// incident lists.
+    fn register_seg(&mut self, id: usize, v1: usize, v2: usize) {
+        self.segs_starting_at[v1].push(id);
+        self.segs_ending_at[v2].push(id);
+    }
+
+    /// Moves seg `id`'s recorded end vertex from `old` to `new` after an in-place
+    /// split shortened it, preserving incident-list order (deterministic).
+    fn move_seg_end(&mut self, id: usize, old: usize, new: usize) {
+        if let Some(pos) = self.segs_ending_at[old].iter().position(|&s| s == id) {
+            self.segs_ending_at[old].remove(pos);
+        }
+        self.segs_ending_at[new].push(id);
+    }
+
+    /// Records vertex `vertex` (known on-partition) into the current event
+    /// accumulator, computing its exact `i128` dot key along `part`'s direction.
+    /// `colinear` tags a colinear seg incident here (see
+    /// [`EventAccumulator::record`]).
+    fn record_event(&mut self, part: &GlPartition, vertex: usize, colinear: Option<(bool, usize)>) {
+        let (vx, vy) = self.verts[vertex];
+        let key = i128::from(part.pdx) * (i128::from(vx) - i128::from(part.px))
+            + i128::from(part.pdy) * (i128::from(vy) - i128::from(part.py));
+        self.events.record(key, vertex, colinear);
+    }
+
+    /// Splits straddling seg `sid` **in place** at the interior rounded
+    /// intersection `(mx, my)` (mirroring ZDBSP `SplitSeg`, Notes §Q1): `sid`
+    /// keeps the `v1→m` half, a freshly pushed id takes `m→v2`, and both fragments
+    /// inherit linedef/side/sector. The mid vertex is interned **once** and reused
+    /// by the partner co-split, so a two-sided linedef's two segs share the split
+    /// vertex (crack-freedom). Returns `(v1→m fragment, m→v2 fragment)` — the
+    /// caller re-classifies each to route it.
+    ///
+    /// # Eager partner co-split
+    ///
+    /// If `sid` has partner `p` (mirrored span `p = v2→v1`), `p` is split at the
+    /// same interned mid into `pA = v2→m` (kept in `p`) and `pB = m→v1` (new).
+    /// With `v1`-ordered fragments the mirrors are the **cross** pairing: `sA`
+    /// (`v1→m`) mirrors `pB` (`m→v1`), and `sB` (`m→v2`) mirrors `pA` (`v2→m`) —
+    /// so `partner(sid) = pB` and `partner(sB) = p`, *not* `sid ↔ p`. (`sid ↔ p`
+    /// is ZDBSP's side-ordered convention, which this kernel does not use.) `pB`
+    /// is not in the set being routed now, so it is parked in
+    /// [`spawned`](Self::spawned) under `p`. The mirrored-span `debug_assert!`s
+    /// below are the authoritative contract.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeBuildError::TooManyElements`] (`kind: "segs"`) if the live-seg count
+    /// exceeds [`MAX_EXTENDED_INDEX`] — the runaway backstop (Global Constraint 9);
+    /// the GL formats are always extended, so the cap is uniform.
+    #[allow(dead_code)] // Consumed by `split_set` (Task 4) and the driver (Task 6).
+    fn split_seg_at(
+        &mut self,
+        sid: usize,
+        mx: i32,
+        my: i32,
+    ) -> Result<(usize, usize), NodeBuildError> {
+        let m = self.intern_vertex(mx, my);
+        let s = self.segs[sid];
+        let (v1, v2) = (s.v1, s.v2);
+        debug_assert_ne!(m, v1, "split vertex coincides with the seg start");
+        debug_assert_ne!(m, v2, "split vertex coincides with the seg end");
+
+        // sB = m→v2 (new); `sid` becomes sA = v1→m in place.
+        let s_b_id = self.segs.len();
+        self.segs.push(GlWorkSeg { v1: m, v2, ..s });
+        self.segs[sid].v2 = m;
+        self.move_seg_end(sid, v2, m);
+        self.register_seg(s_b_id, m, v2);
+        let mut new_segs = 1usize;
+
+        if let Some(p) = s.partner {
+            let ps = self.segs[p];
+            debug_assert!(
+                ps.v1 == v2 && ps.v2 == v1,
+                "partner span is the mirror of the seg's own span"
+            );
+            // pB = m→v1 (new); `p` becomes pA = v2→m in place.
+            let p_b_id = self.segs.len();
+            self.segs.push(GlWorkSeg {
+                v1: m,
+                v2: v1,
+                ..ps
+            });
+            self.segs[p].v2 = m;
+            self.move_seg_end(p, v1, m);
+            self.register_seg(p_b_id, m, v1);
+            new_segs += 1;
+
+            // Cross re-link: sA↔pB and sB↔pA.
+            self.segs[sid].partner = Some(p_b_id);
+            self.segs[p_b_id].partner = Some(sid);
+            self.segs[s_b_id].partner = Some(p);
+            self.segs[p].partner = Some(s_b_id);
+
+            // Park the partner's new fragment under the seg it came from (`p`).
+            self.spawned.entry(p).or_default().push(p_b_id);
+
+            // Authoritative involution + mirrored-span contract.
+            debug_assert_eq!(
+                self.segs[self.segs[sid].partner.unwrap()].partner,
+                Some(sid)
+            );
+            debug_assert_eq!(self.segs[self.segs[p].partner.unwrap()].partner, Some(p));
+            debug_assert!(
+                self.segs[sid].v1 == self.segs[p_b_id].v2
+                    && self.segs[sid].v2 == self.segs[p_b_id].v1,
+                "sA and pB span-mirror"
+            );
+            debug_assert!(
+                self.segs[s_b_id].v1 == self.segs[p].v2 && self.segs[s_b_id].v2 == self.segs[p].v1,
+                "sB and pA span-mirror"
+            );
+        }
+
+        // Each new fragment nets one live seg; the cap is the runaway backstop.
+        self.live_segs += new_segs;
+        if self.live_segs > MAX_EXTENDED_INDEX {
+            return Err(NodeBuildError::TooManyElements {
+                kind: "segs",
+                count: self.live_segs,
+                max: MAX_EXTENDED_INDEX,
+            });
+        }
+
+        Ok((sid, s_b_id))
+    }
+
+    /// Partitions `set` by `part`, splitting straddlers (§C.3–C.4) and returning
+    /// `(front, back)`. Routing is queue-based: a popped seg first drains any
+    /// parked co-split fragments keyed by its id (spawn contract drain point (a),
+    /// see [`spawned`](Self::spawned)) onto the queue, then classifies via the
+    /// shared [`classify_seg`](Self::classify_seg). A `Split` runs
+    /// [`split_seg_at`](Self::split_seg_at) and pushes **both** fragments back onto
+    /// the queue: each now has the mid on the line, so it re-classifies cleanly to
+    /// one side — re-classification is what keeps `select` and routing agreed.
+    ///
+    /// On-partition **events** are recorded for Task 5 (§Q2): each split point and
+    /// on-line endpoint (recorded when a re-classified fragment reports its mid
+    /// on-line), and both endpoints of every colinear seg (tagged front/back by
+    /// its class). The accumulator is cleared on entry and left populated for the
+    /// caller to consume before the next call.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`split_seg_at`](Self::split_seg_at)'s
+    /// [`NodeBuildError::TooManyElements`].
+    #[allow(dead_code)] // Consumed by the recursion driver (Task 6).
+    fn split_set(
+        &mut self,
+        set: Vec<usize>,
+        part: &GlPartition,
+    ) -> Result<(Vec<usize>, Vec<usize>), NodeBuildError> {
+        self.events.clear();
+        let mut front = Vec::new();
+        let mut back = Vec::new();
+        let mut queue: VecDeque<usize> = set.into();
+        while let Some(sid) = queue.pop_front() {
+            // Drain point (a): parked co-split fragments of this seg re-enter.
+            if let Some(parked) = self.spawned.remove(&sid) {
+                queue.extend(parked);
+            }
+            let s = self.segs[sid];
+            match self.classify_seg(part, &s) {
+                GlClass::Split(mx, my) => {
+                    let (a, b) = self.split_seg_at(sid, mx, my)?;
+                    queue.push_back(a);
+                    queue.push_back(b);
+                }
+                class @ (GlClass::ColinearFront | GlClass::ColinearBack) => {
+                    let is_front = class.is_front();
+                    self.record_event(part, s.v1, Some((is_front, sid)));
+                    self.record_event(part, s.v2, Some((is_front, sid)));
+                    if is_front {
+                        front.push(sid);
+                    } else {
+                        back.push(sid);
+                    }
+                }
+                class => {
+                    // Genuine front/back extent; record whichever endpoint (if
+                    // any) lies on the partition — a split point re-entering here.
+                    let c1 = self.cross(part, s.v1);
+                    let c2 = self.cross(part, s.v2);
+                    if Self::on_line(part, c1) {
+                        self.record_event(part, s.v1, None);
+                    }
+                    if Self::on_line(part, c2) {
+                        self.record_event(part, s.v2, None);
+                    }
+                    if class.is_front() {
+                        front.push(sid);
+                    } else {
+                        back.push(sid);
+                    }
+                }
+            }
+        }
+        Ok((front, back))
     }
 
     /// Selects the best splitter in `set` (§B), or `None` if the set is convex
@@ -881,5 +1215,162 @@ mod tests {
 
         assert_eq!(bsp.intersection(&seg, &part), Some((1, 0)));
         assert_eq!(bsp.classify_seg(&part, &seg), GlClass::Back);
+    }
+
+    /// The right seg of the two-sided wall (linedef 1), by construction the
+    /// `side == 0` seg.
+    fn wall_front_seg(bsp: &GlBsp) -> usize {
+        bsp.segs
+            .iter()
+            .position(|s| s.linedef == Some(1) && s.side == 0)
+            .expect("the two-sided wall has a front seg")
+    }
+
+    /// Splitting a two-sided pair's front seg yields four fragments forming two
+    /// mirrored partner pairs, and the partner involution plus the mirrored-span
+    /// invariant hold on both. The eager co-split derivation: with `sid` keeping
+    /// `v1→m` and the new id taking `m→v2`, the mirror pairing is the *cross*
+    /// pairing `sA↔pB` and `sB↔pA` (not `sid↔p`), because under v1-ordering the
+    /// halves that share a span mirror are the ones on opposite fragment ends.
+    #[test]
+    fn split_preserves_partner_involution_two_sided() {
+        let map = two_room_map();
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+
+        let front = wall_front_seg(&bsp);
+        let p = bsp.segs[front]
+            .partner
+            .expect("wall front seg has a partner");
+        let (v1, v2) = (bsp.segs[front].v1, bsp.segs[front].v2);
+
+        // Split the wall at its midpoint (64, 32) in 16.16 — a fresh interior
+        // vertex, so a genuine co-split with a newly interned mid.
+        let (a, b) = bsp.split_seg_at(front, 64 << 16, 32 << 16).unwrap();
+        assert_eq!(a, front, "the v1→m fragment is kept in `sid` in place");
+        let m = bsp.segs[front].v2;
+        assert!(
+            m >= bsp.map_vertex_count,
+            "the mid vertex is a split vertex"
+        );
+
+        // Four distinct fragments: front(sA), b(sB), p(pA), and pB.
+        let p_b = bsp.segs[front].partner.expect("sA keeps a partner");
+        let ids = [a, b, p, p_b];
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(ids[i], ids[j], "the four fragments are distinct");
+            }
+        }
+
+        // Pair 1: sA (v1→m) ↔ pB (m→v1).
+        assert_eq!(bsp.segs[front].partner, Some(p_b));
+        assert_eq!(bsp.segs[p_b].partner, Some(front));
+        assert_eq!(bsp.segs[front].v1, bsp.segs[p_b].v2);
+        assert_eq!(bsp.segs[front].v2, bsp.segs[p_b].v1);
+
+        // Pair 2: sB (m→v2) ↔ pA (v2→m).
+        assert_eq!(bsp.segs[b].partner, Some(p));
+        assert_eq!(bsp.segs[p].partner, Some(b));
+        assert_eq!(bsp.segs[b].v1, bsp.segs[p].v2);
+        assert_eq!(bsp.segs[b].v2, bsp.segs[p].v1);
+
+        // The fragments span the original edge: sA=v1→m, sB=m→v2.
+        assert_eq!((bsp.segs[front].v1, bsp.segs[front].v2), (v1, m));
+        assert_eq!((bsp.segs[b].v1, bsp.segs[b].v2), (m, v2));
+    }
+
+    /// When a seg is split but its partner is *not* being routed by the current
+    /// `split_set`, the partner's new co-split fragment is parked in the spawn
+    /// table under the partner's id, awaiting the container that still holds the
+    /// partner (drain points (b)/(c), Task 6).
+    #[test]
+    fn co_split_fragment_lands_in_spawn_table_for_foreign_container() {
+        let map = two_room_map();
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+
+        let front = wall_front_seg(&bsp);
+        let p = bsp.segs[front]
+            .partner
+            .expect("wall front seg has a partner");
+        let v1 = bsp.segs[front].v1;
+
+        // Route only the front seg; the partner lives in a foreign container.
+        let part = GlPartition::new(0, 32 << 16, 64 << 16, 0);
+        let (f, b) = bsp.split_set(vec![front], &part).unwrap();
+
+        // The straddler's own fragments routed to both sides.
+        assert_eq!(f.len(), 1, "one fragment on the front");
+        assert_eq!(b.len(), 1, "one fragment on the back");
+
+        // The partner's new fragment (m→v1) is parked under `spawned[p]`, not
+        // drained (p was not in the routed set).
+        let parked = bsp.spawned.get(&p).expect("partner fragment is parked");
+        assert_eq!(parked.len(), 1, "exactly one parked co-split fragment");
+        let p_b = parked[0];
+        let m = bsp.segs[front].v2;
+        assert_eq!((bsp.segs[p_b].v1, bsp.segs[p_b].v2), (m, v1));
+    }
+
+    /// `split_set` routes a straddler's two fragments to opposite sides and
+    /// records the split point as an on-partition event keyed by its exact
+    /// `i128` dot product along the partition direction.
+    #[test]
+    fn split_set_routes_fragments_both_sides_and_records_split_event() {
+        let map = two_room_map();
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+
+        let front = wall_front_seg(&bsp);
+        // A horizontal partition through y = 32 splits the vertical wall.
+        let part = GlPartition::new(0, 32 << 16, 64 << 16, 0);
+        let (f, b) = bsp.split_set(vec![front], &part).unwrap();
+
+        assert_eq!(f.len(), 1);
+        assert_eq!(b.len(), 1);
+        assert_ne!(f[0], b[0], "the fragments are distinct segs");
+
+        // The split point (64, 32) sits on the partition; its event key is the
+        // dot of (m − start) with the partition direction.
+        let m = bsp.segs[front].v2;
+        assert!(m >= bsp.map_vertex_count, "the mid is a split vertex");
+        let (mx, my) = bsp.verts[m];
+        let key = i128::from(part.pdx) * (i128::from(mx) - i128::from(part.px))
+            + i128::from(part.pdy) * (i128::from(my) - i128::from(part.py));
+        let event = bsp
+            .events
+            .events
+            .get(&key)
+            .expect("the split point is recorded as an event");
+        assert_eq!(event.vertex, m, "the event carries the split vertex id");
+    }
+
+    /// Interning the exact coordinates of an existing map vertex returns its
+    /// `Normal`-range index and grows neither the split-vertex arena nor the
+    /// combined table.
+    #[test]
+    fn intern_vertex_dedups_exactly_and_reuses_normal_verts() {
+        let map = two_room_map();
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+
+        let verts_before = bsp.verts.len();
+        let gl_before = bsp.gl_vertices.len();
+        // Map vertex 1 is (64, 0); its 16.16 coordinates are (64<<16, 0).
+        let idx = bsp.intern_vertex(64 << 16, 0);
+        assert_eq!(idx, 1, "reuses the existing map vertex");
+        assert!(idx < bsp.map_vertex_count, "index is in the Normal range");
+        assert_eq!(
+            bsp.verts.len(),
+            verts_before,
+            "no new combined-table vertex"
+        );
+        assert_eq!(bsp.gl_vertices.len(), gl_before, "no new split vertex");
+
+        // A genuinely new coordinate does push a split vertex and grows both.
+        let fresh = bsp.intern_vertex(64 << 16, 32 << 16);
+        assert_eq!(fresh, verts_before, "new split vertex appended at the tail");
+        assert_eq!(bsp.gl_vertices.len(), gl_before + 1);
+        assert!((bsp.gl_vertices[gl_before].y - 32.0).abs() < 1e-9);
     }
 }
