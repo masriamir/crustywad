@@ -209,6 +209,11 @@ fn gl_ref_fixed(map: &Map, built: &BuiltGlNodes, r: GlVertexRef) -> (i64, i64) {
 ///   exactly one subsector.
 /// - Linedef/side consistency: every non-miniseg seg's linedef is in range and
 ///   its `side` (0 = right/front, 1 = left/back) is present on that linedef.
+/// - Ancestor-side containment: every seg endpoint of every subsector lies on —
+///   or within a (scaled) 1.5-map-unit tolerance of — the correct side of every
+///   ancestor partition on the path from the root to that leaf (front child ⇒
+///   front side, back child ⇒ back side). The fixed-space analogue of the
+///   classic pass's geometric containment check.
 ///
 /// Geometric **convexity is deliberately not asserted here** — see
 /// [`validate_gl_bsp`] for why it holds only for well-formed geometry.
@@ -300,6 +305,90 @@ fn validate_gl_structure(map: &Map, built: &BuiltGlNodes, warnings: &[NodeBuildW
                 "seg {i} side {} has a present sidedef on its linedef",
                 s.side
             );
+        }
+    }
+
+    // (5) Ancestor-side containment (see `assert_ancestor_side_containment`).
+    assert_ancestor_side_containment(map, built);
+}
+
+/// Ancestor-side containment: every seg endpoint of every subsector lies on — or
+/// within tolerance of — the correct side of every ancestor partition on the path
+/// from the root to that leaf (front child ⇒ front side, back child ⇒ back side).
+/// The fixed-space analogue of the classic oracle's geometric containment check
+/// (`build_lumps.rs`), walked from the root (`built.nodes.last()`) carrying the
+/// ancestor partition stack.
+///
+/// Tolerance: the classic pass allows 1.5 **map units** of slack; scaled to 16.16
+/// fixed space that is `3 * 65536 / 2 = 98304` fixed units. GL split vertices land
+/// within 0.5 fixed units of their partition, so this bound is generous; keeping
+/// the classic's semantic value (scaled) preserves cross-oracle comparability.
+///
+/// Side test: an exact `i128` cross product (`> 0` is the front side, mirroring
+/// the classic formula). A point is "within tolerance" of the line when
+/// `distance² ≤ tol²`, i.e. `cross² ≤ tol²·len2` (no `sqrt`). A violation is an
+/// endpoint on the *wrong* side *and* farther than the tolerance.
+///
+/// Overflow guard (mirrors `geom::within_half_fixed_unit`): partition deltas are
+/// `i32` `fixed_t`, so `len2 = dx²+dy² ≤ 2·(2³¹)² = 2⁶³`, and `tol² < 2³⁴`, hence
+/// the pass threshold `tol²·len2 < 2⁹⁷` (fits `i128`). A pass therefore needs
+/// `|cross| < 2⁴⁸·⁵ < 2⁴⁹`; any `|cross| ≥ 2⁴⁹` on the wrong side is simply "far
+/// on the wrong side" — a failure we take without squaring (`cross` reaches ~2⁶⁴,
+/// whose square overflows `i128`). Below the guard, `cross² < 2⁹⁸` is in range.
+fn assert_ancestor_side_containment(map: &Map, built: &BuiltGlNodes) {
+    const TOL: i128 = 3 * 65536 / 2; // 1.5 map units in 16.16 fixed
+    const TOL_SQ: i128 = TOL * TOL;
+    const CROSS_GUARD: u128 = 1 << 49;
+    if built.nodes.is_empty() {
+        return; // a single convex leaf has no ancestor partitions
+    }
+    let root = GlNodeChild::Node(crustywad::map::GlNodeIdx(built.nodes.len() - 1));
+    // Each stack entry carries its child and the ancestor partition path as
+    // (node_index, is_front) pairs (front = right/front child taken).
+    let mut stack: Vec<(GlNodeChild, Vec<(usize, bool)>)> = vec![(root, Vec::new())];
+    while let Some((child, path)) = stack.pop() {
+        match child {
+            GlNodeChild::Node(k) => {
+                let n = &built.nodes[k.0];
+                let mut front = path.clone();
+                front.push((k.0, true));
+                let mut back = path.clone();
+                back.push((k.0, false));
+                stack.push((n.right, front));
+                stack.push((n.left, back));
+            }
+            GlNodeChild::Subsector(i) => {
+                for &(node_idx, is_front) in &path {
+                    let n = &built.nodes[node_idx];
+                    let nx = i128::from(n.x);
+                    let ny = i128::from(n.y);
+                    let ndx = i128::from(n.dx);
+                    let ndy = i128::from(n.dy);
+                    let len2 = ndx * ndx + ndy * ndy;
+                    for seg in &built.segs[built.subsectors[i.0].segs.clone()] {
+                        for endpoint in [seg.start, seg.end] {
+                            let (qx, qy) = gl_ref_fixed(map, built, endpoint);
+                            // Engine cross: > 0 is the front side.
+                            let cross = (i128::from(qx) - nx) * ndy - (i128::from(qy) - ny) * ndx;
+                            // Correct side? front ⇒ cross ≥ 0, back ⇒ cross ≤ 0.
+                            let on_wrong_side = if is_front { cross < 0 } else { cross > 0 };
+                            if !on_wrong_side {
+                                continue;
+                            }
+                            // On the wrong side: tolerated only within `tol`. The
+                            // guard short-circuits the square when |cross| is
+                            // beyond any tolerable magnitude (and would overflow
+                            // i128), classifying it as a failure.
+                            assert!(
+                                cross.unsigned_abs() < CROSS_GUARD
+                                    && cross * cross <= TOL_SQ * len2,
+                                "subsector {} seg endpoint within tolerance of ancestor partition {node_idx} (is_front={is_front})",
+                                i.0
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -528,6 +617,19 @@ fn two_room_doorway_map() -> Map {
 /// partition crosses a floor-on-both-sides gap, which this open-corridor geometry
 /// does not force. Partnered segs are exercised by
 /// [`build_gl_nodes_two_room_doorway_partners_the_shared_wall`].
+///
+/// # Known integration gap: partnered partition-minisegs
+///
+/// No fixture here exercises builder-created partitioned miniseg **pairs** (two
+/// minisegs that are mutual partners) end-to-end through the public API: the
+/// corridor's connecting minisegs are unpartnered by design, and the doorway's
+/// partners are real (linedef-backed) segs, not minisegs. Partnered
+/// partition-minisegs *are* covered — at the unit level by the kernel's Task-5
+/// tests in `gl_nodes.rs`, and by the retail sweep, where two-sided walls force
+/// them across real geometry. An integration fixture that forces a partnered
+/// partition-miniseg pair *without* also tripping a `DegenerateLeaf` has not been
+/// found; rather than fabricate one that only passes by luck, this gap is left
+/// explicit — revisit it with the sweep run.
 #[test]
 fn build_gl_nodes_corridor_room_produces_minisegs() {
     let map = corridor_room_map();
