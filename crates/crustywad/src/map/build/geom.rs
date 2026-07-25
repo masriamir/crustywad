@@ -4,6 +4,8 @@
 //! I/O — extracted from the classic BSP kernel (`nodes.rs`) so the GL kernel
 //! (`gl_nodes.rs`, #363) can share the exact same math. Moved code keeps its
 //! original semantics verbatim; a behavior change here changes built lumps.
+//! Bare `§` references in item docs (e.g. §B.2, §D) are ADR-0024 sections,
+//! carried over verbatim from the classic kernel these helpers came from.
 
 use crate::map::DoomWriteError;
 use crate::map::build::NodeBuildError;
