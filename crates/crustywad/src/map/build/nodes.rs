@@ -1368,12 +1368,14 @@ impl<'a> Bsp<'a> {
             if !valid {
                 continue;
             }
-            let mut score = u64::from(self.split_cost) * nsp as u64 + nf.abs_diff(nb) as u64;
-            if pdx != 0 && pdy != 0 && self.aa_preference > 0 {
-                // Diagonal penalty (§B.3): a larger `aa_preference` is a weaker
-                // penalty. Guarded against divide-by-zero.
-                score += (nf + nb + nsp) as u64 / u64::from(self.aa_preference);
-            }
+            let score = geom::partition_score(
+                nf,
+                nb,
+                nsp,
+                self.split_cost,
+                self.aa_preference,
+                pdx != 0 && pdy != 0,
+            );
             let better = match *best {
                 None => true,
                 Some((bscore, bid)) => score < bscore || (score == bscore && cand < bid),

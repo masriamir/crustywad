@@ -80,6 +80,26 @@ pub(super) fn within_half_unit(cross: i64, len2: i128) -> bool {
     i128::from(cross) * i128::from(cross) * 4 < len2
 }
 
+/// The partition-candidate score (ADR-0024 §B.3, lower wins):
+/// `split_cost · split + |front − back|`, plus the diagonal penalty
+/// `(front + back + split) / aa_preference` when `diagonal` — a larger
+/// `aa_preference` is a weaker penalty; `0` disables it (guarded divide).
+#[allow(clippy::cast_possible_truncation)]
+pub(super) fn partition_score(
+    front: usize,
+    back: usize,
+    split: usize,
+    split_cost: u32,
+    aa_preference: u32,
+    diagonal: bool,
+) -> u64 {
+    let mut score = u64::from(split_cost) * split as u64 + front.abs_diff(back) as u64;
+    if diagonal && aa_preference > 0 {
+        score += (front + back + split) as u64 / u64::from(aa_preference);
+    }
+    score
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +168,21 @@ mod tests {
         assert_eq!(cross_from_start(5, 3, 10, 0), -30);
         // On the line: zero.
         assert_eq!(cross_from_start(7, 0, 10, 0), 0);
+    }
+
+    /// ADR-0024 §B.3 score: `split_cost·splits` + |front−back| + diagonal penalty.
+    #[test]
+    fn partition_score_matches_the_adr_0024_formula() {
+        // 8*2 + |5-3| = 18, axis-aligned (no penalty).
+        assert_eq!(partition_score(5, 3, 2, 8, 16, false), 18);
+        // Diagonal penalty: + (5+3+2)/16 = 0 (integer division).
+        assert_eq!(partition_score(5, 3, 2, 8, 16, true), 18);
+        // Larger set makes the penalty visible: (20+12+0)/16 = 2.
+        assert_eq!(partition_score(20, 12, 0, 8, 16, true), 8 + 2);
+        // aa_preference = 0 means "no diagonal penalty" (guarded divide).
+        assert_eq!(partition_score(20, 12, 0, 8, 0, true), 8);
+        // split_cost = 0 degrades to balance-only.
+        assert_eq!(partition_score(7, 2, 3, 0, 16, false), 5);
     }
 
     /// The 0.5-unit epsilon is strict: distance² < 1/4 ⇔ 4·cross² < len².
