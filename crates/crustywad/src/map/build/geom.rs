@@ -5,6 +5,9 @@
 //! (`gl_nodes.rs`, #363) can share the exact same math. Moved code keeps its
 //! original semantics verbatim; a behavior change here changes built lumps.
 
+use crate::map::DoomWriteError;
+use crate::map::build::NodeBuildError;
+
 /// Rounds half away from zero to the nearest whole map unit (the write path's
 /// rounding), returning `i32`. Inputs are bounded map coordinates, so the cast
 /// cannot overflow.
@@ -37,6 +40,28 @@ pub(super) fn bbox_union(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
         a[2].min(b[2]),
         a[3].max(b[3]),
     ]
+}
+
+/// Narrows a whole-unit split-vertex coordinate to the extended stream's 16.16
+/// fixed-point `i32` (`coord * 65536`), reversing the reader's `x / 65536.0`.
+/// `build_nodes` creates split vertices as whole `i16`-range map units, so the
+/// product always fits `i32`; a hand-constructed out-of-range value is a
+/// defensive [`DoomWriteError::ValueOutOfRange`].
+pub(super) fn fixed_16_16(
+    value: f64,
+    field: &'static str,
+    index: usize,
+) -> Result<i32, NodeBuildError> {
+    let whole = i64::from(round_half_away(value));
+    let fixed = whole * 65536;
+    i32::try_from(fixed).map_err(|_| {
+        NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+            block: "vertex",
+            field,
+            index,
+            value: fixed,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -83,5 +108,16 @@ mod tests {
         assert_eq!(bbox_union(a, b), [10, -9, -20, 45]);
         // Union with itself is identity.
         assert_eq!(bbox_union(a, a), a);
+    }
+
+    #[test]
+    fn fixed_16_16_encodes_whole_units() {
+        assert_eq!(fixed_16_16(32.0, "x", 0).unwrap(), 32 * 65536);
+        assert_eq!(fixed_16_16(-1.0, "y", 0).unwrap(), -65536);
+        // i16::MAX * 65536 is the largest that fits i32.
+        assert_eq!(
+            fixed_16_16(f64::from(i16::MAX), "x", 0).unwrap(),
+            32767 * 65536
+        );
     }
 }

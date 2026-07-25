@@ -19,7 +19,7 @@ use std::io::Cursor;
 
 use binrw::BinWriterExt;
 
-use super::geom::{bam_angle, bbox_union, distance, round_half_away};
+use super::geom::{bam_angle, bbox_union, distance, fixed_16_16, round_half_away};
 use crate::Strictness;
 use crate::map::DoomWriteError;
 use crate::map::build::{
@@ -657,24 +657,6 @@ fn encode_extended_child(child: NodeChild) -> Result<u32, NodeBuildError> {
     }
     let value = u32::try_from(idx).expect("idx < 0x8000_0000 fits u32");
     Ok(if leaf { 0x8000_0000 | value } else { value })
-}
-
-/// Narrows a whole-unit split-vertex coordinate to the extended stream's 16.16
-/// fixed-point `i32` (`coord * 65536`), reversing the reader's `x / 65536.0`.
-/// `build_nodes` creates split vertices as whole `i16`-range map units, so the
-/// product always fits `i32`; a hand-constructed out-of-range value is a
-/// defensive [`DoomWriteError::ValueOutOfRange`].
-fn fixed_16_16(value: f64, field: &'static str, index: usize) -> Result<i32, NodeBuildError> {
-    let whole = i64::from(round_half_away(value));
-    let fixed = whole * 65536;
-    i32::try_from(fixed).map_err(|_| {
-        NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
-            block: "vertex",
-            field,
-            index,
-            value: fixed,
-        })
-    })
 }
 
 /// Serializes a slice of [`binrw::BinWrite`] records into a lump byte buffer,
@@ -2651,17 +2633,6 @@ mod tests {
                 count: over,
                 max: MAX_BSP_INDEX,
             }
-        );
-    }
-
-    #[test]
-    fn fixed_16_16_encodes_whole_units() {
-        assert_eq!(fixed_16_16(32.0, "x", 0).unwrap(), 32 * 65536);
-        assert_eq!(fixed_16_16(-1.0, "y", 0).unwrap(), -65536);
-        // i16::MAX * 65536 is the largest that fits i32.
-        assert_eq!(
-            fixed_16_16(f64::from(i16::MAX), "x", 0).unwrap(),
-            32767 * 65536
         );
     }
 
