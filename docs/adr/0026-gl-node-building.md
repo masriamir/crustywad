@@ -153,8 +153,11 @@ consolidation, not taken now.
 - **`map/build/gl_nodes.rs` (new):** the GL kernel, `BuiltGlNodes`, and
   its serializer. Gated behind the existing `nodebuild` feature.
 
-New public API (all `#[non_exhaustive]` where struct-shaped, documented
-per house rules):
+New public API, sketched below with attributes and doc comments elided
+for brevity. In the implementation, every struct-shaped item is
+`#[non_exhaustive]` and every public item carries full doc comments per
+house rules (`missing_docs = "deny"`); the `//` annotations here are
+sketch notes, not the shipped documentation:
 
 ```rust
 /// Builds GL BSP nodes (minisegs, partner segs, fractional splits) from an
