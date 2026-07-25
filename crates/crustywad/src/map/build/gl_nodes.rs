@@ -910,6 +910,386 @@ impl<'a> GlBsp<'a> {
             }
         }
     }
+
+    /// The `i64` direction vector `verts[to] − verts[from]` in 16.16 space. A
+    /// 16.16 delta can reach `2³²`, so the components are `i64` (they feed
+    /// [`geom::clockwise_order`] / [`geom::counter_clockwise_order`], which widen
+    /// to `i128` internally).
+    #[allow(dead_code)] // Consumed by the miniseg loop checks (wired in Task 6).
+    fn dir_from(&self, from: usize, to: usize) -> (i64, i64) {
+        let (fx, fy) = self.verts[from];
+        let (tx, ty) = self.verts[to];
+        (i64::from(tx) - i64::from(fx), i64::from(ty) - i64::from(fy))
+    }
+
+    /// Whether seg `sid` lies **entirely on** `part` (both endpoints within half a
+    /// fixed unit of the partition line). The miniseg loop checks skip such segs
+    /// when picking the loop-defining seg: a colinear seg is real geometry already
+    /// covering the span, so counting it would make a miniseg duplicate it
+    /// (Notes §Q2/§Q6, `nodebuild_gl.cpp:301`/`360`).
+    #[allow(dead_code)] // Consumed by the miniseg loop checks (wired in Task 6).
+    fn seg_on_partition(&self, part: &GlPartition, sid: usize) -> bool {
+        let s = self.segs[sid];
+        Self::on_line(part, self.cross(part, s.v1)) && Self::on_line(part, self.cross(part, s.v2))
+    }
+
+    /// The exact `i128` event key of vertex `v` along `part`'s direction — the
+    /// same projection [`record_event`](Self::record_event) keys events by, so a
+    /// colinear seg's endpoints share keys with the events they bound.
+    #[allow(dead_code)] // Consumed by the split-sharer repair (wired in Task 6).
+    fn event_key(&self, part: &GlPartition, v: usize) -> i128 {
+        let (vx, vy) = self.verts[v];
+        i128::from(part.pdx) * (i128::from(vx) - i128::from(part.px))
+            + i128::from(part.pdy) * (i128::from(vy) - i128::from(part.py))
+    }
+
+    /// The GL loop-start test (`CheckLoopStart`, Notes §Q2): the seg **ending** at
+    /// `vertex` (the `segs2`/[`segs_ending_at`](Self::segs_ending_at) role) whose
+    /// direction `verts[v1] − vertex` forms the **smallest clockwise angle** from
+    /// the reference direction `(rdx, rdy)`, or `None` if the loop does not close
+    /// on this side. Segs lying on the partition are skipped
+    /// ([`seg_on_partition`](Self::seg_on_partition)) so a miniseg never duplicates
+    /// real colinear geometry.
+    ///
+    /// The winner is rejected (`None`) when a seg **starting** at `vertex` (the
+    /// opposite `segs`/[`segs_starting_at`](Self::segs_starting_at) list) either
+    /// runs directly to `vertex2` — a real seg already spans this event pair — or
+    /// forms a **strictly smaller** clockwise angle while not being the winner's
+    /// partner (the interior lies on the wrong side). Ported line-for-line from
+    /// `nodebuild_gl.cpp:282–339`, with [`geom::clockwise_order`] replacing BAM +
+    /// `ANGLE_EPSILON` and [`seg_on_partition`](Self::seg_on_partition) replacing
+    /// the `PointOnSide == 0 && diff < ANGLE_EPSILON` skip.
+    #[allow(dead_code)] // Consumed by `add_minisegs` (wired in Task 6).
+    fn check_loop_start(
+        &self,
+        part: &GlPartition,
+        rdx: i64,
+        rdy: i64,
+        vertex: usize,
+        vertex2: usize,
+    ) -> Option<usize> {
+        // Primary: segs ending at `vertex`, smallest clockwise angle from ref.
+        let mut best: Option<usize> = None;
+        for &sid in &self.segs_ending_at[vertex] {
+            if self.seg_on_partition(part, sid) {
+                continue; // a seg on the splitter never defines the loop
+            }
+            let (dx, dy) = self.dir_from(vertex, self.segs[sid].v1);
+            best = Some(match best {
+                None => sid,
+                Some(b) => {
+                    let (bx, by) = self.dir_from(vertex, self.segs[b].v1);
+                    // `<=` matches ZDBSP's `diff <= bestang` (a later equal wins).
+                    if geom::clockwise_order(rdx, rdy, dx, dy, bx, by).is_le() {
+                        sid
+                    } else {
+                        b
+                    }
+                }
+            });
+        }
+        let bestseg = best?;
+        // Secondary: no seg starting at `vertex` may undercut the winner.
+        let (bx, by) = self.dir_from(vertex, self.segs[bestseg].v1);
+        for &sid in &self.segs_starting_at[vertex] {
+            let seg = self.segs[sid];
+            if seg.v2 == vertex2 {
+                return None; // a real seg already spans prev→next
+            }
+            let (dx, dy) = self.dir_from(vertex, seg.v2);
+            if geom::clockwise_order(rdx, rdy, dx, dy, bx, by).is_lt()
+                && seg.partner != Some(bestseg)
+            {
+                return None; // interior is on the wrong side
+            }
+        }
+        Some(bestseg)
+    }
+
+    /// The GL loop-end test (`CheckLoopEnd`, Notes §Q2): the mirror of
+    /// [`check_loop_start`](Self::check_loop_start). It scans the seg **starting**
+    /// at `vertex` (the `segs`/[`segs_starting_at`](Self::segs_starting_at) role)
+    /// with the smallest angle, but from the **negated** reference `(−rdx, −rdy)`
+    /// and in the **counter-clockwise** sense — ZDBSP's `CheckLoopEnd` minimizes
+    /// `segAngle − (splitAngle + ANGLE_180)`, i.e. a CCW extremum from the
+    /// 180°-rotated splitter (`nodebuild_gl.cpp:341–394`). The negation and the
+    /// CCW sense are why this uses [`geom::counter_clockwise_order`] rather than
+    /// the clockwise comparator; a single "smallest clockwise angle" rule would
+    /// pick the seg 180° away (verified against source). The opposite (ending)
+    /// list must not undercut the winner, same partner exemption as the mirror.
+    // `similar_names`: `nrdx`/`nrdy` are the negated `rdx`/`rdy` reference deltas;
+    // renaming them obscures the mirror-of-`check_loop_start` structure.
+    #[allow(dead_code, clippy::similar_names)] // Consumed by `add_minisegs` (Task 6).
+    fn check_loop_end(
+        &self,
+        part: &GlPartition,
+        rdx: i64,
+        rdy: i64,
+        vertex: usize,
+    ) -> Option<usize> {
+        // ZDBSP's `splitAngle + ANGLE_180`: the reference is the negated direction.
+        let (nrdx, nrdy) = (-rdx, -rdy);
+        // Primary: segs starting at `vertex`, smallest CCW angle from −ref.
+        let mut best: Option<usize> = None;
+        for &sid in &self.segs_starting_at[vertex] {
+            if self.seg_on_partition(part, sid) {
+                continue;
+            }
+            let (dx, dy) = self.dir_from(vertex, self.segs[sid].v2);
+            best = Some(match best {
+                None => sid,
+                Some(b) => {
+                    let (bx, by) = self.dir_from(vertex, self.segs[b].v2);
+                    if geom::counter_clockwise_order(nrdx, nrdy, dx, dy, bx, by).is_le() {
+                        sid
+                    } else {
+                        b
+                    }
+                }
+            });
+        }
+        let bestseg = best?;
+        // Secondary: no seg ending at `vertex` may undercut the winner.
+        let (bx, by) = self.dir_from(vertex, self.segs[bestseg].v2);
+        for &sid in &self.segs_ending_at[vertex] {
+            let seg = self.segs[sid];
+            let (dx, dy) = self.dir_from(vertex, seg.v1);
+            if geom::counter_clockwise_order(nrdx, nrdy, dx, dy, bx, by).is_lt()
+                && seg.partner != Some(bestseg)
+            {
+                return None;
+            }
+        }
+        Some(bestseg)
+    }
+
+    /// Split-sharer repair (`FixSplitSharers`, Notes §Q1/§Q6): a colinear seg that
+    /// spans **more than two** events (its endpoints' keys bracket one or more
+    /// interior event keys) is force-split at each interior event vertex, its
+    /// partner following in lockstep via [`split_seg_at`](Self::split_seg_at).
+    /// Without it, minisegs would be added over overlapping colinear lines and
+    /// partner linkage would be corrupted (`nodebuild_gl.cpp:64–160`). It runs
+    /// **before** the interval walk so every colinear span is exactly one event
+    /// wide by the time the loop checks run.
+    ///
+    /// Two-sided colinear segs are repaired through their front seg only (the
+    /// back partner co-splits automatically); one-sided colinear segs are repaired
+    /// on whichever side they routed to. Each new far fragment re-joins its
+    /// parent's out-set and each parked partner fragment joins the opposite
+    /// out-set — accumulated into locals first so the routed `front`/`back` are
+    /// not aliased while `self` is mutated.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`split_seg_at`](Self::split_seg_at)'s
+    /// [`NodeBuildError::TooManyElements`].
+    #[allow(dead_code)] // Consumed by `add_minisegs` (wired in Task 6).
+    fn fix_split_sharers(
+        &mut self,
+        part: &GlPartition,
+        front: &mut Vec<usize>,
+        back: &mut Vec<usize>,
+    ) -> Result<(), NodeBuildError> {
+        // Event vertices in exact partition order (snapshot: releases the borrow
+        // of `self.events` before any mutation).
+        let ordered: Vec<(i128, usize)> = self
+            .events
+            .events
+            .iter()
+            .map(|(&k, e)| (k, e.vertex))
+            .collect();
+        // Colinear segs to repair: every front colinear seg (its back partner
+        // co-splits), plus one-sided back colinear segs (no partner to ride
+        // along). Deduped and ordered for determinism (a colinear seg appears at
+        // both of its endpoint events).
+        let mut fronts: Vec<usize> = self
+            .events
+            .events
+            .values()
+            .flat_map(|e| e.colinear_front.iter().copied())
+            .collect();
+        fronts.sort_unstable();
+        fronts.dedup();
+        let mut backs: Vec<usize> = self
+            .events
+            .events
+            .values()
+            .flat_map(|e| e.colinear_back.iter().copied())
+            .filter(|&sid| self.segs[sid].partner.is_none())
+            .collect();
+        backs.sort_unstable();
+        backs.dedup();
+
+        let mut add_front: Vec<usize> = Vec::new();
+        let mut add_back: Vec<usize> = Vec::new();
+        for sid in fronts {
+            self.repair_colinear(part, sid, &ordered, true, &mut add_front, &mut add_back)?;
+        }
+        for sid in backs {
+            self.repair_colinear(part, sid, &ordered, false, &mut add_front, &mut add_back)?;
+        }
+        front.extend(add_front);
+        back.extend(add_back);
+        Ok(())
+    }
+
+    /// Force-splits one colinear seg `sid` at every event strictly interior to its
+    /// span, folding the fragments into `add_front`/`add_back` by side (see
+    /// [`fix_split_sharers`](Self::fix_split_sharers)). `home_front` marks whether
+    /// `sid` routed to the front out-set. New far fragments join the home side;
+    /// each co-split partner's parked fragment (from
+    /// [`split_seg_at`](Self::split_seg_at)) joins the opposite side.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`split_seg_at`](Self::split_seg_at)'s
+    /// [`NodeBuildError::TooManyElements`].
+    #[allow(dead_code)] // Consumed by `fix_split_sharers` (wired in Task 6).
+    fn repair_colinear(
+        &mut self,
+        part: &GlPartition,
+        sid: usize,
+        ordered: &[(i128, usize)],
+        home_front: bool,
+        add_front: &mut Vec<usize>,
+        add_back: &mut Vec<usize>,
+    ) -> Result<(), NodeBuildError> {
+        let s = self.segs[sid];
+        let k1 = self.event_key(part, s.v1);
+        let k2 = self.event_key(part, s.v2);
+        let (lo, hi) = (k1.min(k2), k1.max(k2));
+        // Interior event vertices, ordered from v1 toward v2 so each split keeps
+        // the near half in place and continues on the far half.
+        let mut interior: Vec<usize> = ordered
+            .iter()
+            .filter(|(k, _)| *k > lo && *k < hi)
+            .map(|&(_, v)| v)
+            .collect();
+        if k1 > k2 {
+            interior.reverse();
+        }
+        let mut cur = sid;
+        for v in interior {
+            let (mx, my) = self.verts[v];
+            let partner_before = self.segs[cur].partner;
+            let (_a, b) = self.split_seg_at(cur, mx, my)?;
+            if home_front {
+                add_front.push(b);
+            } else {
+                add_back.push(b);
+            }
+            // The partner's new co-split fragment was parked under the partner id;
+            // drain it into the opposite out-set.
+            if let Some(p) = partner_before
+                && let Some(frags) = self.spawned.remove(&p)
+            {
+                if home_front {
+                    add_back.extend(frags);
+                } else {
+                    add_front.extend(frags);
+                }
+            }
+            cur = b;
+        }
+        Ok(())
+    }
+
+    /// Adds mirrored miniseg pairs across the partition (`AddMinisegs`, Notes §Q2),
+    /// consuming the on-partition events left in [`self.events`](Self::events) by
+    /// the immediately preceding [`split_set`](Self::split_set) call — the
+    /// accumulator is not passed explicitly because it lives on `self` (Task 4's
+    /// storage choice); callers must invoke `add_minisegs` before the next
+    /// `split_set` overwrites it. `front`/`back` are the just-routed out-sets.
+    ///
+    /// First runs [`fix_split_sharers`](Self::fix_split_sharers), then walks the
+    /// events in exact partition order. For each consecutive pair `(prev, next)` a
+    /// mirrored pair is created **iff all four** loop checks return a seg (Notes
+    /// §Q2's exact calls, with the back checks negating the partition direction):
+    /// front loop-start at `prev`, back loop-start at `next`, front loop-end at
+    /// `next`, back loop-end at `prev`. This is the interval-occupancy rule: the
+    /// span is interior only when a real loop closes at both endpoints on both
+    /// sides, so minisegs are never created in void space.
+    ///
+    /// On success the front miniseg `prev→next` (`linedef: None`, `side: 0`,
+    /// `side_sector` from the front loop-start seg) and the back miniseg `next→prev`
+    /// (`side: 1`, sector from the back loop-start seg) are created as mutual
+    /// partners, registered in the incident lists, counted against the live-seg
+    /// cap, and pushed to `front`/`back` respectively. The `side` field records
+    /// facing only; the GL emission-side mapping (minisegs emit `side 0`) is Task
+    /// 6's concern. Later spans see earlier minisegs in the incident lists, exactly
+    /// as ZDBSP's `AddMiniseg` updates the per-vertex lists in place.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeBuildError::TooManyElements`] (`kind: "segs"`) when the live-seg count
+    /// exceeds [`MAX_EXTENDED_INDEX`], and any error from
+    /// [`fix_split_sharers`](Self::fix_split_sharers).
+    #[allow(dead_code)] // Wired into `branch` in Task 6; unit-tested directly here.
+    fn add_minisegs(
+        &mut self,
+        part: &GlPartition,
+        front: &mut Vec<usize>,
+        back: &mut Vec<usize>,
+    ) -> Result<(), NodeBuildError> {
+        // Overlapping colinear segs must be one event wide before the walk.
+        self.fix_split_sharers(part, front, back)?;
+
+        // Event vertices in exact partition order (BTreeMap iterates by key).
+        let ordered: Vec<usize> = self.events.events.values().map(|e| e.vertex).collect();
+        let (pdx, pdy) = (part.pdx, part.pdy);
+        for pair in ordered.windows(2) {
+            let (prev, next) = (pair[0], pair[1]);
+            // All four loop checks must pass; the back checks use −partition dir.
+            let Some(fseg1) = self.check_loop_start(part, pdx, pdy, prev, next) else {
+                continue;
+            };
+            let Some(bseg1) = self.check_loop_start(part, -pdx, -pdy, next, prev) else {
+                continue;
+            };
+            if self.check_loop_end(part, pdx, pdy, next).is_none() {
+                continue; // front loop-end at next
+            }
+            if self.check_loop_end(part, -pdx, -pdy, prev).is_none() {
+                continue; // back loop-end at prev
+            }
+
+            // Sectors copied from the loop-start segs (ZDBSP `AddMinisegs:195`).
+            let f_sector = self.segs[fseg1].side_sector;
+            let b_sector = self.segs[bseg1].side_sector;
+            let front_id = self.segs.len();
+            let back_id = front_id + 1;
+            self.segs.push(GlWorkSeg {
+                v1: prev,
+                v2: next,
+                linedef: None,
+                side: 0,
+                side_sector: f_sector,
+                partner: Some(back_id),
+            });
+            self.segs.push(GlWorkSeg {
+                v1: next,
+                v2: prev,
+                linedef: None,
+                side: 1,
+                side_sector: b_sector,
+                partner: Some(front_id),
+            });
+            self.register_seg(front_id, prev, next);
+            self.register_seg(back_id, next, prev);
+            // Two new live segs; the cap is the runaway backstop.
+            self.live_segs += 2;
+            if self.live_segs > MAX_EXTENDED_INDEX {
+                return Err(NodeBuildError::TooManyElements {
+                    kind: "segs",
+                    count: self.live_segs,
+                    max: MAX_EXTENDED_INDEX,
+                });
+            }
+            front.push(front_id);
+            back.push(back_id);
+        }
+        Ok(())
+    }
 }
 
 /// Whether a partition delta fits the XGL3 on-disk `i32` node `dx`/`dy` field
@@ -1372,5 +1752,159 @@ mod tests {
         assert_eq!(fresh, verts_before, "new split vertex appended at the tail");
         assert_eq!(bsp.gl_vertices.len(), gl_before + 1);
         assert!((bsp.gl_vertices[gl_before].y - 32.0).abs() < 1e-9);
+    }
+
+    /// A single convex square room bisected by a vertical partition through its
+    /// open interior — the minimal loop-closing "gap" a miniseg seals. Hand-
+    /// derived (Notes §Q2): two events, `(32,0)` and `(32,64)`, bound one span;
+    /// with the room wound sector-on-the-right, every one of the four loop checks
+    /// finds a real seg turning into the interior (front loop-start at `(32,0)`
+    /// picks the front bottom fragment; the back and end mirrors likewise), so
+    /// exactly one mirrored miniseg pair is created — front `prev→next` into the
+    /// front out-set, back `next→prev` into the back, mutual partners with
+    /// `linedef: None` and mirrored spans.
+    #[test]
+    fn doorway_gap_gets_mirrored_miniseg_pair() {
+        let map = build_map(
+            &[(0.0, 0.0), (64.0, 0.0), (64.0, 64.0), (0.0, 64.0)],
+            &[
+                (1, 0, Some(0), None), // bottom  B→A (west, sector on right)
+                (0, 3, Some(0), None), // left    A→D (north)
+                (3, 2, Some(0), None), // top     D→C (east)
+                (2, 1, Some(0), None), // right   C→B (south)
+            ],
+        );
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+        let all: Vec<usize> = (0..bsp.segs.len()).collect();
+        // Vertical partition x = 32, pointing north.
+        let part = GlPartition::new(32 << 16, 0, 0, 64 << 16);
+        let (mut front, mut back) = bsp.split_set(all, &part).unwrap();
+        let (fb, bb) = (front.len(), back.len());
+
+        bsp.add_minisegs(&part, &mut front, &mut back).unwrap();
+
+        assert_eq!(
+            front.len(),
+            fb + 1,
+            "exactly one miniseg added to the front"
+        );
+        assert_eq!(back.len(), bb + 1, "exactly one miniseg added to the back");
+        let f = *front.last().unwrap();
+        let b = *back.last().unwrap();
+        assert_eq!(bsp.segs[f].linedef, None, "front miniseg has no linedef");
+        assert_eq!(bsp.segs[b].linedef, None, "back miniseg has no linedef");
+        assert_eq!(bsp.segs[f].partner, Some(b), "mutual partners");
+        assert_eq!(bsp.segs[b].partner, Some(f), "mutual partners");
+        assert_eq!(bsp.segs[f].v1, bsp.segs[b].v2, "mirrored span");
+        assert_eq!(bsp.segs[f].v2, bsp.segs[b].v1, "mirrored span");
+        assert_eq!(bsp.segs[f].side, 0, "front miniseg records side 0");
+        assert_eq!(bsp.segs[b].side, 1, "back miniseg records side 1");
+    }
+
+    /// Partitioning along a fully-segged two-sided wall creates no minisegs: the
+    /// span between the wall's two events is covered by colinear geometry, so the
+    /// front loop-start's secondary scan sees a real seg running straight from
+    /// `prev` to `next` (`v2 == vertex2`) and returns `None` (Notes §Q2/§Q6). The
+    /// out-sets are unchanged.
+    #[test]
+    fn solid_colinear_wall_produces_no_minisegs() {
+        let map = two_room_map();
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+        let all: Vec<usize> = (0..bsp.segs.len()).collect();
+        // Partition ALONG the shared two-sided wall at x = 64.
+        let part = GlPartition::new(64 << 16, 0, 0, 64 << 16);
+        let (mut front, mut back) = bsp.split_set(all, &part).unwrap();
+        let (fb, bb) = (front.len(), back.len());
+
+        bsp.add_minisegs(&part, &mut front, &mut back).unwrap();
+
+        assert_eq!(front.len(), fb, "no minisegs added to the front");
+        assert_eq!(back.len(), bb, "no minisegs added to the back");
+    }
+
+    /// A span with no loop-closing geometry on one side yields no miniseg ("don't
+    /// create subsectors in void space", Notes §Q2). The bottom wall touches the
+    /// partition at `(64,0)` but only extends into the back half, so nothing
+    /// *ends* at `(64,0)` — the front loop-start's primary scan is empty and
+    /// returns `None`. A second crossing wall supplies the upper event `(64,64)`
+    /// so a full span exists, yet still no pair is created.
+    #[test]
+    fn void_interval_produces_no_minisegs() {
+        let map = build_map(
+            &[(64.0, 0.0), (0.0, 0.0), (0.0, 64.0), (128.0, 64.0)],
+            &[
+                (0, 1, Some(0), None), // (64,0)→(0,0): starts on the line, into back
+                (2, 3, Some(0), None), // (0,64)→(128,64): crosses at (64,64)
+            ],
+        );
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+        let all: Vec<usize> = (0..bsp.segs.len()).collect();
+        let part = GlPartition::new(64 << 16, 0, 0, 64 << 16);
+        let (mut front, mut back) = bsp.split_set(all, &part).unwrap();
+        let (fb, bb) = (front.len(), back.len());
+
+        bsp.add_minisegs(&part, &mut front, &mut back).unwrap();
+
+        assert_eq!(front.len(), fb, "front out-set unchanged (void span)");
+        assert_eq!(back.len(), bb, "back out-set unchanged (void span)");
+    }
+
+    /// A two-sided colinear wall spanning three events is force-split at the
+    /// interior event before the interval walk, and its partner follows in
+    /// lockstep (Notes §Q1 `FixSplitSharers`). Fixture: a shared wall along `x=0`
+    /// from `(0,-32)` to `(0,32)`, crossed by a perpendicular wall at `(0,0)` that
+    /// interns the interior event. After the repair the wall and its partner are
+    /// each two fragments meeting at `(0,0)`, and the partner involution + mirrored
+    /// span hold over every seg.
+    #[test]
+    fn overlapping_colinear_seg_is_split_at_interior_events() {
+        let map = build_map(
+            &[(0.0, -32.0), (0.0, 32.0), (-16.0, 0.0), (16.0, 0.0)],
+            &[
+                (0, 1, Some(0), Some(1)), // shared colinear wall along x = 0
+                (2, 3, Some(0), None),    // perpendicular wall crossing at (0,0)
+            ],
+        );
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+        assert_eq!(
+            bsp.segs.iter().filter(|s| s.linedef == Some(0)).count(),
+            2,
+            "the two-sided colinear wall starts as two segs"
+        );
+        let all: Vec<usize> = (0..bsp.segs.len()).collect();
+        // Partition along x = 0, from (0,-32) pointing north.
+        let part = GlPartition::new(0, -32 << 16, 0, 64 << 16);
+        let (mut front, mut back) = bsp.split_set(all, &part).unwrap();
+
+        bsp.add_minisegs(&part, &mut front, &mut back).unwrap();
+
+        // The colinear wall and its partner were each force-split at (0,0).
+        assert_eq!(
+            bsp.segs.iter().filter(|s| s.linedef == Some(0)).count(),
+            4,
+            "colinear wall + partner each split at the interior event"
+        );
+        // Involution and mirrored span hold over every seg after the co-split.
+        for (i, s) in bsp.segs.iter().enumerate() {
+            if let Some(p) = s.partner {
+                assert_eq!(bsp.segs[p].partner, Some(i), "partner involution holds");
+                assert_eq!(bsp.segs[i].v1, bsp.segs[p].v2, "mirrored span");
+                assert_eq!(bsp.segs[i].v2, bsp.segs[p].v1, "mirrored span");
+            }
+        }
+        // The interior split vertex (0,0) is shared by fragments on both sides.
+        let mid = bsp.dedup[&(0, 0)];
+        assert!(
+            bsp.segs.iter().any(|s| s.linedef == Some(0) && s.v2 == mid),
+            "a colinear fragment ends at the interior vertex"
+        );
+        assert!(
+            bsp.segs.iter().any(|s| s.linedef == Some(0) && s.v1 == mid),
+            "a colinear fragment starts at the interior vertex"
+        );
     }
 }

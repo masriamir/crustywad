@@ -183,6 +183,72 @@ pub(super) fn clockwise_order(
     }
 }
 
+/// Orders directions `a` and `b` by their **counter-clockwise** angle from
+/// reference direction `ref` — the exact mirror of [`clockwise_order`], with the
+/// same `atan2`-free integer frame transform.
+///
+/// This is required by the GL miniseg loop checks (Notes §Q2): ZDBSP's
+/// `CheckLoopStart` minimizes `splitAngle - segAngle` (a clockwise extremum,
+/// served by [`clockwise_order`]), but `CheckLoopEnd` minimizes
+/// `segAngle - (splitAngle + ANGLE_180)` — a *counter-clockwise* extremum from
+/// the negated reference. In BAM angles increase counter-clockwise, so the two
+/// functions pick opposite rotational extrema and need distinct comparators; a
+/// single "smallest clockwise angle" rule reproduces `CheckLoopStart` but not
+/// `CheckLoopEnd` (they differ by 180°, verified against `nodebuild_gl.cpp`).
+///
+/// Each direction transforms into `ref`'s frame as `(x', y')` where `x' = d·ref`
+/// (dot, `i128`) and `y' = ref×d` (cross, `i128`); `y' > 0` is the
+/// counter-clockwise half-plane. Directions bucket into a CCW half-plane rank —
+/// rank 0: on-`ref` (`y' == 0 && x' > 0`); rank 1: counter-clockwise side
+/// (`y' > 0`); rank 2: anti-`ref` (`y' == 0 && x' < 0`); rank 3: clockwise side
+/// (`y' < 0`) — monotonic in CCW angle, so a smaller rank orders first. Within
+/// one rank the two directions are ordered by the sign of their frame cross
+/// product `a×b = a_x'·b_y' − a_y'·b_x'` reversed relative to
+/// [`clockwise_order`] (`> 0` ⇒ `b` is CCW-after `a` ⇒ `a` orders first); equal
+/// directions compare `Equal`.
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) miniseg loop checks.
+// `similar_names`: the `*_dx`/`*_dy` names mirror `clockwise_order`'s contract.
+#[allow(dead_code, clippy::similar_names)]
+pub(super) fn counter_clockwise_order(
+    ref_dx: i64,
+    ref_dy: i64,
+    a_dx: i64,
+    a_dy: i64,
+    b_dx: i64,
+    b_dy: i64,
+) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+    // Frame transform: x' = d·ref (dot), y' = ref×d (cross), both in i128.
+    let frame = |dx: i64, dy: i64| -> (i128, i128) {
+        let dot = i128::from(dx) * i128::from(ref_dx) + i128::from(dy) * i128::from(ref_dy);
+        let cross = i128::from(ref_dx) * i128::from(dy) - i128::from(ref_dy) * i128::from(dx);
+        (dot, cross)
+    };
+    // Counter-clockwise half-plane rank: monotonic in CCW angle from ref.
+    let rank = |x: i128, y: i128| -> u8 {
+        match y.cmp(&0) {
+            Ordering::Equal => {
+                if x > 0 {
+                    0
+                } else {
+                    2
+                }
+            }
+            Ordering::Greater => 1,
+            Ordering::Less => 3,
+        }
+    };
+    let (ax, ay) = frame(a_dx, a_dy);
+    let (bx, by) = frame(b_dx, b_dy);
+    match rank(ax, ay).cmp(&rank(bx, by)) {
+        // Within an equal rank, order by CCW angle: a×b = ax·by − ay·bx > 0 ⇒ b
+        // is counter-clockwise of a ⇒ a has the smaller CCW angle ⇒ a first. This
+        // is the reverse of `clockwise_order`'s within-rank comparison.
+        Ordering::Equal => (ay * bx).cmp(&(ax * by)),
+        other => other,
+    }
+}
+
 /// The partition-candidate score (ADR-0024 §B.3, lower wins):
 /// `split_cost · split + |front − back|`, plus the diagonal penalty
 /// `(front + back + split) / aa_preference` when `diagonal` — a larger
@@ -331,6 +397,34 @@ mod tests {
         assert_eq!(clockwise_order(1, 0, 2, 2, 5, 5), Ordering::Equal);
         // On-ref beats everything.
         assert_eq!(clockwise_order(1, 0, 7, 0, 0, -1), Ordering::Less);
+    }
+
+    /// Exact counter-clockwise ordering: the mirror of `clockwise_order`, used by
+    /// the GL miniseg `CheckLoopEnd` port.
+    #[test]
+    fn counter_clockwise_order_ranks_directions_exactly() {
+        use core::cmp::Ordering;
+        // ref = east. Counter-clockwise from east: north (0,1) before west (-1,0)
+        // before south (0,-1) — the exact reverse of the clockwise sweep.
+        assert_eq!(
+            counter_clockwise_order(1, 0, 0, 1, -1, 0),
+            Ordering::Less,
+            "north precedes west going CCW from east"
+        );
+        assert_eq!(counter_clockwise_order(1, 0, -1, 0, 0, -1), Ordering::Less);
+        assert_eq!(counter_clockwise_order(1, 0, 0, 1, 0, -1), Ordering::Less);
+        // On-ref beats everything.
+        assert_eq!(counter_clockwise_order(1, 0, 1, 0, 0, 1), Ordering::Less);
+        // Within the CCW half-plane, a smaller CCW angle orders first:
+        // (1,1) at 45° precedes (1,2) at ~63°.
+        assert_eq!(counter_clockwise_order(1, 0, 1, 1, 1, 2), Ordering::Less);
+        // Same direction, different magnitude: equal.
+        assert_eq!(counter_clockwise_order(1, 0, 2, 2, 5, 5), Ordering::Equal);
+        // It is the exact reverse of clockwise_order for distinct non-ref dirs.
+        assert_eq!(
+            counter_clockwise_order(1, 0, 0, -1, -1, 0),
+            clockwise_order(1, 0, 0, -1, -1, 0).reverse()
+        );
     }
 
     /// The 0.5-unit epsilon is strict: distance² < 1/4 ⇔ 4·cross² < len².
