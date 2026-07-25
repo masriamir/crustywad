@@ -56,5 +56,6 @@ implementation begins.**
 | [0023](0023-audio-layer.md) | The audio layer — DMX sound, MUS music, instrument banks, Raven scripts, and Doom 64 containers | Accepted |
 | [0024](0024-nodebuilder.md) | The nodebuilder — clean-room BLOCKMAP, REJECT, and classic BSP generation | Accepted |
 | [0025](0025-extended-node-formats.md) | Extended and GL node-format reading | Accepted |
+| [0026](0026-gl-node-building.md) | GL node building and the XGLN/XGL2/XGL3 extended-node writer | Proposed |
 
 <!-- Add new ADRs to the table above in ascending order. -->
