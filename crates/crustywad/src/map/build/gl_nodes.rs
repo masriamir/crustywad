@@ -1441,7 +1441,7 @@ impl<'a> GlBsp<'a> {
     /// Appends a partner-less **connecting miniseg** `from → to` to the working
     /// seg arena (ADR-0026 §2 leaf closing, Notes §Q5 `PushConnectingGLSeg`):
     /// `linedef: None`, `partner: None`, `side: 0`, `side_sector` from the leaf's
-    /// dominant sector. It becomes a real seg in the output subsector loop, so it
+    /// sector. It becomes a real seg in the output subsector loop, so it
     /// is cap-checked and registered in the incident lists like any other seg.
     /// Returns its working id.
     ///
@@ -1517,7 +1517,9 @@ impl<'a> GlBsp<'a> {
         }
 
         // Midpoint pivot (exact, no division): endpoint coordinate sums and count.
-        let n = i64::try_from(segs.len() * 2).unwrap_or(i64::MAX);
+        let n = i64::try_from(segs.len())
+            .unwrap_or(i64::MAX)
+            .saturating_mul(2);
         let (mut sum_x, mut sum_y) = (0i64, 0i64);
         for &s in &segs {
             for e in [self.segs[s].v1, self.segs[s].v2] {
@@ -1526,10 +1528,10 @@ impl<'a> GlBsp<'a> {
                 sum_y += i64::from(y);
             }
         }
-        // The dominant sector for connecting minisegs — the leaf's first seg's
-        // sector (all equal in a single-sector leaf; the render-convention sector
-        // for a lenient mixed-sector leaf).
-        let dominant = self.segs[segs[0]].side_sector;
+        // The sector for connecting minisegs — the leaf's first seg's sector (all
+        // equal in a single-sector leaf; the render-convention sector for a
+        // lenient mixed-sector leaf).
+        let leaf_sector = self.segs[segs[0]].side_sector;
 
         let mut remaining = segs;
         let start = remaining.remove(0);
@@ -1557,14 +1559,14 @@ impl<'a> GlBsp<'a> {
                 }
             }
             let c = remaining.remove(best);
-            let mini = self.push_connecting_miniseg(target, self.segs[c].v1, dominant)?;
+            let mini = self.push_connecting_miniseg(target, self.segs[c].v1, leaf_sector)?;
             order.push(mini);
             order.push(c);
             prev = c;
         }
         // Close the final gap back to the first vertex.
         if self.segs[prev].v2 != start_v1 {
-            let mini = self.push_connecting_miniseg(self.segs[prev].v2, start_v1, dominant)?;
+            let mini = self.push_connecting_miniseg(self.segs[prev].v2, start_v1, leaf_sector)?;
             order.push(mini);
         }
         Ok(order)

@@ -448,6 +448,9 @@ fn assert_subsectors_convex(map: &Map, built: &BuiltGlNodes, warnings: &[NodeBui
                 }
             }
         }
+        // Intentional no-assert: if every turn was collinear (`sign` still 0), the
+        // subsector is a fully degenerate line with no orientation to test — a
+        // valid convex extreme, not a failure. There is nothing to assert here.
     }
 }
 
@@ -558,6 +561,28 @@ fn build_gl_nodes_two_room_doorway_partners_the_shared_wall() {
     );
 
     validate_gl_bsp(&map, &built, &warnings);
+
+    // Explicit root-last check on this driver fixture: the last node is the tree
+    // root (referenced by no other node), and every non-root node is referenced
+    // exactly once as a child.
+    let mut refcount = vec![0usize; built.nodes.len()];
+    for n in &built.nodes {
+        for child in [n.right, n.left] {
+            if let GlNodeChild::Node(k) = child {
+                refcount[k.0] += 1;
+            }
+        }
+    }
+    let root = built.nodes.len() - 1;
+    assert_eq!(
+        refcount[root], 0,
+        "the root (last node) is referenced by no node"
+    );
+    for (i, &c) in refcount.iter().enumerate() {
+        if i != root {
+            assert_eq!(c, 1, "non-root node {i} is referenced exactly once");
+        }
+    }
 
     // The two-sided shared wall yields at least one mutual-partner seg pair.
     let mut found_pair = false;
@@ -714,6 +739,24 @@ fn build_gl_nodes_fractional_split_makes_off_lattice_vertex() {
     assert!(
         off_lattice,
         "an off-lattice partition intersection yields a fractional GL vertex: {:?}",
+        built.gl_vertices
+    );
+
+    // Stronger: the off-lattice vertex is actually *wired into the geometry* — at
+    // least one emitted seg endpoint resolves to a `GlVertexRef::Gl` whose GL
+    // vertex carries non-integral coordinates (not merely present in the arena).
+    let endpoint_off_lattice = built.segs.iter().any(|s| {
+        [s.start, s.end].into_iter().any(|r| match r {
+            GlVertexRef::Gl(v) => {
+                let gv = built.gl_vertices[v.0];
+                gv.x.fract() != 0.0 || gv.y.fract() != 0.0
+            }
+            GlVertexRef::Normal(_) => false,
+        })
+    });
+    assert!(
+        endpoint_off_lattice,
+        "a seg endpoint references a fractional GL vertex: {:?}",
         built.gl_vertices
     );
 }
