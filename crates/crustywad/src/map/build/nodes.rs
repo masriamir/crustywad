@@ -692,7 +692,7 @@ fn partition_delta_fits(pdx: i64, pdy: i64) -> bool {
 /// Above this working-set size the partition search evaluates every
 /// `ceil(n / SAMPLE_BUDGET)`-th candidate first, falling back to all candidates
 /// only if the sample finds none (§B.1). Correctness never depends on it.
-const SAMPLE_BUDGET: usize = 512;
+pub(super) const SAMPLE_BUDGET: usize = 512;
 
 /// Builds the classic BSP tree for `map` (ADR-0024 §2, spec §A–D, issue #315).
 ///

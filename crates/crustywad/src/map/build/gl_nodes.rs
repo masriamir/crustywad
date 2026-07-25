@@ -13,6 +13,8 @@
 
 use std::collections::HashMap;
 
+use super::geom;
+use super::nodes::SAMPLE_BUDGET;
 use super::{NodeBuildError, NodeBuildOptions, NodeBuildWarning};
 use crate::Strictness;
 use crate::map::doom::{Narrower, narrow_vertices};
@@ -84,6 +86,40 @@ impl GlPartition {
             pdy,
             len2,
         }
+    }
+}
+
+/// How a seg sits relative to a GL partition line (§B.2) — the fixed-space twin
+/// of the classic kernel's `Class`. Colinear segs (both endpoints on the line)
+/// are tracked apart from segs with genuine off-line extent so the convexity
+/// test can distinguish them; a straddler is [`GlClass::Split`] **only** when its
+/// rounded intersection is strictly interior (the §C.3 endpoint-coincidence
+/// collapse is already folded in), so a candidate whose "splits" all collapse to
+/// one side is scored as leaving the other side empty. A single classification
+/// decision is shared by [`GlBsp::select`]'s scoring and the split routing (via
+/// [`GlBsp::classify_seg`]) so the two can never disagree.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)] // Consumed by the partition/split passes (Tasks 4, 6).
+enum GlClass {
+    /// Genuine extent on the front (right) half-plane (includes a straddler that
+    /// collapsed to the front by the §C.3 endpoint rule).
+    Front,
+    /// Genuine extent on the back (left) half-plane (includes a §C.3 collapse).
+    Back,
+    /// Both endpoints on the line, same direction as the partition → front side.
+    ColinearFront,
+    /// Both endpoints on the line, opposite direction → back side.
+    ColinearBack,
+    /// Strictly straddling with a strictly-interior rounded intersection at
+    /// `(x, y)` (16.16), guaranteed distinct from either endpoint.
+    Split(i32, i32),
+}
+
+impl GlClass {
+    /// Whether a non-splitting seg routes to the front side when partitioned.
+    #[allow(dead_code)] // Consumed by the split pass (Task 4).
+    fn is_front(self) -> bool {
+        matches!(self, GlClass::Front | GlClass::ColinearFront)
     }
 }
 
@@ -276,6 +312,297 @@ impl<'a> GlBsp<'a> {
             GlVertexRef::Gl(GlVertexIdx(idx - self.map_vertex_count))
         }
     }
+
+    /// Whether every seg in `set` faces the same sector (§C.1). Minisegs carry a
+    /// real `side_sector`, so no seg needs special-casing here.
+    #[allow(dead_code)] // Consumed by the partition pass (Task 6).
+    fn single_sector(&self, set: &[usize]) -> bool {
+        let first = self.segs[set[0]].side_sector;
+        set.iter().all(|&id| self.segs[id].side_sector == first)
+    }
+
+    /// The exact `i128` cross product of the partition direction with the vector
+    /// from the line start to the 16.16 vertex `v`: `> 0` front, `< 0` back
+    /// (§B.2, engine convention `R_PointOnSide`). Wide because a 16.16 delta can
+    /// reach `2³²`, overflowing the classic `i64` cross.
+    #[allow(dead_code)] // Consumed by the partition/split passes (Tasks 4, 6).
+    fn cross(&self, part: &GlPartition, v: usize) -> i128 {
+        let (qx, qy) = self.verts[v];
+        geom::cross_from_start_wide(
+            i64::from(qx) - part.pxi,
+            i64::from(qy) - part.pyi,
+            part.pdx,
+            part.pdy,
+        )
+    }
+
+    /// Whether wide cross product `c` places its vertex **less than** 0.5 fixed
+    /// units from the line (strict; a vertex exactly 0.5 units off counts as a
+    /// side, not on the line).
+    #[allow(dead_code)] // Consumed by the partition/split passes (Tasks 4, 6).
+    fn on_line(part: &GlPartition, c: i128) -> bool {
+        geom::within_half_fixed_unit(c, part.len2)
+    }
+
+    /// Classifies seg `s` against `part` (§B.2) in fixed space, folding in the
+    /// §C.3 endpoint-coincidence collapse so the result is **exactly** what the
+    /// split routing will do — the single source of truth that keeps
+    /// [`select`](Self::select) and the split pass in agreement. Colinear segs
+    /// (both endpoints on-line) route by **orientation**: the dot of the seg
+    /// direction with the partition direction `> 0` → [`GlClass::ColinearFront`],
+    /// else [`GlClass::ColinearBack`] (source-verified ZDBSP rule, Notes §Q6).
+    #[allow(dead_code)] // Consumed by the partition/split passes (Tasks 4, 6).
+    fn classify_seg(&self, part: &GlPartition, s: &GlWorkSeg) -> GlClass {
+        let c1 = self.cross(part, s.v1);
+        let c2 = self.cross(part, s.v2);
+        let (on1, on2) = (Self::on_line(part, c1), Self::on_line(part, c2));
+        let front = u8::from(!on1 && c1 > 0) + u8::from(!on2 && c2 > 0);
+        let back = u8::from(!on1 && c1 < 0) + u8::from(!on2 && c2 < 0);
+
+        if front > 0 && back > 0 {
+            // Strict straddler. Compute where the split would actually land, on
+            // the seg's own linedef geometry (§C.3), and collapse to a side if
+            // the rounded point coincides with an endpoint.
+            let Some((mx, my)) = self.intersection(s, part) else {
+                // Parallel to its own canonical line — impossible for a genuine
+                // straddler; never divide by zero (Global Constraint 9).
+                debug_assert!(
+                    false,
+                    "a straddling seg cannot be parallel to the partition"
+                );
+                return GlClass::Front;
+            };
+            let ec1 = self.verts[s.v1];
+            let ec2 = self.verts[s.v2];
+            // A rounded split on an endpoint means the seg no longer straddles
+            // after rounding — it collapses to the *other* endpoint's side.
+            if (mx, my) == ec1 {
+                return if c2 > 0 {
+                    GlClass::Front
+                } else {
+                    GlClass::Back
+                };
+            }
+            if (mx, my) == ec2 {
+                return if c1 > 0 {
+                    GlClass::Front
+                } else {
+                    GlClass::Back
+                };
+            }
+            return GlClass::Split(mx, my);
+        }
+        if front > 0 {
+            GlClass::Front
+        } else if back > 0 {
+            GlClass::Back
+        } else {
+            // Colinear (both endpoints on-line): assign by orientation (§Q6).
+            let (sx1, sy1) = self.verts[s.v1];
+            let (sx2, sy2) = self.verts[s.v2];
+            let dot = i128::from(part.pdx) * (i128::from(sx2) - i128::from(sx1))
+                + i128::from(part.pdy) * (i128::from(sy2) - i128::from(sy1));
+            // A genuine colinear seg lies on the same nonzero-length line as the
+            // partition, so its direction is (anti)parallel and the dot is
+            // nonzero; a zero dot is impossible. Route Back if it somehow occurs.
+            debug_assert!(
+                dot != 0,
+                "a colinear seg has a nonzero dot with the partition"
+            );
+            if dot > 0 {
+                GlClass::ColinearFront
+            } else {
+                GlClass::ColinearBack
+            }
+        }
+    }
+
+    /// The rounded intersection of `part`'s line with seg `s`'s **canonical**
+    /// geometry (§C.3), or `None` if they are parallel. For a real linedef the
+    /// intersection is computed on the linedef's own start→end vertices (via
+    /// [`verts`](Self::verts)), so both segs of a two-sided linedef split at the
+    /// identical vertex (crack-freedom); a miniseg (`linedef: None`) uses its own
+    /// `v1`→`v2`.
+    ///
+    /// The parametric solution is exact rational integer arithmetic — `num` and
+    /// `den` are `i128` cross products, and each axis is
+    /// `line_v1 + round_half_away_rational(num · delta_axis, den)`. This replaces
+    /// ZDBSP's `double` + truncation with exact round-half-away integers (a
+    /// documented divergence). `den == 0` (parallel) yields `None`.
+    ///
+    /// The result lies within the seg's bounding range by construction (an
+    /// intersection point of a bounded seg with a line it straddles), so both
+    /// axes fit `i32`; a hand-built out-of-range fixture trips the `debug_assert`
+    /// and returns `None` (treated as parallel — a conservative non-split) rather
+    /// than truncating silently.
+    // `similar_names`: the `l*`/`p*` coordinate pairs mirror the classic
+    // kernel's `intersection` naming; renaming obscures the parametric form.
+    #[allow(dead_code, clippy::similar_names)] // Consumed by the split pass (Task 4).
+    fn intersection(&self, s: &GlWorkSeg, part: &GlPartition) -> Option<(i32, i32)> {
+        // Canonical line endpoints: the source linedef's vertices for a real
+        // seg, the seg's own endpoints for a miniseg.
+        let (lv1, lv2) = match s.linedef {
+            Some(li) => {
+                let ld = &self.map.linedefs()[li];
+                (self.verts[ld.start.0], self.verts[ld.end.0])
+            }
+            None => (self.verts[s.v1], self.verts[s.v2]),
+        };
+        let (lsx, lsy) = lv1;
+        let (lex, ley) = lv2;
+        let ldx = i128::from(lex) - i128::from(lsx);
+        let ldy = i128::from(ley) - i128::from(lsy);
+        // num = cross((partition start − line start), partition direction).
+        let num = (i128::from(part.px) - i128::from(lsx)) * i128::from(part.pdy)
+            - (i128::from(part.py) - i128::from(lsy)) * i128::from(part.pdx);
+        // den = cross(line direction, partition direction).
+        let den = ldx * i128::from(part.pdy) - ldy * i128::from(part.pdx);
+        if den == 0 {
+            return None; // parallel — no unique intersection
+        }
+        let mx = i128::from(lsx) + round_half_away_rational(num * ldx, den);
+        let my = i128::from(lsy) + round_half_away_rational(num * ldy, den);
+        if let (Ok(mx), Ok(my)) = (i32::try_from(mx), i32::try_from(my)) {
+            Some((mx, my))
+        } else {
+            debug_assert!(
+                false,
+                "intersection of a bounded seg fits i32 by construction"
+            );
+            None
+        }
+    }
+
+    /// Selects the best splitter in `set` (§B), or `None` if the set is convex
+    /// (no valid partition). `relaxed` switches to the sector-separating validity
+    /// rule (§C.2). Ties break toward the lowest seg id (determinism). Minisegs
+    /// may serve as candidates (their line is a former partition).
+    #[allow(dead_code)] // Consumed by the partition pass (Task 6).
+    fn select(&self, set: &[usize], relaxed: bool) -> Option<usize> {
+        let n = set.len();
+        let stride = if n > SAMPLE_BUDGET {
+            n.div_ceil(SAMPLE_BUDGET)
+        } else {
+            1
+        };
+        let mut best: Option<(u64, usize)> = None;
+        self.eval_candidates(set, relaxed, (0..n).step_by(stride), &mut best);
+        if best.is_none() && stride > 1 {
+            // The sample found nothing; correctness requires the full pass.
+            self.eval_candidates(set, relaxed, 0..n, &mut best);
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// Scores the candidates at `positions` in `set`, updating `best`. Mirrors
+    /// the classic kernel's `eval_candidates`: the same normal (§B.3) and relaxed
+    /// (§C.2) validity rules, scored via [`geom::partition_score`] (counts are
+    /// format-independent). `side_sector` is the facing sector for the
+    /// sector-separation checks.
+    #[allow(dead_code)] // Consumed by the partition pass (Task 6).
+    fn eval_candidates<I: IntoIterator<Item = usize>>(
+        &self,
+        set: &[usize],
+        relaxed: bool,
+        positions: I,
+        best: &mut Option<(u64, usize)>,
+    ) {
+        for pos in positions {
+            let cand = set[pos];
+            let s = self.segs[cand];
+            let (px, py) = self.verts[s.v1];
+            let (x2, y2) = self.verts[s.v2];
+            let pdx = i64::from(x2) - i64::from(px);
+            let pdy = i64::from(y2) - i64::from(py);
+            // §B.1: only a seg whose deltas fit the on-disk `i32` node field can
+            // be a splitter (it still participates as content).
+            if !partition_delta_fits_gl(pdx, pdy) {
+                continue;
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let part = GlPartition::new(px, py, pdx as i32, pdy as i32);
+            if part.len2 == 0 {
+                continue; // a degenerate zero-length fragment cannot partition
+            }
+            // Full front/back counts (colinear included) drive scoring; the
+            // non-colinear counts drive the normal convexity test. Because
+            // `classify_seg` reports the *post-rounding* outcome, these counts
+            // match the split routing exactly.
+            let (mut nf, mut nb, mut nsp) = (0usize, 0usize, 0usize);
+            let (mut front_solid, mut back_solid) = (0usize, 0usize);
+            for &sid in set {
+                match self.classify_seg(&part, &self.segs[sid]) {
+                    GlClass::Front => {
+                        nf += 1;
+                        front_solid += 1;
+                    }
+                    GlClass::Back => {
+                        nb += 1;
+                        back_solid += 1;
+                    }
+                    GlClass::ColinearFront => nf += 1,
+                    GlClass::ColinearBack => nb += 1,
+                    GlClass::Split(..) => nsp += 1,
+                }
+            }
+            let valid = if relaxed {
+                // §C.2: a line separating segs of different sectors — both sides
+                // non-empty, colinear segs counted (a two-sided shared line's
+                // opposite colinear segs are what separate the sectors).
+                (nf + nsp) > 0 && (nb + nsp) > 0
+            } else {
+                // §B.3: a line that genuinely partitions — a split, or
+                // NON-colinear content on both sides. A splitter's own colinear
+                // seg does not, alone, make its line a valid partition.
+                nsp > 0 || (front_solid > 0 && back_solid > 0)
+            };
+            if !valid {
+                continue;
+            }
+            let score = geom::partition_score(
+                nf,
+                nb,
+                nsp,
+                self.split_cost,
+                self.aa_preference,
+                pdx != 0 && pdy != 0,
+            );
+            let better = match *best {
+                None => true,
+                Some((bscore, bid)) => score < bscore || (score == bscore && cand < bid),
+            };
+            if better {
+                *best = Some((score, cand));
+            }
+        }
+    }
+}
+
+/// Whether a partition delta fits the XGL3 on-disk `i32` node `dx`/`dy` field
+/// (§B.1): a seg can serve as a splitter only if its 16.16 `v2 - v1` fits `i32`
+/// on both axes. The fixed-space analog of the classic `partition_delta_fits`
+/// (whose ceiling is the on-disk `i16`); the range is the full signed `i32`.
+#[allow(dead_code)] // Consumed by the partition pass (Task 6).
+fn partition_delta_fits_gl(pdx: i64, pdy: i64) -> bool {
+    i32::try_from(pdx).is_ok() && i32::try_from(pdy).is_ok()
+}
+
+/// Integer round-half-away-from-zero division of `a / b` (`b != 0`): the exact
+/// rounding used by [`GlBsp::intersection`] in place of ZDBSP's `double` +
+/// truncation. Ties (`|remainder| · 2 == |b|`) round away from zero; exact
+/// quotients are returned unchanged. Correct in every sign quadrant.
+#[allow(dead_code)] // Consumed by the split pass (Task 4).
+fn round_half_away_rational(a: i128, b: i128) -> i128 {
+    debug_assert!(
+        b != 0,
+        "round_half_away_rational requires a nonzero denominator"
+    );
+    // Normalize the denominator positive so the truncated remainder's sign
+    // tracks the numerator's, making the tie test symmetric across quadrants.
+    let (a, b) = if b < 0 { (-a, -b) } else { (a, b) };
+    let q = a / b;
+    let r = a % b;
+    if 2 * r.abs() >= b { q + a.signum() } else { q }
 }
 
 #[cfg(test)]
@@ -470,5 +797,89 @@ mod tests {
         assert_eq!(bsp.vertex_ref(2), GlVertexRef::Normal(VertexIdx(2)));
         assert_eq!(bsp.vertex_ref(3), GlVertexRef::Gl(GlVertexIdx(0)));
         assert_eq!(bsp.vertex_ref(5), GlVertexRef::Gl(GlVertexIdx(2)));
+    }
+
+    /// Integer round-half-away-from-zero division, exact in every quadrant.
+    #[test]
+    fn round_half_away_rational_rounds_half_away_from_zero() {
+        assert_eq!(round_half_away_rational(1, 2), 1);
+        assert_eq!(round_half_away_rational(-1, 2), -1);
+        assert_eq!(round_half_away_rational(3, 4), 1);
+        assert_eq!(round_half_away_rational(7, 2), 4);
+        // Exact division is returned unchanged.
+        assert_eq!(round_half_away_rational(4, 2), 2);
+        assert_eq!(round_half_away_rational(-6, 3), -2);
+        // Sign combinations: the denominator's sign must not skew the rounding.
+        assert_eq!(round_half_away_rational(1, -2), -1);
+        assert_eq!(round_half_away_rational(-1, -2), 1);
+        assert_eq!(round_half_away_rational(-3, 4), -1);
+    }
+
+    /// A candidate's fixed-space deltas may serve as a splitter only when both
+    /// fit the XGL3 on-disk `i32` `dx`/`dy` field.
+    #[test]
+    fn partition_delta_fits_gl_bounds() {
+        // The widest 16.16 delta a Doom `i16` coordinate can span — `i16::MIN`
+        // widened by 16 bits — is exactly `i32::MIN`, and still fits.
+        let widest = i64::from(i32::from(i16::MIN) << 16);
+        assert!(partition_delta_fits_gl(widest, 0));
+        assert!(partition_delta_fits_gl(0, widest));
+        // One past `i32::MAX` does not.
+        assert!(!partition_delta_fits_gl(1_i64 << 31, 0));
+        assert!(!partition_delta_fits_gl(0, 1_i64 << 31));
+    }
+
+    /// A seg lying on the partition routes by orientation: same direction as the
+    /// partition → `ColinearFront`, reversed → `ColinearBack` (Notes §Q6).
+    #[test]
+    fn colinear_segs_route_by_orientation() {
+        let map = build_map(&[(0.0, 0.0), (64.0, 0.0)], &[(0, 1, Some(0), None)]);
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.verts = vec![(0, 0), (64, 0)];
+        let part = GlPartition::new(0, 0, 64, 0);
+
+        let forward = GlWorkSeg {
+            v1: 0,
+            v2: 1,
+            linedef: None,
+            side: 0,
+            side_sector: 0,
+            partner: None,
+        };
+        let reversed = GlWorkSeg {
+            v1: 1,
+            v2: 0,
+            linedef: None,
+            side: 0,
+            side_sector: 0,
+            partner: None,
+        };
+        assert_eq!(bsp.classify_seg(&part, &forward), GlClass::ColinearFront);
+        assert_eq!(bsp.classify_seg(&part, &reversed), GlClass::ColinearBack);
+    }
+
+    /// A genuine pre-rounding straddler whose rounded intersection lands exactly
+    /// on an endpoint collapses to the *other* endpoint's side (§C.3), never
+    /// `Split`. Fixture: partition `(0,0)+(3,2)`, seg `(1,0)→(-1,3)` — both
+    /// endpoints strictly off-line and on opposite sides, yet the exact rounded
+    /// intersection is `(1,0)` (the seg's own `v1`), so the seg classifies to the
+    /// side of the far endpoint (`Back`, since `v2`'s cross is negative).
+    #[test]
+    fn classify_agrees_with_endpoint_collapse() {
+        let map = build_map(&[(1.0, 0.0), (-1.0, 3.0)], &[(0, 1, Some(0), None)]);
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.verts = vec![(1, 0), (-1, 3)];
+        let part = GlPartition::new(0, 0, 3, 2);
+        let seg = GlWorkSeg {
+            v1: 0,
+            v2: 1,
+            linedef: Some(0),
+            side: 0,
+            side_sector: 0,
+            partner: None,
+        };
+
+        assert_eq!(bsp.intersection(&seg, &part), Some((1, 0)));
+        assert_eq!(bsp.classify_seg(&part, &seg), GlClass::Back);
     }
 }
