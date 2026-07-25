@@ -46,6 +46,7 @@ use crate::map::DoomWriteError;
 use crate::map::doom::DoomWriteWarning;
 
 mod blockmap;
+mod geom;
 mod nodes;
 mod oneshot;
 mod reject;

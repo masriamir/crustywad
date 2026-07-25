@@ -1,6 +1,6 @@
 # ADR-0026: GL node building and the XGLN/XGL2/XGL3 extended-node writer
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-25
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/345
