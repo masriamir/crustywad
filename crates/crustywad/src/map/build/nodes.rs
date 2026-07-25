@@ -1181,9 +1181,9 @@ impl<'a> Bsp<'a> {
         set.iter().all(|&id| self.segs[id].side_sector == first)
     }
 
-    /// The exact `i64` cross product of the partition direction with the vector
-    /// from the line start to vertex `e`: `> 0` front, `< 0` back (§B.2, engine
-    /// convention `R_PointOnSide`, `src/doom/r_main.c:145`).
+    /// The signed side of vertex `e` against the partition line: `> 0` front,
+    /// `< 0` back (§B.2). See [`geom::cross_from_start`] for the formula and
+    /// engine-convention citation.
     fn cross(&self, part: &Partition, e: usize) -> i64 {
         let (qx, qy) = self.coord(e);
         geom::cross_from_start(
@@ -1195,9 +1195,8 @@ impl<'a> Bsp<'a> {
     }
 
     /// Whether cross product `c` places its vertex **less than** 0.5 map units
-    /// from the line (`distance² < 1/4 ⇔ cross² < len²/4 ⇔ 4·cross² < len²`;
-    /// exact in `i128`). The inequality is strict: a vertex exactly 0.5 units
-    /// off counts as front or back, not on the line.
+    /// from the line. See [`geom::within_half_unit`] for the formula and the
+    /// strict-boundary rationale.
     fn on_line(part: &Partition, c: i64) -> bool {
         geom::within_half_unit(c, part.len2)
     }

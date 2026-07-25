@@ -273,9 +273,13 @@ unit and property coverage (§6).
 **Leaf finalization.** A subsector's segs are ordered into their closed
 convex loop (each seg's end vertex is the next seg's start vertex,
 wrapping) — the property that makes on-disk implicit-`v2` decode correct.
-A leaf that cannot close into a single loop is strict-error /
-lenient-warn-and-emit (best-effort ordering), the mixed-sector-fan
-pattern; the mixed-sector-fan handling itself carries over with identical
+Gaps in that loop — where a seg's end vertex is not the next seg's start —
+are closed by partner-less **connecting minisegs** in **both** modes as
+normal operation, matching the source-verified ZDBSP `CloseSubsector`
+behavior. The strict error (`DegenerateLeaf`) is reserved for a leaf with
+fewer than 3 distinct vertices, which cannot form a loop at all; lenient
+mode emits such a leaf as-is with a `NodeBuildWarning::DegenerateLeaf`.
+The mixed-sector-fan handling itself carries over with identical
 semantics.
 
 **Discipline.** Explicit work stack (no call recursion); live-seg growth
