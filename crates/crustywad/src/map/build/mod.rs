@@ -53,6 +53,7 @@ mod oneshot;
 mod reject;
 
 pub use blockmap::build_blockmap;
+pub use gl_nodes::{BuiltGlNode, BuiltGlNodes, build_gl_nodes};
 pub use nodes::{BuiltNodeLumps, BuiltNodes, build_nodes};
 pub use oneshot::add_doom_map_with_nodes;
 pub use reject::build_reject;
@@ -268,6 +269,21 @@ pub enum NodeBuildError {
         /// The number of segs in the offending convex subsector.
         subsector_segs: usize,
     },
+    /// A GL convex leaf could not be ordered into a closed loop because it has
+    /// fewer than 3 distinct vertices after spawn-table expansion (ADR-0026 §2,
+    /// #363) — a sliver a GL subsector cannot represent. Strict mode rejects it;
+    /// lenient mode emits the leaf as-is and warns
+    /// ([`NodeBuildWarning::DegenerateLeaf`]). The GL leaf-closing pass produces
+    /// this only for adversarial or already-degenerate input; well-formed
+    /// geometry never trips it. The classic (non-GL) pass has no analog — it never
+    /// orders segs into a GL loop.
+    #[error(
+        "a GL convex leaf of {subsector_segs} segs has fewer than 3 distinct vertices and cannot close a loop"
+    )]
+    DegenerateLeaf {
+        /// The number of segs in the offending degenerate leaf.
+        subsector_segs: usize,
+    },
     /// A partition line chosen by the selector (ADR-0024 §B) failed to separate
     /// its seg set into two non-empty sides. `select` only returns a candidate
     /// whose classification places content on both sides, so this is an
@@ -335,7 +351,7 @@ impl NodeBuildError {
     pub fn is_lenient_recoverable(&self) -> bool {
         match self {
             Self::Write(inner) => inner.is_lenient_recoverable(),
-            Self::MixedSectorSubsector { .. } => true,
+            Self::MixedSectorSubsector { .. } | Self::DegenerateLeaf { .. } => true,
             Self::EmptyGeometry
             | Self::BlockmapOverflow { .. }
             | Self::TooManyElements { .. }
@@ -404,6 +420,40 @@ pub enum NodeStructureError {
         /// The size of the referenced arena.
         bound: usize,
     },
+    /// GL seg `seg` references a vertex outside its arena (ADR-0026 §1, #363): a
+    /// [`GlVertexRef::Normal`](crate::map::graph::GlVertexRef::Normal) at or
+    /// above `orig_vertex_count`, or a
+    /// [`GlVertexRef::Gl`](crate::map::graph::GlVertexRef::Gl) at or above the
+    /// `gl_vertices` count. `bound` is the size of whichever arena the reference
+    /// addresses.
+    #[error("GL seg {seg} references a vertex outside its {bound}-entry arena")]
+    GlVertexRef {
+        /// Index of the offending GL seg.
+        seg: usize,
+        /// The size of the arena the out-of-range reference addresses.
+        bound: usize,
+    },
+    /// GL seg `seg`'s partner link is not a mirrored involution (ADR-0026 §1,
+    /// #363): its partner does not point back at it, points at itself, or the two
+    /// spans are not mirror images (`seg.start == partner.end` and
+    /// `seg.end == partner.start`).
+    #[error("GL seg {seg} and its partner {partner} are not a mirrored involution")]
+    PartnerAsymmetry {
+        /// Index of the offending GL seg.
+        seg: usize,
+        /// The partner index it names.
+        partner: usize,
+    },
+    /// GL subsector `subsector`'s seg loop does not close (ADR-0026 §1, #363):
+    /// seg `seg`'s end vertex is not the next seg's start vertex (cyclically),
+    /// so the run is not a closed polygon.
+    #[error("GL subsector {subsector} seg {seg} does not connect to the next seg (open loop)")]
+    OpenLoop {
+        /// Index of the offending subsector.
+        subsector: usize,
+        /// The seg index whose end breaks the loop.
+        seg: usize,
+    },
 }
 
 #[cfg(test)]
@@ -416,6 +466,8 @@ mod tests {
         assert!(
             NodeBuildError::MixedSectorSubsector { subsector_segs: 3 }.is_lenient_recoverable()
         );
+        // Strict-only: lenient emits the degenerate GL leaf as-is with a warning.
+        assert!(NodeBuildError::DegenerateLeaf { subsector_segs: 2 }.is_lenient_recoverable());
 
         // Both-modes structural / hardening errors: lenient does not recover.
         assert!(!NodeBuildError::EmptyGeometry.is_lenient_recoverable());
@@ -537,6 +589,18 @@ pub enum NodeBuildWarning {
     )]
     MixedSectorSubsector {
         /// The number of segs in the accepted mixed-sector subsector.
+        subsector_segs: usize,
+    },
+    /// Lenient mode: a GL convex leaf had fewer than 3 distinct vertices after
+    /// spawn-table expansion (ADR-0026 §2, #363) — a sliver a GL subsector cannot
+    /// properly represent. It was emitted as-is (its segs in expansion order,
+    /// unordered into a loop); the strict-mode counterpart is
+    /// [`NodeBuildError::DegenerateLeaf`]. Emitted **once per such leaf**.
+    #[error(
+        "a GL convex leaf of {subsector_segs} segs has fewer than 3 distinct vertices; emitted as-is"
+    )]
+    DegenerateLeaf {
+        /// The number of segs in the emitted degenerate leaf.
         subsector_segs: usize,
     },
 }
