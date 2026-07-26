@@ -21,7 +21,7 @@ use crustywad::map::build::{
     BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat,
     add_doom_map_with_nodes, build_gl_nodes,
 };
-use crustywad::map::{GlNodeChild, GlVertexRef, Map};
+use crustywad::map::{GlNodeChild, GlVertexRef, Map, NodeChild};
 use crustywad::{ParseOptions, Wad, WadBuilder, WadKind, WriteOptions};
 use proptest::prelude::*;
 
@@ -906,6 +906,44 @@ fn assert_round_trip(src_map: &Map, built: &BuiltGlNodes, reread: &Map) {
             bn.dy >> 16,
             "node {i} partition dy truncates to whole"
         );
+        // Bounding boxes are whole map units on both sides — no truncation, so
+        // the reader's `[i32; 4]` equals the built `[i32; 4]` exactly.
+        assert_eq!(
+            rn.right_bbox, bn.right_bbox,
+            "node {i} right bbox round-trips exactly"
+        );
+        assert_eq!(
+            rn.left_bbox, bn.left_bbox,
+            "node {i} left bbox round-trips exactly"
+        );
+        // Children map across the two structurally-identical child enums.
+        assert!(
+            child_matches(rn.right, bn.right),
+            "node {i} right child round-trips ({:?} vs {:?})",
+            rn.right,
+            bn.right
+        );
+        assert!(
+            child_matches(rn.left, bn.left),
+            "node {i} left child round-trips ({:?} vs {:?})",
+            rn.left,
+            bn.left
+        );
+    }
+}
+
+/// Whether a reader [`NodeChild`] denotes the same child as a built
+/// [`GlNodeChild`]: same variant, same index. The two enums are structurally
+/// identical but distinct types (reader `NodeIdx`/`SubsectorIdx` vs built
+/// `GlNodeIdx`/`GlSubsectorIdx`), so a small local mapping bridges them.
+fn child_matches(reader: NodeChild, built: GlNodeChild) -> bool {
+    use crustywad::map::{GlNodeIdx, GlSubsectorIdx, NodeIdx, SubsectorIdx};
+    match (reader, built) {
+        (NodeChild::Node(NodeIdx(a)), GlNodeChild::Node(GlNodeIdx(b))) => a == b,
+        (NodeChild::Subsector(SubsectorIdx(a)), GlNodeChild::Subsector(GlSubsectorIdx(b))) => {
+            a == b
+        }
+        _ => false,
     }
 }
 
