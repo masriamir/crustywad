@@ -2458,7 +2458,7 @@ mod tests {
     /// When a seg is split but its partner is *not* being routed by the current
     /// `split_set`, the partner's new co-split fragment is parked in the spawn
     /// table under the partner's id, awaiting the container that still holds the
-    /// partner (drain points (b)/(c), Task 6).
+    /// partner (drain points (b)/(c)).
     #[test]
     fn co_split_fragment_lands_in_spawn_table_for_foreign_container() {
         let map = two_room_map();
@@ -2703,7 +2703,7 @@ mod tests {
         );
     }
 
-    // --- Task 6: driver, leaf closing, BuiltGlNodes + validate ---------------
+    // --- Driver, leaf closing, BuiltGlNodes + validate -----------------------
 
     use crate::map::build::NodeStructureError;
     use crate::map::graph::{GlSeg, GlSegIdx, GlSubsector};
