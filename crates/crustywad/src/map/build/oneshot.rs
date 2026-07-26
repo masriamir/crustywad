@@ -93,8 +93,9 @@ use super::{
 ///   [`NodeBuildError::CompressionUnavailable`]).
 /// - For a GL format, the errors documented on
 ///   [`BuiltGlNodes::to_extended_lump_bytes`](super::BuiltGlNodes::to_extended_lump_bytes)
-///   propagate instead (e.g. [`NodeBuildError::UnsupportedNodeFormat`],
-///   [`NodeBuildError::CompressionUnavailable`]).
+///   propagate instead (e.g. [`NodeBuildError::TooManyElements`] when the GL arena
+///   overflows the extended index space, or [`NodeBuildError::Write`] wrapping a
+///   coordinate that will not narrow).
 pub fn add_doom_map_with_nodes(
     builder: &mut WadBuilder,
     name: &str,

@@ -131,18 +131,28 @@ This is why converting real maps with `--nodes` often needs `--lenient`: the
 warning names an inherent property of the source geometry, not a defect the
 builder could fix.
 
-## When you still need an external nodebuilder
+## What the library generates, and when you still need an external nodebuilder
 
-The clean-room builder targets the **classic 16-bit tier only** — vanilla-layout
-`SEGS`/`SSECTORS`/`NODES`, which covers every real classic map with wide margin
-(ADR-0024 §1). It does **not** generate GL nodes or the extended/compressed
-encodings (`XNOD`/`ZNOD`, GL variants). For those, the long-standing recipe
-still applies: run an external nodebuilder (`zdbsp`, `bsp`, …) over the output.
+The clean-room builder now spans three tiers of output:
 
-`crustywad` *reads* both the ZDoom extended family and classic GL nodes (ADR-0025 and its
+- **Classic 16-bit** — vanilla-layout `SEGS`/`SSECTORS`/`NODES`, which covers every
+  real classic map with wide margin (ADR-0024 §1). This is `NodeFormat::Classic`.
+- **Non-GL extended** — the `XNOD` stream (and its zlib twin `ZNOD`, behind
+  `extended-nodes-zlib`) via `build_nodes` + `BuiltNodes::to_extended_lump_bytes`,
+  lifting the vanilla node ceilings (ADR-0025 §Amendment #323).
+- **GL extended** — the `XGL3` stream (and its zlib twin `ZGL3`) via `build_gl_nodes`
+  + `BuiltGlNodes::to_extended_lump_bytes`, or the `add_doom_map_with_nodes` one-shot,
+  which carries the GL stream in `SSECTORS` (ADR-0026, #364).
+
+`crustywad` *reads* the full ZDoom extended family and classic GL nodes (ADR-0025 and its
 amendments, `Extended nodes` milestone, #199/#324) — see
 [Extended node encodings](map-records.md#extended-node-encodings) and
-[Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide. *Generating*
-GL/extended nodes is a separate, still-open follow-up (issue #323) that this clean-room
-builder does not cover. A `cwad build --nodes` for authoring a WAD from loose lumps is
-deferred to issue #320 — today the node-building CLI surface is `cwad convert --nodes`.
+[Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide.
+
+Two gaps remain. First, the intermediate GL dialects `XGL2`/`XGLN` are not yet generated
+(tracked in epic #345); for those, run an external nodebuilder (`zdbsp`, `bsp`, …) over the
+output. Second, the CLI does **not** yet expose GL emission: `cwad convert --nodes` targets the
+classic and non-GL extended formats (see the `--node-format` table above) and `cwad build
+--nodes` emits classic lumps only, so wiring `XGL3`/`ZGL3` into the CLI is a later sub-issue of
+epic #345 — today the library API (`build_gl_nodes` / `add_doom_map_with_nodes`) is the way to
+write GL nodes.
