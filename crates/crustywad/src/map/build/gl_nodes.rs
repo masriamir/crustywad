@@ -2167,7 +2167,15 @@ impl BuiltGlNodes {
                 None => 0xFFFF_FFFF,
             };
             out.extend_from_slice(&linedef.to_le_bytes());
-            out.push(s.side);
+            // Canonicalize `side` on the way out, mirroring the reader's
+            // `raw.side != 0` interpretation and the classic writer's
+            // normalization: linedef-backed segs emit a strict 0/1 flag, and
+            // minisegs always emit 0 (the `BuiltGlNodes::segs` convention).
+            out.push(if s.linedef.is_some() {
+                u8::from(s.side != 0)
+            } else {
+                0
+            });
         }
 
         // --- Node block: numNodes, then i32 16.16 partition + 2x i16 bbox + children. ---
@@ -3155,6 +3163,23 @@ mod tests {
         let mut expected = b"XGL3".to_vec();
         expected.extend(golden_xgl3_body());
         assert_eq!(bytes, expected);
+    }
+
+    /// The on-disk `side` byte is canonicalized: linedef-backed segs emit a
+    /// strict 0/1 flag (a hand-built `side: 2` clamps to 1) and minisegs
+    /// always emit 0, matching the reader's `raw.side != 0` semantics.
+    #[test]
+    fn writer_canonicalizes_the_side_byte() {
+        let mut built = golden_fixture_twin();
+        built.segs[0].side = 2; // linedef-backed: clamps to 1
+        built.segs[1].side = 1; // miniseg: forced to 0
+        let bytes = built.to_extended_lump_bytes(4, NodeFormat::Xgl3).unwrap();
+        // Layout: tag(4) + vertex header(8) + subsector block(12) +
+        // seg count(4) = 28; each seg record is 13 bytes with `side` last.
+        let seg_side = |i: usize| bytes[28 + i * 13 + 12];
+        assert_eq!(seg_side(0), 1);
+        assert_eq!(seg_side(1), 0);
+        assert_eq!(seg_side(2), 0);
     }
 
     #[test]
