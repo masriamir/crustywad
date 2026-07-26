@@ -601,9 +601,7 @@ impl<'a> GlBsp<'a> {
     /// `colinear` tags a colinear seg incident here (see
     /// [`EventAccumulator::record`]).
     fn record_event(&mut self, part: &GlPartition, vertex: usize, colinear: Option<(bool, usize)>) {
-        let (vx, vy) = self.verts[vertex];
-        let key = i128::from(part.pdx) * (i128::from(vx) - i128::from(part.px))
-            + i128::from(part.pdy) * (i128::from(vy) - i128::from(part.py));
+        let key = self.event_key(part, vertex);
         self.events.record(key, vertex, colinear);
     }
 
