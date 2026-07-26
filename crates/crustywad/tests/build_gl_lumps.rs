@@ -17,11 +17,11 @@
 
 mod common;
 
-use crustywad::Wad;
 use crustywad::map::build::{
-    BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, build_gl_nodes,
+    BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat, build_gl_nodes,
 };
 use crustywad::map::{GlNodeChild, GlVertexRef, Map};
+use crustywad::{ParseOptions, Wad};
 use proptest::prelude::*;
 
 // --- WAD-building helpers (mirrors build_lumps.rs) ---------------------------
@@ -108,13 +108,28 @@ fn sector_bytes(tag: i16) -> Vec<u8> {
     .concat()
 }
 
-/// Assembles a Doom map from vertices and general linedefs. Each linedef is
-/// `(start, end, right_sector, left_sector)`: a `Some(sector)` side gets a fresh
-/// sidedef facing that sector; a `None` side is the `0xffff` "no sidedef"
-/// sentinel. Two-sided (both sides present) linedefs get the two-sided flag.
-/// Enough sectors are emitted to cover the highest referenced index. Copied from
-/// `build_lumps.rs` so the GL fixtures build through the same public path.
-fn assemble_general(points: &[(i16, i16)], lines: &[(u16, u16, Option<u16>, Option<u16>)]) -> Map {
+/// One linedef of a general fixture: `(start, end, right_sector, left_sector)` —
+/// a `Some(sector)` side gets a sidedef facing that sector, a `None` side is the
+/// `0xffff` "no sidedef" sentinel.
+type Line = (u16, u16, Option<u16>, Option<u16>);
+
+/// The five classic map lumps (raw on-disk bytes) for a fixture, in WAD order —
+/// the geometry an extended-node round-trip re-synthesizes around a rebuilt
+/// `SEGS`/`SSECTORS`/`NODES` triple (see [`reread_via_ssectors`]).
+struct MapLumps {
+    things: Vec<u8>,
+    linedefs: Vec<u8>,
+    sidedefs: Vec<u8>,
+    vertexes: Vec<u8>,
+    sectors: Vec<u8>,
+}
+
+/// Builds the five classic map lumps from vertices and general linedefs. Each
+/// linedef is `(start, end, right_sector, left_sector)`: a `Some(sector)` side
+/// gets a fresh sidedef facing that sector; a `None` side is the `0xffff` "no
+/// sidedef" sentinel. Two-sided (both sides present) linedefs get the two-sided
+/// flag. Enough sectors are emitted to cover the highest referenced index.
+fn map_lumps_general(points: &[(i16, i16)], lines: &[Line]) -> MapLumps {
     let mut linedefs = Vec::new();
     let mut sidedefs = Vec::new();
     let mut next_side: u16 = 0;
@@ -151,17 +166,34 @@ fn assemble_general(points: &[(i16, i16)], lines: &[(u16, u16, Option<u16>, Opti
     for i in 0..=max_sector {
         sectors.extend(sector_bytes(i16::try_from(i).unwrap()));
     }
-    let bytes = common::build_doom_map_wad(
-        "MAP01",
-        thing_bytes(0, 0, 0, 1, 7),
+    MapLumps {
+        things: thing_bytes(0, 0, 0, 1, 7),
         linedefs,
         sidedefs,
-        vertexes_bytes(points),
+        vertexes: vertexes_bytes(points),
         sectors,
+    }
+}
+
+/// Assembles a classic Doom `Map` from the five map lumps.
+fn assemble_from_lumps(lumps: &MapLumps) -> Map {
+    let bytes = common::build_doom_map_wad(
+        "MAP01",
+        lumps.things.clone(),
+        lumps.linedefs.clone(),
+        lumps.sidedefs.clone(),
+        lumps.vertexes.clone(),
+        lumps.sectors.clone(),
     );
     let wad = Wad::from_bytes(bytes).expect("fixture WAD parses");
     let group = wad.map_group("MAP01").expect("map group present");
     Map::assemble(&wad, &group).expect("map assembles")
+}
+
+/// Assembles a Doom map from vertices and general linedefs. Copied from
+/// `build_lumps.rs` so the GL fixtures build through the same public path.
+fn assemble_general(points: &[(i16, i16)], lines: &[Line]) -> Map {
+    assemble_from_lumps(&map_lumps_general(points, lines))
 }
 
 // --- Oracle -----------------------------------------------------------------
@@ -590,7 +622,15 @@ fn build_gl_nodes_two_room_doorway_partners_the_shared_wall() {
 /// right). Linedef 2 is the only two-sided line — the doorway. Mirrors the
 /// kernel's own `two_room_correct` fixture.
 fn two_room_doorway_map() -> Map {
-    let points = [
+    let (points, lines) = two_room_doorway_geometry();
+    assemble_general(&points, &lines)
+}
+
+/// The two-room-doorway geometry as `(points, lines)` — factored out so the
+/// write→read round-trip fixture can rebuild the same map lumps around a
+/// re-synthesized extended-node stream.
+fn two_room_doorway_geometry() -> (Vec<(i16, i16)>, Vec<Line>) {
+    let points = vec![
         (0i16, 0i16), // 0
         (0, 64),      // 1
         (64, 64),     // 2
@@ -598,7 +638,7 @@ fn two_room_doorway_map() -> Map {
         (128, 0),     // 4
         (128, 64),    // 5
     ];
-    let lines = [
+    let lines = vec![
         (0u16, 1u16, Some(0u16), None), // west, room 0
         (1, 2, Some(0), None),          // north, room 0
         (2, 3, Some(0), Some(1)),       // SHARED wall (right = room 0, left = room 1)
@@ -607,7 +647,7 @@ fn two_room_doorway_map() -> Map {
         (5, 4, Some(1), None),          // east, room 1
         (4, 3, Some(1), None),          // south, room 1
     ];
-    assemble_general(&points, &lines)
+    (points, lines)
 }
 
 /// A single-sector "dumbbell": two square rooms joined by a narrow corridor, all
@@ -685,24 +725,7 @@ fn corridor_room_map() -> Map {
 /// a non-integral `f64` coordinate, i.e. that 16.16 sub-unit precision survives.
 #[test]
 fn build_gl_nodes_fractional_split_makes_off_lattice_vertex() {
-    // A rectangle-ish outline with a downward "V" notch bitten out of the right
-    // edge: the notch tip at (90,80) and the two diagonal notch walls
-    // (200,150)->(90,80) and (90,80)->(200,151) are what a partition slices at a
-    // fractional point.
-    let points = [
-        (0i16, 0i16),
-        (200, 0),
-        (200, 150),
-        (90, 80), // notch tip (reflex)
-        (200, 151),
-        (200, 300),
-        (0, 300),
-    ];
-    let mut lines = Vec::new();
-    let n = u16::try_from(points.len()).unwrap();
-    for i in 0..n {
-        lines.push((i, (i + 1) % n, Some(0u16), None));
-    }
+    let (points, lines) = fractional_chevron_geometry();
     let map = assemble_general(&points, &lines);
     let (built, warnings) = build_gl_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
     assert!(
@@ -741,6 +764,29 @@ fn build_gl_nodes_fractional_split_makes_off_lattice_vertex() {
     );
 }
 
+/// The fractional-chevron geometry as `(points, lines)`: a rectangle-ish outline
+/// with a downward "V" notch bitten out of the right edge — the notch tip at
+/// (90,80) and the two diagonal notch walls (200,150)->(90,80) and
+/// (90,80)->(200,151) are what a partition slices at a fractional point. Factored
+/// out so the round-trip fixture can rebuild the same lumps.
+fn fractional_chevron_geometry() -> (Vec<(i16, i16)>, Vec<Line>) {
+    let points = vec![
+        (0i16, 0i16),
+        (200, 0),
+        (200, 150),
+        (90, 80), // notch tip (reflex)
+        (200, 151),
+        (200, 300),
+        (0, 300),
+    ];
+    let mut lines = Vec::new();
+    let n = u16::try_from(points.len()).unwrap();
+    for i in 0..n {
+        lines.push((i, (i + 1) % n, Some(0u16), None));
+    }
+    (points, lines)
+}
+
 /// Determinism: the same map built twice yields byte-identical arenas (the full
 /// [`BuiltGlNodes`] compares equal via its derived `PartialEq`).
 #[test]
@@ -753,6 +799,204 @@ fn build_gl_nodes_is_deterministic() {
         .expect("builds")
         .0;
     assert_eq!(a, b, "GL node building is deterministic");
+}
+
+// --- Write→read round-trip through the SSECTORS carrier ----------------------
+
+/// Re-synthesizes a WAD around `lumps` — the original THINGS/LINEDEFS/SIDEDEFS/
+/// VERTEXES/SECTORS — plus a rebuilt node triple (`SEGS = b""`, `SSECTORS =
+/// stream`, `NODES = b""`), then assembles it strict. The empty `NODES` makes the
+/// assembler's binary-path dispatch fall through to `SSECTORS`, where the extended
+/// `XGL3`/`ZGL3` stream is probed and decoded into the graph's
+/// `MapSeg`/`MapSubsector`/`MapNode` arenas.
+fn reread_via_ssectors(lumps: &MapLumps, stream: &[u8]) -> Map {
+    let bytes = common::build_doom_map_wad_with_lumps(
+        "MAP01",
+        lumps.things.clone(),
+        lumps.linedefs.clone(),
+        lumps.sidedefs.clone(),
+        lumps.vertexes.clone(),
+        lumps.sectors.clone(),
+        &[("SEGS", b""), ("SSECTORS", stream), ("NODES", b"")],
+    );
+    let wad = Wad::from_bytes(bytes).expect("reread WAD parses");
+    let group = wad.map_group("MAP01").expect("reread map group present");
+    Map::assemble_with_options(&wad, &group, ParseOptions::strict())
+        .expect("extended-node stream decodes")
+}
+
+/// The 16.16 fixed-point coordinates of a reader seg endpoint, resolved through
+/// the reread map's combined vertex table (the original `VERTEXES` first, then the
+/// stream's appended GL vertices). The recovered value is exact: an original
+/// vertex is a whole-unit `f64` and an appended GL vertex was decoded as
+/// `fixed / 65536.0` (a power-of-two divide), so `* 65536` inverts both losslessly
+/// — the exact counterpart of [`gl_ref_fixed`] on the build side.
+fn reader_vertex_fixed(map: &Map, v: usize) -> (i64, i64) {
+    let mv = map.vertices()[v];
+    #[allow(clippy::cast_possible_truncation)]
+    let fx = (mv.x * 65536.0).round() as i64;
+    #[allow(clippy::cast_possible_truncation)]
+    let fy = (mv.y * 65536.0).round() as i64;
+    (fx, fy)
+}
+
+/// Asserts everything the writer→reader pair must preserve, excluding the two
+/// documented reader losses (partner links, dropped; fractional node partitions,
+/// truncated `>> 16`). The seg and subsector arenas are index-aligned — the writer
+/// emits them in build order and the reader reads them back in the same order — so
+/// `built.*[i]` corresponds to `reread.*()[i]`.
+fn assert_round_trip(src_map: &Map, built: &BuiltGlNodes, reread: &Map) {
+    // Seg count round-trips exactly.
+    assert_eq!(
+        reread.segs().len(),
+        built.segs.len(),
+        "seg count round-trips"
+    );
+    for (i, (bs, rs)) in built.segs.iter().zip(reread.segs()).enumerate() {
+        // Per-seg linedef Option: a miniseg's `None` survives.
+        assert_eq!(rs.linedef, bs.linedef, "seg {i} linedef option round-trips");
+        // Direction is derived from the on-disk side bit.
+        assert_eq!(
+            rs.direction,
+            u16::from(bs.side != 0),
+            "seg {i} direction == u16::from(side != 0)"
+        );
+        // Endpoints via implicit-v2 reconstruction: the reader's start/end resolve
+        // (through the combined vertex table) to the built seg's flattened refs.
+        assert_eq!(
+            reader_vertex_fixed(reread, rs.start.0),
+            gl_ref_fixed(src_map, built, bs.start),
+            "seg {i} start endpoint reconstructs"
+        );
+        assert_eq!(
+            reader_vertex_fixed(reread, rs.end.0),
+            gl_ref_fixed(src_map, built, bs.end),
+            "seg {i} end endpoint reconstructs (implicit v2)"
+        );
+    }
+
+    // Subsector seg ranges round-trip exactly.
+    assert_eq!(
+        reread.subsectors().len(),
+        built.subsectors.len(),
+        "subsector count round-trips"
+    );
+    for (i, (bss, rss)) in built.subsectors.iter().zip(reread.subsectors()).enumerate() {
+        assert_eq!(rss.segs, bss.segs, "subsector {i} seg range round-trips");
+    }
+
+    // Node partitions: the reader truncates the 16.16 partition to whole units
+    // (`>> 16`) — a documented loss, so compare against the shifted built value.
+    assert_eq!(
+        reread.nodes().len(),
+        built.nodes.len(),
+        "node count round-trips"
+    );
+    for (i, (bn, rn)) in built.nodes.iter().zip(reread.nodes()).enumerate() {
+        assert_eq!(rn.x, bn.x >> 16, "node {i} partition x truncates to whole");
+        assert_eq!(rn.y, bn.y >> 16, "node {i} partition y truncates to whole");
+        assert_eq!(
+            rn.dx,
+            bn.dx >> 16,
+            "node {i} partition dx truncates to whole"
+        );
+        assert_eq!(
+            rn.dy,
+            bn.dy >> 16,
+            "node {i} partition dy truncates to whole"
+        );
+    }
+}
+
+/// The doorway map (a two-sided shared wall forcing a node and a partnered seg
+/// pair) survives a full XGL3 write→read round-trip through the SSECTORS carrier:
+/// every preserved field matches, with the two documented losses excluded.
+#[test]
+fn xgl3_round_trips_through_the_reader_on_the_doorway_map() {
+    let (points, lines) = two_room_doorway_geometry();
+    let lumps = map_lumps_general(&points, &lines);
+    let map = assemble_from_lumps(&lumps);
+    let (built, warnings) = build_gl_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
+    assert!(warnings.is_empty(), "doorway builds strict-clean");
+    assert!(!built.nodes.is_empty(), "the shared wall forces a node");
+
+    let orig = map.vertices().len();
+    let stream = built
+        .to_extended_lump_bytes(orig, NodeFormat::Xgl3)
+        .expect("XGL3 stream serializes");
+    let reread = reread_via_ssectors(&lumps, &stream);
+    assert_round_trip(&map, &built, &reread);
+}
+
+/// The same doorway map round-trips through the zlib-compressed `ZGL3` container
+/// (feature-gated), yielding the identical decoded arenas its `XGL3` twin does.
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn zgl3_round_trips_the_same_map() {
+    let (points, lines) = two_room_doorway_geometry();
+    let lumps = map_lumps_general(&points, &lines);
+    let map = assemble_from_lumps(&lumps);
+    let (built, warnings) = build_gl_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
+    assert!(warnings.is_empty(), "doorway builds strict-clean");
+
+    let orig = map.vertices().len();
+    let stream = built
+        .to_extended_lump_bytes(orig, NodeFormat::Zgl3)
+        .expect("ZGL3 stream serializes");
+    let reread = reread_via_ssectors(&lumps, &stream);
+    assert_round_trip(&map, &built, &reread);
+}
+
+/// Fractional GL vertices survive the 16.16 vertex header: the chevron fixture's
+/// off-lattice split vertices re-read (beyond `orig_vertex_count`) with the exact
+/// non-integral coordinates the builder produced.
+#[test]
+fn xgl3_preserves_fractional_gl_vertices_through_the_header() {
+    let (points, lines) = fractional_chevron_geometry();
+    let lumps = map_lumps_general(&points, &lines);
+    let map = assemble_from_lumps(&lumps);
+    let (built, warnings) = build_gl_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
+    assert!(warnings.is_empty(), "chevron builds strict-clean");
+    assert!(
+        !built.gl_vertices.is_empty(),
+        "the fractional split produces GL vertices"
+    );
+
+    let orig = map.vertices().len();
+    let stream = built
+        .to_extended_lump_bytes(orig, NodeFormat::Xgl3)
+        .expect("XGL3 stream serializes");
+    let reread = reread_via_ssectors(&lumps, &stream);
+
+    // Every appended reader vertex (beyond the originals) equals the built GL
+    // vertex it came from — compared in 16.16 fixed space, where both sides
+    // recover their exact on-disk value (`fixed / 65536.0` inverts losslessly),
+    // so the comparison is integral and exact.
+    assert_eq!(
+        reread.vertices().len(),
+        orig + built.gl_vertices.len(),
+        "the reader appends exactly the built GL vertices"
+    );
+    let mut saw_fractional = false;
+    for (k, gv) in built.gl_vertices.iter().enumerate() {
+        assert_eq!(
+            reader_vertex_fixed(&reread, orig + k),
+            gl_ref_fixed(
+                &map,
+                &built,
+                GlVertexRef::Gl(crustywad::map::GlVertexIdx(k))
+            ),
+            "GL vertex {k} coordinates survive the 16.16 header"
+        );
+        if gv.x.fract() != 0.0 || gv.y.fract() != 0.0 {
+            saw_fractional = true;
+        }
+    }
+    assert!(
+        saw_fractional,
+        "at least one appended GL vertex is non-integral: {:?}",
+        built.gl_vertices
+    );
 }
 
 // --- Proptest ----------------------------------------------------------------
