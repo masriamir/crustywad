@@ -1584,7 +1584,7 @@ impl<'a> GlBsp<'a> {
     ///
     /// [`close_leaf`](Self::close_leaf)'s errors, and
     /// [`NodeBuildError::TooManyElements`] when the GL vertex, seg, subsector, or
-    /// node arena exceeds [`MAX_EXTENDED_INDEX`] (GL is always extended, so the
+    /// node arena exceeds `MAX_EXTENDED_INDEX` (GL is always extended, so the
     /// classic vanilla soft ceilings and the `u16` linedef gate do not apply).
     fn finish(mut self) -> Result<(BuiltGlNodes, Vec<NodeBuildWarning>), NodeBuildError> {
         // (c) Re-expand and close each leaf into an ordered loop. Taking `leaves`
@@ -1812,7 +1812,7 @@ fn encode_gl_child(child: GlNodeChild) -> Result<u32, NodeBuildError> {
 }
 
 /// The extended-arena ceiling (controller resolution 8): GL is always an extended
-/// format, so every arena is checked against [`MAX_EXTENDED_INDEX`] in **both**
+/// format, so every arena is checked against `MAX_EXTENDED_INDEX` in **both**
 /// strictness modes — there is no vanilla `u16` soft ceiling, and no `u16`
 /// linedef gate (GL seg linedef refs are 32-bit capable; emission ceilings are
 /// #364's concern).
@@ -2065,7 +2065,7 @@ impl BuiltGlNodes {
     ///   Unreachable while that variant is feature-gated (it cannot be named
     ///   without the feature); kept for the #365 auto-format future.
     /// - [`NodeBuildError::TooManyElements`] when an arena count or a child/index
-    ///   reference exceeds the 32-bit [`MAX_EXTENDED_INDEX`] cap (or the 31 bits
+    ///   reference exceeds the 32-bit `MAX_EXTENDED_INDEX` cap (or the 31 bits
     ///   the child leaf flag leaves free).
     /// - [`NodeBuildError::Write`] wrapping
     ///   [`DoomWriteError::ValueOutOfRange`](crate::map::DoomWriteError::ValueOutOfRange)
