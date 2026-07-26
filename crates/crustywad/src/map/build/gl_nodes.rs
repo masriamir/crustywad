@@ -1931,9 +1931,12 @@ impl BuiltGlNodes {
     /// naming the offending element and bound.
     pub fn validate(&self, orig_vertex_count: usize) -> Result<(), NodeBuildError> {
         // (1) Subsector seg ranges partition `segs` exactly, contiguous from 0.
+        // An empty run (`start == end`) is rejected too: a subsector with no
+        // segs cannot form a loop, and letting it through would make the
+        // closed-loop check below vacuously pass.
         let mut expected_start = 0usize;
         for (i, ss) in self.subsectors.iter().enumerate() {
-            if ss.segs.start != expected_start || ss.segs.end < ss.segs.start {
+            if ss.segs.start != expected_start || ss.segs.end <= ss.segs.start {
                 return Err(NodeStructureError::SubsectorRange {
                     subsector: i,
                     start: ss.segs.start,
@@ -2821,6 +2824,23 @@ mod tests {
     #[test]
     fn validate_accepts_a_well_formed_gl_square() {
         assert!(gl_square().validate(4).is_ok());
+    }
+
+    /// An empty subsector seg run cannot form a loop; `validate` must reject
+    /// it rather than let the closed-loop check pass vacuously.
+    #[test]
+    fn validate_rejects_empty_subsector_run() {
+        let mut built = gl_square();
+        built.subsectors.insert(0, GlSubsector { segs: 0..0 });
+        assert_eq!(
+            built.validate(4).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::SubsectorRange {
+                subsector: 0,
+                start: 0,
+                end: 0,
+                expected_start: 0,
+            }),
+        );
     }
 
     #[test]
