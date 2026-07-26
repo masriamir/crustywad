@@ -1038,12 +1038,13 @@ impl<'a> GlBsp<'a> {
     /// **before** the interval walk so every colinear span is exactly one event
     /// wide by the time the loop checks run.
     ///
-    /// Two-sided colinear segs are repaired through their front seg only (the
-    /// back partner co-splits automatically); one-sided colinear segs are repaired
-    /// on whichever side they routed to. Each new far fragment re-joins its
-    /// parent's out-set and each parked partner fragment joins the opposite
-    /// out-set — accumulated into locals first so the routed `front`/`back` are
-    /// not aliased while `self` is mutated.
+    /// Every colinear sharer on both sides is repaired: a two-sided seg co-splits
+    /// its partner as it goes, and a back seg already co-split by that partner's
+    /// own repair has no interior events left, so re-processing is a no-op. Each
+    /// new far fragment re-joins its parent's out-set (accumulated into locals
+    /// first so the routed `front`/`back` are not aliased while `self` is mutated);
+    /// parked partner fragments are delivered by the standard spawn drains, not
+    /// here.
     ///
     /// # Errors
     ///
@@ -1063,10 +1064,11 @@ impl<'a> GlBsp<'a> {
             .iter()
             .map(|(&k, e)| (k, e.vertex))
             .collect();
-        // Colinear segs to repair: every front colinear seg (its back partner
-        // co-splits), plus one-sided back colinear segs (no partner to ride
-        // along). Deduped and ordered for determinism (a colinear seg appears at
-        // both of its endpoint events).
+        // Colinear segs to repair: every colinear sharer on both sides. A back seg
+        // whose partner was already co-split by that partner's own repair has no
+        // interior events left, so re-processing it is a natural no-op — no need to
+        // filter two-sided backs out. Deduped and ordered for determinism (a
+        // colinear seg appears at both of its endpoint events).
         let mut fronts: Vec<usize> = self
             .events
             .events
@@ -1080,7 +1082,6 @@ impl<'a> GlBsp<'a> {
             .events
             .values()
             .flat_map(|e| e.colinear_back.iter().copied())
-            .filter(|&sid| self.segs[sid].partner.is_none())
             .collect();
         backs.sort_unstable();
         backs.dedup();
@@ -1101,9 +1102,15 @@ impl<'a> GlBsp<'a> {
     /// Force-splits one colinear seg `sid` at every event strictly interior to its
     /// span, folding the fragments into `add_front`/`add_back` by side (see
     /// [`fix_split_sharers`](Self::fix_split_sharers)). `home_front` marks whether
-    /// `sid` routed to the front out-set. New far fragments join the home side;
-    /// each co-split partner's parked fragment (from
-    /// [`split_seg_at`](Self::split_seg_at)) joins the opposite side.
+    /// `sid` routed to the front out-set; each new far fragment joins that home
+    /// side. Any partner co-split by [`split_seg_at`](Self::split_seg_at) parks its
+    /// new fragment in [`spawned`](Self::spawned); this function does **not** drain
+    /// those parked fragments — they are delivered by the standard spawn drains
+    /// (the `split_set` routing queue, the `process_split` set expansion, and the
+    /// `finish` leaf expansion), which reach every partner whether or not it is in
+    /// the current partition's sets. A sharer already co-split by an earlier
+    /// sibling's repair has no interior events left, so re-processing it is a
+    /// natural no-op.
     ///
     /// # Errors
     ///
@@ -1135,23 +1142,11 @@ impl<'a> GlBsp<'a> {
         let mut cur = sid;
         for v in interior {
             let (mx, my) = self.verts[v];
-            let partner_before = self.segs[cur].partner;
             let (_a, b) = self.split_seg_at(cur, mx, my)?;
             if home_front {
                 add_front.push(b);
             } else {
                 add_back.push(b);
-            }
-            // The partner's new co-split fragment was parked under the partner id;
-            // drain it into the opposite out-set.
-            if let Some(p) = partner_before
-                && let Some(frags) = self.spawned.remove(&p)
-            {
-                if home_front {
-                    add_back.extend(frags);
-                } else {
-                    add_front.extend(frags);
-                }
             }
             cur = b;
         }
