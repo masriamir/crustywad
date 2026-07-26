@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use super::geom;
-use super::nodes::{MAX_EXTENDED_INDEX, SAMPLE_BUDGET};
+use super::nodes::{MAX_EXTENDED_INDEX, SAMPLE_BUDGET, encode_index_u32};
 use super::{NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeStructureError};
 use crate::Strictness;
 use crate::map::doom::{Narrower, narrow_vertices};
@@ -1798,6 +1798,21 @@ fn child_of_gl_ref(child: TreeRef) -> GlNodeChild {
     }
 }
 
+/// Encodes a [`GlNodeChild`] as the GL extended stream's 32-bit child word: a
+/// subsector leaf sets bit 31 (`0x8000_0000`) over the index, an internal node
+/// stores the bare index (mirrors the classic kernel's `encode_extended_child`,
+/// `nodes.rs`).
+// Consumed by the XGL3 writer's node serialization (Task 2, #364).
+#[allow(dead_code)]
+fn encode_gl_child(child: GlNodeChild) -> Result<u32, NodeBuildError> {
+    match child {
+        GlNodeChild::Node(GlNodeIdx(i)) => encode_index_u32("nodes", i),
+        GlNodeChild::Subsector(GlSubsectorIdx(i)) => {
+            Ok(0x8000_0000 | encode_index_u32("subsectors", i)?)
+        }
+    }
+}
+
 /// The extended-arena ceiling (controller resolution 8): GL is always an extended
 /// format, so every arena is checked against [`MAX_EXTENDED_INDEX`] in **both**
 /// strictness modes — there is no vanilla `u16` soft ceiling, and no `u16`
@@ -2914,5 +2929,14 @@ mod tests {
                 "the closed 2-vertex loop passes validate",
             );
         }
+    }
+
+    #[test]
+    fn encode_gl_child_sets_bit_31_for_subsectors() {
+        assert_eq!(encode_gl_child(GlNodeChild::Node(GlNodeIdx(5))).unwrap(), 5);
+        assert_eq!(
+            encode_gl_child(GlNodeChild::Subsector(GlSubsectorIdx(5))).unwrap(),
+            0x8000_0005
+        );
     }
 }

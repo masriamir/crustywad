@@ -86,6 +86,12 @@ pub enum NodeFormat {
     /// `extended-nodes-zlib` feature.
     #[cfg(feature = "extended-nodes-zlib")]
     Znod,
+    /// The uncompressed `ZDoom` GL extended stream (`XGL3`, ADR-0026 §3).
+    Xgl3,
+    /// The zlib-compressed `ZDoom` GL extended stream (`ZGL3`), the GL twin of
+    /// `Znod`; requires the `extended-nodes-zlib` feature.
+    #[cfg(feature = "extended-nodes-zlib")]
+    Zgl3,
 }
 
 impl NodeFormat {
@@ -100,22 +106,42 @@ impl NodeFormat {
     pub(crate) fn is_extended(self) -> bool {
         match self {
             NodeFormat::Classic => false,
-            NodeFormat::Xnod => true,
+            NodeFormat::Xnod | NodeFormat::Xgl3 => true,
             #[cfg(feature = "extended-nodes-zlib")]
-            NodeFormat::Znod => true,
+            NodeFormat::Znod | NodeFormat::Zgl3 => true,
         }
     }
 
-    /// Whether this format's stream is zlib-compressed (`Znod`).
+    /// Whether this format's stream is zlib-compressed (`Znod`/`Zgl3`).
     #[must_use]
     pub(crate) fn compressed(self) -> bool {
         #[cfg(feature = "extended-nodes-zlib")]
         {
-            matches!(self, NodeFormat::Znod)
+            matches!(self, NodeFormat::Znod | NodeFormat::Zgl3)
         }
         #[cfg(not(feature = "extended-nodes-zlib"))]
         {
             false
+        }
+    }
+
+    /// Whether this is a GL format (`Xgl3`/`Zgl3`) rather than a classic/non-GL
+    /// extended one.
+    ///
+    /// Written as an exhaustive match rather than `matches!(_, Xgl3 | Zgl3)` so
+    /// a future `NodeFormat` variant cannot silently fall through unclassified —
+    /// adding one is a compile error here until it is placed on a side.
+    #[must_use]
+    // Consumed by the XGL3 writer dispatch (Task 2, #364).
+    #[allow(dead_code)]
+    pub(crate) fn is_gl(self) -> bool {
+        match self {
+            NodeFormat::Classic | NodeFormat::Xnod => false,
+            NodeFormat::Xgl3 => true,
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod => false,
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Zgl3 => true,
         }
     }
 }
@@ -293,6 +319,16 @@ pub enum NodeBuildError {
     /// variant that drives it does not exist without the feature.
     #[error("zlib compression requires the `extended-nodes-zlib` feature")]
     CompressionUnavailable,
+    /// A non-GL [`NodeFormat`] (`Classic`, `Xnod`, or `Znod`) was asked to
+    /// serialize GL node data — GL trees carry minisegs, partner links, and
+    /// fractional partitions that only the GL extended formats
+    /// (`Xgl3`/`Zgl3`) can represent. A caller-misuse guard, not reachable from
+    /// `build_nodes`/`build_gl_nodes` themselves.
+    #[error("node format {format:?} cannot serialize GL node data (GL extended formats only)")]
+    UnsupportedNodeFormat {
+        /// The non-GL format that was requested.
+        format: NodeFormat,
+    },
     /// A hand-built [`BuiltNodes`] — assembled via
     /// [`BuiltNodes::new`](crate::map::build::BuiltNodes::new) or by mutating its
     /// public fields — violates one of the type's documented structural
@@ -343,7 +379,8 @@ impl NodeBuildError {
             | Self::MinisegUnsupported { .. }
             | Self::DegeneratePartition { .. }
             | Self::InvalidStructure(_)
-            | Self::CompressionUnavailable => false,
+            | Self::CompressionUnavailable
+            | Self::UnsupportedNodeFormat { .. } => false,
         }
     }
 }
@@ -516,6 +553,21 @@ mod tests {
         {
             assert!(NodeFormat::Znod.is_extended());
             assert!(NodeFormat::Znod.compressed());
+        }
+    }
+
+    #[test]
+    fn gl_format_predicates() {
+        assert!(NodeFormat::Xgl3.is_gl());
+        assert!(NodeFormat::Xgl3.is_extended());
+        assert!(!NodeFormat::Xgl3.compressed());
+        assert!(!NodeFormat::Classic.is_gl());
+        assert!(!NodeFormat::Xnod.is_gl());
+        #[cfg(feature = "extended-nodes-zlib")]
+        {
+            assert!(NodeFormat::Zgl3.is_gl());
+            assert!(NodeFormat::Zgl3.is_extended());
+            assert!(NodeFormat::Zgl3.compressed());
         }
     }
 }

@@ -49,6 +49,8 @@ pub(super) fn bbox_union(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
 /// `build_nodes` creates split vertices as whole `i16`-range map units, so the
 /// product always fits `i32`; a hand-constructed out-of-range value is a
 /// defensive [`DoomWriteError::ValueOutOfRange`].
+///
+/// See also [`fixed_16_16_exact`], the GL kernel's fraction-preserving twin.
 pub(super) fn fixed_16_16(
     value: f64,
     field: &'static str,
@@ -64,6 +66,42 @@ pub(super) fn fixed_16_16(
             value: fixed,
         })
     })
+}
+
+/// Narrows a GL vertex coordinate to 16.16 fixed-point `i32` (`round(value *
+/// 65536)`), preserving the fractional part rather than pre-rounding to a
+/// whole unit first. Contrasts with [`fixed_16_16`]: that helper encodes
+/// whole-unit classic split vertices, while this one preserves fractional GL
+/// coordinates — GL vertices were created from fixed values (widened
+/// `raw << 16` plus any fixed-space splits), so recovery here is exact. An
+/// out-of-`i32`-range result is a defensive
+/// [`DoomWriteError::ValueOutOfRange`].
+// Consumed by the XGL3 writer's GL-vertex serialization (Task 2, #364).
+#[allow(dead_code)]
+#[allow(clippy::cast_possible_truncation)]
+pub(super) fn fixed_16_16_exact(
+    value: f64,
+    field: &'static str,
+    index: usize,
+) -> Result<i32, NodeBuildError> {
+    let fixed = (value * 65536.0).round();
+    let out_of_range = || {
+        NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
+            block: "gl vertex",
+            field,
+            index,
+            value: fixed as i64,
+        })
+    };
+    if !fixed.is_finite() {
+        return Err(out_of_range());
+    }
+    // `as i64` saturates rather than overflowing for a finite `fixed` outside
+    // the `i64` range (stable float-to-int cast semantics since Rust 1.45),
+    // so a too-large `fixed` lands at `i64::{MIN,MAX}` — far outside `i32`'s
+    // range too — and the `try_from` below rejects it; no separate `i64`
+    // bound check is needed.
+    i32::try_from(fixed as i64).map_err(|_| out_of_range())
 }
 
 /// The exact `i64` cross product of the partition direction `(pdx, pdy)` with
@@ -322,6 +360,18 @@ mod tests {
             fixed_16_16(f64::from(i16::MAX), "x", 0).unwrap(),
             32767 * 65536
         );
+    }
+
+    #[test]
+    fn fixed_16_16_exact_preserves_fractions() {
+        assert_eq!(fixed_16_16_exact(32.5, "x", 0).unwrap(), 32 * 65536 + 32768);
+        assert_eq!(fixed_16_16_exact(-0.25, "y", 0).unwrap(), -16384);
+        // Whole-unit inputs agree with `fixed_16_16`.
+        assert_eq!(
+            fixed_16_16_exact(32.0, "x", 0).unwrap(),
+            fixed_16_16(32.0, "x", 0).unwrap()
+        );
+        assert!(fixed_16_16_exact(1e10, "x", 0).is_err());
     }
 
     /// `cross_from_start` is the exact engine side test: positive = front/right of
