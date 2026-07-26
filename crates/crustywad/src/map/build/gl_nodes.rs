@@ -1483,36 +1483,17 @@ impl<'a> GlBsp<'a> {
     /// back to the first vertex is closed the same way. Connecting minisegs are
     /// **normal operation in both modes** (ZDBSP does this unconditionally).
     ///
-    /// A leaf with fewer than 3 distinct vertices after expansion cannot form a
-    /// loop: strict mode returns [`NodeBuildError::DegenerateLeaf`], lenient warns
-    /// ([`NodeBuildWarning::DegenerateLeaf`]) and returns the segs unordered.
+    /// A degenerate leaf (fewer than 3 distinct vertices) takes this same closing
+    /// path: a 1-seg leaf `A→B` closes to seg `A→B` + connecting miniseg `B→A`, a
+    /// closed 2-vertex loop. ZDBSP emits these routinely
+    /// (`OutputDegenerateSubsector`), and the retail sweep measures them on nearly
+    /// every map — so there is no special case here and no error or warning in
+    /// either mode.
     ///
     /// # Errors
     ///
-    /// [`NodeBuildError::DegenerateLeaf`] (strict) for a sub-3-vertex leaf, and
     /// [`push_connecting_miniseg`](Self::push_connecting_miniseg)'s overflow.
     fn close_leaf(&mut self, segs: Vec<usize>) -> Result<Vec<usize>, NodeBuildError> {
-        // Distinct-vertex guard: a loop needs at least a triangle.
-        let mut distinct: Vec<usize> = segs
-            .iter()
-            .flat_map(|&s| [self.segs[s].v1, self.segs[s].v2])
-            .collect();
-        distinct.sort_unstable();
-        distinct.dedup();
-        if distinct.len() < 3 {
-            return match self.strictness {
-                Strictness::Strict => Err(NodeBuildError::DegenerateLeaf {
-                    subsector_segs: segs.len(),
-                }),
-                Strictness::Lenient => {
-                    self.warnings.push(NodeBuildWarning::DegenerateLeaf {
-                        subsector_segs: segs.len(),
-                    });
-                    Ok(segs)
-                }
-            };
-        }
-
         // Midpoint pivot (exact, no division): endpoint coordinate sums and count.
         let n = i64::try_from(segs.len())
             .unwrap_or(i64::MAX)
@@ -1876,10 +1857,10 @@ pub struct BuiltGlNode {
 /// - [`segs`](Self::segs) partner links form a mirrored involution
 ///   (`partner[partner[i]] == i`, never self, and spans mirror).
 /// - Each subsector's seg run is a **closed loop** (`seg.end == next.start`
-///   cyclically).
+///   cyclically) — including a degenerate 2-vertex loop, which closes fine.
 ///
-/// [`build_gl_nodes`] output upholds them by construction (with one lenient-mode
-/// exception for loop closure — see [`validate`](Self::validate)).
+/// [`build_gl_nodes`] output upholds them by construction in both modes — every
+/// leaf, degenerate or not, is closed into a cyclic loop.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct BuiltGlNodes {
@@ -1932,10 +1913,10 @@ impl BuiltGlNodes {
 
     /// Checks this `BuiltGlNodes` against the type's [index-domain
     /// invariants](Self#index-domain-invariants). O(n) over the arenas, iterative,
-    /// identical in both strictness modes. [`build_gl_nodes`] strict-mode output
-    /// always passes; lenient output passes too **except** that a recovered
-    /// degenerate leaf ([`NodeBuildWarning::DegenerateLeaf`]) is emitted as-is and
-    /// may violate loop closure — the warning is the signal. Like the classic
+    /// identical in both strictness modes. [`build_gl_nodes`] output always
+    /// passes in both modes: every leaf, degenerate or not, is closed into a
+    /// cyclic loop by the connecting-miniseg path (a degenerate 1-seg leaf becomes
+    /// a closed 2-vertex loop, which satisfies loop closure). Like the classic
     /// [`BuiltNodes::validate`](super::BuiltNodes), it checks only index-domain
     /// structure, not BSP semantics (node acyclicity, reachability, or whether a
     /// loop is geometrically convex).
@@ -2077,8 +2058,6 @@ impl BuiltGlNodes {
 /// - [`NodeBuildError::MixedSectorSubsector`] (strict) for a convex region
 ///   spanning multiple sectors with no separating seg line; lenient warns and
 ///   accepts the leaf.
-/// - [`NodeBuildError::DegenerateLeaf`] (strict) for a convex leaf of fewer than
-///   3 distinct vertices; lenient warns and emits it as-is.
 /// - [`NodeBuildError::DegeneratePartition`] (both modes) — a fuzz-safe backstop
 ///   — when a selected partition leaves a side empty even after minisegs.
 /// - [`NodeBuildError::TooManyElements`] (both modes) when the GL vertex, seg,
@@ -2884,30 +2863,36 @@ mod tests {
     }
 
     #[test]
-    fn degenerate_leaf_strict_errors_lenient_warns() {
-        // A single two-sided linedef yields two segs over just two vertices — a
-        // leaf of fewer than 3 distinct vertices.
-        let map = build_map(&[(0.0, 0.0), (64.0, 0.0)], &[(0, 1, Some(0), Some(1))]);
+    fn degenerate_leaf_closes_as_a_two_vertex_loop_in_both_modes() {
+        // A single one-sided linedef yields one seg over just two vertices — a
+        // degenerate leaf (fewer than 3 distinct vertices). It must build
+        // successfully in BOTH modes, its leaf closed by the connecting-miniseg
+        // path into a closed 2-vertex loop (seg A→B + miniseg B→A) that validate
+        // accepts — no error, no warning.
+        let map = build_map(&[(0.0, 0.0), (64.0, 0.0)], &[(0, 1, Some(0), None)]);
 
-        let mut strict = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
-        strict.build_initial_segs();
-        let leaf: Vec<usize> = (0..strict.segs.len()).collect();
-        assert_eq!(
-            strict.close_leaf(leaf).unwrap_err(),
-            NodeBuildError::DegenerateLeaf { subsector_segs: 2 },
-        );
-
-        let mut lenient = GlBsp::new(&map, &NodeBuildOptions::lenient()).unwrap();
-        lenient.build_initial_segs();
-        let leaf: Vec<usize> = (0..lenient.segs.len()).collect();
-        let order = lenient.close_leaf(leaf).unwrap();
-        assert_eq!(order.len(), 2, "the degenerate leaf is emitted as-is");
-        assert!(
-            lenient
-                .warnings
-                .iter()
-                .any(|w| matches!(w, NodeBuildWarning::DegenerateLeaf { subsector_segs: 2 })),
-            "lenient mode warns once for the degenerate leaf"
-        );
+        for opts in [NodeBuildOptions::strict(), NodeBuildOptions::lenient()] {
+            let (built, warnings) =
+                build_gl_nodes(&map, &opts).expect("a degenerate leaf builds in both modes");
+            // No degenerate-leaf signal survives: the closing path handles it.
+            assert!(
+                warnings.is_empty(),
+                "a degenerate leaf emits no warning: {warnings:?}"
+            );
+            // One subsector, closed into a 2-vertex loop: the real seg plus its
+            // connecting miniseg back to the start.
+            assert_eq!(built.subsectors.len(), 1, "one degenerate leaf");
+            assert_eq!(built.segs.len(), 2, "seg A→B plus connecting miniseg B→A");
+            assert_eq!(
+                built.segs.iter().filter(|s| s.linedef.is_none()).count(),
+                1,
+                "exactly one connecting miniseg closes the loop",
+            );
+            // The cyclic loop-closure invariant holds on the 2-vertex loop.
+            assert!(
+                built.validate(map.vertices().len()).is_ok(),
+                "the closed 2-vertex loop passes validate",
+            );
+        }
     }
 }

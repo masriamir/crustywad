@@ -19,8 +19,7 @@ mod common;
 
 use crustywad::Wad;
 use crustywad::map::build::{
-    BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeStructureError,
-    build_gl_nodes,
+    BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, build_gl_nodes,
 };
 use crustywad::map::{GlNodeChild, GlVertexRef, Map};
 use proptest::prelude::*;
@@ -196,13 +195,13 @@ fn gl_ref_fixed(map: &Map, built: &BuiltGlNodes, r: GlVertexRef) -> (i64, i64) {
 /// fixtures (via [`validate_gl_bsp`]), the random-geometry proptest, and the
 /// retail sweep. It asserts:
 ///
-/// - Warning set: every emitted warning is one of the four allowed GL variants
-///   (`Write | VanillaCeilingExceeded | MixedSectorSubsector | DegenerateLeaf`).
+/// - Warning set: every emitted warning is one of the three allowed GL variants
+///   (`Write | VanillaCeilingExceeded | MixedSectorSubsector`).
 /// - Structural [`BuiltGlNodes::validate`] passes (subsector partition, vertex
 ///   ranges, node-child ranges, partner involution + mirrored spans, closed
-///   loops). The one documented exception: a lenient build carrying a
-///   [`NodeBuildWarning::DegenerateLeaf`] may emit a leaf whose loop does not
-///   close — an `OpenLoop` failure is accepted **iff** such a warning is present.
+///   loops) unconditionally, in both modes — every leaf, degenerate or not, is
+///   closed into a cyclic loop by the connecting-miniseg path (a degenerate
+///   1-seg leaf becomes a closed 2-vertex loop).
 /// - Root last: the last node is referenced by no other node; every other node
 ///   is referenced exactly once (a tree with the root at the end).
 /// - Subsector/node count: `subsectors == nodes + 1` when nodes exist, else
@@ -218,11 +217,7 @@ fn gl_ref_fixed(map: &Map, built: &BuiltGlNodes, r: GlVertexRef) -> (i64, i64) {
 /// Geometric **convexity is deliberately not asserted here** — see
 /// [`validate_gl_bsp`] for why it holds only for well-formed geometry.
 fn validate_gl_structure(map: &Map, built: &BuiltGlNodes, warnings: &[NodeBuildWarning]) {
-    let has_degenerate = warnings
-        .iter()
-        .any(|w| matches!(w, NodeBuildWarning::DegenerateLeaf { .. }));
-
-    // (0) Warning set: only the four GL-permitted variants may appear.
+    // (0) Warning set: only the three GL-permitted variants may appear.
     for w in warnings {
         assert!(
             matches!(
@@ -230,23 +225,15 @@ fn validate_gl_structure(map: &Map, built: &BuiltGlNodes, warnings: &[NodeBuildW
                 NodeBuildWarning::Write(_)
                     | NodeBuildWarning::VanillaCeilingExceeded { .. }
                     | NodeBuildWarning::MixedSectorSubsector { .. }
-                    | NodeBuildWarning::DegenerateLeaf { .. }
             ),
             "unexpected GL node-build warning: {w:?}"
         );
     }
 
-    // (1) Structural validation, with the lenient degenerate-leaf loop-closure
-    //     exemption folded in.
-    match built.validate(map.vertices().len()) {
-        Ok(()) => {}
-        Err(NodeBuildError::InvalidStructure(NodeStructureError::OpenLoop { .. })) => {
-            assert!(
-                has_degenerate,
-                "validate returned OpenLoop but no DegenerateLeaf warning is present"
-            );
-        }
-        Err(e) => panic!("BuiltGlNodes::validate failed: {e:?}"),
+    // (1) Structural validation: passes unconditionally in both modes — every
+    //     leaf, degenerate or not, is closed into a cyclic loop.
+    if let Err(e) = built.validate(map.vertices().len()) {
+        panic!("BuiltGlNodes::validate failed: {e:?}");
     }
 
     // (2) Subsector/node count relationship.
@@ -396,9 +383,8 @@ fn assert_ancestor_side_containment(map: &Map, built: &BuiltGlNodes) {
 /// Whether every subsector is a **convex** loop: walking each subsector's segs
 /// in loop order, every consecutive edge-pair turn shares one orientation sign
 /// (exact `i128` cross products on the seg-start coordinates; a zero cross for
-/// colinear points is allowed). Runs are shorter than 3 segs, and every
-/// subsector under a `DegenerateLeaf` warning, are skipped (an unordered
-/// degenerate leaf is not a loop).
+/// colinear points is allowed). Runs shorter than 3 segs are skipped (a
+/// degenerate ≤2-vertex loop has no turn to test).
 ///
 /// This is a **well-formed-geometry** invariant, not a universal one. A GL BSP
 /// leaf is the intersection of its ancestor half-planes, hence a convex region;
@@ -412,13 +398,7 @@ fn assert_ancestor_side_containment(map: &Map, built: &BuiltGlNodes) {
 /// is checked only on the designed, non-overlapping fixtures; the random-geometry
 /// proptest and the retail sweep (both of which routinely exercise crossing and
 /// self-referencing lines) assert [`validate_gl_structure`] alone.
-fn assert_subsectors_convex(map: &Map, built: &BuiltGlNodes, warnings: &[NodeBuildWarning]) {
-    if warnings
-        .iter()
-        .any(|w| matches!(w, NodeBuildWarning::DegenerateLeaf { .. }))
-    {
-        return;
-    }
+fn assert_subsectors_convex(map: &Map, built: &BuiltGlNodes) {
     for (si, ss) in built.subsectors.iter().enumerate() {
         let run = ss.segs.clone();
         let n = run.len();
@@ -461,7 +441,7 @@ fn assert_subsectors_convex(map: &Map, built: &BuiltGlNodes, warnings: &[NodeBui
 /// [`validate_gl_structure`] only.
 fn validate_gl_bsp(map: &Map, built: &BuiltGlNodes, warnings: &[NodeBuildWarning]) {
     validate_gl_structure(map, built, warnings);
-    assert_subsectors_convex(map, built, warnings);
+    assert_subsectors_convex(map, built);
 }
 
 // --- Fixtures ----------------------------------------------------------------
@@ -652,7 +632,7 @@ fn two_room_doorway_map() -> Map {
 /// partition-minisegs *are* covered — at the unit level by the kernel's Task-5
 /// tests in `gl_nodes.rs`, and by the retail sweep, where two-sided walls force
 /// them across real geometry. An integration fixture that forces a partnered
-/// partition-miniseg pair *without* also tripping a `DegenerateLeaf` has not been
+/// partition-miniseg pair has not been
 /// found; rather than fabricate one that only passes by luck, this gap is left
 /// explicit — revisit it with the sweep run.
 #[test]
@@ -779,8 +759,7 @@ fn build_gl_nodes_is_deterministic() {
 
 /// Whether a `build_gl_nodes` error is one the plan permits (never a panic): the
 /// shared narrowing/format errors plus the GL-specific structural guards. Mirrors
-/// `build_lumps.rs`'s `is_plan_known_error`, extended with the GL
-/// [`NodeBuildError::DegenerateLeaf`].
+/// `build_lumps.rs`'s `is_plan_known_error`.
 fn is_plan_known_error(err: &NodeBuildError) -> bool {
     matches!(
         err,
@@ -789,7 +768,6 @@ fn is_plan_known_error(err: &NodeBuildError) -> bool {
             | NodeBuildError::TooManyElements { .. }
             | NodeBuildError::MixedSectorSubsector { .. }
             | NodeBuildError::DegeneratePartition { .. }
-            | NodeBuildError::DegenerateLeaf { .. }
     )
 }
 
@@ -849,8 +827,8 @@ proptest! {
 /// maps ship pre-built nodes and are not a build target, so they are skipped.
 ///
 /// The sweep runs `build_gl_nodes` in **lenient** mode. Its warning set is pinned
-/// to the four GL-tolerated classes (`Write | VanillaCeilingExceeded |
-/// MixedSectorSubsector | DegenerateLeaf`), enforced inside
+/// to the three GL-tolerated classes (`Write | VanillaCeilingExceeded |
+/// MixedSectorSubsector`), enforced inside
 /// [`validate_gl_structure`]; every other warning, and every error, fails the
 /// sweep. Geometric convexity is **not** asserted here: retail maps routinely
 /// carry self-referencing and crossing lines, which yield valid-but-non-convex
@@ -871,7 +849,7 @@ fn sweep_builds_gl_nodes_for_every_classic_map() {
     let mut doom64_skipped = 0usize;
     let mut total_segs = 0usize;
     let mut total_minisegs = 0usize;
-    let mut degenerate_leaf_maps = 0usize;
+    let mut degenerate_subsectors = 0usize;
 
     for path in &paths {
         let wad = Wad::from_path_with_options(path, ParseOptions::strict())
@@ -908,11 +886,20 @@ fn sweep_builds_gl_nodes_for_every_classic_map() {
             // real maps carry self-referencing/crossing lines).
             validate_gl_structure(&map, &built, &warnings);
 
-            if warnings
-                .iter()
-                .any(|w| matches!(w, NodeBuildWarning::DegenerateLeaf { .. }))
-            {
-                degenerate_leaf_maps += 1;
+            // Informational: degenerate (≤2-distinct-vertex) subsectors are normal
+            // GL output (closed by the connecting-miniseg path); count them only to
+            // report their prevalence, not to gate anything.
+            for ss in &built.subsectors {
+                let mut vs: Vec<(i64, i64)> = built.segs[ss.segs.clone()]
+                    .iter()
+                    .flat_map(|s| [s.start, s.end])
+                    .map(|r| gl_ref_fixed(&map, &built, r))
+                    .collect();
+                vs.sort_unstable();
+                vs.dedup();
+                if vs.len() < 3 {
+                    degenerate_subsectors += 1;
+                }
             }
             total_segs += built.segs.len();
             total_minisegs += built.segs.iter().filter(|s| s.linedef.is_none()).count();
@@ -926,7 +913,7 @@ fn sweep_builds_gl_nodes_for_every_classic_map() {
         paths.len()
     );
     eprintln!(
-        "built GL nodes for {} WAD(s): {maps_built} classic map(s), {doom64_skipped} Doom 64 skipped, {total_segs} total GL segs ({total_minisegs} minisegs); {degenerate_leaf_maps} map(s) carried a tolerated degenerate leaf",
+        "built GL nodes for {} WAD(s): {maps_built} classic map(s), {doom64_skipped} Doom 64 skipped, {total_segs} total GL segs ({total_minisegs} minisegs); {degenerate_subsectors} degenerate (<=2-vertex) subsector(s), all closed and validate-clean",
         paths.len()
     );
 }
