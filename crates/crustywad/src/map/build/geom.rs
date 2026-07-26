@@ -76,8 +76,6 @@ pub(super) fn fixed_16_16(
 /// `raw << 16` plus any fixed-space splits), so recovery here is exact. An
 /// out-of-`i32`-range result is a defensive
 /// [`DoomWriteError::ValueOutOfRange`].
-// Consumed by the XGL3 writer's GL-vertex serialization (Task 2, #364).
-#[allow(dead_code)]
 #[allow(clippy::cast_possible_truncation)]
 pub(super) fn fixed_16_16_exact(
     value: f64,

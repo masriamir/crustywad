@@ -14,8 +14,8 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use super::geom;
-use super::nodes::{MAX_EXTENDED_INDEX, SAMPLE_BUDGET, encode_index_u32};
-use super::{NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeStructureError};
+use super::nodes::{MAX_EXTENDED_INDEX, SAMPLE_BUDGET, encode_index_u32, encode_u32, narrow_bbox};
+use super::{NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat, NodeStructureError};
 use crate::Strictness;
 use crate::map::doom::{Narrower, narrow_vertices};
 use crate::map::graph::{
@@ -1802,8 +1802,6 @@ fn child_of_gl_ref(child: TreeRef) -> GlNodeChild {
 /// subsector leaf sets bit 31 (`0x8000_0000`) over the index, an internal node
 /// stores the bare index (mirrors the classic kernel's `encode_extended_child`,
 /// `nodes.rs`).
-// Consumed by the XGL3 writer's node serialization (Task 2, #364).
-#[allow(dead_code)]
 fn encode_gl_child(child: GlNodeChild) -> Result<u32, NodeBuildError> {
     match child {
         GlNodeChild::Node(GlNodeIdx(i)) => encode_index_u32("nodes", i),
@@ -2046,6 +2044,139 @@ impl BuiltGlNodes {
         }
 
         Ok(())
+    }
+
+    /// Serializes this `BuiltGlNodes` as one `ZDoom` GL extended-node lump — the
+    /// byte-exact inverse of the crate's own GL reader (ADR-0026 §3). `format`
+    /// selects the on-disk container: [`NodeFormat::Xgl3`] emits the plaintext
+    /// `XGL3` stream, [`NodeFormat::Zgl3`] the zlib-compressed `ZGL3` twin.
+    ///
+    /// `orig_vertex_count` is the owning map's `VERTEXES` record count; it is
+    /// written into the vertex header and used to flatten combined GL-seg vertex
+    /// references (a [`GlVertexRef::Gl`]`(j)` becomes `orig_vertex_count + j`).
+    ///
+    /// # Errors
+    ///
+    /// - [`NodeBuildError::UnsupportedNodeFormat`] when `format` is not a GL
+    ///   variant (`Classic`/`Xnod`/`Znod`) — a caller-misuse guard, checked
+    ///   first.
+    /// - [`NodeBuildError::CompressionUnavailable`] when `format` is
+    ///   [`NodeFormat::Zgl3`] but the `extended-nodes-zlib` feature is disabled.
+    ///   Unreachable while that variant is feature-gated (it cannot be named
+    ///   without the feature); kept for the #365 auto-format future.
+    /// - [`NodeBuildError::TooManyElements`] when an arena count or a child/index
+    ///   reference exceeds the 32-bit [`MAX_EXTENDED_INDEX`] cap (or the 31 bits
+    ///   the child leaf flag leaves free).
+    /// - [`NodeBuildError::Write`] wrapping
+    ///   [`DoomWriteError::ValueOutOfRange`](crate::map::DoomWriteError::ValueOutOfRange)
+    ///   when a node bbox coordinate does not fit the on-disk `i16`, or a GL
+    ///   vertex coordinate overflows the 16.16 `i32` — guards only
+    ///   hand-constructed values.
+    pub fn to_extended_lump_bytes(
+        &self,
+        orig_vertex_count: usize,
+        format: NodeFormat,
+    ) -> Result<Vec<u8>, NodeBuildError> {
+        if !format.is_gl() {
+            return Err(NodeBuildError::UnsupportedNodeFormat { format });
+        }
+        let body = self.build_xgl3_body(orig_vertex_count)?;
+        match format {
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Zgl3 => {
+                let mut lump = b"ZGL3".to_vec();
+                lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
+                Ok(lump)
+            }
+            // `is_gl()` above guaranteed a GL variant; `Zgl3` is handled above
+            // (when the feature is on), so the only remaining GL variant here is
+            // `Xgl3`. The non-GL arms are unreachable past the guard.
+            _ => {
+                let mut lump = Vec::with_capacity(4 + body.len());
+                lump.extend_from_slice(b"XGL3");
+                lump.extend_from_slice(&body);
+                Ok(lump)
+            }
+        }
+    }
+
+    /// Builds the tag-less `XGL3` body (the bytes after the 4-byte signature),
+    /// reversing the GL reader's `decode_body`: vertex header, subsector block,
+    /// GL-seg block, node block. Shared by the `XGL3` and `ZGL3` paths.
+    fn build_xgl3_body(&self, orig_vertex_count: usize) -> Result<Vec<u8>, NodeBuildError> {
+        // Presize from the arena counts — every record is fixed-size, so the
+        // total is exact: 8-byte vertex header + 8/GL vertex + 4-byte subsector
+        // count + 4/subsector + 4-byte seg count + 13/GL seg (u32 v1 + u32
+        // partner + u32 linedef + u8 side) + 4-byte node count + 40/node (4x i32
+        // partition + 8x i16 bbox + 2x u32 child). Keeps allocation O(input)
+        // with no reallocation.
+        let mut out = Vec::with_capacity(
+            20 + 8 * self.gl_vertices.len()
+                + 4 * self.subsectors.len()
+                + 13 * self.segs.len()
+                + 40 * self.nodes.len(),
+        );
+
+        // --- Vertex header: origVerts, newVerts, then GL vertex coords (16.16). ---
+        // GL vertices are already fixed-space, so `fixed_16_16_exact` preserves
+        // their fractional part verbatim.
+        out.extend_from_slice(&encode_u32("vertices", orig_vertex_count)?.to_le_bytes());
+        out.extend_from_slice(&encode_u32("vertices", self.gl_vertices.len())?.to_le_bytes());
+        for (i, v) in self.gl_vertices.iter().enumerate() {
+            out.extend_from_slice(&geom::fixed_16_16_exact(v.x, "x", i)?.to_le_bytes());
+            out.extend_from_slice(&geom::fixed_16_16_exact(v.y, "y", i)?.to_le_bytes());
+        }
+
+        // --- Subsector block: numSubs, then each run length. ---
+        out.extend_from_slice(&encode_u32("subsectors", self.subsectors.len())?.to_le_bytes());
+        for ss in &self.subsectors {
+            let count = ss.segs.end.saturating_sub(ss.segs.start);
+            out.extend_from_slice(&encode_u32("subsector segs", count)?.to_le_bytes());
+        }
+
+        // --- Seg block: numSegs, then u32 v1, u32 partner, u32 linedef, u8 side. ---
+        // No v2 is written: the GL reader recovers each seg's end vertex from the
+        // next seg in the subsector's closed loop (implicit-v2, the ordering the
+        // build kernel guarantees).
+        out.extend_from_slice(&encode_u32("segs", self.segs.len())?.to_le_bytes());
+        for s in &self.segs {
+            let v1 = match s.start {
+                GlVertexRef::Normal(v) => v.0,
+                GlVertexRef::Gl(v) => orig_vertex_count + v.0,
+            };
+            out.extend_from_slice(&encode_index_u32("vertices", v1)?.to_le_bytes());
+            let partner = match s.partner {
+                Some(p) => encode_index_u32("segs", p.0)?,
+                None => 0xFFFF_FFFF,
+            };
+            out.extend_from_slice(&partner.to_le_bytes());
+            let linedef = match s.linedef {
+                Some(l) => encode_index_u32("linedefs", l.0)?,
+                None => 0xFFFF_FFFF,
+            };
+            out.extend_from_slice(&linedef.to_le_bytes());
+            out.push(s.side);
+        }
+
+        // --- Node block: numNodes, then i32 16.16 partition + 2x i16 bbox + children. ---
+        out.extend_from_slice(&encode_u32("nodes", self.nodes.len())?.to_le_bytes());
+        for (i, n) in self.nodes.iter().enumerate() {
+            // Partition x/y/dx/dy are already 16.16 fixed-point on `BuiltGlNode`;
+            // emit them verbatim — re-scaling would corrupt the sub-unit geometry.
+            for part in [n.x, n.y, n.dx, n.dy] {
+                out.extend_from_slice(&part.to_le_bytes());
+            }
+            for value in narrow_bbox(n.right_bbox, "right_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            for value in narrow_bbox(n.left_bbox, "left_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&encode_gl_child(n.right)?.to_le_bytes());
+            out.extend_from_slice(&encode_gl_child(n.left)?.to_le_bytes());
+        }
+
+        Ok(out)
     }
 }
 
@@ -2938,5 +3069,136 @@ mod tests {
             encode_gl_child(GlNodeChild::Subsector(GlSubsectorIdx(5))).unwrap(),
             0x8000_0005
         );
+    }
+
+    // --- XGL3/ZGL3 writer GOLDEN tests (Task 2, #364) ------------------------
+
+    /// The `BuiltGlNodes` whose serialization must equal the reader's own
+    /// `xgl3_stream` fixture (`tests/extended_nodes.rs`) byte-for-byte.
+    fn golden_fixture_twin() -> BuiltGlNodes {
+        let seg = |v1: usize, v2: usize, linedef: Option<usize>| GlSeg {
+            start: GlVertexRef::Normal(VertexIdx(v1)),
+            end: GlVertexRef::Normal(VertexIdx(v2)),
+            linedef: linedef.map(LinedefIdx),
+            side: 0,
+            partner: None,
+        };
+        BuiltGlNodes::new(
+            vec![], // newVerts = 0
+            vec![
+                seg(0, 1, Some(0)),
+                seg(1, 0, None),
+                seg(2, 3, Some(2)),
+                seg(3, 2, Some(3)),
+            ],
+            vec![GlSubsector { segs: 0..2 }, GlSubsector { segs: 2..4 }],
+            vec![BuiltGlNode {
+                x: 32 << 16,
+                y: 0,
+                dx: 0,
+                dy: 64 << 16,
+                right_bbox: [64, 0, 0, 64],
+                left_bbox: [64, 0, 0, 64],
+                right: GlNodeChild::Subsector(GlSubsectorIdx(0)),
+                left: GlNodeChild::Subsector(GlSubsectorIdx(1)),
+            }],
+            4, // origVerts = 4
+        )
+        .expect("golden twin is structurally valid")
+    }
+
+    /// The expected tag-less XGL3 body, built with the same field layout the
+    /// reader fixture `xgl3_stream` uses; keep in lockstep with
+    /// `tests/extended_nodes.rs`.
+    fn golden_xgl3_body() -> Vec<u8> {
+        let mut expected = Vec::new();
+        expected.extend(4u32.to_le_bytes()); // origVerts
+        expected.extend(0u32.to_le_bytes()); // newVerts
+        expected.extend(2u32.to_le_bytes()); // numSubsectors
+        expected.extend(2u32.to_le_bytes()); // ss0 count
+        expected.extend(2u32.to_le_bytes()); // ss1 count
+        expected.extend(4u32.to_le_bytes()); // numSegs
+        for (v1, line) in [(0u32, 0u32), (1, 0xFFFF_FFFF), (2, 2), (3, 3)] {
+            expected.extend(v1.to_le_bytes());
+            expected.extend(0xFFFF_FFFFu32.to_le_bytes()); // partner: none
+            expected.extend(line.to_le_bytes());
+            expected.push(0); // side
+        }
+        expected.extend(1u32.to_le_bytes()); // numNodes
+        for part in [32i32 << 16, 0, 0, 64 << 16] {
+            expected.extend(part.to_le_bytes());
+        }
+        for b in [64i16, 0, 0, 64, 64, 0, 0, 64] {
+            expected.extend(b.to_le_bytes());
+        }
+        expected.extend(0x8000_0000u32.to_le_bytes());
+        expected.extend(0x8000_0001u32.to_le_bytes());
+        expected
+    }
+
+    #[test]
+    fn golden_xgl3_bytes_match_the_reader_fixture() {
+        let built = golden_fixture_twin();
+        let bytes = built.to_extended_lump_bytes(4, NodeFormat::Xgl3).unwrap();
+        let mut expected = b"XGL3".to_vec();
+        expected.extend(golden_xgl3_body());
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn writer_rejects_non_gl_formats() {
+        let built = golden_fixture_twin();
+        for format in [NodeFormat::Classic, NodeFormat::Xnod] {
+            assert!(matches!(
+                built.to_extended_lump_bytes(4, format).unwrap_err(),
+                NodeBuildError::UnsupportedNodeFormat { .. }
+            ));
+        }
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn golden_zgl3_bytes_inflate_to_the_xgl3_body() {
+        let built = golden_fixture_twin();
+        let z = built.to_extended_lump_bytes(4, NodeFormat::Zgl3).unwrap();
+        assert_eq!(&z[..4], b"ZGL3");
+        let inflated =
+            miniz_oxide::inflate::decompress_to_vec_zlib(&z[4..]).expect("ZGL3 body inflates");
+        assert_eq!(inflated, golden_xgl3_body());
+    }
+
+    #[test]
+    fn writer_emits_fractional_gl_vertices_exactly() {
+        // One GL vertex at (32.5, -0.25); a seg references it so `new` accepts
+        // the arena. The header must carry its exact 16.16 fixed-point coords.
+        let built = BuiltGlNodes::new(
+            vec![GlVertex { x: 32.5, y: -0.25 }],
+            vec![
+                GlSeg {
+                    start: GlVertexRef::Normal(VertexIdx(0)),
+                    end: GlVertexRef::Gl(GlVertexIdx(0)),
+                    linedef: Some(LinedefIdx(0)),
+                    side: 0,
+                    partner: None,
+                },
+                GlSeg {
+                    start: GlVertexRef::Gl(GlVertexIdx(0)),
+                    end: GlVertexRef::Normal(VertexIdx(0)),
+                    linedef: None,
+                    side: 0,
+                    partner: None,
+                },
+            ],
+            vec![GlSubsector { segs: 0..2 }],
+            vec![],
+            1, // origVerts = 1
+        )
+        .expect("fractional twin is structurally valid");
+        let bytes = built.to_extended_lump_bytes(1, NodeFormat::Xgl3).unwrap();
+        // Vertex coords follow the 4-byte tag + 8-byte vertex header.
+        let x = i32::from_le_bytes(bytes[12..16].try_into().unwrap());
+        let y = i32::from_le_bytes(bytes[16..20].try_into().unwrap());
+        assert_eq!(x, 32 * 65536 + 32768); // 32.5 in 16.16
+        assert_eq!(y, -16384); // -0.25 in 16.16
     }
 }
