@@ -9,7 +9,8 @@ use crate::map::write_doom_map;
 use crate::write::{WadBuilder, WriteOptions};
 
 use super::{
-    NodeBuildError, NodeBuildOptions, NodeBuildWarning, build_blockmap, build_nodes, build_reject,
+    NodeBuildError, NodeBuildOptions, NodeBuildWarning, build_blockmap, build_gl_nodes,
+    build_nodes, build_reject,
 };
 
 /// Serializes `map`, builds its node lumps, and adds a complete, **engine-playable**
@@ -37,8 +38,8 @@ use super::{
 /// `SECTORS`, `REJECT`, `BLOCKMAP`. The split vertices **must** be appended to
 /// `VERTEXES` (done here) or the seg vertex indices would dangle.
 ///
-/// When [`build_opts.format`](NodeBuildOptions::format) selects an extended
-/// format (ADR-0025, #323) — [`Xnod`](super::NodeFormat::Xnod) or
+/// When [`build_opts.format`](NodeBuildOptions::format) selects a non-GL
+/// extended format (ADR-0025, #323) — [`Xnod`](super::NodeFormat::Xnod) or
 /// `Znod` — the node data is instead emitted as a
 /// single `XNOD`/`ZNOD` stream in `NODES`, with `SEGS`/`SSECTORS` left empty
 /// and the split vertices left out of `VERTEXES` entirely (they live in the
@@ -46,16 +47,27 @@ use super::{
 /// [`Classic`](super::NodeFormat::Classic) writes the vanilla three-lump
 /// layout described above.
 ///
+/// When `build_opts.format` selects a GL format (ADR-0026 §3, #364) —
+/// [`Xgl3`](super::NodeFormat::Xgl3) or `Zgl3` — the classic BSP pass
+/// ([`build_nodes`]) does **not** run at all; [`build_gl_nodes`] runs in its
+/// place and its `XGL3`/`ZGL3` stream is carried in **`SSECTORS`** instead of
+/// `NODES` (both `SEGS` and `NODES` are left empty). This is the carrier
+/// inverse of the reader's dispatch, which probes `NODES` first and falls
+/// back to a GL-stream signature in `SSECTORS` only when `NODES` is empty. As
+/// with the non-GL extended formats, the GL split vertices live in the
+/// stream's own vertex header and are never appended to `VERTEXES`.
+///
 /// Warnings are returned in a deterministic order (Global Constraint 6): the
 /// write-path warnings first (excluding `NodesNotBuilt`), then the
-/// `BLOCKMAP`-build warnings, then the BSP-build warnings.
+/// `BLOCKMAP`-build warnings, then the BSP-build warnings (from whichever of
+/// [`build_nodes`] or [`build_gl_nodes`] ran for the selected format).
 ///
 /// The caller invokes [`WadBuilder::build`] afterward (which returns
 /// [`WriteError`](crate::WriteError)).
 ///
 /// # Errors
 ///
-/// Returns a [`NodeBuildError`] if any of the three builders, the shared write
+/// Returns a [`NodeBuildError`] if any of the builders, the shared write
 /// pass, or the node-lump serialization fails; the builder is left unmodified
 /// in that case (every build runs before the first lump is added). Reachable
 /// variants:
@@ -68,15 +80,20 @@ use super::{
 ///   strict mode (via [`write_doom_map`] or the builders' shared narrowing pass).
 /// - [`NodeBuildError::BlockmapOverflow`] — a `BLOCKMAP` word offset exceeds the
 ///   addressable range (or, in strict mode, the vanilla signed-offset ceiling).
-/// - [`NodeBuildError::TooManyElements`] (**both** modes) — a BSP arena exceeds
-///   what the on-disk format can index.
+/// - [`NodeBuildError::TooManyElements`] (**both** modes) — a BSP (or GL BSP)
+///   arena exceeds what the on-disk format can index.
 /// - [`NodeBuildError::MixedSectorSubsector`] (**strict** mode) — a convex
-///   subsector spans multiple sectors with no separating partition.
+///   subsector spans multiple sectors with no separating partition. Reachable
+///   from either [`build_nodes`] or [`build_gl_nodes`].
 /// - [`NodeBuildError::DegeneratePartition`] (**both** modes) — a hardening guard
 ///   for adversarial geometry a selected partition cannot separate.
-/// - For an extended format, the errors documented on
+/// - For a non-GL extended format, the errors documented on
 ///   [`BuiltNodes::to_extended_lump_bytes`](super::BuiltNodes::to_extended_lump_bytes)
 ///   propagate as well (e.g. [`NodeBuildError::MinisegUnsupported`],
+///   [`NodeBuildError::CompressionUnavailable`]).
+/// - For a GL format, the errors documented on
+///   [`BuiltGlNodes::to_extended_lump_bytes`](super::BuiltGlNodes::to_extended_lump_bytes)
+///   propagate instead (e.g. [`NodeBuildError::UnsupportedNodeFormat`],
 ///   [`NodeBuildError::CompressionUnavailable`]).
 pub fn add_doom_map_with_nodes(
     builder: &mut WadBuilder,
@@ -97,21 +114,50 @@ pub fn add_doom_map_with_nodes(
     let (blockmap, blockmap_ws) = build_blockmap(map, build_opts)?;
     let blockmap = blockmap.to_lump_bytes()?;
 
-    // 4. SEGS/SSECTORS/NODES — collect its build warnings.
-    let (nodes, node_ws) = build_nodes(map, build_opts)?;
-
-    // Deterministic warning order: write (minus NodesNotBuilt), blockmap, nodes.
-    // `NodesNotBuilt` describes the empty-lump write path and is a lie here — we
-    // built the nodes — so it is filtered out (Global Constraint 4).
+    // Shared warning prefix: write (minus NodesNotBuilt) + blockmap. Each format
+    // arm below appends its own build warnings last, keeping the deterministic
+    // order (Global Constraint 6). `NodesNotBuilt` describes the empty-lump
+    // write path and is a lie here — we built the nodes — so it is filtered out
+    // (Global Constraint 4).
     let mut warnings: Vec<NodeBuildWarning> = write_ws
         .into_iter()
         .filter(|w| !matches!(w, DoomWriteWarning::NodesNotBuilt))
         .map(NodeBuildWarning::Write)
         .collect();
     warnings.extend(blockmap_ws);
+
+    // 4. Emit the node lumps per the target format (ADR-0025 §5, ADR-0026 §3).
+    if build_opts.format.is_gl() {
+        // GL: a single XGL3/ZGL3 stream carried in SSECTORS — the inverse of
+        // the reader's NODES-then-SSECTORS probe (an empty NODES lump makes
+        // the assembler fall through to SSECTORS, where a GL stream signature
+        // is recognized; ADR-0026 §3). SEGS and NODES are both left empty, and
+        // — like the non-GL extended arm — the split (GL) vertices live in the
+        // stream's own vertex header, NOT appended to VERTEXES. The classic
+        // `build_nodes` BSP pass does not run at all in this arm.
+        let (gl_nodes, gl_ws) = build_gl_nodes(map, build_opts)?;
+        let stream = gl_nodes.to_extended_lump_bytes(map.vertices().len(), build_opts.format)?;
+        warnings.extend(gl_ws);
+
+        builder.add_lump(name, b"");
+        builder.add_lump("THINGS", data.things);
+        builder.add_lump("LINEDEFS", data.linedefs);
+        builder.add_lump("SIDEDEFS", data.sidedefs);
+        builder.add_lump("VERTEXES", data.vertexes);
+        builder.add_lump("SEGS", b"");
+        builder.add_lump("SSECTORS", stream);
+        builder.add_lump("NODES", b"");
+        builder.add_lump("SECTORS", data.sectors);
+        builder.add_lump("REJECT", reject);
+        builder.add_lump("BLOCKMAP", blockmap);
+        return Ok(warnings);
+    }
+
+    // 5. SEGS/SSECTORS/NODES (classic or non-GL extended) — collect its build
+    //    warnings.
+    let (nodes, node_ws) = build_nodes(map, build_opts)?;
     warnings.extend(node_ws);
 
-    // 5. Emit the node lumps per the target format (ADR-0025, #323).
     if build_opts.format.is_extended() {
         // Extended: a single XNOD/ZNOD stream in NODES; SEGS/SSECTORS empty; the
         // split vertices live in the stream header, NOT appended to VERTEXES.

@@ -18,10 +18,11 @@
 mod common;
 
 use crustywad::map::build::{
-    BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat, build_gl_nodes,
+    BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat,
+    add_doom_map_with_nodes, build_gl_nodes,
 };
 use crustywad::map::{GlNodeChild, GlVertexRef, Map};
-use crustywad::{ParseOptions, Wad};
+use crustywad::{ParseOptions, Wad, WadBuilder, WadKind, WriteOptions};
 use proptest::prelude::*;
 
 // --- WAD-building helpers (mirrors build_lumps.rs) ---------------------------
@@ -996,6 +997,138 @@ fn xgl3_preserves_fractional_gl_vertices_through_the_header() {
         saw_fractional,
         "at least one appended GL vertex is non-integral: {:?}",
         built.gl_vertices
+    );
+}
+
+// --- One-shot GL arm (add_doom_map_with_nodes) -------------------------------
+
+/// `add_doom_map_with_nodes` with a GL [`NodeFormat`] (`Xgl3`) emits the GL
+/// stream in the `SSECTORS` carrier — the inverse of the reader's
+/// NODES-then-SSECTORS probe (an empty `NODES` lump makes the assembler fall
+/// through to `SSECTORS`, where a GL stream signature is recognized). `SEGS`
+/// and `NODES` are both empty; `VERTEXES` is untouched (byte-identical to the
+/// input map's own vertices — GL split vertices live in the stream header, not
+/// appended to the classic lump, exactly like the non-GL extended arm). The
+/// canonical eleven-lump order still holds, and the resulting WAD re-assembles
+/// strict with a populated seg/subsector arena, proving the reader's dispatch
+/// actually found the stream.
+#[test]
+fn oneshot_emits_xgl3_in_ssectors_with_empty_segs_and_nodes() {
+    let map = two_room_doorway_map();
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Xgl3;
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings =
+        add_doom_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+            .expect("one-shot builds");
+    assert!(
+        warnings.is_empty(),
+        "a clean map builds warning-free: {warnings:?}"
+    );
+
+    let bytes = builder.build().expect("WAD serializes");
+    let wad = Wad::from_bytes(bytes).expect("built WAD parses");
+
+    let names: Vec<&str> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(
+        names,
+        [
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP",
+        ],
+        "canonical lump order still holds for the GL layout (Global Constraint 5)"
+    );
+
+    let lump_bytes = |name: &str| {
+        let idx = wad
+            .lumps()
+            .iter()
+            .position(|l| l.name() == name)
+            .expect("lump present");
+        wad.lump_bytes(idx).expect("lump bytes present")
+    };
+
+    // SSECTORS carries the XGL3 stream; SEGS/NODES are both empty (contrast
+    // with the non-GL extended arm, which carries its stream in NODES).
+    let ssectors_bytes = lump_bytes("SSECTORS");
+    assert_eq!(
+        &ssectors_bytes[..4],
+        b"XGL3",
+        "SSECTORS carries the XGL3 stream signature"
+    );
+    assert!(
+        lump_bytes("SEGS").is_empty(),
+        "SEGS is empty for the GL layout"
+    );
+    assert!(
+        lump_bytes("NODES").is_empty(),
+        "NODES is empty for the GL layout"
+    );
+
+    // VERTEXES holds only the map's own vertices, byte-identical to the input.
+    assert_eq!(
+        lump_bytes("VERTEXES"),
+        vertexes_bytes(&two_room_doorway_geometry().0),
+        "VERTEXES is untouched for the GL layout — split GL verts live in the stream header"
+    );
+
+    // The map re-assembles strict with a populated seg/subsector arena, proving
+    // the reader's dispatch found the stream in SSECTORS.
+    let group = wad.map_group("MAP01").expect("map group present");
+    let assembled = Map::assemble(&wad, &group).expect("strict assembly");
+    assert!(
+        assembled.warnings().is_empty(),
+        "the playable WAD assembles strict-clean: {:?}",
+        assembled.warnings()
+    );
+    assert!(
+        !assembled.segs().is_empty(),
+        "the doorway map yields at least one seg"
+    );
+    assert!(
+        !assembled.subsectors().is_empty(),
+        "the doorway map yields at least one subsector"
+    );
+}
+
+/// The zlib-compressed `ZGL3` twin lands in the same `SSECTORS` carrier
+/// (feature-gated).
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn oneshot_emits_zgl3_in_ssectors() {
+    let map = two_room_doorway_map();
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Zgl3;
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings =
+        add_doom_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+            .expect("one-shot builds");
+    assert!(
+        warnings.is_empty(),
+        "a clean map builds warning-free: {warnings:?}"
+    );
+
+    let bytes = builder.build().expect("WAD serializes");
+    let wad = Wad::from_bytes(bytes).expect("built WAD parses");
+    let ssectors_idx = wad
+        .lumps()
+        .iter()
+        .position(|l| l.name() == "SSECTORS")
+        .expect("SSECTORS present");
+    let ssectors_bytes = wad.lump_bytes(ssectors_idx).expect("lump bytes present");
+    assert_eq!(
+        &ssectors_bytes[..4],
+        b"ZGL3",
+        "SSECTORS carries the ZGL3 stream signature"
+    );
+
+    let group = wad.map_group("MAP01").expect("map group present");
+    let assembled = Map::assemble(&wad, &group).expect("strict assembly");
+    assert!(
+        !assembled.segs().is_empty(),
+        "the doorway map yields at least one seg"
     );
 }
 
