@@ -1174,9 +1174,11 @@ impl<'a> GlBsp<'a> {
     /// (`side: 1`, sector from the back loop-start seg) are created as mutual
     /// partners, registered in the incident lists, counted against the live-seg
     /// cap, and pushed to `front`/`back` respectively. The `side` field records
-    /// facing only; the GL emission-side mapping (minisegs emit `side 0`) is Task
-    /// 6's concern. Later spans see earlier minisegs in the incident lists, exactly
-    /// as ZDBSP's `AddMiniseg` updates the per-vertex lists in place.
+    /// facing only; the GL emission-side mapping (minisegs emit `side 0`) is
+    /// applied in [`finish`](Self::finish)'s seg flatten, where a `linedef: None`
+    /// seg is normalized to `side: 0`. Later spans see earlier minisegs in the
+    /// incident lists, exactly as ZDBSP's `AddMiniseg` updates the per-vertex lists
+    /// in place.
     ///
     /// # Errors
     ///
@@ -1633,7 +1635,10 @@ impl<'a> GlBsp<'a> {
                 start: self.vertex_ref(s.v1),
                 end: self.vertex_ref(s.v2),
                 linedef: s.linedef.map(LinedefIdx),
-                side: s.side,
+                // Minisegs always emit `side: 0` (the ZDBSP GL convention, Notes
+                // §Q5); the working-state `side: 1` on a back miniseg stays
+                // internal. Linedef-backed segs keep their real front/back side.
+                side: if s.linedef.is_some() { s.side } else { 0 },
                 partner: s.partner.map(|p| {
                     debug_assert!(remap[p] != usize::MAX, "every partner is emitted");
                     GlSegIdx(remap[p])
@@ -1882,6 +1887,8 @@ pub struct BuiltGlNodes {
     /// order. Seg refs of kind [`GlVertexRef::Gl`] index this arena.
     pub gl_vertices: Vec<GlVertex>,
     /// The `GL_SEGS` arena, ordered so each subsector owns a contiguous run.
+    /// Minisegs (`linedef == None`) always carry `side: 0` (the ZDBSP GL
+    /// convention); linedef-backed segs carry their real front/back side.
     pub segs: Vec<GlSeg>,
     /// The `GL_SSECT` arena: one leaf per convex region, each a contiguous run
     /// into [`segs`](Self::segs).
