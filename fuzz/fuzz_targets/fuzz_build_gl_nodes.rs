@@ -2,8 +2,11 @@
 use libfuzzer_sys::fuzz_target;
 
 use crustywad::map::Map;
-use crustywad::map::build::{BuiltGlNodes, NodeBuildOptions, NodeBuildWarning, build_gl_nodes};
-use crustywad::{ParseOptions, Wad};
+use crustywad::map::build::{
+    BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat,
+    add_doom_map_with_nodes, build_gl_nodes,
+};
+use crustywad::{ParseOptions, Wad, WadBuilder, WadKind, WriteOptions};
 
 // GL nodes are always an extended format, so every arena (segs, subsectors,
 // nodes, and the combined original+GL vertex namespace) is bounded by the
@@ -48,6 +51,75 @@ fuzz_target!(|data: &[u8]| {
         }
 
         assert_output_bounds(&map, &built);
+
+        // Serialize -> decode oracle (ADR-0026 §5, PR #370's hardening
+        // statement): the *fully public* write path — `add_doom_map_with_nodes`
+        // targeting `NodeFormat::Xgl3` — must never panic, and neither may
+        // feeding its output straight back through the crate's own reader and
+        // assembler. This is the writer-side twin of the read-only oracle
+        // above: `build_gl_nodes` alone proves the in-memory kernel is safe,
+        // this proves the on-disk `XGL3` stream it produces is too.
+        //
+        // `add_doom_map_with_nodes` re-runs its own write pass, `REJECT`,
+        // `BLOCKMAP`, and `build_gl_nodes` internally (independent of the
+        // in-memory `built` above), so it can legitimately fail with any of
+        // the same errors those builders document — this is not a narrower
+        // guarantee than the read-only oracle already gave. `format` is
+        // always a GL variant here, so `UnsupportedNodeFormat` — a
+        // non-GL-format-serializing-GL-data caller-misuse guard — can never
+        // fire; if it ever does, that is a real bug and the catch-all below
+        // panics on it.
+        // `NodeBuildOptions` is `#[non_exhaustive]`, so it cannot be built with
+        // struct-literal syntax outside the crate; start from `lenient()` (which
+        // already sets `strictness: Strictness::Lenient`) and override the
+        // public `format` field in place.
+        let mut gl_opts = NodeBuildOptions::lenient();
+        gl_opts.format = NodeFormat::Xgl3;
+        let mut builder = WadBuilder::new(WadKind::Pwad);
+        match add_doom_map_with_nodes(
+            &mut builder,
+            "MAP01",
+            &map,
+            &WriteOptions::lenient(),
+            &gl_opts,
+        ) {
+            Ok(_warnings) => {
+                // Finish the WAD, then feed it back through the crate's own
+                // reader and assembler. Neither call is asserted to succeed —
+                // only to never panic — mirroring every other oracle in this
+                // suite; genuine round-trip fidelity is covered by the golden
+                // and round-trip integration tests (ADR-0026 §6), not fuzzing.
+                if let Ok((bytes, _write_warnings)) =
+                    builder.build_with_options(&WriteOptions::lenient())
+                {
+                    if let Ok(wad2) = Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
+                    {
+                        for group2 in wad2.map_groups() {
+                            let _ = Map::assemble_with_options(
+                                &wad2,
+                                &group2,
+                                ParseOptions::lenient(),
+                            );
+                        }
+                    }
+                }
+            }
+            // The known, tolerated error set every other builder in this
+            // target already accepts (structural ceilings, hardening guards,
+            // and write-path narrowing) — a clean `Err`, not a bug.
+            Err(
+                NodeBuildError::Write(_)
+                | NodeBuildError::EmptyGeometry
+                | NodeBuildError::BlockmapOverflow { .. }
+                | NodeBuildError::TooManyElements { .. }
+                | NodeBuildError::MinisegUnsupported { .. }
+                | NodeBuildError::MixedSectorSubsector { .. }
+                | NodeBuildError::DegeneratePartition { .. }
+                | NodeBuildError::CompressionUnavailable
+                | NodeBuildError::InvalidStructure(_),
+            ) => {}
+            Err(other) => panic!("unexpected add_doom_map_with_nodes error: {other:?}"),
+        }
     }
 });
 
