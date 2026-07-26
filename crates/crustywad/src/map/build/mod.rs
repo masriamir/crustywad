@@ -47,11 +47,13 @@ use crate::map::doom::DoomWriteWarning;
 
 mod blockmap;
 mod geom;
+mod gl_nodes;
 mod nodes;
 mod oneshot;
 mod reject;
 
 pub use blockmap::build_blockmap;
+pub use gl_nodes::{BuiltGlNode, BuiltGlNodes, build_gl_nodes};
 pub use nodes::{BuiltNodeLumps, BuiltNodes, build_nodes};
 pub use oneshot::add_doom_map_with_nodes;
 pub use reject::build_reject;
@@ -402,6 +404,40 @@ pub enum NodeStructureError {
         child: usize,
         /// The size of the referenced arena.
         bound: usize,
+    },
+    /// GL seg `seg` references a vertex outside its arena (ADR-0026 §1, #363): a
+    /// [`GlVertexRef::Normal`](crate::map::graph::GlVertexRef::Normal) at or
+    /// above `orig_vertex_count`, or a
+    /// [`GlVertexRef::Gl`](crate::map::graph::GlVertexRef::Gl) at or above the
+    /// `gl_vertices` count. `bound` is the size of whichever arena the reference
+    /// addresses.
+    #[error("GL seg {seg} references a vertex outside its {bound}-entry arena")]
+    GlVertexRef {
+        /// Index of the offending GL seg.
+        seg: usize,
+        /// The size of the arena the out-of-range reference addresses.
+        bound: usize,
+    },
+    /// GL seg `seg`'s partner link is not a mirrored involution (ADR-0026 §1,
+    /// #363): its partner does not point back at it, points at itself, or the two
+    /// spans are not mirror images (`seg.start == partner.end` and
+    /// `seg.end == partner.start`).
+    #[error("GL seg {seg} and its partner {partner} are not a mirrored involution")]
+    PartnerAsymmetry {
+        /// Index of the offending GL seg.
+        seg: usize,
+        /// The partner index it names.
+        partner: usize,
+    },
+    /// GL subsector `subsector`'s seg loop does not close (ADR-0026 §1, #363):
+    /// seg `seg`'s end vertex is not the next seg's start vertex (cyclically),
+    /// so the run is not a closed polygon.
+    #[error("GL subsector {subsector} seg {seg} does not connect to the next seg (open loop)")]
+    OpenLoop {
+        /// Index of the offending subsector.
+        subsector: usize,
+        /// The seg index whose end breaks the loop.
+        seg: usize,
     },
 }
 

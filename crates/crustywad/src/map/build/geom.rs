@@ -82,6 +82,171 @@ pub(super) fn within_half_unit(cross: i64, len2: i128) -> bool {
     i128::from(cross) * i128::from(cross) * 4 < len2
 }
 
+/// The exact `i128` cross product of the partition direction `(pdx, pdy)` with
+/// the vector `(rx, ry)` from the partition start to a queried point:
+/// `rx·pdy − ry·pdx` (`> 0` front, `< 0` back — same sign convention as
+/// [`cross_from_start`]). The GL kernel works in 16.16 fixed-point `i32`
+/// coordinates, where a delta can reach `2³²`; the products then reach `2⁶³`
+/// and overflow the `i64` used by [`cross_from_start`], so they are computed in
+/// `i128` here. On whole-unit inputs the two helpers agree exactly.
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) classify pass.
+pub(super) fn cross_from_start_wide(rx: i64, ry: i64, pdx: i64, pdy: i64) -> i128 {
+    i128::from(rx) * i128::from(pdy) - i128::from(ry) * i128::from(pdx)
+}
+
+/// Whether cross product `cross` places its vertex **less than** 0.5 fixed units
+/// from a line with squared length `len2`, the fixed-space analogue of
+/// [`within_half_unit`] (`distance² < 1/4 ⇔ cross² < len2/4 ⇔ 4·cross² < len2`;
+/// strict, so a vertex exactly 0.5 units off counts as a side, not on the line).
+///
+/// # Overflow guard
+///
+/// `cross` here is a wide [`cross_from_start_wide`] result, so the naive
+/// `4·cross²` could overflow `i128`. We guard by rejecting any
+/// `cross.unsigned_abs() >= 1 << 31` up front.
+///
+/// Derivation of the `2³¹` bound: partition direction deltas are (ZDBSP-style)
+/// `fixed_t` `i32` quantities, so `|pdx|, |pdy| ≤ 2³¹` and the squared length
+/// is bounded by `len2 = pdx² + pdy² ≤ 2·(2³¹)² = 2⁶³`. The test can then only
+/// pass when `cross² < len2/4 ≤ 2⁶¹`, i.e. `|cross| < 2³⁰·⁵ < 2³¹` — so any
+/// `|cross| ≥ 2³¹` cannot satisfy the inequality and is already known `false`,
+/// and we return without squaring. This also keeps the arithmetic in range:
+/// once `|cross| < 2³¹` we have `cross² < 2⁶²` and `4·cross² < 2⁶⁴ ≪
+/// i128::MAX`, so no product overflows. The guard fails safe: if a caller ever
+/// exceeded the `i32` partition-delta precondition (`len2 > 2⁶⁴` becomes
+/// reachable), a `|cross| ≥ 2³¹` vertex would be classified as a side rather
+/// than on-line — a conservative extra split, never a wrong `true`.
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) on-partition tests.
+pub(super) fn within_half_fixed_unit(cross: i128, len2: i128) -> bool {
+    if cross.unsigned_abs() >= 1 << 31 {
+        return false;
+    }
+    cross * cross * 4 < len2
+}
+
+/// Orders directions `a` and `b` by their **clockwise** angle from reference
+/// direction `ref`, exactly and without `atan2`, division, or floating point.
+///
+/// Each direction is transformed into `ref`'s frame as `(x', y')` where
+/// `x' = d·ref` (dot, `i128`) and `y' = ref×d = ref_dx·d_dy − ref_dy·d_dx`
+/// (cross, `i128`). Directions are then bucketed into a clockwise half-plane
+/// rank — rank 0: on-`ref` (`y' == 0 && x' > 0`); rank 1: clockwise side
+/// (`y' < 0`); rank 2: anti-`ref` (`y' == 0 && x' < 0`); rank 3:
+/// counter-clockwise side (`y' > 0`) — which is monotonic in clockwise angle,
+/// so a smaller rank orders first. Within one rank the two directions are
+/// ordered by the sign of their frame cross product `a×b = a_x'·b_y' − a_y'·b_x'`
+/// (`< 0` ⇒ `a` is clockwise-before `b`); equal directions compare `Equal`.
+/// Cross-multiplication avoids any division. This replaces ZDBSP's BAM +
+/// `ANGLE_EPSILON` comparisons (Notes §Q2/§Q5) with an exact integer test.
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) miniseg loop checks.
+// `similar_names`: the `*_dx`/`*_dy` parameter names mirror the delta naming used
+// across this module.
+#[allow(clippy::similar_names)]
+pub(super) fn clockwise_order(
+    ref_dx: i64,
+    ref_dy: i64,
+    a_dx: i64,
+    a_dy: i64,
+    b_dx: i64,
+    b_dy: i64,
+) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+    // Frame transform: x' = d·ref (dot), y' = ref×d (cross), both in i128.
+    let frame = |dx: i64, dy: i64| -> (i128, i128) {
+        let dot = i128::from(dx) * i128::from(ref_dx) + i128::from(dy) * i128::from(ref_dy);
+        let cross = i128::from(ref_dx) * i128::from(dy) - i128::from(ref_dy) * i128::from(dx);
+        (dot, cross)
+    };
+    // Clockwise half-plane rank: monotonic in clockwise angle from ref.
+    let rank = |x: i128, y: i128| -> u8 {
+        match y.cmp(&0) {
+            Ordering::Equal => {
+                if x > 0 {
+                    0
+                } else {
+                    2
+                }
+            }
+            Ordering::Less => 1,
+            Ordering::Greater => 3,
+        }
+    };
+    let (ax, ay) = frame(a_dx, a_dy);
+    let (bx, by) = frame(b_dx, b_dy);
+    match rank(ax, ay).cmp(&rank(bx, by)) {
+        // Within an equal rank, order by the sign of the frame cross product
+        // a×b = ax·by − ay·bx (< 0 ⇒ a is clockwise-before b).
+        Ordering::Equal => (ax * by).cmp(&(ay * bx)),
+        other => other,
+    }
+}
+
+/// Orders directions `a` and `b` by their **counter-clockwise** angle from
+/// reference direction `ref` — the exact mirror of [`clockwise_order`], with the
+/// same `atan2`-free integer frame transform.
+///
+/// This is required by the GL miniseg loop checks (Notes §Q2): ZDBSP's
+/// `CheckLoopStart` minimizes `splitAngle - segAngle` (a clockwise extremum,
+/// served by [`clockwise_order`]), but `CheckLoopEnd` minimizes
+/// `segAngle - (splitAngle + ANGLE_180)` — a *counter-clockwise* extremum from
+/// the negated reference. In BAM angles increase counter-clockwise, so the two
+/// functions pick opposite rotational extrema and need distinct comparators; a
+/// single "smallest clockwise angle" rule reproduces `CheckLoopStart` but not
+/// `CheckLoopEnd` (they differ by 180°, verified against `nodebuild_gl.cpp`).
+///
+/// Each direction transforms into `ref`'s frame as `(x', y')` where `x' = d·ref`
+/// (dot, `i128`) and `y' = ref×d` (cross, `i128`); `y' > 0` is the
+/// counter-clockwise half-plane. Directions bucket into a CCW half-plane rank —
+/// rank 0: on-`ref` (`y' == 0 && x' > 0`); rank 1: counter-clockwise side
+/// (`y' > 0`); rank 2: anti-`ref` (`y' == 0 && x' < 0`); rank 3: clockwise side
+/// (`y' < 0`) — monotonic in CCW angle, so a smaller rank orders first. Within
+/// one rank the two directions are ordered by the sign of their frame cross
+/// product `a×b = a_x'·b_y' − a_y'·b_x'` reversed relative to
+/// [`clockwise_order`] (`> 0` ⇒ `b` is CCW-after `a` ⇒ `a` orders first); equal
+/// directions compare `Equal`.
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) miniseg loop checks.
+// `similar_names`: the `*_dx`/`*_dy` names mirror `clockwise_order`'s contract.
+#[allow(clippy::similar_names)]
+pub(super) fn counter_clockwise_order(
+    ref_dx: i64,
+    ref_dy: i64,
+    a_dx: i64,
+    a_dy: i64,
+    b_dx: i64,
+    b_dy: i64,
+) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+    // Frame transform: x' = d·ref (dot), y' = ref×d (cross), both in i128.
+    let frame = |dx: i64, dy: i64| -> (i128, i128) {
+        let dot = i128::from(dx) * i128::from(ref_dx) + i128::from(dy) * i128::from(ref_dy);
+        let cross = i128::from(ref_dx) * i128::from(dy) - i128::from(ref_dy) * i128::from(dx);
+        (dot, cross)
+    };
+    // Counter-clockwise half-plane rank: monotonic in CCW angle from ref.
+    let rank = |x: i128, y: i128| -> u8 {
+        match y.cmp(&0) {
+            Ordering::Equal => {
+                if x > 0 {
+                    0
+                } else {
+                    2
+                }
+            }
+            Ordering::Greater => 1,
+            Ordering::Less => 3,
+        }
+    };
+    let (ax, ay) = frame(a_dx, a_dy);
+    let (bx, by) = frame(b_dx, b_dy);
+    match rank(ax, ay).cmp(&rank(bx, by)) {
+        // Within an equal rank, order by CCW angle: a×b = ax·by − ay·bx > 0 ⇒ b
+        // is counter-clockwise of a ⇒ a has the smaller CCW angle ⇒ a first. This
+        // is the reverse of `clockwise_order`'s within-rank comparison.
+        Ordering::Equal => (ay * bx).cmp(&(ax * by)),
+        other => other,
+    }
+}
+
 /// The partition-candidate score (ADR-0024 §B.3, lower wins):
 /// `split_cost · split + |front − back|`, plus the diagonal penalty
 /// `(front + back + split) / aa_preference` when `diagonal` — a larger
@@ -185,6 +350,79 @@ mod tests {
         assert_eq!(partition_score(20, 12, 0, 8, 0, true), 8);
         // split_cost = 0 degrades to balance-only.
         assert_eq!(partition_score(7, 2, 3, 0, 16, false), 5);
+    }
+
+    /// `cross_from_start_wide` must survive the 16.16 extremes that overflow the
+    /// classic i64 helper: deltas up to 2^32 with partition deltas up to 2^31.
+    // `cast_lossless`: the `as i128` casts are task-brief test code, verbatim.
+    #[allow(clippy::cast_lossless)]
+    #[test]
+    fn cross_from_start_wide_survives_16_16_extremes() {
+        // rx = 2^32, pdy = 2^31: product 2^63 overflows i64 but not i128.
+        let rx = 1_i64 << 32;
+        let pdy = 1_i64 << 31;
+        assert_eq!(
+            cross_from_start_wide(rx, 0, 0, pdy),
+            (rx as i128) * (pdy as i128)
+        );
+        // Sign convention matches the narrow helper on small values.
+        assert_eq!(cross_from_start_wide(5, -3, 10, 0), 30);
+        assert_eq!(cross_from_start_wide(5, 3, 10, 0), -30);
+    }
+
+    /// The 0.5-fixed-unit epsilon is strict, and the overflow guard rejects
+    /// magnitudes that could not pass anyway.
+    #[test]
+    fn within_half_fixed_unit_boundary_and_guard() {
+        // Line of squared length 100: cross = 5 => exactly 0.5 units off => false.
+        assert!(!within_half_fixed_unit(5, 100));
+        assert!(within_half_fixed_unit(4, 100));
+        assert!(within_half_fixed_unit(0, 1));
+        // Guard: |cross| = 2^31 is always out, even against a huge len2.
+        assert!(!within_half_fixed_unit(1_i128 << 31, i128::MAX));
+    }
+
+    /// Exact clockwise ordering around a reference direction, no atan2.
+    #[test]
+    fn clockwise_order_ranks_directions_exactly() {
+        use core::cmp::Ordering;
+        // ref = east. Clockwise from east: south (0,-1) comes before west (-1,0),
+        // which comes before north (0,1).
+        assert_eq!(clockwise_order(1, 0, 0, -1, -1, 0), Ordering::Less);
+        assert_eq!(clockwise_order(1, 0, -1, 0, 0, 1), Ordering::Less);
+        assert_eq!(clockwise_order(1, 0, 0, 1, 0, -1), Ordering::Greater);
+        // Same direction, different magnitude: equal.
+        assert_eq!(clockwise_order(1, 0, 2, 2, 5, 5), Ordering::Equal);
+        // On-ref beats everything.
+        assert_eq!(clockwise_order(1, 0, 7, 0, 0, -1), Ordering::Less);
+    }
+
+    /// Exact counter-clockwise ordering: the mirror of `clockwise_order`, used by
+    /// the GL miniseg `CheckLoopEnd` port.
+    #[test]
+    fn counter_clockwise_order_ranks_directions_exactly() {
+        use core::cmp::Ordering;
+        // ref = east. Counter-clockwise from east: north (0,1) before west (-1,0)
+        // before south (0,-1) — the exact reverse of the clockwise sweep.
+        assert_eq!(
+            counter_clockwise_order(1, 0, 0, 1, -1, 0),
+            Ordering::Less,
+            "north precedes west going CCW from east"
+        );
+        assert_eq!(counter_clockwise_order(1, 0, -1, 0, 0, -1), Ordering::Less);
+        assert_eq!(counter_clockwise_order(1, 0, 0, 1, 0, -1), Ordering::Less);
+        // On-ref beats everything.
+        assert_eq!(counter_clockwise_order(1, 0, 1, 0, 0, 1), Ordering::Less);
+        // Within the CCW half-plane, a smaller CCW angle orders first:
+        // (1,1) at 45° precedes (1,2) at ~63°.
+        assert_eq!(counter_clockwise_order(1, 0, 1, 1, 1, 2), Ordering::Less);
+        // Same direction, different magnitude: equal.
+        assert_eq!(counter_clockwise_order(1, 0, 2, 2, 5, 5), Ordering::Equal);
+        // It is the exact reverse of clockwise_order for distinct non-ref dirs.
+        assert_eq!(
+            counter_clockwise_order(1, 0, 0, -1, -1, 0),
+            clockwise_order(1, 0, 0, -1, -1, 0).reverse()
+        );
     }
 
     /// The 0.5-unit epsilon is strict: distance² < 1/4 ⇔ 4·cross² < len².
