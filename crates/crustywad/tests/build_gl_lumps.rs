@@ -17,12 +17,12 @@
 
 mod common;
 
+use crustywad::Wad;
 use crustywad::map::build::{
     BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeStructureError,
     build_gl_nodes,
 };
 use crustywad::map::{GlNodeChild, GlVertexRef, Map};
-use crustywad::{ParseOptions, Wad};
 use proptest::prelude::*;
 
 // --- WAD-building helpers (mirrors build_lumps.rs) ---------------------------
@@ -859,6 +859,7 @@ proptest! {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn sweep_builds_gl_nodes_for_every_classic_map() {
+    use crustywad::ParseOptions;
     use crustywad::map::{MapFormat, detect_map_format};
 
     let paths = common::wad_files("CRUSTYWAD_SWEEP_DIR");
