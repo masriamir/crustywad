@@ -39,9 +39,11 @@ fuzz_target!(|data: &[u8]| {
         let mut has_degenerate = false;
         for warning in &warnings {
             match warning {
-                // The narrowing recovery, the vanilla soft ceiling, the tolerated
-                // mixed-sector fan, and the degenerate-leaf recovery are the only
-                // GL node-build warnings.
+                // The tolerated warning set: the narrowing recovery, the vanilla
+                // soft ceiling, the mixed-sector fan, and the degenerate-leaf
+                // recovery. This is a superset for parity with the classic build —
+                // the GL kernel never emits `VanillaCeilingExceeded` itself, but
+                // accepting it keeps this oracle aligned with the shared contract.
                 NodeBuildWarning::Write(_)
                 | NodeBuildWarning::VanillaCeilingExceeded { .. }
                 | NodeBuildWarning::MixedSectorSubsector { .. } => {}

@@ -3,7 +3,7 @@
 //!
 //! This module structurally mirrors the classic BSP kernel (`nodes.rs`): the
 //! same vertex-narrowing gate, the same initial-seg pass, the same explicit
-//! work-stack partitioner (in later tasks). The GL kernel differs in three
+//! work-stack partitioner. The GL kernel differs in three
 //! ways — vertices widen to 16.16 fixed-point (`raw << 16`), segs carry a
 //! `partner` link maintained from birth (the GL involution), and there is no
 //! per-seg `offset` (the GL formats derive it on read). Moved logic keeps the
@@ -31,7 +31,7 @@ struct GlWorkSeg {
     v1: usize,
     /// End-vertex index into the combined 16.16 vertex table.
     v2: usize,
-    /// The source linedef, or `None` for a miniseg (Task 4).
+    /// The source linedef, or `None` for a miniseg.
     linedef: Option<usize>,
     /// `0` = right/front sidedef, `1` = left/back.
     side: u8,
@@ -44,7 +44,7 @@ struct GlWorkSeg {
 }
 
 /// A partition line in 16.16 space with its widened integer precomputes, built
-/// once per candidate so the classify pass (Task 3) does no redundant widening.
+/// once per candidate so the classify pass does no redundant widening.
 #[derive(Clone, Copy)]
 struct GlPartition {
     /// Line start `x` (16.16).
@@ -143,7 +143,7 @@ struct GlTreeNode {
 }
 
 /// One on-partition vertex encountered while routing a set through a partition,
-/// with the colinear segs that touch it. Task 5's loop-closing checks walk the
+/// with the colinear segs that touch it. The miniseg loop-closing checks walk the
 /// events in partition order and need, per vertex, which colinear front/back
 /// segs enter it — so their working ids are retained here rather than just a
 /// coverage count.
@@ -237,10 +237,11 @@ struct GlBsp<'a> {
     /// transitively at exactly three points:
     /// (a) [`split_set`](Self::split_set)'s routing queue pushes a key's parked
     ///     fragments when it pops that key id;
-    /// (b) the recursion driver expands a popped set before classification the
-    ///     same way (Task 6);
-    /// (c) `finish` expands each leaf's seg list before finalization (Task 6).
-    /// Points (b)/(c) land with the driver in Task 6; only (a) is wired here. A
+    /// (b) the recursion driver ([`process_split`](Self::process_split)) expands a
+    ///     popped set before classification the same way;
+    /// (c) [`finish`](Self::finish) expands each leaf's seg list before
+    ///     finalization.
+    /// All three points are wired. A
     /// partner sitting in an already-emitted leaf can still be co-split by a
     /// later partition in the sibling subtree — subdividing an edge of a convex
     /// polygon keeps it convex and closed, so a cross-subtree co-split is normal,
@@ -251,15 +252,16 @@ struct GlBsp<'a> {
     /// Per-vertex incident segs whose current start (`v1`) is this vertex,
     /// indexed by combined-table vertex id (the Rust analog of ZDBSP's
     /// `nextforvert` lists). Grown by [`intern_vertex`](Self::intern_vertex) and
-    /// maintained on every seg creation and in-place split. Consumed by Task 5.
+    /// maintained on every seg creation and in-place split. Consumed by the
+    /// miniseg loop checks.
     segs_starting_at: Vec<Vec<usize>>,
     /// Per-vertex incident segs whose current end (`v2`) is this vertex, the
     /// end-vertex twin of [`segs_starting_at`](Self::segs_starting_at). An
     /// in-place split that shortens a seg moves it here from its old end to the
-    /// mid. Consumed by Task 5.
+    /// mid. Consumed by the miniseg loop checks.
     segs_ending_at: Vec<Vec<usize>>,
     /// On-partition events for the current [`split_set`](Self::split_set) call,
-    /// consumed by Task 5's `branch`.
+    /// consumed by [`add_minisegs`](Self::add_minisegs).
     events: EventAccumulator,
     /// Live seg count (segs reachable in some pending set or leaf).
     live_segs: usize,
@@ -275,7 +277,7 @@ struct GlBsp<'a> {
     leaves: Vec<Vec<usize>>,
     /// Internal nodes, in post-order (root last).
     tree_nodes: Vec<GlTreeNode>,
-    /// The tree root, set by the partition pass (Task 3).
+    /// The tree root, set by the partition pass.
     root: Option<TreeRef>,
 }
 
@@ -716,7 +718,7 @@ impl<'a> GlBsp<'a> {
     /// the queue: each now has the mid on the line, so it re-classifies cleanly to
     /// one side — re-classification is what keeps `select` and routing agreed.
     ///
-    /// On-partition **events** are recorded for Task 5 (§Q2): each split point and
+    /// On-partition **events** are recorded for the miniseg pass (§Q2): each split point and
     /// on-line endpoint (recorded when a re-classified fragment reports its mid
     /// on-line), and both endpoints of every colinear seg (tagged front/back by
     /// its class). The accumulator is cleared on entry and left populated for the
@@ -1154,8 +1156,8 @@ impl<'a> GlBsp<'a> {
     /// Adds mirrored miniseg pairs across the partition (`AddMinisegs`, Notes §Q2),
     /// consuming the on-partition events left in [`self.events`](Self::events) by
     /// the immediately preceding [`split_set`](Self::split_set) call — the
-    /// accumulator is not passed explicitly because it lives on `self` (Task 4's
-    /// storage choice); callers must invoke `add_minisegs` before the next
+    /// accumulator is not passed explicitly because it lives on `self`; callers
+    /// must invoke `add_minisegs` before the next
     /// `split_set` overwrites it. `front`/`back` are the just-routed out-sets.
     ///
     /// First runs [`fix_split_sharers`](Self::fix_split_sharers), then walks the
@@ -2215,6 +2217,10 @@ mod tests {
 
     /// Two square rooms sharing the vertical wall from v1 to v2 — the only
     /// two-sided linedef (index 1). Six vertices, seven linedefs, two sectors.
+    ///
+    /// Kept CCW-wound so the winding-invariant internals tests can assert on its
+    /// raw geometry; the driver-level, engine-correct fixture is
+    /// [`two_room_correct`] (see [`two_room_correct`] for the end-to-end tests).
     fn two_room_map() -> Map {
         build_map(
             &[

@@ -89,8 +89,7 @@ pub(super) fn within_half_unit(cross: i64, len2: i128) -> bool {
 /// coordinates, where a delta can reach `2³²`; the products then reach `2⁶³`
 /// and overflow the `i64` used by [`cross_from_start`], so they are computed in
 /// `i128` here. On whole-unit inputs the two helpers agree exactly.
-// Consumed by the GL kernel (`gl_nodes.rs`, #363), which lands in a later task.
-#[allow(dead_code)]
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) classify pass.
 pub(super) fn cross_from_start_wide(rx: i64, ry: i64, pdx: i64, pdy: i64) -> i128 {
     i128::from(rx) * i128::from(pdy) - i128::from(ry) * i128::from(pdx)
 }
@@ -117,8 +116,7 @@ pub(super) fn cross_from_start_wide(rx: i64, ry: i64, pdx: i64, pdy: i64) -> i12
 /// exceeded the `i32` partition-delta precondition (`len2 > 2⁶⁴` becomes
 /// reachable), a `|cross| ≥ 2³¹` vertex would be classified as a side rather
 /// than on-line — a conservative extra split, never a wrong `true`.
-// Consumed by the GL kernel (`gl_nodes.rs`, #363), which lands in a later task.
-#[allow(dead_code)]
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) on-partition tests.
 pub(super) fn within_half_fixed_unit(cross: i128, len2: i128) -> bool {
     if cross.unsigned_abs() >= 1 << 31 {
         return false;
@@ -140,10 +138,10 @@ pub(super) fn within_half_fixed_unit(cross: i128, len2: i128) -> bool {
 /// (`< 0` ⇒ `a` is clockwise-before `b`); equal directions compare `Equal`.
 /// Cross-multiplication avoids any division. This replaces ZDBSP's BAM +
 /// `ANGLE_EPSILON` comparisons (Notes §Q2/§Q5) with an exact integer test.
-// Consumed by the GL kernel (`gl_nodes.rs`, #363), which lands in a later task.
-// `similar_names`: the `*_dx`/`*_dy` parameter names are the task-brief
-// interface contract and mirror the delta naming used across this module.
-#[allow(dead_code, clippy::similar_names)]
+// Consumed by the GL kernel (`gl_nodes.rs`, #363) miniseg loop checks.
+// `similar_names`: the `*_dx`/`*_dy` parameter names mirror the delta naming used
+// across this module.
+#[allow(clippy::similar_names)]
 pub(super) fn clockwise_order(
     ref_dx: i64,
     ref_dy: i64,
@@ -208,7 +206,7 @@ pub(super) fn clockwise_order(
 /// directions compare `Equal`.
 // Consumed by the GL kernel (`gl_nodes.rs`, #363) miniseg loop checks.
 // `similar_names`: the `*_dx`/`*_dy` names mirror `clockwise_order`'s contract.
-#[allow(dead_code, clippy::similar_names)]
+#[allow(clippy::similar_names)]
 pub(super) fn counter_clockwise_order(
     ref_dx: i64,
     ref_dy: i64,
