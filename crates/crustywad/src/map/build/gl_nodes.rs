@@ -2081,6 +2081,9 @@ impl BuiltGlNodes {
             return Err(NodeBuildError::UnsupportedNodeFormat { format });
         }
         let body = self.build_xgl3_body(orig_vertex_count)?;
+        // Written as an exhaustive match rather than falling through a `_` arm
+        // so a future GL variant (#365's Xgln/Xgl2) must pick its body here —
+        // no catch-all — mirroring `is_gl()`'s own rationale above.
         match format {
             #[cfg(feature = "extended-nodes-zlib")]
             NodeFormat::Zgl3 => {
@@ -2088,15 +2091,17 @@ impl BuiltGlNodes {
                 lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
                 Ok(lump)
             }
-            // `is_gl()` above guaranteed a GL variant; `Zgl3` is handled above
-            // (when the feature is on), so the only remaining GL variant here is
-            // `Xgl3`. The non-GL arms are unreachable past the guard.
-            _ => {
+            NodeFormat::Xgl3 => {
                 let mut lump = Vec::with_capacity(4 + body.len());
                 lump.extend_from_slice(b"XGL3");
                 lump.extend_from_slice(&body);
                 Ok(lump)
             }
+            NodeFormat::Classic | NodeFormat::Xnod => {
+                Err(NodeBuildError::UnsupportedNodeFormat { format })
+            }
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod => Err(NodeBuildError::UnsupportedNodeFormat { format }),
         }
     }
 
@@ -2145,11 +2150,18 @@ impl BuiltGlNodes {
                 GlVertexRef::Gl(v) => orig_vertex_count + v.0,
             };
             out.extend_from_slice(&encode_index_u32("vertices", v1)?.to_le_bytes());
+            // No partner (one-sided edge): the GL reader's `0xFFFF_FFFF`
+            // sentinel. A real index can never collide with it —
+            // `encode_index_u32` caps every emitted index at
+            // `MAX_EXTENDED_INDEX` (`0x8000_0000`), well below `0xFFFF_FFFF`.
             let partner = match s.partner {
                 Some(p) => encode_index_u32("segs", p.0)?,
                 None => 0xFFFF_FFFF,
             };
             out.extend_from_slice(&partner.to_le_bytes());
+            // No linedef (miniseg): same `0xFFFF_FFFF` sentinel, and the same
+            // `MAX_EXTENDED_INDEX` ceiling keeps real indices from colliding
+            // with it.
             let linedef = match s.linedef {
                 Some(l) => encode_index_u32("linedefs", l.0)?,
                 None => 0xFFFF_FFFF,

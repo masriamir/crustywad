@@ -132,8 +132,6 @@ impl NodeFormat {
     /// a future `NodeFormat` variant cannot silently fall through unclassified —
     /// adding one is a compile error here until it is placed on a side.
     #[must_use]
-    // Consumed by the XGL3 writer dispatch (Task 2, #364).
-    #[allow(dead_code)]
     pub(crate) fn is_gl(self) -> bool {
         match self {
             NodeFormat::Classic | NodeFormat::Xnod => false,
