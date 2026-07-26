@@ -94,6 +94,13 @@ fuzz_target!(|data: &[u8]| {
                 {
                     if let Ok(wad2) = Wad::from_bytes_with_options(bytes, ParseOptions::lenient())
                     {
+                        // The just-written map must be discoverable: a written
+                        // WAD whose MAP01 run is unrecognizable would otherwise
+                        // make this whole oracle a silent no-op.
+                        assert!(
+                            !wad2.map_groups().is_empty(),
+                            "one-shot XGL3 output lost its map group on re-parse"
+                        );
                         for group2 in wad2.map_groups() {
                             let _ = Map::assemble_with_options(
                                 &wad2,
