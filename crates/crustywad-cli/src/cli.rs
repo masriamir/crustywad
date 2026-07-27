@@ -218,9 +218,16 @@ pub(crate) enum SubCommand {
         lumps: Vec<String>,
         /// After packing, build engine-playable SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
         /// for each Doom map group in the result. Hexen/Doom 64/UDMF groups are
-        /// skipped with a note. Classic node lumps only.
+        /// skipped with a note.
         #[arg(long)]
         nodes: bool,
+        /// On-disk node format for `--nodes` (applies to the Doom-format map
+        /// groups `--nodes` rebuilds). GL streams (`xgln`/`xgl2`/`xgl3`/`gl`
+        /// and their `z*` twins) are carried in `SSECTORS` instead of `NODES`.
+        /// Every `z*` value requires cwad built with the `extended-nodes-zlib`
+        /// feature.
+        #[arg(long = "node-format", default_value = "classic", value_name = "FORMAT")]
+        node_format: NodeFormatArg,
     },
     /// Convert every map in a WAD between the UDMF and classic Doom formats.
     ///

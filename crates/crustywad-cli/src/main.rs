@@ -992,6 +992,7 @@ fn run(cli: Cli) -> Result<i32> {
             kind,
             lumps,
             nodes,
+            node_format,
         } => {
             let wad_kind = match kind {
                 WadKindArg::Iwad => WadKind::Iwad,
@@ -1036,6 +1037,13 @@ fn run(cli: Cli) -> Result<i32> {
                 eprintln!("warning: {w}");
             }
 
+            // `--node-format` only takes effect when `--nodes` rebuilds Doom
+            // node lumps; note-and-ignore rather than silently dropping it
+            // (house style; no auto-implying `--nodes`).
+            if !matches!(node_format, NodeFormatArg::Classic) && !nodes {
+                eprintln!("note: --node-format has no effect without --nodes; ignoring");
+            }
+
             let final_bytes = if nodes {
                 use crustywad::ParseOptions;
                 use crustywad::map::build::{NodeBuildOptions, add_doom_map_with_nodes};
@@ -1047,10 +1055,17 @@ fn run(cli: Cli) -> Result<i32> {
                 } else {
                     ParseOptions::strict()
                 };
-                let build_opts = if cli.lenient {
+                let mut build_opts = if cli.lenient {
                     NodeBuildOptions::lenient()
                 } else {
                     NodeBuildOptions::strict()
+                };
+                build_opts.format = match node_format_arg_to_lib(node_format) {
+                    Ok(format) => format,
+                    Err(msg) => {
+                        eprintln!("error: {msg}");
+                        return Ok(3);
+                    }
                 };
                 // Re-read our own freshly-built WAD to detect map groups. This is
                 // our own serializer output, so a parse failure is an internal
