@@ -145,7 +145,7 @@ The clean-room builder now spans three tiers of output:
   + `BuiltGlNodes::to_extended_lump_bytes`, or the `add_doom_map_with_nodes` one-shot,
   which carries the GL stream in `SSECTORS` (ADR-0026, #364, #365).
   `NodeFormat::Gl`/`Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
-  32-bit seg linedef or a fractional/out-of-range partition forces `XGL2` or `XGL3`.
+  32-bit seg linedef or a fractional partition forces `XGL2` or `XGL3`.
 
 `crustywad` *reads* the full ZDoom extended family and classic GL nodes (ADR-0025 and its
 amendments, `Extended nodes` milestone, #199/#324) — see

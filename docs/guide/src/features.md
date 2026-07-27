@@ -333,7 +333,7 @@ more than 65,536 linedefs is unrepresentable *there*. The GL formats lift that i
 `build_gl_nodes` (and `add_doom_map_with_nodes`) emit an `XGLN`, `XGL2`, or `XGL3` stream (or
 their zlib twins `ZGLN`/`ZGL2`/`ZGL3`) via `BuiltGlNodes::to_extended_lump_bytes`, carried in
 `SSECTORS`; `XGLN` keeps a 16-bit seg linedef like the non-GL streams, `XGL2` widens it to `u32`,
-and `XGL3` additionally allows fractional or out-of-`i16`-range node partitions.
+and `XGL3` additionally allows fractional (sub-unit) node partitions.
 `NodeFormat::Gl`/`Zgl` auto-select the minimal dialect that fits the map, so callers who don't
 need a specific dialect can request `Gl` and get the smallest stream that round-trips it.
 `cwad`'s CLI does not yet expose GL emission (#366).

@@ -80,11 +80,11 @@ const DEFAULT_AA_PREFERENCE: u32 = 16;
 /// The seg `linedef` reference stays 16-bit in the **non-GL** formats, so a map with
 /// more than 65,536 linedefs is unrepresentable through `Xnod`/`Znod`. The GL formats
 /// lift that in stages (ADR-0026 §3): `Xgln`/`Zgln` still write a 16-bit seg linedef,
-/// `Xgl2`/`Zgl2` widen it to `u32`, and `Xgl3`/`Zgl3` additionally allow fractional or
-/// out-of-`i16`-range node partitions (`Xgln`/`Xgl2` require whole-unit `i16`
+/// `Xgl2`/`Zgl2` widen it to `u32`, and `Xgl3`/`Zgl3` additionally allow fractional
+/// node partitions (`Xgln`/`Xgl2` require whole-unit `i16`
 /// partitions, matching the classic format). `Gl`/`Zgl` auto-select the minimal
 /// sufficient dialect: `Xgln` unless a 32-bit linedef reference or a sentinel
-/// collision forces `Xgl2`, or a fractional/out-of-range partition forces `Xgl3`.
+/// collision forces `Xgl2`, or a fractional partition forces `Xgl3`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum NodeFormat {
@@ -120,7 +120,7 @@ pub enum NodeFormat {
     #[cfg(feature = "extended-nodes-zlib")]
     Zgl2,
     /// Auto-selects the minimal sufficient GL dialect (ADR-0026 §3 escalation:
-    /// `XGLN` → `XGL2` on sentinel collision → `XGL3` on fractional/out-of-range
+    /// `XGLN` → `XGL2` on sentinel collision → `XGL3` on fractional
     /// partitions), then emits it uncompressed.
     Gl,
     /// Like [`NodeFormat::Gl`] but emits the selected dialect's zlib-compressed

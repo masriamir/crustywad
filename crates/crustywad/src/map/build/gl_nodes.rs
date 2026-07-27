@@ -2165,7 +2165,7 @@ impl BuiltGlNodes {
     ///   first.
     /// - [`NodeBuildError::PartitionPrecision`] when `format` is
     ///   [`NodeFormat::Xgln`]/[`NodeFormat::Xgl2`] (or their zlib twins) and a
-    ///   node partition is fractional or falls outside `i16` — only `XGL3`'s
+    ///   node partition is fractional (nonzero low 16 bits) — only `XGL3`'s
     ///   fixed-point partitions can represent it. Unreachable for
     ///   [`NodeFormat::Gl`]/[`NodeFormat::Zgl`]: the auto-resolution step
     ///   escalates to `Xgl3` whenever a partition would trip this, by
