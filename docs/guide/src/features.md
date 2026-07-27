@@ -337,7 +337,8 @@ largest real linedef index is `0xFFFE`), `XGL2` widens it to `u32`,
 and `XGL3` additionally allows fractional (sub-unit) node partitions.
 `NodeFormat::Gl`/`Zgl` auto-select the minimal dialect that fits the map, so callers who don't
 need a specific dialect can request `Gl` and get the smallest stream that round-trips it.
-`cwad`'s CLI does not yet expose GL emission (#366).
+`cwad convert --nodes`/`build --nodes` expose the full set through `--node-format`
+(`xgln`/`xgl2`/`xgl3`/`gl`, plus their `z*` twins), each GL stream carried in `SSECTORS`.
 
 ### Usage
 
