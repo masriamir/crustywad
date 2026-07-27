@@ -250,8 +250,10 @@ zlib-compressed twin) — and four GL dialects — `xgln`, `xgl2`, `xgl3`, and
 `SSECTORS` instead of `NODES` (`SEGS`/`NODES` left empty). Every GL value
 also has a `z*` zlib-compressed twin (`zgln`/`zgl2`/`zgl3`/`zgl`). All `z*`
 values, GL and non-GL alike, require `cwad` built with the
-`extended-nodes-zlib` feature (on by default) — without it, they exit `3`
-with a clear error rather than a clap parse failure. See
+`extended-nodes-zlib` feature (on by default) — without it, a `z*` value
+that actually takes effect (i.e. `--nodes` is in play) exits `3` with a
+clear error rather than a clap parse failure; without `--nodes` the flag is
+noted and ignored as described above. See
 [Choosing the on-disk node format](building-nodes.md#choosing-the-on-disk-node-format)
 for the full value table.
 

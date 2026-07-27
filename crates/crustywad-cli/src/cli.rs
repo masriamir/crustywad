@@ -61,7 +61,8 @@ pub(crate) enum MapFormatArg {
     Udmf,
 }
 
-/// On-disk node format for `convert --nodes`. The classic and non-GL extended
+/// On-disk node format for `convert --nodes` and `build --nodes`. The
+/// classic and non-GL extended
 /// formats (`classic`/`xnod`/`znod`) carry their stream in `NODES`; the GL
 /// formats (`xgln`/`xgl2`/`xgl3`/`gl` and their `z*` zlib twins) instead carry
 /// theirs in `SSECTORS`.
@@ -216,9 +217,10 @@ pub(crate) enum SubCommand {
         /// Lumps are added to the WAD in the order they are listed.
         #[arg(value_name = "NAME=FILE")]
         lumps: Vec<String>,
-        /// After packing, build engine-playable SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
-        /// for each Doom map group in the result. Hexen/Doom 64/UDMF groups are
-        /// skipped with a note.
+        /// After packing, build engine-playable node lumps (plus REJECT and
+        /// BLOCKMAP) for each Doom map group in the result — the lump layout
+        /// follows `--node-format`. Hexen/Doom 64/UDMF groups are skipped with
+        /// a note.
         #[arg(long)]
         nodes: bool,
         /// On-disk node format for `--nodes` (applies to the Doom-format map
