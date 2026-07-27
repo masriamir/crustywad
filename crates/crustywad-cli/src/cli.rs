@@ -61,7 +61,10 @@ pub(crate) enum MapFormatArg {
     Udmf,
 }
 
-/// On-disk node format for `convert --nodes`.
+/// On-disk node format for `convert --nodes`. The classic and non-GL extended
+/// formats (`classic`/`xnod`/`znod`) carry their stream in `NODES`; the GL
+/// formats (`xgln`/`xgl2`/`xgl3`/`gl` and their `z*` zlib twins) instead carry
+/// theirs in `SSECTORS`.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub(crate) enum NodeFormatArg {
     /// Classic SEGS/SSECTORS/NODES (16-bit indices; vanilla-compatible).
@@ -72,6 +75,32 @@ pub(crate) enum NodeFormatArg {
     /// `ZDoom` zlib-compressed extended nodes (`ZNOD`); requires cwad built with
     /// the `extended-nodes-zlib` feature.
     Znod,
+    /// The uncompressed `ZDoom` GL extended stream with a 16-bit seg linedef
+    /// reference and whole-unit `i16` node partitions (`XGLN`); the minimal GL
+    /// dialect.
+    Xgln,
+    /// Like `xgln` but with a 32-bit seg linedef reference (`XGL2`); still
+    /// requires whole-unit `i16` node partitions.
+    Xgl2,
+    /// The uncompressed `ZDoom` GL extended stream with fractional node
+    /// partitions (`XGL3`).
+    Xgl3,
+    /// Auto-selects the minimal sufficient GL dialect (`xgln`, escalating to
+    /// `xgl2` or `xgl3` only if the geometry requires it), then emits it
+    /// uncompressed.
+    Gl,
+    /// The zlib-compressed twin of `xgln` (`ZGLN`); requires cwad built with
+    /// the `extended-nodes-zlib` feature.
+    Zgln,
+    /// The zlib-compressed twin of `xgl2` (`ZGL2`); requires cwad built with
+    /// the `extended-nodes-zlib` feature.
+    Zgl2,
+    /// The zlib-compressed twin of `xgl3` (`ZGL3`); requires cwad built with
+    /// the `extended-nodes-zlib` feature.
+    Zgl3,
+    /// Like `gl` but emits the selected dialect's zlib-compressed twin;
+    /// requires cwad built with the `extended-nodes-zlib` feature.
+    Zgl,
 }
 
 /// Available `cwad` subcommands.
@@ -238,8 +267,10 @@ pub(crate) enum SubCommand {
         /// Doom output only; ignored for `--to udmf`).
         #[arg(long)]
         nodes: bool,
-        /// On-disk node format for `--nodes` (classic Doom output only). `znod`
-        /// requires cwad built with the `extended-nodes-zlib` feature.
+        /// On-disk node format for `--nodes` (classic Doom output only). GL
+        /// streams (`xgln`/`xgl2`/`xgl3`/`gl` and their `z*` twins) are carried
+        /// in `SSECTORS` instead of `NODES`. Every `z*` value requires cwad
+        /// built with the `extended-nodes-zlib` feature.
         #[arg(long = "node-format", default_value = "classic", value_name = "FORMAT")]
         node_format: NodeFormatArg,
     },

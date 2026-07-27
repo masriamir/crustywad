@@ -517,6 +517,54 @@ fn audio_summary(wad: &Wad) -> Vec<(&'static str, usize)> {
     .collect()
 }
 
+/// Maps a CLI `--node-format` value to the library's
+/// [`NodeFormat`](crustywad::map::build::NodeFormat).
+///
+/// # Errors
+///
+/// Returns `Err` with a human-readable message — printed by the caller as
+/// `error: {msg}` before exiting 3 — when `arg` selects a zlib dialect
+/// (`znod`/`zgln`/`zgl2`/`zgl3`/`zgl`) and cwad was built without the
+/// `extended-nodes-zlib` feature.
+// With the `extended-nodes-zlib` feature on (the default build), every arm
+// is infallible and clippy flags the `Result` as unnecessary; with the
+// feature off, the `z*` arms return `Err`, so the wrap is load-bearing for
+// the `--no-default-features` build.
+#[allow(clippy::unnecessary_wraps)]
+fn node_format_arg_to_lib(arg: NodeFormatArg) -> Result<crustywad::map::build::NodeFormat, String> {
+    use crustywad::map::build::NodeFormat;
+
+    macro_rules! zlib_arm {
+        ($lib_variant:ident, $name:literal) => {{
+            #[cfg(feature = "extended-nodes-zlib")]
+            {
+                NodeFormat::$lib_variant
+            }
+            #[cfg(not(feature = "extended-nodes-zlib"))]
+            {
+                return Err(format!(
+                    "--node-format {} requires cwad built with the extended-nodes-zlib feature",
+                    $name
+                ));
+            }
+        }};
+    }
+
+    Ok(match arg {
+        NodeFormatArg::Classic => NodeFormat::Classic,
+        NodeFormatArg::Xnod => NodeFormat::Xnod,
+        NodeFormatArg::Znod => zlib_arm!(Znod, "znod"),
+        NodeFormatArg::Xgln => NodeFormat::Xgln,
+        NodeFormatArg::Xgl2 => NodeFormat::Xgl2,
+        NodeFormatArg::Xgl3 => NodeFormat::Xgl3,
+        NodeFormatArg::Gl => NodeFormat::Gl,
+        NodeFormatArg::Zgln => zlib_arm!(Zgln, "zgln"),
+        NodeFormatArg::Zgl2 => zlib_arm!(Zgl2, "zgl2"),
+        NodeFormatArg::Zgl3 => zlib_arm!(Zgl3, "zgl3"),
+        NodeFormatArg::Zgl => zlib_arm!(Zgl, "zgl"),
+    })
+}
+
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(c) => c,
@@ -1139,7 +1187,7 @@ fn run(cli: Cli) -> Result<i32> {
             nodes,
             node_format,
         } => {
-            use crustywad::map::build::{NodeBuildOptions, NodeFormat, add_doom_map_with_nodes};
+            use crustywad::map::build::{NodeBuildOptions, add_doom_map_with_nodes};
             use crustywad::map::detect_map_format;
             use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
 
@@ -1182,21 +1230,11 @@ fn run(cli: Cli) -> Result<i32> {
                 eprintln!("note: --node-format has no effect without --nodes; ignoring");
             }
             if nodes && matches!(to, MapFormatArg::Doom) {
-                build_opts.format = match node_format {
-                    NodeFormatArg::Classic => NodeFormat::Classic,
-                    NodeFormatArg::Xnod => NodeFormat::Xnod,
-                    NodeFormatArg::Znod => {
-                        #[cfg(feature = "extended-nodes-zlib")]
-                        {
-                            NodeFormat::Znod
-                        }
-                        #[cfg(not(feature = "extended-nodes-zlib"))]
-                        {
-                            eprintln!(
-                                "error: --node-format znod requires cwad built with the extended-nodes-zlib feature"
-                            );
-                            return Ok(3);
-                        }
+                build_opts.format = match node_format_arg_to_lib(node_format) {
+                    Ok(format) => format,
+                    Err(msg) => {
+                        eprintln!("error: {msg}");
+                        return Ok(3);
                     }
                 };
             }
