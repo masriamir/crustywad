@@ -1031,7 +1031,7 @@ fn gl_auto_round_trips_the_doorway_map_as_xgln() {
 /// This proves auto-resolution never silently truncates a fractional
 /// partition down to a coarser dialect that can't hold it.
 #[test]
-fn gl_auto_round_trips_the_fractional_chevron_as_xgl3() {
+fn gl_auto_round_trips_the_fractional_partition_pentagon_as_xgl3() {
     let (points, lines) = fractional_partition_pentagon_geometry();
     let lumps = map_lumps_general(&points, &lines);
     let map = assemble_from_lumps(&lumps);
