@@ -1811,6 +1811,46 @@ fn encode_gl_child(child: GlNodeChild) -> Result<u32, NodeBuildError> {
     }
 }
 
+/// The largest linedef index [`GlDialect::Xgln`] can encode: its seg linedef is
+/// a `u16` whose `0xFFFF` value is the miniseg sentinel, so a real index must be
+/// strictly below it (`<= 0xFFFE`).
+const MAX_XGLN_LINEDEF: usize = 0xFFFE;
+
+/// Encodes a linedef index into an `XGLN` seg's 16-bit field. An index `>=
+/// 0xFFFF` cannot be represented — `0xFFFF` is the miniseg sentinel — so it is a
+/// clean [`NodeBuildError::TooManyElements`] (`kind: "linedefs"`) in both modes,
+/// mirroring [`encode_index_u32`]'s ceiling guard. Guards a hand-built
+/// [`BuiltGlNodes`]; the in-tree GL kernel never produces such an index for the
+/// narrow dialect (`Xgl2`/`Xgl3` carry the wide u32 field instead).
+fn encode_xgln_linedef(idx: usize) -> Result<u16, NodeBuildError> {
+    if idx > MAX_XGLN_LINEDEF {
+        return Err(NodeBuildError::TooManyElements {
+            kind: "linedefs",
+            count: idx.saturating_add(1),
+            max: MAX_XGLN_LINEDEF,
+        });
+    }
+    // `idx <= 0xFFFE` always fits `u16`.
+    Ok(u16::try_from(idx).expect("idx <= MAX_XGLN_LINEDEF fits u16"))
+}
+
+/// Narrows a 16.16 fixed-point partition component to the whole-unit `i16` the
+/// `XGLN`/`XGL2` node block requires (matching the reader's `i16_as_i32` read).
+/// The value must be a whole unit — its low 16 fractional bits all zero — and
+/// its whole part must fit `i16`; otherwise it is a
+/// [`NodeBuildError::PartitionPrecision`] naming `node`, in both strictness
+/// modes. Negative whole values (e.g. `-1.0`) narrow cleanly; negative fractions
+/// (e.g. `-0.5`) do not, since their low 16 bits are nonzero.
+fn narrow_partition(value: i32, node: usize) -> Result<i16, NodeBuildError> {
+    // Fractional if any of the low 16 bits are set — true for negative
+    // fractions too (e.g. -0.5 == 0xFFFF_8000, low bits 0x8000).
+    if value & 0xFFFF != 0 {
+        return Err(NodeBuildError::PartitionPrecision { node });
+    }
+    // Arithmetic shift recovers the signed whole part; reject if it leaves i16.
+    i16::try_from(value >> 16).map_err(|_| NodeBuildError::PartitionPrecision { node })
+}
+
 /// The extended-arena ceiling (controller resolution 8): GL is always an extended
 /// format, so every arena is checked against `MAX_EXTENDED_INDEX` in **both**
 /// strictness modes — there is no vanilla `u16` soft ceiling, and no `u16`
@@ -1889,6 +1929,58 @@ pub struct BuiltGlNodes {
     pub subsectors: Vec<GlSubsector>,
     /// The `GL_NODES` arena: the internal tree in post-order (root last).
     pub nodes: Vec<BuiltGlNode>,
+}
+
+/// Writer-side mirror of the reader's GL [`ExtendedNodeKind`] subset: which
+/// seg-linedef width and node-partition encoding a GL stream uses. The
+/// dispatch in [`BuiltGlNodes::to_extended_lump_bytes`] maps each GL
+/// [`NodeFormat`] onto one of these and feeds it to `build_gl_body`.
+///
+/// [`ExtendedNodeKind`]: crate::map::extended::ExtendedNodeKind
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GlDialect {
+    /// `XGLN`: 16-bit seg linedef (`0xFFFF` = miniseg), whole-unit `i16` node
+    /// partitions.
+    Xgln,
+    /// `XGL2`: 32-bit seg linedef (`0xFFFF_FFFF` = miniseg), whole-unit `i16`
+    /// node partitions.
+    Xgl2,
+    /// `XGL3`: 32-bit seg linedef, 16.16 fixed-point `i32` node partitions.
+    Xgl3,
+}
+
+impl GlDialect {
+    /// The 4-byte on-disk signature for this dialect: the `X…` tag when
+    /// uncompressed, the `Z…` tag when zlib-compressed.
+    fn tag(self, compressed: bool) -> [u8; 4] {
+        match (self, compressed) {
+            (GlDialect::Xgln, false) => *b"XGLN",
+            (GlDialect::Xgln, true) => *b"ZGLN",
+            (GlDialect::Xgl2, false) => *b"XGL2",
+            (GlDialect::Xgl2, true) => *b"ZGL2",
+            (GlDialect::Xgl3, false) => *b"XGL3",
+            (GlDialect::Xgl3, true) => *b"ZGL3",
+        }
+    }
+
+    /// On-disk byte size of one GL seg record: 11 for `XGLN` (u16 linedef),
+    /// 13 for `XGL2`/`XGL3` (u32 linedef). Used for the presize hint only.
+    fn seg_record_size(self) -> usize {
+        match self {
+            GlDialect::Xgln => 11,
+            GlDialect::Xgl2 | GlDialect::Xgl3 => 13,
+        }
+    }
+
+    /// On-disk byte size of one node record: 32 for the whole-unit `i16`
+    /// dialects (`XGLN`/`XGL2`), 40 for `XGL3`'s 16.16 `i32` partitions. Used
+    /// for the presize hint only.
+    fn node_record_size(self) -> usize {
+        match self {
+            GlDialect::Xgln | GlDialect::Xgl2 => 32,
+            GlDialect::Xgl3 => 40,
+        }
+    }
 }
 
 impl BuiltGlNodes {
@@ -2048,8 +2140,12 @@ impl BuiltGlNodes {
 
     /// Serializes this `BuiltGlNodes` as one `ZDoom` GL extended-node lump — the
     /// byte-exact inverse of the crate's own GL reader (ADR-0026 §3). `format`
-    /// selects the on-disk container: [`NodeFormat::Xgl3`] emits the plaintext
-    /// `XGL3` stream, [`NodeFormat::Zgl3`] the zlib-compressed `ZGL3` twin.
+    /// selects the GL dialect and on-disk container: [`NodeFormat::Xgln`] (16-bit
+    /// seg linedef, whole-unit `i16` partitions), [`NodeFormat::Xgl2`] (32-bit
+    /// seg linedef, whole-unit `i16` partitions), and [`NodeFormat::Xgl3`]
+    /// (32-bit seg linedef, 16.16 `i32` partitions) emit the plaintext `X…`
+    /// stream; each `Z…` twin ([`NodeFormat::Zgln`]/[`NodeFormat::Zgl2`]/
+    /// [`NodeFormat::Zgl3`]) emits the zlib-compressed form.
     ///
     /// `orig_vertex_count` is the owning map's `VERTEXES` record count; it is
     /// written into the vertex header and used to flatten combined GL-seg vertex
@@ -2059,16 +2155,22 @@ impl BuiltGlNodes {
     ///
     /// - [`NodeBuildError::UnsupportedNodeFormat`] when `format` is not a GL
     ///   variant (`Classic`/`Xnod`/`Znod`) — a caller-misuse guard, checked
-    ///   first. Also returned, **temporarily**, for [`NodeFormat::Xgln`],
-    ///   [`NodeFormat::Xgl2`], and [`NodeFormat::Gl`] (and their zlib twins),
-    ///   which are GL formats but not yet implemented here (#365 Tasks 2-3).
+    ///   first. Also returned, **temporarily**, for [`NodeFormat::Gl`] (and its
+    ///   zlib twin [`NodeFormat::Zgl`]), whose auto-dialect resolution lands in
+    ///   #365 Task 3.
+    /// - [`NodeBuildError::PartitionPrecision`] when `format` is
+    ///   [`NodeFormat::Xgln`]/[`NodeFormat::Xgl2`] (or their zlib twins) and a
+    ///   node partition is fractional or falls outside `i16` — only `XGL3`'s
+    ///   fixed-point partitions can represent it.
     /// - [`NodeBuildError::CompressionUnavailable`] when `format` is
     ///   [`NodeFormat::Zgl3`] but the `extended-nodes-zlib` feature is disabled.
     ///   Unreachable while that variant is feature-gated (it cannot be named
     ///   without the feature); kept for the #365 auto-format future.
     /// - [`NodeBuildError::TooManyElements`] when an arena count or a child/index
     ///   reference exceeds the 32-bit `MAX_EXTENDED_INDEX` cap (or the 31 bits
-    ///   the child leaf flag leaves free).
+    ///   the child leaf flag leaves free), or — for [`NodeFormat::Xgln`] — a seg
+    ///   linedef index reaches the 16-bit `0xFFFF` miniseg sentinel (`kind:
+    ///   "linedefs"`).
     /// - [`NodeBuildError::Write`] wrapping
     ///   [`DoomWriteError::ValueOutOfRange`](crate::map::DoomWriteError::ValueOutOfRange)
     ///   when a node bbox coordinate does not fit the on-disk `i16`, or a GL
@@ -2083,51 +2185,78 @@ impl BuiltGlNodes {
         // than falling through a `_` arm so a future NodeFormat variant must
         // pick its body here — no catch-all — mirroring `is_gl()`'s own
         // rationale. Non-GL variants are rejected before any body is built.
-        // `Xgln`/`Xgl2`/`Gl` (and their zlib twins) are GL formats but not yet
-        // implemented here — they return `UnsupportedNodeFormat` as a
-        // temporary placeholder (#365 Tasks 2-3 give them real bodies).
+        // `Gl` (and its zlib twin) is a GL format but its auto-dialect
+        // resolution is not yet implemented here — it returns
+        // `UnsupportedNodeFormat` as a temporary placeholder (#365 Task 3).
         match format {
+            NodeFormat::Xgln => self.gl_plaintext(orig_vertex_count, GlDialect::Xgln),
+            NodeFormat::Xgl2 => self.gl_plaintext(orig_vertex_count, GlDialect::Xgl2),
+            NodeFormat::Xgl3 => self.gl_plaintext(orig_vertex_count, GlDialect::Xgl3),
             #[cfg(feature = "extended-nodes-zlib")]
-            NodeFormat::Zgl3 => {
-                let body = self.build_xgl3_body(orig_vertex_count)?;
-                let mut lump = b"ZGL3".to_vec();
-                lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
-                Ok(lump)
-            }
-            NodeFormat::Xgl3 => {
-                let body = self.build_xgl3_body(orig_vertex_count)?;
-                let mut lump = Vec::with_capacity(4 + body.len());
-                lump.extend_from_slice(b"XGL3");
-                lump.extend_from_slice(&body);
-                Ok(lump)
-            }
+            NodeFormat::Zgln => self.gl_compressed(orig_vertex_count, GlDialect::Xgln),
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Zgl2 => self.gl_compressed(orig_vertex_count, GlDialect::Xgl2),
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Zgl3 => self.gl_compressed(orig_vertex_count, GlDialect::Xgl3),
             NodeFormat::Classic | NodeFormat::Xnod => {
                 Err(NodeBuildError::UnsupportedNodeFormat { format })
             }
             #[cfg(feature = "extended-nodes-zlib")]
             NodeFormat::Znod => Err(NodeBuildError::UnsupportedNodeFormat { format }),
-            // Replaced in Tasks 2-3.
-            NodeFormat::Xgln | NodeFormat::Xgl2 | NodeFormat::Gl => {
-                Err(NodeBuildError::UnsupportedNodeFormat { format })
-            }
-            // Replaced in Tasks 2-3.
+            // Task 3 wires auto-resolution.
+            NodeFormat::Gl => Err(NodeBuildError::UnsupportedNodeFormat { format }),
+            // Task 3 wires auto-resolution.
             #[cfg(feature = "extended-nodes-zlib")]
-            NodeFormat::Zgln | NodeFormat::Zgl2 | NodeFormat::Zgl => {
-                Err(NodeBuildError::UnsupportedNodeFormat { format })
-            }
+            NodeFormat::Zgl => Err(NodeBuildError::UnsupportedNodeFormat { format }),
         }
     }
 
-    /// Builds the tag-less `XGL3` body (the bytes after the 4-byte signature),
+    /// Assembles one uncompressed GL lump: the dialect's `X…` tag followed by
+    /// [`build_gl_body`](Self::build_gl_body)'s output.
+    fn gl_plaintext(
+        &self,
+        orig_vertex_count: usize,
+        dialect: GlDialect,
+    ) -> Result<Vec<u8>, NodeBuildError> {
+        let body = self.build_gl_body(orig_vertex_count, dialect)?;
+        let tag = dialect.tag(false);
+        let mut lump = Vec::with_capacity(4 + body.len());
+        lump.extend_from_slice(&tag);
+        lump.extend_from_slice(&body);
+        Ok(lump)
+    }
+
+    /// Assembles one zlib-compressed GL lump: the dialect's `Z…` tag followed
+    /// by the deflated [`build_gl_body`](Self::build_gl_body) output — the same
+    /// wrapper the reader inflates back to the plaintext twin.
+    #[cfg(feature = "extended-nodes-zlib")]
+    fn gl_compressed(
+        &self,
+        orig_vertex_count: usize,
+        dialect: GlDialect,
+    ) -> Result<Vec<u8>, NodeBuildError> {
+        let body = self.build_gl_body(orig_vertex_count, dialect)?;
+        let mut lump = dialect.tag(true).to_vec();
+        lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
+        Ok(lump)
+    }
+
+    /// Builds the tag-less GL body (the bytes after the 4-byte signature),
     /// reversing the GL reader's `decode_body`: vertex header, subsector block,
-    /// GL-seg block, node block. Shared by the `XGL3` and `ZGL3` paths.
-    fn build_xgl3_body(&self, orig_vertex_count: usize) -> Result<Vec<u8>, NodeBuildError> {
+    /// GL-seg block, node block. Shared by every GL dialect and its zlib twin;
+    /// `dialect` selects the seg-linedef width and node-partition encoding.
+    fn build_gl_body(
+        &self,
+        orig_vertex_count: usize,
+        dialect: GlDialect,
+    ) -> Result<Vec<u8>, NodeBuildError> {
         // Presize from the arena counts — every record is fixed-size, so the
         // total is exact: 8-byte vertex header + 8/GL vertex + 4-byte subsector
-        // count + 4/subsector + 4-byte seg count + 13/GL seg (u32 v1 + u32
-        // partner + u32 linedef + u8 side) + 4-byte node count + 40/node (4x i32
-        // partition + 8x i16 bbox + 2x u32 child). Keeps allocation O(input)
-        // with no reallocation.
+        // count + 4/subsector + 4-byte seg count + 11-or-13/GL seg (u32 v1 + u32
+        // partner + u16-or-u32 linedef + u8 side) + 4-byte node count +
+        // 32-or-40/node (4x i16-or-i32 partition + 8x i16 bbox + 2x u32 child).
+        // The per-dialect record sizes come from `GlDialect`. Keeps allocation
+        // O(input) with no reallocation.
         // Saturating arithmetic keeps even hostile hand-mutated arena lengths
         // off any debug-overflow path; the capacity is only a hint, and the
         // `encode_u32` count ceilings below reject such inputs cleanly before
@@ -2137,8 +2266,8 @@ impl BuiltGlNodes {
                 .len()
                 .saturating_mul(8)
                 .saturating_add(self.subsectors.len().saturating_mul(4))
-                .saturating_add(self.segs.len().saturating_mul(13))
-                .saturating_add(self.nodes.len().saturating_mul(40))
+                .saturating_add(self.segs.len().saturating_mul(dialect.seg_record_size()))
+                .saturating_add(self.nodes.len().saturating_mul(dialect.node_record_size()))
                 .saturating_add(20),
         );
 
@@ -2159,10 +2288,10 @@ impl BuiltGlNodes {
             out.extend_from_slice(&encode_u32("subsector segs", count)?.to_le_bytes());
         }
 
-        // --- Seg block: numSegs, then u32 v1, u32 partner, u32 linedef, u8 side. ---
-        // No v2 is written: the GL reader recovers each seg's end vertex from the
-        // next seg in the subsector's closed loop (implicit-v2, the ordering the
-        // build kernel guarantees).
+        // --- Seg block: numSegs, then u32 v1, u32 partner, u16-or-u32 linedef,
+        // u8 side. --- No v2 is written: the GL reader recovers each seg's end
+        // vertex from the next seg in the subsector's closed loop (implicit-v2,
+        // the ordering the build kernel guarantees).
         out.extend_from_slice(&encode_u32("segs", self.segs.len())?.to_le_bytes());
         for s in &self.segs {
             // `saturating_add` keeps a hand-built out-of-range `GlVertexIdx`
@@ -2183,14 +2312,28 @@ impl BuiltGlNodes {
                 None => 0xFFFF_FFFF,
             };
             out.extend_from_slice(&partner.to_le_bytes());
-            // No linedef (miniseg): same `0xFFFF_FFFF` sentinel, and the same
-            // `MAX_EXTENDED_INDEX` ceiling keeps real indices from colliding
-            // with it.
-            let linedef = match s.linedef {
-                Some(l) => encode_index_u32("linedefs", l.0)?,
-                None => 0xFFFF_FFFF,
-            };
-            out.extend_from_slice(&linedef.to_le_bytes());
+            // Linedef ref, width by dialect. `XGL2`/`XGL3` carry a u32 with the
+            // `0xFFFF_FFFF` miniseg sentinel (a real index can never collide —
+            // `encode_index_u32` caps every emitted index at `MAX_EXTENDED_INDEX`
+            // (`0x8000_0000`), well below `0xFFFF_FFFF`). `XGLN` carries a u16
+            // with the `0xFFFF` sentinel, so any real index `>= 0xFFFF` cannot
+            // be represented and is rejected as `TooManyElements`.
+            match dialect {
+                GlDialect::Xgln => {
+                    let linedef = match s.linedef {
+                        Some(l) => encode_xgln_linedef(l.0)?,
+                        None => 0xFFFF,
+                    };
+                    out.extend_from_slice(&linedef.to_le_bytes());
+                }
+                GlDialect::Xgl2 | GlDialect::Xgl3 => {
+                    let linedef = match s.linedef {
+                        Some(l) => encode_index_u32("linedefs", l.0)?,
+                        None => 0xFFFF_FFFF,
+                    };
+                    out.extend_from_slice(&linedef.to_le_bytes());
+                }
+            }
             // Canonicalize `side` on the way out, mirroring the reader's
             // `raw.side != 0` interpretation and the classic writer's
             // normalization: linedef-backed segs emit a strict 0/1 flag, and
@@ -2202,13 +2345,26 @@ impl BuiltGlNodes {
             });
         }
 
-        // --- Node block: numNodes, then i32 16.16 partition + 2x i16 bbox + children. ---
+        // --- Node block: numNodes, then partition (i32 16.16 for XGL3, whole-
+        // unit i16 for XGLN/XGL2) + 2x i16 bbox + children. ---
         out.extend_from_slice(&encode_u32("nodes", self.nodes.len())?.to_le_bytes());
         for (i, n) in self.nodes.iter().enumerate() {
-            // Partition x/y/dx/dy are already 16.16 fixed-point on `BuiltGlNode`;
-            // emit them verbatim — re-scaling would corrupt the sub-unit geometry.
-            for part in [n.x, n.y, n.dx, n.dy] {
-                out.extend_from_slice(&part.to_le_bytes());
+            // Partition x/y/dx/dy are already 16.16 fixed-point on `BuiltGlNode`.
+            // XGL3 emits them verbatim as i32 — re-scaling would corrupt the
+            // sub-unit geometry. XGLN/XGL2 instead carry whole-unit i16
+            // partitions (the classic encoding), so any fractional or
+            // out-of-i16 partition is rejected as `PartitionPrecision`.
+            match dialect {
+                GlDialect::Xgl3 => {
+                    for part in [n.x, n.y, n.dx, n.dy] {
+                        out.extend_from_slice(&part.to_le_bytes());
+                    }
+                }
+                GlDialect::Xgln | GlDialect::Xgl2 => {
+                    for part in [n.x, n.y, n.dx, n.dy] {
+                        out.extend_from_slice(&narrow_partition(part, i)?.to_le_bytes());
+                    }
+                }
             }
             for value in narrow_bbox(n.right_bbox, "right_bbox", i)? {
                 out.extend_from_slice(&value.to_le_bytes());
@@ -3246,6 +3402,125 @@ mod tests {
         let inflated =
             miniz_oxide::inflate::decompress_to_vec_zlib(&z[4..]).expect("ZGL3 body inflates");
         assert_eq!(inflated, golden_xgl3_body());
+    }
+
+    // --- XGLN/XGL2 writer GOLDEN + hard-error tests (Task 2, #365) ----------
+
+    /// The `origVerts`/`newVerts`/subsector header both narrow goldens share —
+    /// identical to the `XGL3` body's, the layout differing only in the seg and
+    /// node blocks that follow.
+    fn golden_narrow_header(expected: &mut Vec<u8>) {
+        expected.extend(4u32.to_le_bytes()); // origVerts
+        expected.extend(0u32.to_le_bytes()); // newVerts
+        expected.extend(2u32.to_le_bytes()); // numSubsectors
+        expected.extend(2u32.to_le_bytes()); // ss0 count
+        expected.extend(2u32.to_le_bytes()); // ss1 count
+        expected.extend(4u32.to_le_bytes()); // numSegs
+    }
+
+    /// The whole-unit (`i16`) node block both `XGLN` and `XGL2` carry: the
+    /// golden twin's single node, its `[32,0,0,64]` partition arithmetic-shifted
+    /// to whole map units, identical bboxes, and subsector children.
+    fn golden_narrow_node_block(expected: &mut Vec<u8>) {
+        expected.extend(1u32.to_le_bytes()); // numNodes
+        for part in [32i16, 0, 0, 64] {
+            expected.extend(part.to_le_bytes());
+        }
+        for b in [64i16, 0, 0, 64, 64, 0, 0, 64] {
+            expected.extend(b.to_le_bytes());
+        }
+        expected.extend(0x8000_0000u32.to_le_bytes());
+        expected.extend(0x8000_0001u32.to_le_bytes());
+    }
+
+    #[test]
+    fn golden_xgln_bytes_match_the_reader_layout() {
+        let built = golden_fixture_twin();
+        let bytes = built.to_extended_lump_bytes(4, NodeFormat::Xgln).unwrap();
+        let mut expected = b"XGLN".to_vec();
+        golden_narrow_header(&mut expected);
+        for (v1, line) in [(0u32, 0u16), (1, 0xFFFF), (2, 2), (3, 3)] {
+            expected.extend(v1.to_le_bytes());
+            expected.extend(0xFFFF_FFFFu32.to_le_bytes()); // partner: none
+            expected.extend(line.to_le_bytes()); // u16 linedef
+            expected.push(0); // side
+        }
+        golden_narrow_node_block(&mut expected);
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn golden_xgl2_bytes_match_the_reader_layout() {
+        let built = golden_fixture_twin();
+        let bytes = built.to_extended_lump_bytes(4, NodeFormat::Xgl2).unwrap();
+        let mut expected = b"XGL2".to_vec();
+        golden_narrow_header(&mut expected);
+        for (v1, line) in [(0u32, 0u32), (1, 0xFFFF_FFFF), (2, 2), (3, 3)] {
+            expected.extend(v1.to_le_bytes());
+            expected.extend(0xFFFF_FFFFu32.to_le_bytes()); // partner: none
+            expected.extend(line.to_le_bytes()); // u32 linedef
+            expected.push(0); // side
+        }
+        golden_narrow_node_block(&mut expected);
+        assert_eq!(bytes, expected);
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn golden_zgln_bytes_inflate_to_the_xgln_body() {
+        let built = golden_fixture_twin();
+        let z = built.to_extended_lump_bytes(4, NodeFormat::Zgln).unwrap();
+        assert_eq!(&z[..4], b"ZGLN");
+        let inflated =
+            miniz_oxide::inflate::decompress_to_vec_zlib(&z[4..]).expect("ZGLN body inflates");
+        let plain = built.to_extended_lump_bytes(4, NodeFormat::Xgln).unwrap();
+        assert_eq!(inflated, plain[4..]);
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn golden_zgl2_bytes_inflate_to_the_xgl2_body() {
+        let built = golden_fixture_twin();
+        let z = built.to_extended_lump_bytes(4, NodeFormat::Zgl2).unwrap();
+        assert_eq!(&z[..4], b"ZGL2");
+        let inflated =
+            miniz_oxide::inflate::decompress_to_vec_zlib(&z[4..]).expect("ZGL2 body inflates");
+        let plain = built.to_extended_lump_bytes(4, NodeFormat::Xgl2).unwrap();
+        assert_eq!(inflated, plain[4..]);
+    }
+
+    #[test]
+    fn explicit_xgln_rejects_wide_linedefs() {
+        let mut built = golden_fixture_twin();
+        built.segs[0].linedef = Some(LinedefIdx(0xFFFF)); // collides with the sentinel
+        assert!(matches!(
+            built
+                .to_extended_lump_bytes(4, NodeFormat::Xgln)
+                .unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "linedefs",
+                ..
+            }
+        ));
+        // ...but Xgl2 carries it fine.
+        assert!(built.to_extended_lump_bytes(4, NodeFormat::Xgl2).is_ok());
+    }
+
+    #[test]
+    fn explicit_narrow_dialects_reject_fractional_partitions() {
+        let mut built = golden_fixture_twin();
+        built.nodes[0].x = (32 << 16) | 0x8000; // 32.5 in 16.16
+        for format in [NodeFormat::Xgln, NodeFormat::Xgl2] {
+            assert!(matches!(
+                built.to_extended_lump_bytes(4, format).unwrap_err(),
+                NodeBuildError::PartitionPrecision { node: 0 }
+            ));
+        }
+        // Negative whole values stay emittable; negative fractions do not.
+        built.nodes[0].x = -(1 << 16); // -1.0
+        assert!(built.to_extended_lump_bytes(4, NodeFormat::Xgln).is_ok());
+        built.nodes[0].x = -(1 << 15); // -0.5
+        assert!(built.to_extended_lump_bytes(4, NodeFormat::Xgln).is_err());
     }
 
     #[test]
