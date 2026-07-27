@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-af5f920d.js";
+            window.path_to_searchindex_js = "searchindex-d859b85e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -194,9 +194,9 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
 <tr><td><a href="#guide-doctests"><code>guide-doctests</code></a></td><td>no</td><td><strong>Internal, CI-only.</strong> Compiles this guide’s Rust code samples as crate doctests (enabled by <code>--all-features</code>); not a runtime capability</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
-<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; also emits the <code>XNOD</code>/<code>ZNOD</code> non-GL stream via <code>NodeFormat</code>, plus the <code>XGL3</code> GL stream (and <code>ZGL3</code> with <code>extended-nodes-zlib</code>) via <code>build_gl_nodes</code> (ADR-0025, ADR-0026); powers <code>cwad convert --nodes</code></td></tr>
+<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; also emits the <code>XNOD</code>/<code>ZNOD</code> non-GL stream via <code>NodeFormat</code>, plus the GL <code>XGLN</code>/<code>XGL2</code>/<code>XGL3</code> streams (and their <code>Z*</code> twins with <code>extended-nodes-zlib</code>), with <code>NodeFormat::Gl</code> auto-selecting the minimal dialect, via <code>build_gl_nodes</code> (ADR-0025, ADR-0026); powers <code>cwad convert --nodes</code></td></tr>
 <tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
-<tr><td><a href="#extended-nodes-zlib"><code>extended-nodes-zlib</code></a></td><td>no</td><td>Decode the zlib-compressed ZDoom extended node formats (<code>ZNOD</code>/<code>ZGLN</code>/<code>ZGL2</code>/<code>ZGL3</code>) via <code>miniz_oxide</code>, bounded by <code>Limits::max_decoded_node_bytes</code>; with <code>nodebuild</code> also enabled, also powers the <code>nodebuild</code> <code>ZNOD</code> and <code>ZGL3</code> writers</td></tr>
+<tr><td><a href="#extended-nodes-zlib"><code>extended-nodes-zlib</code></a></td><td>no</td><td>Decode the zlib-compressed ZDoom extended node formats (<code>ZNOD</code>/<code>ZGLN</code>/<code>ZGL2</code>/<code>ZGL3</code>) via <code>miniz_oxide</code>, bounded by <code>Limits::max_decoded_node_bytes</code>; with <code>nodebuild</code> also enabled, also powers the <code>nodebuild</code> <code>ZNOD</code> and <code>Z*</code> GL writers</td></tr>
 </tbody>
 </table>
 </div>
@@ -425,11 +425,15 @@ extended-node stream in <code>NODES</code> via <code>BuiltNodes::to_extended_lum
 <code>SSECTORS</code> empty. The extended formats widen the subsector/node/seg/vertex ceilings from the
 vanilla 15/16-bit limits to a 31-bit structural cap, so a past-vanilla map can serialize — though
 a seg’s linedef reference stays a 16-bit field in the non-GL <code>XNOD</code>/<code>ZNOD</code> streams, so a map with
-more than 65,536 linedefs is unrepresentable <em>there</em>. The GL formats lift that: <code>build_gl_nodes</code>
-(and <code>add_doom_map_with_nodes</code>) emit an <code>XGL3</code> stream (or its zlib twin <code>ZGL3</code>) via
-<code>BuiltGlNodes::to_extended_lump_bytes</code>, carried in <code>SSECTORS</code>, with a <code>u32</code> seg linedef. The
-intermediate GL dialects <code>XGL2</code>/<code>XGLN</code> are tracked separately (#345); <code>cwad</code>’s CLI does not yet
-expose GL emission.</p>
+more than 65,536 linedefs is unrepresentable <em>there</em>. The GL formats lift that in stages:
+<code>build_gl_nodes</code> (and <code>add_doom_map_with_nodes</code>) emit an <code>XGLN</code>, <code>XGL2</code>, or <code>XGL3</code> stream (or
+their zlib twins <code>ZGLN</code>/<code>ZGL2</code>/<code>ZGL3</code>) via <code>BuiltGlNodes::to_extended_lump_bytes</code>, carried in
+<code>SSECTORS</code>; <code>XGLN</code> keeps a 16-bit seg linedef but reserves <code>0xFFFF</code> as the miniseg sentinel (so its
+largest real linedef index is <code>0xFFFE</code>), <code>XGL2</code> widens it to <code>u32</code>,
+and <code>XGL3</code> additionally allows fractional (sub-unit) node partitions.
+<code>NodeFormat::Gl</code>/<code>Zgl</code> auto-select the minimal dialect that fits the map, so callers who don’t
+need a specific dialect can request <code>Gl</code> and get the smallest stream that round-trips it.
+<code>cwad</code>’s CLI does not yet expose GL emission (#366).</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.9.0", features = ["nodebuild"] }
@@ -548,13 +552,14 @@ feature flag, since neither needs a decompressor): <code>DeePBSP</code> v4 (<cod
 lumps (<code>GL_VERT</code>/<code>GL_SEGS</code>/<code>GL_SSECT</code>/<code>GL_NODES</code>) — see
 <a href="map-records.html#classic-gl-nodes">Classic GL nodes</a> in the map-records guide.</p>
 <p>With <code>nodebuild</code> also enabled, this feature gates the write side too: <code>NodeFormat::Znod</code>
-(ADR-0025 §Amendment #323) and <code>NodeFormat::Zgl3</code> (ADR-0026 #364) only exist as variants when
-<code>extended-nodes-zlib</code> is on. It powers both the <code>ZNOD</code> and <code>ZGL3</code> writers:
-<code>BuiltNodes::to_extended_lump_bytes(_, compressed: true)</code> compresses the <code>XNOD</code> body, and
-<code>BuiltGlNodes::to_extended_lump_bytes(_, NodeFormat::Zgl3)</code> compresses the <code>XGL3</code> body, each with
-<code>miniz_oxide::deflate::compress_to_vec_zlib</code> before prepending the <code>ZNOD</code>/<code>ZGL3</code> tag. Requesting
-compressed output without this feature returns <code>NodeBuildError::CompressionUnavailable</code> rather
-than panicking.</p>
+(ADR-0025 §Amendment #323) and its GL twins <code>NodeFormat::Zgln</code>/<code>Zgl2</code>/<code>Zgl3</code>/<code>Zgl</code> (ADR-0026
+#364, #365) only exist as variants when <code>extended-nodes-zlib</code> is on. It powers both the <code>ZNOD</code>
+and <code>Z*</code> GL writers: <code>BuiltNodes::to_extended_lump_bytes(_, compressed: true)</code> compresses the
+<code>XNOD</code> body, and <code>BuiltGlNodes::to_extended_lump_bytes(_, format)</code> compresses the selected GL
+dialect’s body for <code>Zgln</code>/<code>Zgl2</code>/<code>Zgl3</code> (and the auto <code>Zgl</code>), each with
+<code>miniz_oxide::deflate::compress_to_vec_zlib</code>
+before prepending the matching four-byte tag. Requesting compressed output without this feature
+returns <code>NodeBuildError::CompressionUnavailable</code> rather than panicking.</p>
 <h3 id="usage-4"><a class="header" href="#usage-4">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.9.0", features = ["extended-nodes-zlib"] }
