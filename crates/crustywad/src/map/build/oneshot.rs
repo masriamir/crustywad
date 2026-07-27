@@ -33,10 +33,13 @@ use super::{
 /// check) and exactly what a freshly built map wants.
 ///
 /// The lumps are added in the canonical order (Global Constraint 5): the `name`
-/// marker, `THINGS`, `LINEDEFS`, `SIDEDEFS`, `VERTEXES` (the map's vertices with
-/// the BSP pass's split vertices appended), `SEGS`, `SSECTORS`, `NODES`,
-/// `SECTORS`, `REJECT`, `BLOCKMAP`. The split vertices **must** be appended to
-/// `VERTEXES` (done here) or the seg vertex indices would dangle.
+/// marker, `THINGS`, `LINEDEFS`, `SIDEDEFS`, `VERTEXES`, `SEGS`, `SSECTORS`,
+/// `NODES`, `SECTORS`, `REJECT`, `BLOCKMAP`. Under the default
+/// [`Classic`](super::NodeFormat::Classic) format, `VERTEXES` carries the map's
+/// vertices with the BSP pass's split vertices appended — they **must** be
+/// (done here) or the classic seg vertex indices would dangle. The extended and
+/// GL formats below instead carry builder-added vertices in their stream
+/// headers and leave `VERTEXES` untouched.
 ///
 /// When [`build_opts.format`](NodeBuildOptions::format) selects a non-GL
 /// extended format (ADR-0025, #323) — [`Xnod`](super::NodeFormat::Xnod) or
