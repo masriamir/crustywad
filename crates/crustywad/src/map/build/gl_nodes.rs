@@ -2059,7 +2059,9 @@ impl BuiltGlNodes {
     ///
     /// - [`NodeBuildError::UnsupportedNodeFormat`] when `format` is not a GL
     ///   variant (`Classic`/`Xnod`/`Znod`) — a caller-misuse guard, checked
-    ///   first.
+    ///   first. Also returned, **temporarily**, for [`NodeFormat::Xgln`],
+    ///   [`NodeFormat::Xgl2`], and [`NodeFormat::Gl`] (and their zlib twins),
+    ///   which are GL formats but not yet implemented here (#365 Tasks 2-3).
     /// - [`NodeBuildError::CompressionUnavailable`] when `format` is
     ///   [`NodeFormat::Zgl3`] but the `extended-nodes-zlib` feature is disabled.
     ///   Unreachable while that variant is feature-gated (it cannot be named
@@ -2078,10 +2080,12 @@ impl BuiltGlNodes {
         format: NodeFormat,
     ) -> Result<Vec<u8>, NodeBuildError> {
         // The match is the single dispatch point, written exhaustively rather
-        // than falling through a `_` arm so a future GL variant (#365's
-        // Xgln/Xgl2) must pick its body here — no catch-all — mirroring
-        // `is_gl()`'s own rationale. Non-GL variants are rejected before any
-        // body is built.
+        // than falling through a `_` arm so a future NodeFormat variant must
+        // pick its body here — no catch-all — mirroring `is_gl()`'s own
+        // rationale. Non-GL variants are rejected before any body is built.
+        // `Xgln`/`Xgl2`/`Gl` (and their zlib twins) are GL formats but not yet
+        // implemented here — they return `UnsupportedNodeFormat` as a
+        // temporary placeholder (#365 Tasks 2-3 give them real bodies).
         match format {
             #[cfg(feature = "extended-nodes-zlib")]
             NodeFormat::Zgl3 => {
@@ -2102,6 +2106,15 @@ impl BuiltGlNodes {
             }
             #[cfg(feature = "extended-nodes-zlib")]
             NodeFormat::Znod => Err(NodeBuildError::UnsupportedNodeFormat { format }),
+            // Replaced in Tasks 2-3.
+            NodeFormat::Xgln | NodeFormat::Xgl2 | NodeFormat::Gl => {
+                Err(NodeBuildError::UnsupportedNodeFormat { format })
+            }
+            // Replaced in Tasks 2-3.
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Zgln | NodeFormat::Zgl2 | NodeFormat::Zgl => {
+                Err(NodeBuildError::UnsupportedNodeFormat { format })
+            }
         }
     }
 
