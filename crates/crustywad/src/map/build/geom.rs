@@ -370,6 +370,10 @@ mod tests {
             fixed_16_16(32.0, "x", 0).unwrap()
         );
         assert!(fixed_16_16_exact(1e10, "x", 0).is_err());
+        // Non-finite inputs take the explicit finiteness guard, not the
+        // saturating-cast path.
+        assert!(fixed_16_16_exact(f64::NAN, "x", 0).is_err());
+        assert!(fixed_16_16_exact(f64::INFINITY, "y", 0).is_err());
     }
 
     /// `cross_from_start` is the exact engine side test: positive = front/right of

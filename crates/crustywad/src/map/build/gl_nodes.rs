@@ -2077,21 +2077,21 @@ impl BuiltGlNodes {
         orig_vertex_count: usize,
         format: NodeFormat,
     ) -> Result<Vec<u8>, NodeBuildError> {
-        if !format.is_gl() {
-            return Err(NodeBuildError::UnsupportedNodeFormat { format });
-        }
-        let body = self.build_xgl3_body(orig_vertex_count)?;
-        // Written as an exhaustive match rather than falling through a `_` arm
-        // so a future GL variant (#365's Xgln/Xgl2) must pick its body here —
-        // no catch-all — mirroring `is_gl()`'s own rationale above.
+        // The match is the single dispatch point, written exhaustively rather
+        // than falling through a `_` arm so a future GL variant (#365's
+        // Xgln/Xgl2) must pick its body here — no catch-all — mirroring
+        // `is_gl()`'s own rationale. Non-GL variants are rejected before any
+        // body is built.
         match format {
             #[cfg(feature = "extended-nodes-zlib")]
             NodeFormat::Zgl3 => {
+                let body = self.build_xgl3_body(orig_vertex_count)?;
                 let mut lump = b"ZGL3".to_vec();
                 lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
                 Ok(lump)
             }
             NodeFormat::Xgl3 => {
+                let body = self.build_xgl3_body(orig_vertex_count)?;
                 let mut lump = Vec::with_capacity(4 + body.len());
                 lump.extend_from_slice(b"XGL3");
                 lump.extend_from_slice(&body);
@@ -3185,7 +3185,10 @@ mod tests {
     #[test]
     fn writer_rejects_non_gl_formats() {
         let built = golden_fixture_twin();
-        for format in [NodeFormat::Classic, NodeFormat::Xnod] {
+        let mut non_gl = vec![NodeFormat::Classic, NodeFormat::Xnod];
+        #[cfg(feature = "extended-nodes-zlib")]
+        non_gl.push(NodeFormat::Znod);
+        for format in non_gl {
             assert!(matches!(
                 built.to_extended_lump_bytes(4, format).unwrap_err(),
                 NodeBuildError::UnsupportedNodeFormat { .. }
