@@ -986,6 +986,91 @@ fn zgl3_round_trips_the_same_map() {
     assert_round_trip(&map, &built, &reread);
 }
 
+/// `NodeFormat::Gl` auto-resolution round-trips end to end on the doorway map:
+/// its whole-unit coordinates never force a fractional partition, so
+/// `resolve_gl_dialect` picks the minimal dialect, `Xgln`. The reader widens
+/// that stream's `i16` partitions to whole `i32`, which is exactly what
+/// [`assert_round_trip`]'s `built >> 16` expectation already checks — the same
+/// comparator serves both the explicit-`Xgl3` fixture above and this
+/// auto-resolved one, since a whole-unit `i32` shifted right 16 bits equals the
+/// `i16` the `Xgln` reader widened back up.
+#[test]
+fn gl_auto_round_trips_the_doorway_map_as_xgln() {
+    let (points, lines) = two_room_doorway_geometry();
+    let lumps = map_lumps_general(&points, &lines);
+    let map = assemble_from_lumps(&lumps);
+    let (built, warnings) = build_gl_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
+    assert!(warnings.is_empty(), "doorway builds strict-clean");
+    assert!(!built.nodes.is_empty(), "the shared wall forces a node");
+
+    let orig = map.vertices().len();
+    let stream = built
+        .to_extended_lump_bytes(orig, NodeFormat::Gl)
+        .expect("Gl auto-resolution serializes");
+    assert_eq!(
+        &stream[..4],
+        b"XGLN",
+        "whole-unit doorway partitions resolve to the minimal XGLN dialect"
+    );
+    let reread = reread_via_ssectors(&lumps, &stream);
+    assert_round_trip(&map, &built, &reread);
+}
+
+/// `NodeFormat::Gl` auto-resolution escalates all the way to `Xgl3` when the
+/// BSP partition itself is genuinely fractional (not merely a fractional
+/// **split vertex**, which [`fractional_chevron_geometry`]'s notch produces —
+/// per `resolve_gl_dialect`'s own contract, "GL vertices never force
+/// escalation": a partition candidate is always a piece of an original
+/// linedef, so its anchor is only fractional when that piece itself was
+/// produced by an earlier off-lattice split, which the single-level chevron
+/// notch does not trigger). [`fractional_partition_pentagon_geometry`] is a
+/// small single-sector fixture (found by sweeping tiny single-sector polygons
+/// for one whose *own* interior partition anchors on a non-integral 16.16
+/// coordinate) that does trigger it, confirmed by inspecting
+/// `BuiltGlNodes::nodes` directly before asserting on the serialized header.
+/// This proves auto-resolution never silently truncates a fractional
+/// partition down to a coarser dialect that can't hold it.
+#[test]
+fn gl_auto_round_trips_the_fractional_partition_pentagon_as_xgl3() {
+    let (points, lines) = fractional_partition_pentagon_geometry();
+    let lumps = map_lumps_general(&points, &lines);
+    let map = assemble_from_lumps(&lumps);
+    let (built, warnings) = build_gl_nodes(&map, &NodeBuildOptions::strict()).expect("builds");
+    assert!(warnings.is_empty(), "pentagon builds strict-clean");
+    assert!(
+        built.nodes.iter().any(|node| {
+            [node.x, node.y, node.dx, node.dy]
+                .into_iter()
+                .any(|v| v & 0xffff != 0)
+        }),
+        "fixture precondition: at least one node partition is genuinely fractional"
+    );
+
+    let orig = map.vertices().len();
+    let stream = built
+        .to_extended_lump_bytes(orig, NodeFormat::Gl)
+        .expect("Gl auto-resolution serializes");
+    assert_eq!(
+        &stream[..4],
+        b"XGL3",
+        "a fractional partition forces escalation to the XGL3 dialect"
+    );
+    let reread = reread_via_ssectors(&lumps, &stream);
+    assert_round_trip(&map, &built, &reread);
+}
+
+/// The fractional-partition pentagon geometry as `(points, lines)`: a small
+/// single-sector, all-one-sided closed pentagon whose interior BSP partition
+/// lands on a genuinely fractional 16.16 anchor point (verified above, not
+/// merely asserted) — unlike [`fractional_chevron_geometry`], whose fractional
+/// coordinate lives only on a split *vertex*, not a partition anchor.
+fn fractional_partition_pentagon_geometry() -> (Vec<(i16, i16)>, Vec<Line>) {
+    let points = vec![(23i16, 23i16), (0, -3), (-9, 17), (37, 7), (18, 38)];
+    let n = u16::try_from(points.len()).unwrap();
+    let lines = (0..n).map(|i| (i, (i + 1) % n, Some(0u16), None)).collect();
+    (points, lines)
+}
+
 /// Fractional GL vertices survive the 16.16 vertex header: the chevron fixture's
 /// off-lattice split vertices re-read (beyond `orig_vertex_count`) with the exact
 /// non-integral coordinates the builder produced.
@@ -1113,6 +1198,80 @@ fn oneshot_emits_xgl3_in_ssectors_with_empty_segs_and_nodes() {
 
     // The map re-assembles strict with a populated seg/subsector arena, proving
     // the reader's dispatch found the stream in SSECTORS.
+    let group = wad.map_group("MAP01").expect("map group present");
+    let assembled = Map::assemble(&wad, &group).expect("strict assembly");
+    assert!(
+        assembled.warnings().is_empty(),
+        "the playable WAD assembles strict-clean: {:?}",
+        assembled.warnings()
+    );
+    assert!(
+        !assembled.segs().is_empty(),
+        "the doorway map yields at least one seg"
+    );
+    assert!(
+        !assembled.subsectors().is_empty(),
+        "the doorway map yields at least one subsector"
+    );
+}
+
+/// Proves the one-shot/auto-resolution composition needs no code change: the
+/// GL arm in `add_doom_map_with_nodes` gates on the crate's private
+/// `NodeFormat::is_gl` (which already covers `Gl`), and
+/// `BuiltGlNodes::to_extended_lump_bytes` resolves `Gl` internally — so
+/// feeding `NodeFormat::Gl` straight into the one-shot builder on the
+/// (whole-unit) doorway map emits the auto-resolved `XGLN` stream in
+/// `SSECTORS`, with `SEGS`/`NODES` both empty exactly like the explicit-dialect
+/// arm, and the resulting WAD still re-assembles strict with a populated
+/// seg/subsector arena.
+#[test]
+fn oneshot_emits_the_auto_resolved_gl_stream() {
+    let map = two_room_doorway_map();
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Gl;
+
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let warnings =
+        add_doom_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+            .expect("one-shot builds");
+    assert!(
+        warnings.is_empty(),
+        "a clean map builds warning-free: {warnings:?}"
+    );
+
+    let bytes = builder.build().expect("WAD serializes");
+    let wad = Wad::from_bytes(bytes).expect("built WAD parses");
+
+    let lump_bytes = |name: &str| {
+        let idx = wad
+            .lumps()
+            .iter()
+            .position(|l| l.name() == name)
+            .expect("lump present");
+        wad.lump_bytes(idx).expect("lump bytes present")
+    };
+
+    // SSECTORS carries the auto-resolved stream; the whole-unit doorway
+    // geometry resolves to the minimal XGLN dialect, same as the direct
+    // `to_extended_lump_bytes(.., NodeFormat::Gl)` call above.
+    let ssectors_bytes = lump_bytes("SSECTORS");
+    assert_eq!(
+        &ssectors_bytes[..4],
+        b"XGLN",
+        "SSECTORS carries the auto-resolved XGLN stream signature"
+    );
+    assert!(
+        lump_bytes("SEGS").is_empty(),
+        "SEGS is empty for the GL layout"
+    );
+    assert!(
+        lump_bytes("NODES").is_empty(),
+        "NODES is empty for the GL layout"
+    );
+
+    // The map re-assembles strict with a populated seg/subsector arena,
+    // proving the reader's dispatch found the auto-resolved stream in
+    // SSECTORS.
     let group = wad.map_group("MAP01").expect("map group present");
     let assembled = Map::assemble(&wad, &group).expect("strict assembly");
     assert!(
