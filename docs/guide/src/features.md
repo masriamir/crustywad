@@ -486,7 +486,8 @@ With `nodebuild` also enabled, this feature gates the write side too: `NodeForma
 #364, #365) only exist as variants when `extended-nodes-zlib` is on. It powers both the `ZNOD`
 and `Z*` GL writers: `BuiltNodes::to_extended_lump_bytes(_, compressed: true)` compresses the
 `XNOD` body, and `BuiltGlNodes::to_extended_lump_bytes(_, format)` compresses the selected GL
-dialect's body for `Zgln`/`Zgl2`/`Zgl3`, each with `miniz_oxide::deflate::compress_to_vec_zlib`
+dialect's body for `Zgln`/`Zgl2`/`Zgl3` (and the auto `Zgl`), each with
+`miniz_oxide::deflate::compress_to_vec_zlib`
 before prepending the matching four-byte tag. Requesting compressed output without this feature
 returns `NodeBuildError::CompressionUnavailable` rather than panicking.
 

@@ -227,13 +227,14 @@ pub struct NodeBuildOptions {
     /// to `16`. `0` is treated as "no diagonal penalty" — the build path guards
     /// the division and skips the term entirely rather than dividing by zero.
     pub aa_preference: u32,
-    /// The on-disk node format to target (ADR-0025 #323, ADR-0026 #364). Defaults
-    /// to [`NodeFormat::Classic`]. Set to [`NodeFormat::Xnod`] (or, with the
-    /// `extended-nodes-zlib` feature, `NodeFormat::Znod`) to emit a `ZDoom`
+    /// The on-disk node format to target (ADR-0025 #323, ADR-0026 #364, #365).
+    /// Defaults to [`NodeFormat::Classic`]. Set to [`NodeFormat::Xnod`] (or, with
+    /// the `extended-nodes-zlib` feature, `NodeFormat::Znod`) to emit a `ZDoom`
     /// non-GL extended stream that lifts the vanilla 16-bit node ceilings.
     ///
-    /// The GL formats [`NodeFormat::Xgl3`] / `NodeFormat::Zgl3` are honored only
-    /// by [`add_doom_map_with_nodes`] (which carries the GL stream in `SSECTORS`)
+    /// The GL formats — [`NodeFormat::Xgln`]/`Xgl2`/`Xgl3`, their `Z`-prefixed
+    /// zlib twins, and the auto-resolving `Gl`/`Zgl` — are honored only by
+    /// [`add_doom_map_with_nodes`] (which carries the GL stream in `SSECTORS`)
     /// and by [`BuiltGlNodes::to_extended_lump_bytes`]. Passed to the classic
     /// [`build_nodes`], a GL format is treated merely as "extended" (the wider
     /// `MAX_EXTENDED_INDEX` ceilings apply), and the resulting [`BuiltNodes`]
@@ -374,10 +375,10 @@ pub enum NodeBuildError {
     #[error("zlib compression requires the `extended-nodes-zlib` feature")]
     CompressionUnavailable,
     /// A non-GL [`NodeFormat`] (`Classic`, `Xnod`, or `Znod`) was asked to
-    /// serialize GL node data — GL trees carry minisegs, partner links, and
-    /// fractional partitions that only the GL extended formats
-    /// (`Xgl3`/`Zgl3`) can represent. A caller-misuse guard, not reachable from
-    /// `build_nodes`/`build_gl_nodes` themselves.
+    /// serialize GL node data — GL trees carry minisegs and partner links that
+    /// only the GL extended family can represent, and fractional partitions
+    /// specifically need `Xgl3`/`Zgl3`. A caller-misuse guard, not reachable
+    /// from `build_nodes`/`build_gl_nodes` themselves.
     #[error("node format {format:?} cannot serialize GL node data (GL extended formats only)")]
     UnsupportedNodeFormat {
         /// The non-GL format that was requested.
