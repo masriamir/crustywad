@@ -2255,10 +2255,10 @@ impl BuiltGlNodes {
             .segs
             .iter()
             .any(|s| matches!(s.linedef, Some(LinedefIdx(idx)) if idx > MAX_XGLN_LINEDEF));
-        let needs_xgl3 = self.nodes.iter().any(|n| {
+        let needs_xgl3 = self.nodes.iter().enumerate().any(|(i, n)| {
             [n.x, n.y, n.dx, n.dy]
                 .into_iter()
-                .any(|v| narrow_partition(v, 0).is_err())
+                .any(|v| narrow_partition(v, i).is_err())
         });
         if needs_xgl3 {
             GlDialect::Xgl3
