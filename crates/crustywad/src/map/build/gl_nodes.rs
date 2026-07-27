@@ -1816,6 +1816,13 @@ fn encode_gl_child(child: GlNodeChild) -> Result<u32, NodeBuildError> {
 /// strictly below it (`<= 0xFFFE`).
 const MAX_XGLN_LINEDEF: usize = 0xFFFE;
 
+/// The largest linedef *count* [`GlDialect::Xgln`] can address
+/// (`MAX_XGLN_LINEDEF + 1`) — the ceiling reported in
+/// [`NodeBuildError::TooManyElements`]'s `max` field, matching
+/// [`encode_index_u32`]'s convention of reporting a count, not the largest
+/// legal index.
+const MAX_XGLN_LINEDEF_COUNT: usize = MAX_XGLN_LINEDEF + 1;
+
 /// Encodes a linedef index into an `XGLN` seg's 16-bit field. An index `>=
 /// 0xFFFF` cannot be represented — `0xFFFF` is the miniseg sentinel — so it is a
 /// clean [`NodeBuildError::TooManyElements`] (`kind: "linedefs"`) in both modes,
@@ -1827,7 +1834,7 @@ fn encode_xgln_linedef(idx: usize) -> Result<u16, NodeBuildError> {
         return Err(NodeBuildError::TooManyElements {
             kind: "linedefs",
             count: idx.saturating_add(1),
-            max: MAX_XGLN_LINEDEF,
+            max: MAX_XGLN_LINEDEF_COUNT,
         });
     }
     // `idx <= 0xFFFE` always fits `u16`.
