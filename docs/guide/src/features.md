@@ -14,9 +14,9 @@ allowing callers to opt in to additional capabilities.
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
 | [`guide-doctests`](#guide-doctests) | no | **Internal, CI-only.** Compiles this guide's Rust code samples as crate doctests (enabled by `--all-features`); not a runtime capability |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
-| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; also emits the `XNOD`/`ZNOD` non-GL stream via `NodeFormat`, plus the `XGL3` GL stream (and `ZGL3` with `extended-nodes-zlib`) via `build_gl_nodes` (ADR-0025, ADR-0026); powers `cwad convert --nodes` |
+| [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; also emits the `XNOD`/`ZNOD` non-GL stream via `NodeFormat`, plus the GL `XGLN`/`XGL2`/`XGL3` streams (and their `Z*` twins with `extended-nodes-zlib`), with `NodeFormat::Gl` auto-selecting the minimal dialect, via `build_gl_nodes` (ADR-0025, ADR-0026); powers `cwad convert --nodes` |
 | [`doom64-gfx`](#doom64-gfx) | no | Doom 64 PNG texture/sprite decoding via `png` — `Doom64Png`, capped by `Limits::max_decoded_pixels` |
-| [`extended-nodes-zlib`](#extended-nodes-zlib) | no | Decode the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) via `miniz_oxide`, bounded by `Limits::max_decoded_node_bytes`; with `nodebuild` also enabled, also powers the `nodebuild` `ZNOD` and `ZGL3` writers |
+| [`extended-nodes-zlib`](#extended-nodes-zlib) | no | Decode the zlib-compressed ZDoom extended node formats (`ZNOD`/`ZGLN`/`ZGL2`/`ZGL3`) via `miniz_oxide`, bounded by `Limits::max_decoded_node_bytes`; with `nodebuild` also enabled, also powers the `nodebuild` `ZNOD` and `Z*` GL writers |
 
 ---
 
@@ -329,11 +329,14 @@ extended-node stream in `NODES` via `BuiltNodes::to_extended_lump_bytes`, leavin
 `SSECTORS` empty. The extended formats widen the subsector/node/seg/vertex ceilings from the
 vanilla 15/16-bit limits to a 31-bit structural cap, so a past-vanilla map can serialize — though
 a seg's linedef reference stays a 16-bit field in the non-GL `XNOD`/`ZNOD` streams, so a map with
-more than 65,536 linedefs is unrepresentable *there*. The GL formats lift that: `build_gl_nodes`
-(and `add_doom_map_with_nodes`) emit an `XGL3` stream (or its zlib twin `ZGL3`) via
-`BuiltGlNodes::to_extended_lump_bytes`, carried in `SSECTORS`, with a `u32` seg linedef. The
-intermediate GL dialects `XGL2`/`XGLN` are tracked separately (#345); `cwad`'s CLI does not yet
-expose GL emission.
+more than 65,536 linedefs is unrepresentable *there*. The GL formats lift that in stages:
+`build_gl_nodes` (and `add_doom_map_with_nodes`) emit an `XGLN`, `XGL2`, or `XGL3` stream (or
+their zlib twins `ZGLN`/`ZGL2`/`ZGL3`) via `BuiltGlNodes::to_extended_lump_bytes`, carried in
+`SSECTORS`; `XGLN` keeps a 16-bit seg linedef like the non-GL streams, `XGL2` widens it to `u32`,
+and `XGL3` additionally allows fractional or out-of-`i16`-range node partitions.
+`NodeFormat::Gl`/`Zgl` auto-select the minimal dialect that fits the map, so callers who don't
+need a specific dialect can request `Gl` and get the smallest stream that round-trips it.
+`cwad`'s CLI does not yet expose GL emission (#366).
 
 ### Usage
 
@@ -479,13 +482,13 @@ lumps (`GL_VERT`/`GL_SEGS`/`GL_SSECT`/`GL_NODES`) — see
 [Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide.
 
 With `nodebuild` also enabled, this feature gates the write side too: `NodeFormat::Znod`
-(ADR-0025 §Amendment #323) and `NodeFormat::Zgl3` (ADR-0026 #364) only exist as variants when
-`extended-nodes-zlib` is on. It powers both the `ZNOD` and `ZGL3` writers:
-`BuiltNodes::to_extended_lump_bytes(_, compressed: true)` compresses the `XNOD` body, and
-`BuiltGlNodes::to_extended_lump_bytes(_, NodeFormat::Zgl3)` compresses the `XGL3` body, each with
-`miniz_oxide::deflate::compress_to_vec_zlib` before prepending the `ZNOD`/`ZGL3` tag. Requesting
-compressed output without this feature returns `NodeBuildError::CompressionUnavailable` rather
-than panicking.
+(ADR-0025 §Amendment #323) and its GL twins `NodeFormat::Zgln`/`Zgl2`/`Zgl3`/`Zgl` (ADR-0026
+#364, #365) only exist as variants when `extended-nodes-zlib` is on. It powers both the `ZNOD`
+and `Z*` GL writers: `BuiltNodes::to_extended_lump_bytes(_, compressed: true)` compresses the
+`XNOD` body, and `BuiltGlNodes::to_extended_lump_bytes(_, format)` compresses the selected GL
+dialect's body for `Zgln`/`Zgl2`/`Zgl3`, each with `miniz_oxide::deflate::compress_to_vec_zlib`
+before prepending the matching four-byte tag. Requesting compressed output without this feature
+returns `NodeBuildError::CompressionUnavailable` rather than panicking.
 
 ### Usage
 

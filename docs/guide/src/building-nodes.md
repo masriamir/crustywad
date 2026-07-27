@@ -140,19 +140,20 @@ The clean-room builder now spans three tiers of output:
 - **Non-GL extended** — the `XNOD` stream (and its zlib twin `ZNOD`, behind
   `extended-nodes-zlib`) via `build_nodes` + `BuiltNodes::to_extended_lump_bytes`,
   lifting the vanilla node ceilings (ADR-0025 §Amendment #323).
-- **GL extended** — the `XGL3` stream (and its zlib twin `ZGL3`) via `build_gl_nodes`
+- **GL extended** — the `XGLN`/`XGL2`/`XGL3` streams (and their zlib twins
+  `ZGLN`/`ZGL2`/`ZGL3` with `extended-nodes-zlib`) via `build_gl_nodes`
   + `BuiltGlNodes::to_extended_lump_bytes`, or the `add_doom_map_with_nodes` one-shot,
-  which carries the GL stream in `SSECTORS` (ADR-0026, #364).
+  which carries the GL stream in `SSECTORS` (ADR-0026, #364, #365).
+  `NodeFormat::Gl`/`Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
+  32-bit seg linedef or a fractional/out-of-range partition forces `XGL2` or `XGL3`.
 
 `crustywad` *reads* the full ZDoom extended family and classic GL nodes (ADR-0025 and its
 amendments, `Extended nodes` milestone, #199/#324) — see
 [Extended node encodings](map-records.md#extended-node-encodings) and
 [Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide.
 
-Two gaps remain. First, the intermediate GL dialects `XGL2`/`XGLN` are not yet generated
-(tracked in epic #345); for those, run an external nodebuilder (`zdbsp`, `bsp`, …) over the
-output. Second, the CLI does **not** yet expose GL emission: `cwad convert --nodes` targets the
-classic and non-GL extended formats (see the `--node-format` table above) and `cwad build
---nodes` emits classic lumps only, so wiring `XGL3`/`ZGL3` into the CLI is a later sub-issue of
-epic #345 — today the library API (`build_gl_nodes` / `add_doom_map_with_nodes`) is the way to
+One gap remains: the CLI does **not** yet expose GL emission. `cwad convert --nodes` targets
+the classic and non-GL extended formats (see the `--node-format` table above) and `cwad build
+--nodes` emits classic lumps only, so wiring the GL dialects into the CLI is tracked separately
+(#366) — today the library API (`build_gl_nodes` / `add_doom_map_with_nodes`) is the way to
 write GL nodes.
