@@ -2115,11 +2115,18 @@ impl BuiltGlNodes {
         // partner + u32 linedef + u8 side) + 4-byte node count + 40/node (4x i32
         // partition + 8x i16 bbox + 2x u32 child). Keeps allocation O(input)
         // with no reallocation.
+        // Saturating arithmetic keeps even hostile hand-mutated arena lengths
+        // off any debug-overflow path; the capacity is only a hint, and the
+        // `encode_u32` count ceilings below reject such inputs cleanly before
+        // the buffer would ever grow toward the saturated size.
         let mut out = Vec::with_capacity(
-            20 + 8 * self.gl_vertices.len()
-                + 4 * self.subsectors.len()
-                + 13 * self.segs.len()
-                + 40 * self.nodes.len(),
+            self.gl_vertices
+                .len()
+                .saturating_mul(8)
+                .saturating_add(self.subsectors.len().saturating_mul(4))
+                .saturating_add(self.segs.len().saturating_mul(13))
+                .saturating_add(self.nodes.len().saturating_mul(40))
+                .saturating_add(20),
         );
 
         // --- Vertex header: origVerts, newVerts, then GL vertex coords (16.16). ---
