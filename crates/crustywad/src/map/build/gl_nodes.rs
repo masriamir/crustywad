@@ -2145,9 +2145,13 @@ impl BuiltGlNodes {
         // build kernel guarantees).
         out.extend_from_slice(&encode_u32("segs", self.segs.len())?.to_le_bytes());
         for s in &self.segs {
+            // `saturating_add` keeps a hand-built out-of-range `GlVertexIdx`
+            // on the clean error path: the saturated value exceeds the
+            // `MAX_EXTENDED_INDEX` cap below, so `encode_index_u32` rejects it
+            // with `TooManyElements` instead of a debug overflow panic.
             let v1 = match s.start {
                 GlVertexRef::Normal(v) => v.0,
-                GlVertexRef::Gl(v) => orig_vertex_count + v.0,
+                GlVertexRef::Gl(v) => orig_vertex_count.saturating_add(v.0),
             };
             out.extend_from_slice(&encode_index_u32("vertices", v1)?.to_le_bytes());
             // No partner (one-sided edge): the GL reader's `0xFFFF_FFFF`
@@ -3163,6 +3167,23 @@ mod tests {
         let mut expected = b"XGL3".to_vec();
         expected.extend(golden_xgl3_body());
         assert_eq!(bytes, expected);
+    }
+
+    /// A hand-built out-of-range GL vertex ref saturates onto the clean
+    /// `TooManyElements` path instead of overflowing in debug builds.
+    #[test]
+    fn writer_rejects_overflowing_gl_vertex_refs_cleanly() {
+        let mut built = golden_fixture_twin();
+        built.segs[0].start = GlVertexRef::Gl(GlVertexIdx(usize::MAX));
+        assert!(matches!(
+            built
+                .to_extended_lump_bytes(4, NodeFormat::Xgl3)
+                .unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "vertices",
+                ..
+            }
+        ));
     }
 
     /// The on-disk `side` byte is canonicalized: linedef-backed segs emit a
