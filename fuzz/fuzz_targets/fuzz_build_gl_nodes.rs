@@ -84,12 +84,11 @@ fuzz_target!(|data: &[u8]| {
         // logic failed to escalate far enough, a real bug, not a tolerated
         // narrowing. `PartitionPrecision` is its own variant, so it is simply
         // left out of the match below and falls to the catch-all panic.
-        // `TooManyElements` as a *whole variant* stays in the tolerated set
-        // (the general arena/index-ceiling case, e.g. too many segs or
-        // vertices, is a legitimate and expected outcome on this path): the
-        // match cannot discriminate the linedef-`kind` case from the general
-        // case by variant alone, so that specific escalation guarantee is
-        // covered indirectly, not by narrowing this match arm.
+        // `TooManyElements` splits by `kind`: the `"linedefs"` case panics (a
+        // linedef ceiling on this path can only mean resolution failed to
+        // escalate past XGLN — parsed-map linedef indices sit far below the
+        // u32 ceilings), while the general arena/index-ceiling kinds (segs,
+        // vertices, subsectors, nodes) stay tolerated as legitimate outcomes.
         //
         // `NodeBuildOptions` is `#[non_exhaustive]`, so it cannot be built with
         // struct-literal syntax outside the crate; start from `lenient()` (which
@@ -139,7 +138,15 @@ fuzz_target!(|data: &[u8]| {
             // `NodeBuildError::PartitionPrecision` is deliberately absent: on
             // the `Gl` auto-resolution path it is documented unreachable (see
             // the comment above `gl_opts.format`), so seeing it here is a
-            // resolution bug and must panic via the catch-all.
+            // resolution bug and must panic via the catch-all. The same holds
+            // for the XGLN linedef-sentinel ceiling: on this path linedef
+            // indices come from parsed map linedefs (bounded far below the
+            // u32 ceilings), so a `kind: "linedefs"` overflow can only mean
+            // resolution failed to escalate past XGLN — panic on it while
+            // tolerating the general arena/index ceilings.
+            Err(NodeBuildError::TooManyElements {
+                kind: "linedefs", ..
+            }) => panic!("Gl auto-resolution failed to escalate past the XGLN linedef ceiling"),
             Err(
                 NodeBuildError::Write(_)
                 | NodeBuildError::EmptyGeometry

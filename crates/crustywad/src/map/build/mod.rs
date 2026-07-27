@@ -384,15 +384,18 @@ pub enum NodeBuildError {
         /// The non-GL format that was requested.
         format: NodeFormat,
     },
-    /// Node `node`'s partition is fractional or falls outside the `i16` range
-    /// that [`NodeFormat::Xgln`] and [`NodeFormat::Xgl2`] require (ADR-0026 §3):
-    /// both dialects encode the partition the same whole-unit-`i16` way the
-    /// classic format does, unlike [`NodeFormat::Xgl3`]'s fixed-point `i32`.
+    /// Node `node`'s partition is fractional (nonzero low 16 bits) — a value
+    /// [`NodeFormat::Xgln`] and [`NodeFormat::Xgl2`] cannot carry (ADR-0026
+    /// §3): both dialects encode the partition the same whole-unit-`i16` way
+    /// the classic format does, unlike [`NodeFormat::Xgl3`]'s fixed-point
+    /// `i32`. (An `i32` 16.16 whole part always fits `i16`, so fractionality
+    /// is the only reachable trigger; the range guard is kept in the emitter
+    /// as belt-and-braces for any future representation change.)
     /// Returned in **both** strictness modes when `Xgln`/`Xgl2`/their zlib
     /// twins are requested explicitly; the [`NodeFormat::Gl`] auto-format never
     /// trips it, escalating to `Xgl3` instead (ADR-0026 §3).
     #[error(
-        "node {node} has a partition only XGL3 can represent (fractional or beyond i16); use NodeFormat::Xgl3 or the Gl auto-format"
+        "node {node} has a fractional partition only XGL3 can represent; use NodeFormat::Xgl3 or the Gl auto-format"
     )]
     PartitionPrecision {
         /// The index of the offending node in the `BuiltGlNodes` node arena.
