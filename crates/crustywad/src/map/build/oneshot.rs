@@ -37,7 +37,7 @@ use super::{
 /// `NODES`, `SECTORS`, `REJECT`, `BLOCKMAP`. Under the default
 /// [`Classic`](super::NodeFormat::Classic) format, `VERTEXES` carries the map's
 /// vertices with the BSP pass's split vertices appended — they **must** be
-/// (done here) or the classic seg vertex indices would dangle. The extended and
+/// appended (done here) or the classic seg vertex indices would dangle. The extended and
 /// GL formats below instead carry builder-added vertices in their stream
 /// headers and leave `VERTEXES` untouched.
 ///
