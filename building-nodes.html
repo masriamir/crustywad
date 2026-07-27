@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b5dc08dd.js";
+            window.path_to_searchindex_js = "searchindex-af5f920d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -296,19 +296,31 @@ sectors meeting at a bare corner vertex). Across the full retail collection,
 <p>This is why converting real maps with <code>--nodes</code> often needs <code>--lenient</code>: the
 warning names an inherent property of the source geometry, not a defect the
 builder could fix.</p>
-<h2 id="when-you-still-need-an-external-nodebuilder"><a class="header" href="#when-you-still-need-an-external-nodebuilder">When you still need an external nodebuilder</a></h2>
-<p>The clean-room builder targets the <strong>classic 16-bit tier only</strong> — vanilla-layout
-<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>, which covers every real classic map with wide margin
-(ADR-0024 §1). It does <strong>not</strong> generate GL nodes or the extended/compressed
-encodings (<code>XNOD</code>/<code>ZNOD</code>, GL variants). For those, the long-standing recipe
-still applies: run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output.</p>
-<p><code>crustywad</code> <em>reads</em> both the ZDoom extended family and classic GL nodes (ADR-0025 and its
+<h2 id="what-the-library-generates-and-when-you-still-need-an-external-nodebuilder"><a class="header" href="#what-the-library-generates-and-when-you-still-need-an-external-nodebuilder">What the library generates, and when you still need an external nodebuilder</a></h2>
+<p>The clean-room builder now spans three tiers of output:</p>
+<ul>
+<li><strong>Classic 16-bit</strong> — vanilla-layout <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>, which covers every
+real classic map with wide margin (ADR-0024 §1). This is <code>NodeFormat::Classic</code>.</li>
+<li><strong>Non-GL extended</strong> — the <code>XNOD</code> stream (and its zlib twin <code>ZNOD</code>, behind
+<code>extended-nodes-zlib</code>) via <code>build_nodes</code> + <code>BuiltNodes::to_extended_lump_bytes</code>,
+lifting the vanilla node ceilings (ADR-0025 §Amendment #323).</li>
+<li><strong>GL extended</strong> — the <code>XGL3</code> stream (and its zlib twin <code>ZGL3</code>) via <code>build_gl_nodes</code>
+<ul>
+<li><code>BuiltGlNodes::to_extended_lump_bytes</code>, or the <code>add_doom_map_with_nodes</code> one-shot,
+which carries the GL stream in <code>SSECTORS</code> (ADR-0026, #364).</li>
+</ul>
+</li>
+</ul>
+<p><code>crustywad</code> <em>reads</em> the full ZDoom extended family and classic GL nodes (ADR-0025 and its
 amendments, <code>Extended nodes</code> milestone, #199/#324) — see
 <a href="map-records.html#extended-node-encodings">Extended node encodings</a> and
-<a href="map-records.html#classic-gl-nodes">Classic GL nodes</a> in the map-records guide. <em>Generating</em>
-GL/extended nodes is a separate, still-open follow-up (issue #323) that this clean-room
-builder does not cover. A <code>cwad build --nodes</code> for authoring a WAD from loose lumps is
-deferred to issue #320 — today the node-building CLI surface is <code>cwad convert --nodes</code>.</p>
+<a href="map-records.html#classic-gl-nodes">Classic GL nodes</a> in the map-records guide.</p>
+<p>Two gaps remain. First, the intermediate GL dialects <code>XGL2</code>/<code>XGLN</code> are not yet generated
+(tracked in epic #345); for those, run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the
+output. Second, the CLI does <strong>not</strong> yet expose GL emission: <code>cwad convert --nodes</code> targets the
+classic and non-GL extended formats (see the <code>--node-format</code> table above) and <code>cwad build --nodes</code> emits classic lumps only, so wiring <code>XGL3</code>/<code>ZGL3</code> into the CLI is a later sub-issue of
+epic #345 — today the library API (<code>build_gl_nodes</code> / <code>add_doom_map_with_nodes</code>) is the way to
+write GL nodes.</p>
 
                     </main>
 
