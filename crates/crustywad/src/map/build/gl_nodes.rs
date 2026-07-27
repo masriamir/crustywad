@@ -2155,27 +2155,34 @@ impl BuiltGlNodes {
     ///
     /// - [`NodeBuildError::UnsupportedNodeFormat`] when `format` is not a GL
     ///   variant (`Classic`/`Xnod`/`Znod`) — a caller-misuse guard, checked
-    ///   first. Also returned, **temporarily**, for [`NodeFormat::Gl`] (and its
-    ///   zlib twin [`NodeFormat::Zgl`]), whose auto-dialect resolution lands in
-    ///   #365 Task 3.
+    ///   first.
     /// - [`NodeBuildError::PartitionPrecision`] when `format` is
     ///   [`NodeFormat::Xgln`]/[`NodeFormat::Xgl2`] (or their zlib twins) and a
     ///   node partition is fractional or falls outside `i16` — only `XGL3`'s
-    ///   fixed-point partitions can represent it.
+    ///   fixed-point partitions can represent it. Unreachable for
+    ///   [`NodeFormat::Gl`]/[`NodeFormat::Zgl`]: the auto-resolution step
+    ///   escalates to `Xgl3` whenever a partition would trip this, by
+    ///   construction (ADR-0026 §3).
     /// - [`NodeBuildError::CompressionUnavailable`] when `format` is
-    ///   [`NodeFormat::Zgl3`] but the `extended-nodes-zlib` feature is disabled.
-    ///   Unreachable while that variant is feature-gated (it cannot be named
-    ///   without the feature); kept for the #365 auto-format future.
+    ///   [`NodeFormat::Zgl3`] but the `extended-nodes-zlib` feature is
+    ///   disabled. Unreachable while that variant is feature-gated (it cannot
+    ///   be named without the feature); the same holds for
+    ///   [`NodeFormat::Zgl`], which does not exist without the feature either.
     /// - [`NodeBuildError::TooManyElements`] when an arena count or a child/index
     ///   reference exceeds the 32-bit `MAX_EXTENDED_INDEX` cap (or the 31 bits
     ///   the child leaf flag leaves free), or — for [`NodeFormat::Xgln`] — a seg
     ///   linedef index reaches the 16-bit `0xFFFF` miniseg sentinel (`kind:
-    ///   "linedefs"`).
+    ///   "linedefs"`). The linedef variant is unreachable for
+    ///   [`NodeFormat::Gl`]/[`NodeFormat::Zgl`]: auto-resolution escalates to at
+    ///   least `Xgl2` whenever a real linedef index would trip it, by
+    ///   construction; the arena-count variant remains reachable on the auto
+    ///   path like every other dialect.
     /// - [`NodeBuildError::Write`] wrapping
     ///   [`DoomWriteError::ValueOutOfRange`](crate::map::DoomWriteError::ValueOutOfRange)
     ///   when a node bbox coordinate does not fit the on-disk `i16`, or a GL
     ///   vertex coordinate overflows the 16.16 `i32` — guards only
-    ///   hand-constructed values.
+    ///   hand-constructed values; reachable on the auto path like every other
+    ///   dialect.
     pub fn to_extended_lump_bytes(
         &self,
         orig_vertex_count: usize,
@@ -2185,9 +2192,9 @@ impl BuiltGlNodes {
         // than falling through a `_` arm so a future NodeFormat variant must
         // pick its body here — no catch-all — mirroring `is_gl()`'s own
         // rationale. Non-GL variants are rejected before any body is built.
-        // `Gl` (and its zlib twin) is a GL format but its auto-dialect
-        // resolution is not yet implemented here — it returns
-        // `UnsupportedNodeFormat` as a temporary placeholder (#365 Task 3).
+        // `Gl`/`Zgl` resolve their dialect via `resolve_gl_dialect` first
+        // (ADR-0026 §3), then emit through the same `gl_plaintext`/
+        // `gl_compressed` helpers the explicit dialects use.
         match format {
             NodeFormat::Xgln => self.gl_plaintext(orig_vertex_count, GlDialect::Xgln),
             NodeFormat::Xgl2 => self.gl_plaintext(orig_vertex_count, GlDialect::Xgl2),
@@ -2203,11 +2210,54 @@ impl BuiltGlNodes {
             }
             #[cfg(feature = "extended-nodes-zlib")]
             NodeFormat::Znod => Err(NodeBuildError::UnsupportedNodeFormat { format }),
-            // Task 3 wires auto-resolution.
-            NodeFormat::Gl => Err(NodeBuildError::UnsupportedNodeFormat { format }),
-            // Task 3 wires auto-resolution.
+            // Auto (ADR-0026 §3): resolve the minimal sufficient dialect, then
+            // emit through the same helper the explicit dialects use.
+            // `PartitionPrecision` and the XGLN linedef `TooManyElements` are
+            // unreachable here — `resolve_gl_dialect` escalates past both by
+            // construction (the Task 4 fuzz oracle relies on this).
+            NodeFormat::Gl => self.gl_plaintext(orig_vertex_count, self.resolve_gl_dialect()),
+            // The compressed twin of the `Gl` arm above: same resolution, same
+            // unreachable-error guarantee, zlib-wrapped body.
             #[cfg(feature = "extended-nodes-zlib")]
-            NodeFormat::Zgl => Err(NodeBuildError::UnsupportedNodeFormat { format }),
+            NodeFormat::Zgl => self.gl_compressed(orig_vertex_count, self.resolve_gl_dialect()),
+        }
+    }
+
+    /// ADR-0026 §3 escalation: the minimal GL dialect sufficient to represent
+    /// these arenas without error. `Xgln` unless a real (non-miniseg) linedef
+    /// index collides with the 16-bit miniseg sentinel (any index `>=
+    /// 0xFFFF`, escalating to at least `Xgl2`), or any node partition is
+    /// fractional (nonzero low 16 bits) or has a whole part outside `i16`
+    /// (escalating to `Xgl3`). The two escalations combine correctly: a set
+    /// with both a wide linedef and a fractional partition still resolves to
+    /// `Xgl3`, which carries `Xgl2`'s wide `u32` seg linedef as well as the
+    /// fixed-point partition. GL vertices never force escalation — only the
+    /// seg-linedef width and node-partition encoding vary by dialect.
+    ///
+    /// Because this always escalates far enough, [`to_extended_lump_bytes`]'s
+    /// `Gl`/`Zgl` arms can never hit [`NodeBuildError::PartitionPrecision`] or
+    /// the `Xgln` seg-linedef [`NodeBuildError::TooManyElements`] (`kind:
+    /// "linedefs"`) — resolution avoids both by construction. The Task 4 fuzz
+    /// oracle for `NodeFormat::Gl`/`Zgl` relies on this: those two error
+    /// shapes must never appear on the auto path.
+    ///
+    /// [`to_extended_lump_bytes`]: Self::to_extended_lump_bytes
+    fn resolve_gl_dialect(&self) -> GlDialect {
+        let needs_xgl2 = self
+            .segs
+            .iter()
+            .any(|s| matches!(s.linedef, Some(LinedefIdx(idx)) if idx > MAX_XGLN_LINEDEF));
+        let needs_xgl3 = self.nodes.iter().any(|n| {
+            [n.x, n.y, n.dx, n.dy]
+                .into_iter()
+                .any(|v| narrow_partition(v, 0).is_err())
+        });
+        if needs_xgl3 {
+            GlDialect::Xgl3
+        } else if needs_xgl2 {
+            GlDialect::Xgl2
+        } else {
+            GlDialect::Xgln
         }
     }
 
@@ -3521,6 +3571,63 @@ mod tests {
         assert!(built.to_extended_lump_bytes(4, NodeFormat::Xgln).is_ok());
         built.nodes[0].x = -(1 << 15); // -0.5
         assert!(built.to_extended_lump_bytes(4, NodeFormat::Xgln).is_err());
+    }
+
+    // --- `NodeFormat::Gl`/`Zgl` auto-resolution (#365 Task 3) ---------------
+
+    /// [`NodeFormat::Gl`] resolves the minimal sufficient GL dialect (ADR-0026
+    /// §3): `XGLN` when nothing forces escalation, `XGL2` on a sentinel-
+    /// colliding linedef, and `XGL3` on a fractional node partition — even
+    /// combined with a wide linedef, confirming the two escalations compose
+    /// (`XGL3` still carries the wide `u32` seg linedef `XGL2` needs).
+    ///
+    /// The brief for this test additionally called for an "out-of-i16 whole
+    /// partition" case (`nodes[0].dx = 40_000 << 16`). That case is omitted:
+    /// `40_000i32 << 16` silently wraps to `-1_673_527_296` (shl overflows the
+    /// *value*, not the shift amount, so it neither panics nor is caught by
+    /// `overflow-checks`), whose low 16 bits are `0` and whose arithmetic-
+    /// shifted whole part is `-25536` — still well within `i16`. This is not a
+    /// bad literal choice; it is structurally impossible for *any* `i32`: a
+    /// 16.16 value's whole part is exactly `value >> 16`, which is bounded to
+    /// `i16`'s range for every `i32` (`i32::MIN >> 16 == i16::MIN as i32`,
+    /// `i32::MAX >> 16 == i16::MAX as i32`). So a whole-unit (zero low 16
+    /// bits) `i32` can never carry a whole part outside `i16` — matching the
+    /// existing writer test suite, which likewise never exercises that half
+    /// of `narrow_partition`'s check.
+    #[test]
+    fn gl_auto_resolves_the_minimal_dialect() {
+        // Base twin: whole partitions, tiny linedefs -> XGLN.
+        let built = golden_fixture_twin();
+        let bytes = built.to_extended_lump_bytes(4, NodeFormat::Gl).unwrap();
+        assert_eq!(&bytes[..4], b"XGLN");
+
+        // A sentinel-colliding linedef escalates to XGL2.
+        let mut wide = golden_fixture_twin();
+        wide.segs[0].linedef = Some(LinedefIdx(0xFFFF));
+        let bytes = wide.to_extended_lump_bytes(4, NodeFormat::Gl).unwrap();
+        assert_eq!(&bytes[..4], b"XGL2");
+
+        // A fractional partition escalates to XGL3 (even with wide linedefs).
+        let mut frac = wide;
+        frac.nodes[0].y = (7 << 16) | 1;
+        let bytes = frac.to_extended_lump_bytes(4, NodeFormat::Gl).unwrap();
+        assert_eq!(&bytes[..4], b"XGL3");
+    }
+
+    /// [`NodeFormat::Zgl`] resolves the same minimal dialect as
+    /// [`NodeFormat::Gl`], then emits its zlib-compressed twin: on the base
+    /// (unescalated) twin that is `ZGLN`, and the inflated body matches the
+    /// `Gl` plaintext exactly (same body, `gl_compressed` only wraps it).
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn zgl_auto_emits_the_compressed_resolved_tag() {
+        let built = golden_fixture_twin();
+        let z = built.to_extended_lump_bytes(4, NodeFormat::Zgl).unwrap();
+        assert_eq!(&z[..4], b"ZGLN");
+        let inflated =
+            miniz_oxide::inflate::decompress_to_vec_zlib(&z[4..]).expect("ZGLN body inflates");
+        let plain = built.to_extended_lump_bytes(4, NodeFormat::Gl).unwrap();
+        assert_eq!(inflated, plain[4..]);
     }
 
     #[test]
