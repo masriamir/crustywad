@@ -65,15 +65,21 @@ const DEFAULT_SPLIT_COST: u32 = 8;
 /// nodebuilder-standard axis-aligned preference divisor.
 const DEFAULT_AA_PREFERENCE: u32 = 16;
 
-/// The on-disk node format `build_nodes` targets (ADR-0025, #323).
+/// The on-disk node format the node builders target (ADR-0025 #323, ADR-0026 #364).
 ///
-/// `Classic` (the default) emits the vanilla `SEGS`/`SSECTORS`/`NODES` lumps
-/// with the 16-bit index ceilings. The extended formats emit a single `ZDoom`
-/// non-GL node stream — `Xnod`, or its zlib twin `Znod` — that widens the
-/// subsector/node/seg/vertex counts to 32 bits, letting a past-vanilla map
-/// serialize. The seg `linedef` reference stays 16-bit in every format, so a map
-/// with more than 65,536 linedefs is unrepresentable here (that needs the GL
-/// `XGL2` format, tracked in #345).
+/// Two builders consume this. `Classic` (the default), `Xnod`, and its zlib twin
+/// `Znod` are [`build_nodes`] targets: `Classic` emits the vanilla
+/// `SEGS`/`SSECTORS`/`NODES` lumps with the 16-bit index ceilings, while `Xnod`/`Znod`
+/// emit a single `ZDoom` non-GL node stream that widens the subsector/node/seg/vertex
+/// counts to 32 bits, letting a past-vanilla map serialize. `Xgl3` and its zlib twin
+/// `Zgl3` are instead [`build_gl_nodes`] (and [`add_doom_map_with_nodes`]) targets:
+/// they emit a `ZDoom` GL extended-node stream carried in `SSECTORS`.
+///
+/// The seg `linedef` reference stays 16-bit in the **non-GL** formats, so a map with
+/// more than 65,536 linedefs is unrepresentable through `Xnod`/`Znod`. The GL formats
+/// lift that: `Xgl3`/`Zgl3` write a `u32` seg linedef (capped at `MAX_EXTENDED_INDEX`),
+/// so a past-vanilla-linedef map serializes there. (The intermediate GL dialects
+/// `XGL2`/`XGLN` are tracked in #345.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum NodeFormat {
@@ -86,6 +92,12 @@ pub enum NodeFormat {
     /// `extended-nodes-zlib` feature.
     #[cfg(feature = "extended-nodes-zlib")]
     Znod,
+    /// The uncompressed `ZDoom` GL extended stream (`XGL3`, ADR-0026 §3).
+    Xgl3,
+    /// The zlib-compressed `ZDoom` GL extended stream (`ZGL3`), the GL twin of
+    /// `Znod`; requires the `extended-nodes-zlib` feature.
+    #[cfg(feature = "extended-nodes-zlib")]
+    Zgl3,
 }
 
 impl NodeFormat {
@@ -100,22 +112,40 @@ impl NodeFormat {
     pub(crate) fn is_extended(self) -> bool {
         match self {
             NodeFormat::Classic => false,
-            NodeFormat::Xnod => true,
+            NodeFormat::Xnod | NodeFormat::Xgl3 => true,
             #[cfg(feature = "extended-nodes-zlib")]
-            NodeFormat::Znod => true,
+            NodeFormat::Znod | NodeFormat::Zgl3 => true,
         }
     }
 
-    /// Whether this format's stream is zlib-compressed (`Znod`).
+    /// Whether this format's stream is zlib-compressed (`Znod`/`Zgl3`).
     #[must_use]
     pub(crate) fn compressed(self) -> bool {
         #[cfg(feature = "extended-nodes-zlib")]
         {
-            matches!(self, NodeFormat::Znod)
+            matches!(self, NodeFormat::Znod | NodeFormat::Zgl3)
         }
         #[cfg(not(feature = "extended-nodes-zlib"))]
         {
             false
+        }
+    }
+
+    /// Whether this is a GL format (`Xgl3`/`Zgl3`) rather than a classic/non-GL
+    /// extended one.
+    ///
+    /// Written as an exhaustive match rather than `matches!(_, Xgl3 | Zgl3)` so
+    /// a future `NodeFormat` variant cannot silently fall through unclassified —
+    /// adding one is a compile error here until it is placed on a side.
+    #[must_use]
+    pub(crate) fn is_gl(self) -> bool {
+        match self {
+            NodeFormat::Classic | NodeFormat::Xnod => false,
+            NodeFormat::Xgl3 => true,
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod => false,
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Zgl3 => true,
         }
     }
 }
@@ -155,10 +185,18 @@ pub struct NodeBuildOptions {
     /// to `16`. `0` is treated as "no diagonal penalty" — the build path guards
     /// the division and skips the term entirely rather than dividing by zero.
     pub aa_preference: u32,
-    /// The on-disk node format to target (ADR-0025, #323). Defaults to
-    /// [`NodeFormat::Classic`]. Set to [`NodeFormat::Xnod`] (or, with the
+    /// The on-disk node format to target (ADR-0025 #323, ADR-0026 #364). Defaults
+    /// to [`NodeFormat::Classic`]. Set to [`NodeFormat::Xnod`] (or, with the
     /// `extended-nodes-zlib` feature, `NodeFormat::Znod`) to emit a `ZDoom`
     /// non-GL extended stream that lifts the vanilla 16-bit node ceilings.
+    ///
+    /// The GL formats [`NodeFormat::Xgl3`] / `NodeFormat::Zgl3` are honored only
+    /// by [`add_doom_map_with_nodes`] (which carries the GL stream in `SSECTORS`)
+    /// and by [`BuiltGlNodes::to_extended_lump_bytes`]. Passed to the classic
+    /// [`build_nodes`], a GL format is treated merely as "extended" (the wider
+    /// `MAX_EXTENDED_INDEX` ceilings apply), and the resulting [`BuiltNodes`]
+    /// still serializes only an `XNOD`/`ZNOD` non-GL stream — it never emits a GL
+    /// stream. Use [`build_gl_nodes`] to actually build GL nodes.
     pub format: NodeFormat,
 }
 
@@ -293,6 +331,16 @@ pub enum NodeBuildError {
     /// variant that drives it does not exist without the feature.
     #[error("zlib compression requires the `extended-nodes-zlib` feature")]
     CompressionUnavailable,
+    /// A non-GL [`NodeFormat`] (`Classic`, `Xnod`, or `Znod`) was asked to
+    /// serialize GL node data — GL trees carry minisegs, partner links, and
+    /// fractional partitions that only the GL extended formats
+    /// (`Xgl3`/`Zgl3`) can represent. A caller-misuse guard, not reachable from
+    /// `build_nodes`/`build_gl_nodes` themselves.
+    #[error("node format {format:?} cannot serialize GL node data (GL extended formats only)")]
+    UnsupportedNodeFormat {
+        /// The non-GL format that was requested.
+        format: NodeFormat,
+    },
     /// A hand-built [`BuiltNodes`] — assembled via
     /// [`BuiltNodes::new`](crate::map::build::BuiltNodes::new) or by mutating its
     /// public fields — violates one of the type's documented structural
@@ -343,7 +391,8 @@ impl NodeBuildError {
             | Self::MinisegUnsupported { .. }
             | Self::DegeneratePartition { .. }
             | Self::InvalidStructure(_)
-            | Self::CompressionUnavailable => false,
+            | Self::CompressionUnavailable
+            | Self::UnsupportedNodeFormat { .. } => false,
         }
     }
 }
@@ -516,6 +565,21 @@ mod tests {
         {
             assert!(NodeFormat::Znod.is_extended());
             assert!(NodeFormat::Znod.compressed());
+        }
+    }
+
+    #[test]
+    fn gl_format_predicates() {
+        assert!(NodeFormat::Xgl3.is_gl());
+        assert!(NodeFormat::Xgl3.is_extended());
+        assert!(!NodeFormat::Xgl3.compressed());
+        assert!(!NodeFormat::Classic.is_gl());
+        assert!(!NodeFormat::Xnod.is_gl());
+        #[cfg(feature = "extended-nodes-zlib")]
+        {
+            assert!(NodeFormat::Zgl3.is_gl());
+            assert!(NodeFormat::Zgl3.is_extended());
+            assert!(NodeFormat::Zgl3.compressed());
         }
     }
 }

@@ -318,8 +318,11 @@ represent the data (sentinel collision, fractional or out-of-range
 partition) is a hard error (§4) — the situation `Gl` exists to avoid.
 
 The serializer reuses #323's plumbing (presized exact-capacity buffer,
-`fixed_16_16`, `encode_u32`/`encode_index_u32`, bit-31 child encoding, the
-`Z*` tag + zlib-level-6 wrapper) and flattens `GlVertexRef` into the
+`encode_u32`/`encode_index_u32`, bit-31 child encoding, the
+`Z*` tag + zlib-level-6 wrapper) — but writes GL vertices with the
+fraction-preserving `fixed_16_16_exact` (added in #364), not the whole-unit
+`fixed_16_16` #323 uses, since GL split vertices carry sub-unit coordinates. It
+flattens `GlVertexRef` into the
 on-disk unified index space: `Normal(i)` → `i`, `Gl(j)` →
 `orig_vertex_count + j`. Partner `None` and miniseg `None` emit their
 sentinels. No `v2` is written; the subsector loop order carries it.

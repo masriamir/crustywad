@@ -558,7 +558,11 @@ fn narrow_offset(offset: i32, index: usize) -> Result<i16, NodeBuildError> {
 
 /// Narrows a node partition coordinate (`i32`) to the on-disk `i16`, or a
 /// defensive [`DoomWriteError::ValueOutOfRange`] naming `field`.
-fn narrow_coord(value: i32, field: &'static str, index: usize) -> Result<i16, NodeBuildError> {
+pub(super) fn narrow_coord(
+    value: i32,
+    field: &'static str,
+    index: usize,
+) -> Result<i16, NodeBuildError> {
     i16::try_from(value).map_err(|_| {
         NodeBuildError::Write(DoomWriteError::ValueOutOfRange {
             block: "node",
@@ -570,7 +574,7 @@ fn narrow_coord(value: i32, field: &'static str, index: usize) -> Result<i16, No
 }
 
 /// Narrows a node child bounding box (four `i32`) to the on-disk `[i16; 4]`.
-fn narrow_bbox(
+pub(super) fn narrow_bbox(
     bbox: [i32; 4],
     field: &'static str,
     index: usize,
@@ -608,7 +612,7 @@ fn encode_child(child: NodeChild) -> Result<u16, NodeBuildError> {
 /// [`NodeBuildError::TooManyElements`] naming `kind` if it exceeds
 /// [`MAX_EXTENDED_INDEX`] (which keeps every index within the low 31 bits the
 /// child leaf flag leaves free).
-fn encode_u32(kind: &'static str, value: usize) -> Result<u32, NodeBuildError> {
+pub(super) fn encode_u32(kind: &'static str, value: usize) -> Result<u32, NodeBuildError> {
     if value > MAX_EXTENDED_INDEX {
         return Err(NodeBuildError::TooManyElements {
             kind,
@@ -628,7 +632,7 @@ fn encode_u32(kind: &'static str, value: usize) -> Result<u32, NodeBuildError> {
 /// gives a clean write-time [`NodeBuildError::TooManyElements`] rather than
 /// emitting a stream the reader would reject. Guards a hand-built [`BuiltNodes`]
 /// (via [`BuiltNodes::new`]); `build_nodes` never produces such an index.
-fn encode_index_u32(kind: &'static str, idx: usize) -> Result<u32, NodeBuildError> {
+pub(super) fn encode_index_u32(kind: &'static str, idx: usize) -> Result<u32, NodeBuildError> {
     if idx >= MAX_EXTENDED_INDEX {
         return Err(NodeBuildError::TooManyElements {
             kind,

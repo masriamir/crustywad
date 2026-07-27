@@ -14,8 +14,8 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use super::geom;
-use super::nodes::{MAX_EXTENDED_INDEX, SAMPLE_BUDGET};
-use super::{NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeStructureError};
+use super::nodes::{MAX_EXTENDED_INDEX, SAMPLE_BUDGET, encode_index_u32, encode_u32, narrow_bbox};
+use super::{NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat, NodeStructureError};
 use crate::Strictness;
 use crate::map::doom::{Narrower, narrow_vertices};
 use crate::map::graph::{
@@ -1584,7 +1584,7 @@ impl<'a> GlBsp<'a> {
     ///
     /// [`close_leaf`](Self::close_leaf)'s errors, and
     /// [`NodeBuildError::TooManyElements`] when the GL vertex, seg, subsector, or
-    /// node arena exceeds [`MAX_EXTENDED_INDEX`] (GL is always extended, so the
+    /// node arena exceeds `MAX_EXTENDED_INDEX` (GL is always extended, so the
     /// classic vanilla soft ceilings and the `u16` linedef gate do not apply).
     fn finish(mut self) -> Result<(BuiltGlNodes, Vec<NodeBuildWarning>), NodeBuildError> {
         // (c) Re-expand and close each leaf into an ordered loop. Taking `leaves`
@@ -1798,8 +1798,21 @@ fn child_of_gl_ref(child: TreeRef) -> GlNodeChild {
     }
 }
 
+/// Encodes a [`GlNodeChild`] as the GL extended stream's 32-bit child word: a
+/// subsector leaf sets bit 31 (`0x8000_0000`) over the index, an internal node
+/// stores the bare index (mirrors the classic kernel's `encode_extended_child`,
+/// `nodes.rs`).
+fn encode_gl_child(child: GlNodeChild) -> Result<u32, NodeBuildError> {
+    match child {
+        GlNodeChild::Node(GlNodeIdx(i)) => encode_index_u32("nodes", i),
+        GlNodeChild::Subsector(GlSubsectorIdx(i)) => {
+            Ok(0x8000_0000 | encode_index_u32("subsectors", i)?)
+        }
+    }
+}
+
 /// The extended-arena ceiling (controller resolution 8): GL is always an extended
-/// format, so every arena is checked against [`MAX_EXTENDED_INDEX`] in **both**
+/// format, so every arena is checked against `MAX_EXTENDED_INDEX` in **both**
 /// strictness modes — there is no vanilla `u16` soft ceiling, and no `u16`
 /// linedef gate (GL seg linedef refs are 32-bit capable; emission ceilings are
 /// #364's concern).
@@ -2031,6 +2044,170 @@ impl BuiltGlNodes {
         }
 
         Ok(())
+    }
+
+    /// Serializes this `BuiltGlNodes` as one `ZDoom` GL extended-node lump — the
+    /// byte-exact inverse of the crate's own GL reader (ADR-0026 §3). `format`
+    /// selects the on-disk container: [`NodeFormat::Xgl3`] emits the plaintext
+    /// `XGL3` stream, [`NodeFormat::Zgl3`] the zlib-compressed `ZGL3` twin.
+    ///
+    /// `orig_vertex_count` is the owning map's `VERTEXES` record count; it is
+    /// written into the vertex header and used to flatten combined GL-seg vertex
+    /// references (a [`GlVertexRef::Gl`]`(j)` becomes `orig_vertex_count + j`).
+    ///
+    /// # Errors
+    ///
+    /// - [`NodeBuildError::UnsupportedNodeFormat`] when `format` is not a GL
+    ///   variant (`Classic`/`Xnod`/`Znod`) — a caller-misuse guard, checked
+    ///   first.
+    /// - [`NodeBuildError::CompressionUnavailable`] when `format` is
+    ///   [`NodeFormat::Zgl3`] but the `extended-nodes-zlib` feature is disabled.
+    ///   Unreachable while that variant is feature-gated (it cannot be named
+    ///   without the feature); kept for the #365 auto-format future.
+    /// - [`NodeBuildError::TooManyElements`] when an arena count or a child/index
+    ///   reference exceeds the 32-bit `MAX_EXTENDED_INDEX` cap (or the 31 bits
+    ///   the child leaf flag leaves free).
+    /// - [`NodeBuildError::Write`] wrapping
+    ///   [`DoomWriteError::ValueOutOfRange`](crate::map::DoomWriteError::ValueOutOfRange)
+    ///   when a node bbox coordinate does not fit the on-disk `i16`, or a GL
+    ///   vertex coordinate overflows the 16.16 `i32` — guards only
+    ///   hand-constructed values.
+    pub fn to_extended_lump_bytes(
+        &self,
+        orig_vertex_count: usize,
+        format: NodeFormat,
+    ) -> Result<Vec<u8>, NodeBuildError> {
+        // The match is the single dispatch point, written exhaustively rather
+        // than falling through a `_` arm so a future GL variant (#365's
+        // Xgln/Xgl2) must pick its body here — no catch-all — mirroring
+        // `is_gl()`'s own rationale. Non-GL variants are rejected before any
+        // body is built.
+        match format {
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Zgl3 => {
+                let body = self.build_xgl3_body(orig_vertex_count)?;
+                let mut lump = b"ZGL3".to_vec();
+                lump.extend(miniz_oxide::deflate::compress_to_vec_zlib(&body, 6));
+                Ok(lump)
+            }
+            NodeFormat::Xgl3 => {
+                let body = self.build_xgl3_body(orig_vertex_count)?;
+                let mut lump = Vec::with_capacity(4 + body.len());
+                lump.extend_from_slice(b"XGL3");
+                lump.extend_from_slice(&body);
+                Ok(lump)
+            }
+            NodeFormat::Classic | NodeFormat::Xnod => {
+                Err(NodeBuildError::UnsupportedNodeFormat { format })
+            }
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod => Err(NodeBuildError::UnsupportedNodeFormat { format }),
+        }
+    }
+
+    /// Builds the tag-less `XGL3` body (the bytes after the 4-byte signature),
+    /// reversing the GL reader's `decode_body`: vertex header, subsector block,
+    /// GL-seg block, node block. Shared by the `XGL3` and `ZGL3` paths.
+    fn build_xgl3_body(&self, orig_vertex_count: usize) -> Result<Vec<u8>, NodeBuildError> {
+        // Presize from the arena counts — every record is fixed-size, so the
+        // total is exact: 8-byte vertex header + 8/GL vertex + 4-byte subsector
+        // count + 4/subsector + 4-byte seg count + 13/GL seg (u32 v1 + u32
+        // partner + u32 linedef + u8 side) + 4-byte node count + 40/node (4x i32
+        // partition + 8x i16 bbox + 2x u32 child). Keeps allocation O(input)
+        // with no reallocation.
+        // Saturating arithmetic keeps even hostile hand-mutated arena lengths
+        // off any debug-overflow path; the capacity is only a hint, and the
+        // `encode_u32` count ceilings below reject such inputs cleanly before
+        // the buffer would ever grow toward the saturated size.
+        let mut out = Vec::with_capacity(
+            self.gl_vertices
+                .len()
+                .saturating_mul(8)
+                .saturating_add(self.subsectors.len().saturating_mul(4))
+                .saturating_add(self.segs.len().saturating_mul(13))
+                .saturating_add(self.nodes.len().saturating_mul(40))
+                .saturating_add(20),
+        );
+
+        // --- Vertex header: origVerts, newVerts, then GL vertex coords (16.16). ---
+        // GL vertices are already fixed-space, so `fixed_16_16_exact` preserves
+        // their fractional part verbatim.
+        out.extend_from_slice(&encode_u32("vertices", orig_vertex_count)?.to_le_bytes());
+        out.extend_from_slice(&encode_u32("vertices", self.gl_vertices.len())?.to_le_bytes());
+        for (i, v) in self.gl_vertices.iter().enumerate() {
+            out.extend_from_slice(&geom::fixed_16_16_exact(v.x, "x", i)?.to_le_bytes());
+            out.extend_from_slice(&geom::fixed_16_16_exact(v.y, "y", i)?.to_le_bytes());
+        }
+
+        // --- Subsector block: numSubs, then each run length. ---
+        out.extend_from_slice(&encode_u32("subsectors", self.subsectors.len())?.to_le_bytes());
+        for ss in &self.subsectors {
+            let count = ss.segs.end.saturating_sub(ss.segs.start);
+            out.extend_from_slice(&encode_u32("subsector segs", count)?.to_le_bytes());
+        }
+
+        // --- Seg block: numSegs, then u32 v1, u32 partner, u32 linedef, u8 side. ---
+        // No v2 is written: the GL reader recovers each seg's end vertex from the
+        // next seg in the subsector's closed loop (implicit-v2, the ordering the
+        // build kernel guarantees).
+        out.extend_from_slice(&encode_u32("segs", self.segs.len())?.to_le_bytes());
+        for s in &self.segs {
+            // `saturating_add` keeps a hand-built out-of-range `GlVertexIdx`
+            // on the clean error path: the saturated value exceeds the
+            // `MAX_EXTENDED_INDEX` cap below, so `encode_index_u32` rejects it
+            // with `TooManyElements` instead of a debug overflow panic.
+            let v1 = match s.start {
+                GlVertexRef::Normal(v) => v.0,
+                GlVertexRef::Gl(v) => orig_vertex_count.saturating_add(v.0),
+            };
+            out.extend_from_slice(&encode_index_u32("vertices", v1)?.to_le_bytes());
+            // No partner (one-sided edge): the GL reader's `0xFFFF_FFFF`
+            // sentinel. A real index can never collide with it —
+            // `encode_index_u32` caps every emitted index at
+            // `MAX_EXTENDED_INDEX` (`0x8000_0000`), well below `0xFFFF_FFFF`.
+            let partner = match s.partner {
+                Some(p) => encode_index_u32("segs", p.0)?,
+                None => 0xFFFF_FFFF,
+            };
+            out.extend_from_slice(&partner.to_le_bytes());
+            // No linedef (miniseg): same `0xFFFF_FFFF` sentinel, and the same
+            // `MAX_EXTENDED_INDEX` ceiling keeps real indices from colliding
+            // with it.
+            let linedef = match s.linedef {
+                Some(l) => encode_index_u32("linedefs", l.0)?,
+                None => 0xFFFF_FFFF,
+            };
+            out.extend_from_slice(&linedef.to_le_bytes());
+            // Canonicalize `side` on the way out, mirroring the reader's
+            // `raw.side != 0` interpretation and the classic writer's
+            // normalization: linedef-backed segs emit a strict 0/1 flag, and
+            // minisegs always emit 0 (the `BuiltGlNodes::segs` convention).
+            out.push(if s.linedef.is_some() {
+                u8::from(s.side != 0)
+            } else {
+                0
+            });
+        }
+
+        // --- Node block: numNodes, then i32 16.16 partition + 2x i16 bbox + children. ---
+        out.extend_from_slice(&encode_u32("nodes", self.nodes.len())?.to_le_bytes());
+        for (i, n) in self.nodes.iter().enumerate() {
+            // Partition x/y/dx/dy are already 16.16 fixed-point on `BuiltGlNode`;
+            // emit them verbatim — re-scaling would corrupt the sub-unit geometry.
+            for part in [n.x, n.y, n.dx, n.dy] {
+                out.extend_from_slice(&part.to_le_bytes());
+            }
+            for value in narrow_bbox(n.right_bbox, "right_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            for value in narrow_bbox(n.left_bbox, "left_bbox", i)? {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&encode_gl_child(n.right)?.to_le_bytes());
+            out.extend_from_slice(&encode_gl_child(n.left)?.to_le_bytes());
+        }
+
+        Ok(out)
     }
 }
 
@@ -2914,5 +3091,182 @@ mod tests {
                 "the closed 2-vertex loop passes validate",
             );
         }
+    }
+
+    #[test]
+    fn encode_gl_child_sets_bit_31_for_subsectors() {
+        assert_eq!(encode_gl_child(GlNodeChild::Node(GlNodeIdx(5))).unwrap(), 5);
+        assert_eq!(
+            encode_gl_child(GlNodeChild::Subsector(GlSubsectorIdx(5))).unwrap(),
+            0x8000_0005
+        );
+    }
+
+    // --- XGL3/ZGL3 writer GOLDEN tests (Task 2, #364) ------------------------
+
+    /// The `BuiltGlNodes` whose serialization must equal the reader's own
+    /// `xgl3_stream` fixture (`tests/extended_nodes.rs`) byte-for-byte.
+    fn golden_fixture_twin() -> BuiltGlNodes {
+        let seg = |v1: usize, v2: usize, linedef: Option<usize>| GlSeg {
+            start: GlVertexRef::Normal(VertexIdx(v1)),
+            end: GlVertexRef::Normal(VertexIdx(v2)),
+            linedef: linedef.map(LinedefIdx),
+            side: 0,
+            partner: None,
+        };
+        BuiltGlNodes::new(
+            vec![], // newVerts = 0
+            vec![
+                seg(0, 1, Some(0)),
+                seg(1, 0, None),
+                seg(2, 3, Some(2)),
+                seg(3, 2, Some(3)),
+            ],
+            vec![GlSubsector { segs: 0..2 }, GlSubsector { segs: 2..4 }],
+            vec![BuiltGlNode {
+                x: 32 << 16,
+                y: 0,
+                dx: 0,
+                dy: 64 << 16,
+                right_bbox: [64, 0, 0, 64],
+                left_bbox: [64, 0, 0, 64],
+                right: GlNodeChild::Subsector(GlSubsectorIdx(0)),
+                left: GlNodeChild::Subsector(GlSubsectorIdx(1)),
+            }],
+            4, // origVerts = 4
+        )
+        .expect("golden twin is structurally valid")
+    }
+
+    /// The expected tag-less XGL3 body, built with the same field layout the
+    /// reader fixture `xgl3_stream` uses; keep in lockstep with
+    /// `tests/extended_nodes.rs`.
+    fn golden_xgl3_body() -> Vec<u8> {
+        let mut expected = Vec::new();
+        expected.extend(4u32.to_le_bytes()); // origVerts
+        expected.extend(0u32.to_le_bytes()); // newVerts
+        expected.extend(2u32.to_le_bytes()); // numSubsectors
+        expected.extend(2u32.to_le_bytes()); // ss0 count
+        expected.extend(2u32.to_le_bytes()); // ss1 count
+        expected.extend(4u32.to_le_bytes()); // numSegs
+        for (v1, line) in [(0u32, 0u32), (1, 0xFFFF_FFFF), (2, 2), (3, 3)] {
+            expected.extend(v1.to_le_bytes());
+            expected.extend(0xFFFF_FFFFu32.to_le_bytes()); // partner: none
+            expected.extend(line.to_le_bytes());
+            expected.push(0); // side
+        }
+        expected.extend(1u32.to_le_bytes()); // numNodes
+        for part in [32i32 << 16, 0, 0, 64 << 16] {
+            expected.extend(part.to_le_bytes());
+        }
+        for b in [64i16, 0, 0, 64, 64, 0, 0, 64] {
+            expected.extend(b.to_le_bytes());
+        }
+        expected.extend(0x8000_0000u32.to_le_bytes());
+        expected.extend(0x8000_0001u32.to_le_bytes());
+        expected
+    }
+
+    #[test]
+    fn golden_xgl3_bytes_match_the_reader_fixture() {
+        let built = golden_fixture_twin();
+        let bytes = built.to_extended_lump_bytes(4, NodeFormat::Xgl3).unwrap();
+        let mut expected = b"XGL3".to_vec();
+        expected.extend(golden_xgl3_body());
+        assert_eq!(bytes, expected);
+    }
+
+    /// A hand-built out-of-range GL vertex ref saturates onto the clean
+    /// `TooManyElements` path instead of overflowing in debug builds.
+    #[test]
+    fn writer_rejects_overflowing_gl_vertex_refs_cleanly() {
+        let mut built = golden_fixture_twin();
+        built.segs[0].start = GlVertexRef::Gl(GlVertexIdx(usize::MAX));
+        assert!(matches!(
+            built
+                .to_extended_lump_bytes(4, NodeFormat::Xgl3)
+                .unwrap_err(),
+            NodeBuildError::TooManyElements {
+                kind: "vertices",
+                ..
+            }
+        ));
+    }
+
+    /// The on-disk `side` byte is canonicalized: linedef-backed segs emit a
+    /// strict 0/1 flag (a hand-built `side: 2` clamps to 1) and minisegs
+    /// always emit 0, matching the reader's `raw.side != 0` semantics.
+    #[test]
+    fn writer_canonicalizes_the_side_byte() {
+        let mut built = golden_fixture_twin();
+        built.segs[0].side = 2; // linedef-backed: clamps to 1
+        built.segs[1].side = 1; // miniseg: forced to 0
+        let bytes = built.to_extended_lump_bytes(4, NodeFormat::Xgl3).unwrap();
+        // Layout: tag(4) + vertex header(8) + subsector block(12) +
+        // seg count(4) = 28; each seg record is 13 bytes with `side` last.
+        let seg_side = |i: usize| bytes[28 + i * 13 + 12];
+        assert_eq!(seg_side(0), 1);
+        assert_eq!(seg_side(1), 0);
+        assert_eq!(seg_side(2), 0);
+    }
+
+    #[test]
+    fn writer_rejects_non_gl_formats() {
+        let built = golden_fixture_twin();
+        let mut non_gl = vec![NodeFormat::Classic, NodeFormat::Xnod];
+        #[cfg(feature = "extended-nodes-zlib")]
+        non_gl.push(NodeFormat::Znod);
+        for format in non_gl {
+            assert!(matches!(
+                built.to_extended_lump_bytes(4, format).unwrap_err(),
+                NodeBuildError::UnsupportedNodeFormat { .. }
+            ));
+        }
+    }
+
+    #[cfg(feature = "extended-nodes-zlib")]
+    #[test]
+    fn golden_zgl3_bytes_inflate_to_the_xgl3_body() {
+        let built = golden_fixture_twin();
+        let z = built.to_extended_lump_bytes(4, NodeFormat::Zgl3).unwrap();
+        assert_eq!(&z[..4], b"ZGL3");
+        let inflated =
+            miniz_oxide::inflate::decompress_to_vec_zlib(&z[4..]).expect("ZGL3 body inflates");
+        assert_eq!(inflated, golden_xgl3_body());
+    }
+
+    #[test]
+    fn writer_emits_fractional_gl_vertices_exactly() {
+        // One GL vertex at (32.5, -0.25); a seg references it so `new` accepts
+        // the arena. The header must carry its exact 16.16 fixed-point coords.
+        let built = BuiltGlNodes::new(
+            vec![GlVertex { x: 32.5, y: -0.25 }],
+            vec![
+                GlSeg {
+                    start: GlVertexRef::Normal(VertexIdx(0)),
+                    end: GlVertexRef::Gl(GlVertexIdx(0)),
+                    linedef: Some(LinedefIdx(0)),
+                    side: 0,
+                    partner: None,
+                },
+                GlSeg {
+                    start: GlVertexRef::Gl(GlVertexIdx(0)),
+                    end: GlVertexRef::Normal(VertexIdx(0)),
+                    linedef: None,
+                    side: 0,
+                    partner: None,
+                },
+            ],
+            vec![GlSubsector { segs: 0..2 }],
+            vec![],
+            1, // origVerts = 1
+        )
+        .expect("fractional twin is structurally valid");
+        let bytes = built.to_extended_lump_bytes(1, NodeFormat::Xgl3).unwrap();
+        // Vertex coords follow the 4-byte tag + 8-byte vertex header.
+        let x = i32::from_le_bytes(bytes[12..16].try_into().unwrap());
+        let y = i32::from_le_bytes(bytes[16..20].try_into().unwrap());
+        assert_eq!(x, 32 * 65536 + 32768); // 32.5 in 16.16
+        assert_eq!(y, -16384); // -0.25 in 16.16
     }
 }
