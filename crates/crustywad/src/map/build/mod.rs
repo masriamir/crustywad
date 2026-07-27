@@ -395,7 +395,7 @@ pub enum NodeBuildError {
     /// twins are requested explicitly; the [`NodeFormat::Gl`] auto-format never
     /// trips it, escalating to `Xgl3` instead (ADR-0026 §3).
     #[error(
-        "node {node} has a fractional partition only XGL3 can represent; use NodeFormat::Xgl3 or the Gl auto-format"
+        "node {node} has a fractional partition only XGL3 can represent; use NodeFormat::Xgl3/Zgl3 or the Gl/Zgl auto-formats"
     )]
     PartitionPrecision {
         /// The index of the offending node in the `BuiltGlNodes` node arena.

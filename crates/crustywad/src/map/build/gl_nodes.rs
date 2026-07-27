@@ -2234,8 +2234,9 @@ impl BuiltGlNodes {
     /// these arenas without error. `Xgln` unless a real (non-miniseg) linedef
     /// index collides with the 16-bit miniseg sentinel (any index `>=
     /// 0xFFFF`, escalating to at least `Xgl2`), or any node partition is
-    /// fractional (nonzero low 16 bits) or has a whole part outside `i16`
-    /// (escalating to `Xgl3`). The two escalations combine correctly: a set
+    /// fractional (nonzero low 16 bits — the only reachable trigger, since an
+    /// `i32` 16.16 whole part always fits `i16`; escalating to `Xgl3`).
+    /// The two escalations combine correctly: a set
     /// with both a wide linedef and a fractional partition still resolves to
     /// `Xgl3`, which carries `Xgl2`'s wide `u32` seg linedef as well as the
     /// fixed-point partition. GL vertices never force escalation — only the
