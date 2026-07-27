@@ -3375,6 +3375,70 @@ fn convert_with_node_format_xgl3_emits_the_gl_stream_in_ssectors() {
     assert_maps_assemble_strict_clean(out.path());
 }
 
+/// Every explicit GL dialect drives the writer end-to-end: the emitted
+/// SSECTORS stream carries the requested (or, for `zgl`, the auto-resolved)
+/// on-disk tag.
+#[test]
+fn convert_with_each_explicit_gl_dialect_emits_its_tag() {
+    for (value, tag) in [("xgln", b"XGLN"), ("xgl2", b"XGL2")] {
+        let wad = write_udmf_square_room_wad();
+        let out = NamedTempFile::new().unwrap();
+        Command::cargo_bin("cwad")
+            .unwrap()
+            .args([
+                "convert",
+                wad.path().to_str().unwrap(),
+                "-o",
+                out.path().to_str().unwrap(),
+                "--to",
+                "doom",
+                "--nodes",
+                "--node-format",
+                value,
+            ])
+            .assert()
+            .code(0);
+        let ssectors = lump_bytes(out.path(), "SSECTORS");
+        assert!(
+            ssectors.starts_with(tag),
+            "--node-format {value}: SSECTORS should start with {tag:?}"
+        );
+        assert_maps_assemble_strict_clean(out.path());
+    }
+}
+
+/// The compressed twins (and the compressed auto-format, which resolves ZGLN
+/// on this whole-unit map) emit their `Z*` tags.
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn convert_with_each_compressed_gl_dialect_emits_its_tag() {
+    for (value, tag) in [("zgln", b"ZGLN"), ("zgl2", b"ZGL2"), ("zgl", b"ZGLN")] {
+        let wad = write_udmf_square_room_wad();
+        let out = NamedTempFile::new().unwrap();
+        Command::cargo_bin("cwad")
+            .unwrap()
+            .args([
+                "convert",
+                wad.path().to_str().unwrap(),
+                "-o",
+                out.path().to_str().unwrap(),
+                "--to",
+                "doom",
+                "--nodes",
+                "--node-format",
+                value,
+            ])
+            .assert()
+            .code(0);
+        let ssectors = lump_bytes(out.path(), "SSECTORS");
+        assert!(
+            ssectors.starts_with(tag),
+            "--node-format {value}: SSECTORS should start with {tag:?}"
+        );
+        assert_maps_assemble_strict_clean(out.path());
+    }
+}
+
 #[test]
 fn convert_with_node_format_gl_auto_selects_the_minimal_dialect() {
     // write_udmf_square_room_wad uses whole-unit coordinates and a handful of
