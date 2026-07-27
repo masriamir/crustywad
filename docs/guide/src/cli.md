@@ -156,7 +156,7 @@ size validation failures exit `3`.
 #### Building nodes: `build --nodes`
 
 Pass `--nodes` to rebuild, after packing, every **Doom**-format map group in
-the output with classic engine-playable node lumps via the
+the output with engine-playable node lumps via the
 [`add_doom_map_with_nodes`](building-nodes.md) one-shot — the BSP tree
 (`SEGS`/`SSECTORS`/`NODES`), the collision `BLOCKMAP`, and the all-clear
 `REJECT`:

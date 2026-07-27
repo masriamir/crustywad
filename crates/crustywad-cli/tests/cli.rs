@@ -2400,7 +2400,7 @@ fn build_node_format_zgln_without_feature_errors_clearly() {
         .assert()
         .code(3)
         .stderr(predicate::str::contains(
-            "requires cwad built with the extended-nodes-zlib feature",
+            "--node-format zgln requires cwad built with the extended-nodes-zlib feature",
         ));
 }
 
@@ -3297,7 +3297,7 @@ fn convert_node_format_znod_without_feature_errors_clearly() {
         .assert()
         .code(3)
         .stderr(predicate::str::contains(
-            "requires cwad built with the extended-nodes-zlib feature",
+            "--node-format znod requires cwad built with the extended-nodes-zlib feature",
         ));
 }
 
@@ -3459,7 +3459,7 @@ fn convert_node_format_zgl3_without_feature_errors_clearly() {
         .assert()
         .code(3)
         .stderr(predicate::str::contains(
-            "requires cwad built with the extended-nodes-zlib feature",
+            "--node-format zgl3 requires cwad built with the extended-nodes-zlib feature",
         ));
 }
 

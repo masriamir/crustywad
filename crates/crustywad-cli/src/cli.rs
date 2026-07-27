@@ -240,7 +240,8 @@ pub(crate) enum SubCommand {
     /// instance as a warning, naming the field exactly as listed here.
     ///
     /// Converting to `doom` emits empty SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
-    /// lumps — run an external nodebuilder (zdbsp, bsp) before playing the map.
+    /// lumps — pass `--nodes` to build them in place, or run an external
+    /// nodebuilder (zdbsp, bsp) before playing the map.
     ///
     /// A converted map keeps only the lumps the target format defines. Any
     /// other lump inside the map group — BEHAVIOR (compiled ACS), SCRIPTS,
