@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785186954908,
+  "lastUpdate": 1785209551499,
   "repoUrl": "https://github.com/masriamir/crustywad",
   "entries": {
     "Benchmark": [
@@ -29249,6 +29249,288 @@ window.BENCHMARK_DATA = {
             "name": "write/udmf_to_doom/write_doom_map",
             "value": 43842,
             "range": "± 726",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "masriamir@users.noreply.github.com",
+            "name": "Amir Masri",
+            "username": "masriamir"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ca8ad894404acc8d38c1ca66aeec72220da1e225",
+          "message": "feat(cli): expose the GL node formats on convert and build (#375)",
+          "timestamp": "2026-07-27T23:23:21-04:00",
+          "tree_id": "43f00b5deea59484a98e4487665b7214f54a21c2",
+          "url": "https://github.com/masriamir/crustywad/commit/ca8ad894404acc8d38c1ca66aeec72220da1e225"
+        },
+        "date": 1785209549509,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "build/nodes/build_nodes",
+            "value": 288491,
+            "range": "± 840",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "build/blockmap/build_blockmap",
+            "value": 13463,
+            "range": "± 129",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "build/one_shot/add_doom_map_with_nodes",
+            "value": 322836,
+            "range": "± 1886",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/small",
+            "value": 297,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/medium",
+            "value": 2989,
+            "range": "± 50",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_strict/large",
+            "value": 29631,
+            "range": "± 565",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/small",
+            "value": 305,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/medium",
+            "value": 3009,
+            "range": "± 51",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_bytes_lenient/large",
+            "value": 29663,
+            "range": "± 1327",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict",
+            "value": 22494,
+            "range": "± 53",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient",
+            "value": 22455,
+            "range": "± 59",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_strict_mmap",
+            "value": 17022,
+            "range": "± 138",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "parse/from_path/medium_lenient_mmap",
+            "value": 17047,
+            "range": "± 121",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_index",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit",
+            "value": 4,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_hit_last",
+            "value": 32,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_by_name_miss",
+            "value": 33,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_bytes",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lump_data",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/lumps_iter_count",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/clone",
+            "value": 11642,
+            "range": "± 42",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "lump_access/into_bytes",
+            "value": 817,
+            "range": "± 27",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Thing_x1000",
+            "value": 8576,
+            "range": "± 139",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Linedef_x1000",
+            "value": 14714,
+            "range": "± 473",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sidedef_x1000",
+            "value": 25352,
+            "range": "± 208",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Vertex_x1000",
+            "value": 4132,
+            "range": "± 15",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Seg_x1000",
+            "value": 9145,
+            "range": "± 49",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Subsector_x1000",
+            "value": 4132,
+            "range": "± 7",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Node_x1000",
+            "value": 17894,
+            "range": "± 150",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "map_records/Sector_x1000",
+            "value": 18301,
+            "range": "± 104",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/small",
+            "value": 224,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/medium",
+            "value": 10321,
+            "range": "± 58",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_strict/large",
+            "value": 624354,
+            "range": "± 36322",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/small",
+            "value": 218,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/medium",
+            "value": 11652,
+            "range": "± 23",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_lenient/large",
+            "value": 592242,
+            "range": "± 10837",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/10_lumps_256b",
+            "value": 685,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/build_from_scratch/100_lumps_4kib",
+            "value": 26619,
+            "range": "± 182",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/small",
+            "value": 1068,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/medium",
+            "value": 36965,
+            "range": "± 558",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/roundtrip/large",
+            "value": 2168243,
+            "range": "± 24481",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/doom_map/write_doom_map",
+            "value": 33843,
+            "range": "± 96",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "write/udmf_to_doom/write_doom_map",
+            "value": 34404,
+            "range": "± 103",
             "unit": "ns/iter"
           }
         ]
