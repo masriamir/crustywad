@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d859b85e.js";
+            window.path_to_searchindex_js = "searchindex-e65550a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -431,9 +431,10 @@ their zlib twins <code>ZGLN</code>/<code>ZGL2</code>/<code>ZGL3</code>) via <cod
 <code>SSECTORS</code>; <code>XGLN</code> keeps a 16-bit seg linedef but reserves <code>0xFFFF</code> as the miniseg sentinel (so its
 largest real linedef index is <code>0xFFFE</code>), <code>XGL2</code> widens it to <code>u32</code>,
 and <code>XGL3</code> additionally allows fractional (sub-unit) node partitions.
-<code>NodeFormat::Gl</code>/<code>Zgl</code> auto-select the minimal dialect that fits the map, so callers who don’t
+<code>NodeFormat::Gl</code>/<code>NodeFormat::Zgl</code> auto-select the minimal dialect that fits the map, so callers who don’t
 need a specific dialect can request <code>Gl</code> and get the smallest stream that round-trips it.
-<code>cwad</code>’s CLI does not yet expose GL emission (#366).</p>
+<code>cwad convert --nodes</code>/<code>build --nodes</code> expose the full set through <code>--node-format</code>
+(<code>xgln</code>/<code>xgl2</code>/<code>xgl3</code>/<code>gl</code>, plus their <code>z*</code> twins), each GL stream carried in <code>SSECTORS</code>.</p>
 <h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.9.0", features = ["nodebuild"] }

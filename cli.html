@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d859b85e.js";
+            window.path_to_searchindex_js = "searchindex-e65550a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -278,14 +278,14 @@ wrote custom.wad: kind=Pwad lumps: 2
 size validation failures exit <code>3</code>.</p>
 <h4 id="building-nodes-build---nodes"><a class="header" href="#building-nodes-build---nodes">Building nodes: <code>build --nodes</code></a></h4>
 <p>Pass <code>--nodes</code> to rebuild, after packing, every <strong>Doom</strong>-format map group in
-the output with classic engine-playable node lumps via the
+the output with engine-playable node lumps via the
 <a href="building-nodes.html"><code>add_doom_map_with_nodes</code></a> one-shot — the BSP tree
 (<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the collision <code>BLOCKMAP</code>, and the all-clear
 <code>REJECT</code>:</p>
 <pre><code class="language-text">$ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
 wrote playable.wad: kind=Pwad lumps: 11
 </code></pre>
-<p>All of a rebuilt Doom group’s classic node lumps — <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>,
+<p>All of a rebuilt Doom group’s node lumps — <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>,
 the <code>REJECT</code> visibility table, and the <code>BLOCKMAP</code> — are overwritten with the
 newly built ones, whether they were packed as empty placeholders or already
 held data. The map’s packed <code>VERTEXES</code> lump can also grow: the BSP pass
@@ -294,13 +294,20 @@ appends any split vertices it creates to it. <strong>Hexen</strong> (#352), <str
 map groups are not yet supported by <code>--nodes</code> and are passed through
 unchanged with a note on stderr; non-map lumps always pass through
 unchanged; if no Doom map group is found, <code>--nodes</code> is a no-op and prints a
-note. <code>--nodes</code> builds classic node lumps only — there is no <code>--node-format</code>
-flag on <code>build</code> (unlike <code>convert --nodes</code>, which also supports <code>xnod</code>, and
-<code>znod</code> when <code>cwad</code> is built with the <code>extended-nodes-zlib</code> feature). The
-global <code>--lenient</code> flag applies to the node build too — a strict-mode build
-failure exits <code>3</code>, and, when the error is one lenient mode can recover, hints
-to re-run with <code>--lenient</code>. See <a href="building-nodes.html">Building nodes</a> for the
-full picture.</p>
+note.</p>
+<p><code>build --nodes</code> takes the same <code>--node-format &lt;FORMAT&gt;</code> flag as
+<code>convert --nodes</code> — <code>classic</code> (default), the non-GL extended pair
+(<code>xnod</code>/<code>znod</code>), the four GL dialects (<code>xgln</code>/<code>xgl2</code>/<code>xgl3</code>/<code>gl</code>), and their
+<code>z*</code> zlib twins:</p>
+<pre><code class="language-text">$ cwad build --nodes --node-format gl -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
+wrote playable.wad: kind=Pwad lumps: 11
+</code></pre>
+<p>See <a href="building-nodes.html#choosing-the-on-disk-node-format">Choosing the on-disk node format</a>
+for the full value table — it applies identically to <code>build --nodes</code> and
+<code>convert --nodes</code>. The global <code>--lenient</code> flag applies to the node build too
+— a strict-mode build failure exits <code>3</code>, and, when the error is one lenient
+mode can recover, hints to re-run with <code>--lenient</code>. See
+<a href="building-nodes.html">Building nodes</a> for the full picture.</p>
 <h3 id="convert"><a class="header" href="#convert">convert</a></h3>
 <p>Convert every map in a WAD between the classic Doom binary format and UDMF,
 replacing each map’s lump run in place; non-map lumps, and maps already in
@@ -334,20 +341,22 @@ effect (UDMF has no binary node lumps) and prints a note to stderr:</p>
 <pre><code class="language-text">$ cwad convert doom.wad -o out.wad --to udmf --nodes
 note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
 </code></pre>
-<p><code>--node-format &lt;classic|xnod|znod&gt;</code> selects the on-disk form of the nodes
-<code>--nodes</code> builds; default <code>classic</code>. It has no effect without <code>--nodes</code>; a
-non-<code>classic</code> value (<code>xnod</code>/<code>znod</code>) passed without <code>--nodes</code> prints a note on
-stderr and is ignored. <code>xnod</code> writes an uncompressed
-ZDoom extended-node stream in <code>NODES</code>; <code>znod</code> writes the zlib-compressed
-form and requires <code>cwad</code> built with the <code>extended-nodes-zlib</code> feature
-(on by default) — without it, <code>znod</code> exits <code>3</code> with a clear error rather than
-a clap parse failure. See
-<a href="building-nodes.html#choosing-the-on-disk-node-format">Choosing the on-disk node format</a>.</p>
-<p>The ZDoom non-GL extended and compressed node formats (<code>xnod</code>/<code>znod</code>) are
-supported via <code>--node-format</code>; GL nodes (<code>XGL2</code>/<code>XGL3</code>) remain out of scope
-for <code>--nodes</code> and are deferred to a future issue — for those, still run an
-external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …) over the output. See
-<a href="building-nodes.html">Building nodes</a> for the full picture.</p>
+<p><code>--node-format &lt;FORMAT&gt;</code> selects the on-disk form of the nodes <code>--nodes</code>
+builds; default <code>classic</code>. It has no effect without <code>--nodes</code>; a
+non-<code>classic</code> value passed without <code>--nodes</code> prints a note on stderr and is
+ignored. Besides <code>classic</code>, the values are the non-GL extended pair —
+<code>xnod</code> (uncompressed <code>XNOD</code> stream in <code>NODES</code>) and <code>znod</code> (its
+zlib-compressed twin) — and four GL dialects — <code>xgln</code>, <code>xgl2</code>, <code>xgl3</code>, and
+<code>gl</code> (auto-selects the minimal sufficient dialect) — each carried in
+<code>SSECTORS</code> instead of <code>NODES</code> (<code>SEGS</code>/<code>NODES</code> left empty). Every GL value
+also has a <code>z*</code> zlib-compressed twin (<code>zgln</code>/<code>zgl2</code>/<code>zgl3</code>/<code>zgl</code>). All <code>z*</code>
+values, GL and non-GL alike, require <code>cwad</code> built with the
+<code>extended-nodes-zlib</code> feature (on by default) — without it, a <code>z*</code> value
+that actually takes effect (i.e. <code>--nodes</code> is in play) exits <code>3</code> with a
+clear error rather than a clap parse failure; without <code>--nodes</code> the flag is
+noted and ignored as described above. See
+<a href="building-nodes.html#choosing-the-on-disk-node-format">Choosing the on-disk node format</a>
+for the full value table.</p>
 <p><strong>Strict mode refuses data loss.</strong> Converting a typical ZDoom-namespace UDMF
 map (linedef <code>args</code>, thing <code>height</code>/<code>id</code>/<code>special</code>, …) to <code>doom</code> exits <code>3</code>,
 naming the offending field on stderr:</p>

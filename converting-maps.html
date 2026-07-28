@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d859b85e.js";
+            window.path_to_searchindex_js = "searchindex-e65550a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -296,11 +296,12 @@ in-crate with the <a href="./features.html#nodebuild"><code>nodebuild</code></a>
 <code>add_doom_map_with_nodes</code> one-shot, or the <code>build_nodes</code> / <code>build_blockmap</code> /
 <code>build_reject</code> builders — or run an external nodebuilder (<code>zdbsp</code>, <code>bsp</code>, …)
 over the output. From the CLI, <code>cwad convert --to doom --nodes</code> is the
-turnkey path, and <code>--node-format classic|xnod|znod</code> selects the on-disk node
-encoding (classic 16-bit by default, or ZDoom’s uncompressed/compressed
-extended formats). See <a href="building-nodes.html">Building nodes</a> for the full
-picture, including the tolerated mixed-sector fan and when GL nodes still
-need an external tool (issue #199).</p>
+turnkey path, and <code>--node-format</code> selects the on-disk node encoding —
+<code>classic</code> (the 16-bit default), the non-GL <code>xnod</code>/<code>znod</code> streams, the GL
+<code>xgln</code>/<code>xgl2</code>/<code>xgl3</code> streams, or <code>gl</code> to auto-select the minimal GL dialect
+(<code>z*</code> values need cwad built with <code>extended-nodes-zlib</code>, the default). See
+<a href="building-nodes.html">Building nodes</a> for the full picture, including the
+tolerated mixed-sector fan.</p>
 </blockquote>
 <h2 id="round-tripping-not-symmetric"><a class="header" href="#round-tripping-not-symmetric">Round-tripping: not symmetric</a></h2>
 <blockquote>

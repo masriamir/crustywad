@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d859b85e.js";
+            window.path_to_searchindex_js = "searchindex-e65550a5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -260,10 +260,16 @@ has no effect without <code>--nodes</code>, and a non-<code>classic</code> value
 <tr><td><code>classic</code> (default)</td><td><code>SEGS</code> / <code>SSECTORS</code> / <code>NODES</code> (16-bit)</td><td>Vanilla-compatible; unchanged from plain <code>--nodes</code>.</td></tr>
 <tr><td><code>xnod</code></td><td>A single uncompressed <code>XNOD</code> stream in <code>NODES</code> (<code>SEGS</code>/<code>SSECTORS</code> empty)</td><td>ZDoom non-GL extended nodes; lifts the vanilla 16-bit ceilings.</td></tr>
 <tr><td><code>znod</code></td><td>A zlib-compressed <code>ZNOD</code> stream</td><td>Same as <code>xnod</code>, compressed. Requires <code>cwad</code> built with the <code>extended-nodes-zlib</code> feature (on by default); a <code>--no-default-features</code> build rejects <code>znod</code> with a clear error.</td></tr>
+<tr><td><code>xgln</code></td><td>An uncompressed <code>XGLN</code> stream, carried in <code>SSECTORS</code> (<code>SEGS</code>/<code>NODES</code> empty)</td><td>The minimal GL dialect: 16-bit seg linedef reference (<code>0xFFFF</code> reserved as the miniseg sentinel), whole-unit <code>i16</code> node partitions.</td></tr>
+<tr><td><code>xgl2</code></td><td>An uncompressed <code>XGL2</code> stream, carried in <code>SSECTORS</code></td><td>Like <code>xgln</code> but with a 32-bit seg linedef reference; still whole-unit <code>i16</code> node partitions.</td></tr>
+<tr><td><code>xgl3</code></td><td>An uncompressed <code>XGL3</code> stream, carried in <code>SSECTORS</code></td><td>Like <code>xgl2</code>, plus fractional (sub-unit) node partitions.</td></tr>
+<tr><td><code>gl</code></td><td>Whichever of <code>xgln</code>/<code>xgl2</code>/<code>xgl3</code> is the minimal dialect the map needs, emitted uncompressed</td><td>Escalates only if the geometry requires it (a real linedef index colliding with <code>XGLN</code>’s sentinel, or a fractional partition).</td></tr>
+<tr><td><code>zgln</code> / <code>zgl2</code> / <code>zgl3</code> / <code>zgl</code></td><td>The zlib-compressed twins of the four GL rows above</td><td>Each carried in <code>SSECTORS</code>, same as its uncompressed twin. Requires <code>cwad</code> built with the <code>extended-nodes-zlib</code> feature (on by default); without it, these exit <code>3</code> with a clear error.</td></tr>
 </tbody>
 </table>
 </div>
 <pre><code class="language-bash">cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
+cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format gl
 </code></pre>
 <h3 id="cwad-build---nodes"><a class="header" href="#cwad-build---nodes"><code>cwad build --nodes</code></a></h3>
 <p><code>cwad build --nodes</code> runs the same one-shot for a WAD assembled from scratch
@@ -274,14 +280,14 @@ was packed for those lumps, whether empty placeholders or existing data. The
 packed <code>VERTEXES</code> lump can also grow, since the BSP pass appends any split
 vertices it creates to it:</p>
 <pre><code class="language-bash">cwad build --nodes MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
+cwad build --nodes --node-format gl MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
 </code></pre>
-<p>Hexen, Doom 64, and UDMF map groups are not yet supported by <code>build --nodes</code>
+<p><code>build --nodes</code> accepts the same <code>--node-format</code> values as <code>convert --nodes</code>
+(the table above), including the GL dialects and their <code>z*</code> zlib twins.
+Hexen, Doom 64, and UDMF map groups are not yet supported by <code>build --nodes</code>
 and are passed through unchanged with a note on stderr (follow-up issues
-#352/#353/#354); non-map lumps always pass through unchanged. Like plain
-<code>--nodes</code>, <code>build --nodes</code> emits <strong>classic</strong> node
-lumps only — there is no <code>--node-format</code> flag on <code>build</code>. Reach for
-<code>--node-format xnod</code>/<code>znod</code> extended-node output through <code>convert --nodes</code>
-instead. See <a href="cli.html#build">CLI Usage</a> for the full flag reference.</p>
+#352/#353/#354); non-map lumps always pass through unchanged. See
+<a href="cli.html#build">CLI Usage</a> for the full flag reference.</p>
 <h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
 <p>Real geometry occasionally produces a convex leaf that spans more than one
 sector with no seg line able to separate them — the <strong>mixed-sector fan</strong> (two
@@ -309,7 +315,7 @@ lifting the vanilla node ceilings (ADR-0025 §Amendment #323).</li>
 <ul>
 <li><code>BuiltGlNodes::to_extended_lump_bytes</code>, or the <code>add_doom_map_with_nodes</code> one-shot,
 which carries the GL stream in <code>SSECTORS</code> (ADR-0026, #364, #365).
-<code>NodeFormat::Gl</code>/<code>Zgl</code> auto-select the minimal dialect a map needs — <code>XGLN</code> unless a
+<code>NodeFormat::Gl</code>/<code>NodeFormat::Zgl</code> auto-select the minimal dialect a map needs — <code>XGLN</code> unless a
 real linedef index collides with <code>XGLN</code>’s <code>0xFFFF</code> miniseg sentinel (forcing <code>XGL2</code>’s
 32-bit linedefs) or a fractional partition forces <code>XGL3</code>.</li>
 </ul>
@@ -319,10 +325,9 @@ real linedef index collides with <code>XGLN</code>’s <code>0xFFFF</code> minis
 amendments, <code>Extended nodes</code> milestone, #199/#324) — see
 <a href="map-records.html#extended-node-encodings">Extended node encodings</a> and
 <a href="map-records.html#classic-gl-nodes">Classic GL nodes</a> in the map-records guide.</p>
-<p>One gap remains: the CLI does <strong>not</strong> yet expose GL emission. <code>cwad convert --nodes</code> targets
-the classic and non-GL extended formats (see the <code>--node-format</code> table above) and <code>cwad build --nodes</code> emits classic lumps only, so wiring the GL dialects into the CLI is tracked separately
-(#366) — today the library API (<code>build_gl_nodes</code> / <code>add_doom_map_with_nodes</code>) is the way to
-write GL nodes.</p>
+<p>Both <code>cwad convert --nodes</code> and <code>cwad build --nodes</code> expose the full tier set through
+<code>--node-format</code> — classic, the non-GL extended pair, and all four GL dialects (see the table
+above) — so no external nodebuilder pass is needed to reach any of them from the CLI.</p>
 
                     </main>
 
