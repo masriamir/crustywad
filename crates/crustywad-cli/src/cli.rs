@@ -226,8 +226,9 @@ pub(crate) enum SubCommand {
         /// On-disk node format for `--nodes` (applies to the Doom-format map
         /// groups `--nodes` rebuilds). GL streams (`xgln`/`xgl2`/`xgl3`/`gl`
         /// and their `z*` twins) are carried in `SSECTORS` instead of `NODES`.
-        /// Every `z*` value requires cwad built with the `extended-nodes-zlib`
-        /// feature.
+        /// When `--nodes` is in effect, every `z*` value requires cwad built
+        /// with the `extended-nodes-zlib` feature (without `--nodes` the flag
+        /// is noted and ignored).
         #[arg(long = "node-format", default_value = "classic", value_name = "FORMAT")]
         node_format: NodeFormatArg,
     },
@@ -279,8 +280,9 @@ pub(crate) enum SubCommand {
         nodes: bool,
         /// On-disk node format for `--nodes` (classic Doom output only). GL
         /// streams (`xgln`/`xgl2`/`xgl3`/`gl` and their `z*` twins) are carried
-        /// in `SSECTORS` instead of `NODES`. Every `z*` value requires cwad
-        /// built with the `extended-nodes-zlib` feature.
+        /// in `SSECTORS` instead of `NODES`. When `--nodes` is in effect,
+        /// every `z*` value requires cwad built with the `extended-nodes-zlib`
+        /// feature (without `--nodes` the flag is noted and ignored).
         #[arg(long = "node-format", default_value = "classic", value_name = "FORMAT")]
         node_format: NodeFormatArg,
     },
