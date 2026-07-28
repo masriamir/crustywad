@@ -150,7 +150,7 @@ The clean-room builder now spans three tiers of output:
   `ZGLN`/`ZGL2`/`ZGL3` with `extended-nodes-zlib`) via `build_gl_nodes`
   + `BuiltGlNodes::to_extended_lump_bytes`, or the `add_doom_map_with_nodes` one-shot,
   which carries the GL stream in `SSECTORS` (ADR-0026, #364, #365).
-  `NodeFormat::Gl`/`Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
+  `NodeFormat::Gl`/`NodeFormat::Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
   real linedef index collides with `XGLN`'s `0xFFFF` miniseg sentinel (forcing `XGL2`'s
   32-bit linedefs) or a fractional partition forces `XGL3`.
 

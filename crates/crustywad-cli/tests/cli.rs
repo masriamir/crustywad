@@ -3375,9 +3375,9 @@ fn convert_with_node_format_xgl3_emits_the_gl_stream_in_ssectors() {
     assert_maps_assemble_strict_clean(out.path());
 }
 
-/// Every explicit GL dialect drives the writer end-to-end: the emitted
-/// SSECTORS stream carries the requested (or, for `zgl`, the auto-resolved)
-/// on-disk tag.
+/// The remaining explicit uncompressed GL dialects (`xgln`/`xgl2` — `xgl3`
+/// has its own dedicated carrier-layout test above) drive the writer
+/// end-to-end: the emitted SSECTORS stream carries the requested tag.
 #[test]
 fn convert_with_each_explicit_gl_dialect_emits_its_tag() {
     for (value, tag) in [("xgln", b"XGLN"), ("xgl2", b"XGL2")] {
