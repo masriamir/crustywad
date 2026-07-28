@@ -156,7 +156,7 @@ size validation failures exit `3`.
 #### Building nodes: `build --nodes`
 
 Pass `--nodes` to rebuild, after packing, every **Doom**-format map group in
-the output with classic engine-playable node lumps via the
+the output with engine-playable node lumps via the
 [`add_doom_map_with_nodes`](building-nodes.md) one-shot — the BSP tree
 (`SEGS`/`SSECTORS`/`NODES`), the collision `BLOCKMAP`, and the all-clear
 `REJECT`:
@@ -166,7 +166,7 @@ $ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
 wrote playable.wad: kind=Pwad lumps: 11
 ```
 
-All of a rebuilt Doom group's classic node lumps — `SEGS`/`SSECTORS`/`NODES`,
+All of a rebuilt Doom group's node lumps — `SEGS`/`SSECTORS`/`NODES`,
 the `REJECT` visibility table, and the `BLOCKMAP` — are overwritten with the
 newly built ones, whether they were packed as empty placeholders or already
 held data. The map's packed `VERTEXES` lump can also grow: the BSP pass
@@ -175,13 +175,24 @@ appends any split vertices it creates to it. **Hexen** (#352), **Doom 64**
 map groups are not yet supported by `--nodes` and are passed through
 unchanged with a note on stderr; non-map lumps always pass through
 unchanged; if no Doom map group is found, `--nodes` is a no-op and prints a
-note. `--nodes` builds classic node lumps only — there is no `--node-format`
-flag on `build` (unlike `convert --nodes`, which also supports `xnod`, and
-`znod` when `cwad` is built with the `extended-nodes-zlib` feature). The
-global `--lenient` flag applies to the node build too — a strict-mode build
-failure exits `3`, and, when the error is one lenient mode can recover, hints
-to re-run with `--lenient`. See [Building nodes](building-nodes.md) for the
-full picture.
+note.
+
+`build --nodes` takes the same `--node-format <FORMAT>` flag as
+`convert --nodes` — `classic` (default), the non-GL extended pair
+(`xnod`/`znod`), the four GL dialects (`xgln`/`xgl2`/`xgl3`/`gl`), and their
+`z*` zlib twins:
+
+```text
+$ cwad build --nodes --node-format gl -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
+wrote playable.wad: kind=Pwad lumps: 11
+```
+
+See [Choosing the on-disk node format](building-nodes.md#choosing-the-on-disk-node-format)
+for the full value table — it applies identically to `build --nodes` and
+`convert --nodes`. The global `--lenient` flag applies to the node build too
+— a strict-mode build failure exits `3`, and, when the error is one lenient
+mode can recover, hints to re-run with `--lenient`. See
+[Building nodes](building-nodes.md) for the full picture.
 
 ### convert
 
@@ -229,21 +240,22 @@ $ cwad convert doom.wad -o out.wad --to udmf --nodes
 note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
 ```
 
-`--node-format <classic|xnod|znod>` selects the on-disk form of the nodes
-`--nodes` builds; default `classic`. It has no effect without `--nodes`; a
-non-`classic` value (`xnod`/`znod`) passed without `--nodes` prints a note on
-stderr and is ignored. `xnod` writes an uncompressed
-ZDoom extended-node stream in `NODES`; `znod` writes the zlib-compressed
-form and requires `cwad` built with the `extended-nodes-zlib` feature
-(on by default) — without it, `znod` exits `3` with a clear error rather than
-a clap parse failure. See
-[Choosing the on-disk node format](building-nodes.md#choosing-the-on-disk-node-format).
-
-The ZDoom non-GL extended and compressed node formats (`xnod`/`znod`) are
-supported via `--node-format`; GL nodes (`XGL2`/`XGL3`) remain out of scope
-for `--nodes` and are deferred to a future issue — for those, still run an
-external nodebuilder (`zdbsp`, `bsp`, ...) over the output. See
-[Building nodes](building-nodes.md) for the full picture.
+`--node-format <FORMAT>` selects the on-disk form of the nodes `--nodes`
+builds; default `classic`. It has no effect without `--nodes`; a
+non-`classic` value passed without `--nodes` prints a note on stderr and is
+ignored. Besides `classic`, the values are the non-GL extended pair —
+`xnod` (uncompressed `XNOD` stream in `NODES`) and `znod` (its
+zlib-compressed twin) — and four GL dialects — `xgln`, `xgl2`, `xgl3`, and
+`gl` (auto-selects the minimal sufficient dialect) — each carried in
+`SSECTORS` instead of `NODES` (`SEGS`/`NODES` left empty). Every GL value
+also has a `z*` zlib-compressed twin (`zgln`/`zgl2`/`zgl3`/`zgl`). All `z*`
+values, GL and non-GL alike, require `cwad` built with the
+`extended-nodes-zlib` feature (on by default) — without it, a `z*` value
+that actually takes effect (i.e. `--nodes` is in play) exits `3` with a
+clear error rather than a clap parse failure; without `--nodes` the flag is
+noted and ignored as described above. See
+[Choosing the on-disk node format](building-nodes.md#choosing-the-on-disk-node-format)
+for the full value table.
 
 **Strict mode refuses data loss.** Converting a typical ZDoom-namespace UDMF
 map (linedef `args`, thing `height`/`id`/`special`, ...) to `doom` exits `3`,

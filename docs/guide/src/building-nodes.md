@@ -88,9 +88,15 @@ has no effect without `--nodes`, and a non-`classic` value passed without
 | `classic` (default) | `SEGS` / `SSECTORS` / `NODES` (16-bit) | Vanilla-compatible; unchanged from plain `--nodes`. |
 | `xnod` | A single uncompressed `XNOD` stream in `NODES` (`SEGS`/`SSECTORS` empty) | ZDoom non-GL extended nodes; lifts the vanilla 16-bit ceilings. |
 | `znod` | A zlib-compressed `ZNOD` stream | Same as `xnod`, compressed. Requires `cwad` built with the `extended-nodes-zlib` feature (on by default); a `--no-default-features` build rejects `znod` with a clear error. |
+| `xgln` | An uncompressed `XGLN` stream, carried in `SSECTORS` (`SEGS`/`NODES` empty) | The minimal GL dialect: 16-bit seg linedef reference (`0xFFFF` reserved as the miniseg sentinel), whole-unit `i16` node partitions. |
+| `xgl2` | An uncompressed `XGL2` stream, carried in `SSECTORS` | Like `xgln` but with a 32-bit seg linedef reference; still whole-unit `i16` node partitions. |
+| `xgl3` | An uncompressed `XGL3` stream, carried in `SSECTORS` | Like `xgl2`, plus fractional (sub-unit) node partitions. |
+| `gl` | Whichever of `xgln`/`xgl2`/`xgl3` is the minimal dialect the map needs, emitted uncompressed | Escalates only if the geometry requires it (a real linedef index colliding with `XGLN`'s sentinel, or a fractional partition). |
+| `zgln` / `zgl2` / `zgl3` / `zgl` | The zlib-compressed twins of the four GL rows above | Each carried in `SSECTORS`, same as its uncompressed twin. Requires `cwad` built with the `extended-nodes-zlib` feature (on by default); without it, these exit `3` with a clear error. |
 
 ```bash
 cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format xnod
+cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format gl
 ```
 
 ### `cwad build --nodes`
@@ -105,15 +111,15 @@ vertices it creates to it:
 
 ```bash
 cwad build --nodes MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
+cwad build --nodes --node-format gl MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
 ```
 
+`build --nodes` accepts the same `--node-format` values as `convert --nodes`
+(the table above), including the GL dialects and their `z*` zlib twins.
 Hexen, Doom 64, and UDMF map groups are not yet supported by `build --nodes`
 and are passed through unchanged with a note on stderr (follow-up issues
-#352/#353/#354); non-map lumps always pass through unchanged. Like plain
-`--nodes`, `build --nodes` emits **classic** node
-lumps only — there is no `--node-format` flag on `build`. Reach for
-`--node-format xnod`/`znod` extended-node output through `convert --nodes`
-instead. See [CLI Usage](cli.md#build) for the full flag reference.
+#352/#353/#354); non-map lumps always pass through unchanged. See
+[CLI Usage](cli.md#build) for the full flag reference.
 
 ## The tolerated mixed-sector fan
 
@@ -144,7 +150,7 @@ The clean-room builder now spans three tiers of output:
   `ZGLN`/`ZGL2`/`ZGL3` with `extended-nodes-zlib`) via `build_gl_nodes`
   + `BuiltGlNodes::to_extended_lump_bytes`, or the `add_doom_map_with_nodes` one-shot,
   which carries the GL stream in `SSECTORS` (ADR-0026, #364, #365).
-  `NodeFormat::Gl`/`Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
+  `NodeFormat::Gl`/`NodeFormat::Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
   real linedef index collides with `XGLN`'s `0xFFFF` miniseg sentinel (forcing `XGL2`'s
   32-bit linedefs) or a fractional partition forces `XGL3`.
 
@@ -153,8 +159,6 @@ amendments, `Extended nodes` milestone, #199/#324) — see
 [Extended node encodings](map-records.md#extended-node-encodings) and
 [Classic GL nodes](map-records.md#classic-gl-nodes) in the map-records guide.
 
-One gap remains: the CLI does **not** yet expose GL emission. `cwad convert --nodes` targets
-the classic and non-GL extended formats (see the `--node-format` table above) and `cwad build
---nodes` emits classic lumps only, so wiring the GL dialects into the CLI is tracked separately
-(#366) — today the library API (`build_gl_nodes` / `add_doom_map_with_nodes`) is the way to
-write GL nodes.
+Both `cwad convert --nodes` and `cwad build --nodes` expose the full tier set through
+`--node-format` — classic, the non-GL extended pair, and all four GL dialects (see the table
+above) — so no external nodebuilder pass is needed to reach any of them from the CLI.

@@ -125,11 +125,12 @@ let bytes = builder.build()?;
 > `add_doom_map_with_nodes` one-shot, or the `build_nodes` / `build_blockmap` /
 > `build_reject` builders — or run an external nodebuilder (`zdbsp`, `bsp`, …)
 > over the output. From the CLI, `cwad convert --to doom --nodes` is the
-> turnkey path, and `--node-format classic|xnod|znod` selects the on-disk node
-> encoding (classic 16-bit by default, or ZDoom's uncompressed/compressed
-> extended formats). See [Building nodes](building-nodes.md) for the full
-> picture, including the tolerated mixed-sector fan and when GL nodes still
-> need an external tool (issue #199).
+> turnkey path, and `--node-format` selects the on-disk node encoding —
+> `classic` (the 16-bit default), the non-GL `xnod`/`znod` streams, the GL
+> `xgln`/`xgl2`/`xgl3` streams, or `gl` to auto-select the minimal GL dialect
+> (`z*` values need cwad built with `extended-nodes-zlib`, the default). See
+> [Building nodes](building-nodes.md) for the full picture, including the
+> tolerated mixed-sector fan.
 
 ## Round-tripping: not symmetric
 

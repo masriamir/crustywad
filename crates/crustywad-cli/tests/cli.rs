@@ -2303,6 +2303,107 @@ fn build_nodes_lenient_recovers_mixed_sector_fan() {
     );
 }
 
+#[test]
+fn build_nodes_with_node_format_xgl3_emits_the_gl_stream() {
+    // build --nodes --node-format xgl3: the rebuilt Doom group's SSECTORS
+    // carries a single XGL3 stream (ADR-0026), SEGS/NODES stay empty, the
+    // output re-assembles strict-clean, and the trailing non-map lump
+    // (COLORMAP) is preserved.
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "xgl3".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    let ssectors = lump_bytes(out.path(), "SSECTORS");
+    assert!(
+        ssectors.starts_with(b"XGL3"),
+        "SSECTORS should be an XGL3 stream, got {:?}",
+        &ssectors[..ssectors.len().min(4)]
+    );
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "GL nodes leave SEGS empty"
+    );
+    assert!(
+        lump_bytes(out.path(), "NODES").is_empty(),
+        "GL nodes leave NODES empty"
+    );
+    assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4_u8, 5, 6]);
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[test]
+fn build_node_format_without_nodes_is_noted_and_ignored() {
+    // Mirror convert_node_format_without_nodes_is_noted_and_ignored: a
+    // --node-format given without --nodes is noted and ignored rather than
+    // silently dropped.
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--node-format".to_string(),
+        "xnod".to_string(), // no --nodes
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "--node-format has no effect without --nodes",
+        ));
+
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "no --nodes: packed empty SEGS stays untouched"
+    );
+}
+
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn build_node_format_zgln_without_feature_errors_clearly() {
+    let fixture = write_doom_square_room_empty_nodes_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "zgln".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "--node-format zgln requires cwad built with the extended-nodes-zlib feature",
+        ));
+}
+
 // ---------------------------------------------------------------------------
 // Hardening: invalid-file regression tests
 //
@@ -3196,7 +3297,233 @@ fn convert_node_format_znod_without_feature_errors_clearly() {
         .assert()
         .code(3)
         .stderr(predicate::str::contains(
-            "requires cwad built with the extended-nodes-zlib feature",
+            "--node-format znod requires cwad built with the extended-nodes-zlib feature",
+        ));
+}
+
+/// Every documented --node-format value parses (guards clap's kebab-casing
+/// at digit boundaries: `xgl2` must not render as `xgl-2`).
+#[test]
+fn convert_node_format_accepts_every_documented_value() {
+    for value in [
+        "classic", "xnod", "znod", "xgln", "xgl2", "xgl3", "gl", "zgln", "zgl2", "zgl3", "zgl",
+    ] {
+        // --help-style parse check: an unknown value fails at clap level with
+        // exit 2 before any file I/O; a known value proceeds far enough to
+        // fail on the missing input file instead. Assert the clap layer
+        // accepted the value by checking the error is NOT "invalid value".
+        let assert = Command::cargo_bin("cwad")
+            .unwrap()
+            .args([
+                "convert",
+                "--to",
+                "doom",
+                "--nodes",
+                "--node-format",
+                value,
+                "missing.wad",
+                "-o",
+                "out.wad",
+            ])
+            .assert()
+            .failure();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+        assert!(
+            !stderr.contains("invalid value"),
+            "--node-format {value} rejected at the clap layer: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn convert_with_node_format_xgl3_emits_the_gl_stream_in_ssectors() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "xgl3",
+        ])
+        .assert()
+        .code(0);
+
+    // The GL writer packs everything into a single XGL3 stream in SSECTORS,
+    // leaving SEGS/NODES zero-length (ADR-0026).
+    let ssectors = lump_bytes(out.path(), "SSECTORS");
+    assert!(
+        ssectors.starts_with(b"XGL3"),
+        "SSECTORS should be an XGL3 stream, got {:?}",
+        &ssectors[..ssectors.len().min(4)]
+    );
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "GL nodes leave SEGS empty"
+    );
+    assert!(
+        lump_bytes(out.path(), "NODES").is_empty(),
+        "GL nodes leave NODES empty"
+    );
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+/// The remaining explicit uncompressed GL dialects (`xgln`/`xgl2` — `xgl3`
+/// has its own dedicated carrier-layout test above) drive the writer
+/// end-to-end: the emitted SSECTORS stream carries the requested tag.
+#[test]
+fn convert_with_each_explicit_gl_dialect_emits_its_tag() {
+    for (value, tag) in [("xgln", b"XGLN"), ("xgl2", b"XGL2")] {
+        let wad = write_udmf_square_room_wad();
+        let out = NamedTempFile::new().unwrap();
+        Command::cargo_bin("cwad")
+            .unwrap()
+            .args([
+                "convert",
+                wad.path().to_str().unwrap(),
+                "-o",
+                out.path().to_str().unwrap(),
+                "--to",
+                "doom",
+                "--nodes",
+                "--node-format",
+                value,
+            ])
+            .assert()
+            .code(0);
+        let ssectors = lump_bytes(out.path(), "SSECTORS");
+        assert!(
+            ssectors.starts_with(tag),
+            "--node-format {value}: SSECTORS should start with {tag:?}"
+        );
+        assert_maps_assemble_strict_clean(out.path());
+    }
+}
+
+/// The compressed twins (and the compressed auto-format, which resolves ZGLN
+/// on this whole-unit map) emit their `Z*` tags.
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn convert_with_each_compressed_gl_dialect_emits_its_tag() {
+    for (value, tag) in [("zgln", b"ZGLN"), ("zgl2", b"ZGL2"), ("zgl", b"ZGLN")] {
+        let wad = write_udmf_square_room_wad();
+        let out = NamedTempFile::new().unwrap();
+        Command::cargo_bin("cwad")
+            .unwrap()
+            .args([
+                "convert",
+                wad.path().to_str().unwrap(),
+                "-o",
+                out.path().to_str().unwrap(),
+                "--to",
+                "doom",
+                "--nodes",
+                "--node-format",
+                value,
+            ])
+            .assert()
+            .code(0);
+        let ssectors = lump_bytes(out.path(), "SSECTORS");
+        assert!(
+            ssectors.starts_with(tag),
+            "--node-format {value}: SSECTORS should start with {tag:?}"
+        );
+        assert_maps_assemble_strict_clean(out.path());
+    }
+}
+
+#[test]
+fn convert_with_node_format_gl_auto_selects_the_minimal_dialect() {
+    // write_udmf_square_room_wad uses whole-unit coordinates and a handful of
+    // linedefs, so nothing forces escalation past the minimal GL dialect.
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "gl",
+        ])
+        .assert()
+        .code(0);
+
+    let ssectors = lump_bytes(out.path(), "SSECTORS");
+    assert!(
+        ssectors.starts_with(b"XGLN"),
+        "SSECTORS should be an XGLN stream, got {:?}",
+        &ssectors[..ssectors.len().min(4)]
+    );
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn convert_with_node_format_zgl3_emits_the_compressed_stream() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "zgl3",
+        ])
+        .assert()
+        .code(0);
+
+    let ssectors = lump_bytes(out.path(), "SSECTORS");
+    assert!(
+        ssectors.starts_with(b"ZGL3"),
+        "SSECTORS should be a ZGL3 stream"
+    );
+    assert_maps_assemble_strict_clean(out.path());
+}
+
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn convert_node_format_zgl3_without_feature_errors_clearly() {
+    let wad = write_udmf_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+            "--node-format",
+            "zgl3",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "--node-format zgl3 requires cwad built with the extended-nodes-zlib feature",
         ));
 }
 

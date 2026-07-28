@@ -170,7 +170,7 @@ cargo run -p crustywad-cli -- info path/to/file.wad
 cargo run -p crustywad-cli -- list path/to/file.wad
 ```
 
-`cwad` also has `validate`, `merge`, `diff`, `extract`, `convert`, and `build` subcommands — `convert --to doom --nodes` additionally builds engine-playable node lumps (`SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`). See [CLI Usage](https://crustywad.dev/cli.html) in the guide for the full reference.
+`cwad` also has `validate`, `merge`, `diff`, `extract`, `convert`, and `build` subcommands — `convert --to doom --nodes` and `build --nodes` additionally build engine-playable node lumps (`SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`), with `--node-format` selecting classic, non-GL extended, or GL (`xgln`/`xgl2`/`xgl3`/`gl`, plus zlib `z*` twins) output. See [CLI Usage](https://crustywad.dev/cli.html) in the guide for the full reference.
 
 ## Feature flags
 
