@@ -3149,6 +3149,49 @@ mod tests {
         );
     }
 
+    /// The relaxed (§C.2) validity rule composes with the real-seg rule (#376):
+    /// a two-sided shared line whose opposite colinear segs are both
+    /// linedef-backed separates sectors — colinear real segs count toward
+    /// their routed side, so `both_sides_real` holds and the §C.2 arm accepts
+    /// the candidate that the normal §B.3 rule (no split, no non-colinear
+    /// content) rejects.
+    #[test]
+    fn relaxed_mode_accepts_sector_separating_colinear_pair() {
+        let map = square_room();
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+
+        let v1 = bsp.intern_vertex(0, 0);
+        let v2 = bsp.intern_vertex(64 << 16, 0);
+        bsp.segs.push(GlWorkSeg {
+            v1,
+            v2,
+            linedef: Some(0),
+            side: 0,
+            side_sector: 0,
+            partner: Some(1),
+        });
+        bsp.segs.push(GlWorkSeg {
+            v1: v2,
+            v2: v1,
+            linedef: Some(0),
+            side: 1,
+            side_sector: 1,
+            partner: Some(0),
+        });
+        let set: Vec<usize> = vec![0, 1];
+
+        assert_eq!(
+            bsp.select(&set, false),
+            None,
+            "normal mode: a lone colinear pair is no genuine partition"
+        );
+        assert_eq!(
+            bsp.select(&set, true),
+            Some(0),
+            "relaxed mode: the sector-separating colinear pair is valid"
+        );
+    }
+
     /// Partitioning along a fully-segged two-sided wall creates no minisegs: the
     /// span between the wall's two events is covered by colinear geometry, so the
     /// front loop-start's secondary scan sees a real seg running straight from
