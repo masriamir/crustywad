@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.2...crustywad-cli-v0.4.3) - 2026-07-28
+
+### Added
+
+- *(cli)* expose the GL node formats on convert and build ([#375](https://github.com/masriamir/crustywad/pull/375))
+- *(map)* XGLN/XGL2 writers and NodeFormat::Gl auto-selection ([#373](https://github.com/masriamir/crustywad/pull/373))
+- *(map)* XGL3/ZGL3 extended-node writer with the one-shot SSECTORS carrier ([#371](https://github.com/masriamir/crustywad/pull/371))
+
 ## [0.4.2](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.1...crustywad-cli-v0.4.2) - 2026-07-24
 
 ### Added
