@@ -549,6 +549,21 @@ pub enum NodeStructureError {
         /// The seg index whose end breaks the loop.
         seg: usize,
     },
+    /// GL subsector `subsector`'s first seg `seg` is a miniseg (#376).
+    /// GZDoom-family engines resolve a subsector's sector through its first
+    /// seg's sidedef with no null check (`MapLoader::GroupLines`:
+    /// `sub.sector = sub.firstline->sidedef->sector`) and seed miniseg
+    /// frontsectors from `firstline`, so a miniseg-led subsector segfaults the
+    /// engine at map load. This also rejects an all-miniseg run: ZDBSP's
+    /// real-seg splitter rule makes one unconstructible, and its output pass
+    /// calls one a failure.
+    #[error("GL subsector {subsector} leads with miniseg {seg}")]
+    MinisegLeadsSubsector {
+        /// Index of the offending subsector.
+        subsector: usize,
+        /// The arena index of the leading miniseg.
+        seg: usize,
+    },
 }
 
 #[cfg(test)]

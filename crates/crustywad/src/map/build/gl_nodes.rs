@@ -834,32 +834,55 @@ impl<'a> GlBsp<'a> {
             // match the split routing exactly.
             let (mut nf, mut nb, mut nsp) = (0usize, 0usize, 0usize);
             let (mut front_solid, mut back_solid) = (0usize, 0usize);
+            let (mut front_real, mut back_real) = (0usize, 0usize);
             for &sid in set {
+                let is_real = self.segs[sid].linedef.is_some();
                 match self.classify_seg(&part, &self.segs[sid]) {
                     GlClass::Front => {
                         nf += 1;
                         front_solid += 1;
+                        front_real += usize::from(is_real);
                     }
                     GlClass::Back => {
                         nb += 1;
                         back_solid += 1;
+                        back_real += usize::from(is_real);
                     }
-                    GlClass::ColinearFront => nf += 1,
-                    GlClass::ColinearBack => nb += 1,
-                    GlClass::Split(..) => nsp += 1,
+                    GlClass::ColinearFront => {
+                        nf += 1;
+                        front_real += usize::from(is_real);
+                    }
+                    GlClass::ColinearBack => {
+                        nb += 1;
+                        back_real += usize::from(is_real);
+                    }
+                    GlClass::Split(..) => {
+                        nsp += 1;
+                        // A split real seg leaves a real fragment on each side.
+                        front_real += usize::from(is_real);
+                        back_real += usize::from(is_real);
+                    }
                 }
             }
-            let valid = if relaxed {
-                // §C.2: a line separating segs of different sectors — both sides
-                // non-empty, colinear segs counted (a two-sided shared line's
-                // opposite colinear segs are what separate the sectors).
-                (nf + nsp) > 0 && (nb + nsp) > 0
-            } else {
-                // §B.3: a line that genuinely partitions — a split, or
-                // NON-colinear content on both sides. A splitter's own colinear
-                // seg does not, alone, make its line a valid partition.
-                nsp > 0 || (front_solid > 0 && back_solid > 0)
-            };
+            // A splitter must leave at least one linedef-backed seg on each side
+            // (#376; ZDBSP `Heuristic`, nodebuild.cpp:656–663): a side of only
+            // minisegs closes into a subsector with no way to determine its
+            // sector, which GZDoom-family loaders dereference into a crash.
+            // Applies in both validity modes; with the root set all-real this
+            // inductively keeps every leaf set real-bearing.
+            let both_sides_real = front_real > 0 && back_real > 0;
+            let valid = both_sides_real
+                && if relaxed {
+                    // §C.2: a line separating segs of different sectors — both sides
+                    // non-empty, colinear segs counted (a two-sided shared line's
+                    // opposite colinear segs are what separate the sectors).
+                    (nf + nsp) > 0 && (nb + nsp) > 0
+                } else {
+                    // §B.3: a line that genuinely partitions — a split, or
+                    // NON-colinear content on both sides. A splitter's own colinear
+                    // seg does not, alone, make its line a valid partition.
+                    nsp > 0 || (front_solid > 0 && back_solid > 0)
+                };
             if !valid {
                 continue;
             }
@@ -1483,6 +1506,20 @@ impl<'a> GlBsp<'a> {
     /// back to the first vertex is closed the same way. Connecting minisegs are
     /// **normal operation in both modes** (ZDBSP does this unconditionally).
     ///
+    /// The walk **starts at the set's first linedef-backed seg**, so the emitted
+    /// loop always leads with a real seg (#376). GZDoom-family loaders resolve a
+    /// subsector's sector through its first seg's sidedef with no null check
+    /// (`MapLoader::GroupLines`: `sub.sector = sub.firstline->sidedef->sector`)
+    /// and seed miniseg frontsectors from `firstline`, so a miniseg-led loop
+    /// segfaults the engine at map load. ZDBSP upholds the same invariant purely
+    /// through set order (its in-place splits keep real segs ahead of appended
+    /// minisegs); our [`split_set`](Self::split_set) tail-re-enqueues split
+    /// fragments, so the start is chosen explicitly instead. An all-miniseg set
+    /// never reaches here — the real-seg splitter rule in
+    /// [`eval_candidates`](Self::eval_candidates) keeps every routed side
+    /// real-bearing — but the `unwrap_or(0)` fallback keeps the walk total
+    /// (fuzz-safe) rather than panicking if one ever did.
+    ///
     /// A degenerate leaf (fewer than 3 distinct vertices) takes this same closing
     /// path: a 1-seg leaf `A→B` closes to seg `A→B` + connecting miniseg `B→A`, a
     /// closed 2-vertex loop. ZDBSP emits these routinely
@@ -1506,13 +1543,19 @@ impl<'a> GlBsp<'a> {
                 sum_y += i64::from(y);
             }
         }
-        // The sector for connecting minisegs — the leaf's first seg's sector (all
+        let mut remaining = segs;
+        // Lead with a linedef-backed seg (#376): engines read the subsector's
+        // sector off `firstline->sidedef` with no null check. All-miniseg sets
+        // fall back to position 0.
+        let start_pos = remaining
+            .iter()
+            .position(|&s| self.segs[s].linedef.is_some())
+            .unwrap_or(0);
+        let start = remaining.remove(start_pos);
+        // The sector for connecting minisegs — the leaf's lead seg's sector (all
         // equal in a single-sector leaf; the render-convention sector for a
         // lenient mixed-sector leaf).
-        let leaf_sector = self.segs[segs[0]].side_sector;
-
-        let mut remaining = segs;
-        let start = remaining.remove(0);
+        let leaf_sector = self.segs[start].side_sector;
         let start_v1 = self.segs[start].v1;
         let mut order = vec![start];
         let mut prev = start;
@@ -1918,6 +1961,11 @@ pub struct BuiltGlNode {
 ///   (`partner[partner[i]] == i`, never self, and spans mirror).
 /// - Each subsector's seg run is a **closed loop** (`seg.end == next.start`
 ///   cyclically) — including a degenerate 2-vertex loop, which closes fine.
+/// - Every subsector **leads with a linedef-backed seg** (#376): GZDoom-family
+///   loaders resolve the subsector's sector through its first seg's sidedef
+///   with no null check, so a miniseg-led run crashes the engine at map load.
+///   An all-miniseg run is rejected outright — the real-seg splitter rule
+///   makes one unconstructible in [`build_gl_nodes`].
 ///
 /// [`build_gl_nodes`] output upholds them by construction in both modes — every
 /// leaf, degenerate or not, is closed into a cyclic loop.
@@ -2139,6 +2187,22 @@ impl BuiltGlNodes {
                     }
                     .into());
                 }
+            }
+        }
+
+        // (6) Every subsector's first seg is linedef-backed (#376): GZDoom-family
+        // loaders read `firstline->sidedef->sector` with no null check, so a
+        // miniseg-led subsector segfaults the engine at map load. All-miniseg
+        // subsectors are rejected outright — ZDBSP's real-seg splitter rule
+        // (`Heuristic`) makes them unconstructible, and its output pass calls
+        // one a "Failure" (`CreateSubsectorsForReal`).
+        for (si, ss) in self.subsectors.iter().enumerate() {
+            if self.segs[ss.segs.start].linedef.is_none() {
+                return Err(NodeStructureError::MinisegLeadsSubsector {
+                    subsector: si,
+                    seg: ss.segs.start,
+                }
+                .into());
             }
         }
 
@@ -2983,6 +3047,108 @@ mod tests {
         assert_eq!(bsp.segs[b].side, 1, "back miniseg records side 1");
     }
 
+    /// A leaf set that *leads* with a partition miniseg still emits a
+    /// linedef-backed seg first (#376). GZDoom-family loaders resolve a
+    /// subsector's sector through its first seg's sidedef with no null check
+    /// (`GroupLines`: `sub.sector = sub.firstline->sidedef->sector`), so a
+    /// miniseg-led loop segfaults the engine at load. ZDBSP upholds the
+    /// invariant through set order alone (reals precede minisegs);
+    /// [`GlBsp::split_set`] tail-re-enqueues split fragments, so a deeper
+    /// leaf's set can lead with an inherited miniseg — rotating the doorway
+    /// front set models exactly that order.
+    #[test]
+    fn close_leaf_leads_with_a_real_seg_when_set_starts_with_miniseg() {
+        let map = build_map(
+            &[(0.0, 0.0), (64.0, 0.0), (64.0, 64.0), (0.0, 64.0)],
+            &[
+                (1, 0, Some(0), None), // bottom  B→A (west, sector on right)
+                (0, 3, Some(0), None), // left    A→D (north)
+                (3, 2, Some(0), None), // top     D→C (east)
+                (2, 1, Some(0), None), // right   C→B (south)
+            ],
+        );
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+        bsp.build_initial_segs();
+        let all: Vec<usize> = (0..bsp.segs.len()).collect();
+        let part = GlPartition::new(32 << 16, 0, 0, 64 << 16);
+        let (mut front, mut back) = bsp.split_set(all, &part).unwrap();
+        bsp.add_minisegs(&part, &mut front, &mut back).unwrap();
+
+        // The doorway miniseg was appended at the tail; rotate it to the head.
+        front.rotate_right(1);
+        assert!(
+            bsp.segs[front[0]].linedef.is_none(),
+            "precondition: the set leads with the miniseg"
+        );
+
+        let order = bsp.close_leaf(front).unwrap();
+
+        assert!(
+            bsp.segs[order[0]].linedef.is_some(),
+            "the emitted loop leads with a linedef-backed seg"
+        );
+        // The loop is still cyclically closed from the rotated start.
+        for k in 0..order.len() {
+            let next = order[(k + 1) % order.len()];
+            assert_eq!(
+                bsp.segs[order[k]].v2, bsp.segs[next].v1,
+                "loop closes at position {k}"
+            );
+        }
+    }
+
+    /// A candidate splitter that would strand only minisegs on one side is
+    /// invalid in **both** validity modes (#376; ZDBSP `Heuristic`,
+    /// `nodebuild.cpp:656–663`: "A splitter must have at least one real seg on
+    /// each side"). Without the rule, the all-miniseg side closes into a
+    /// subsector with no linedef-backed seg at all — no rotation in
+    /// `close_leaf` can save it, and GZDoom-family loaders segfault resolving
+    /// its sector. The set: two real segs north of `y = 0` sharing `(0, 0)`,
+    /// one miniseg south at `y = -16`; the first real seg's line (`y = 0`) is
+    /// the only candidate with content on both sides, and that content is the
+    /// lone miniseg.
+    #[test]
+    fn select_rejects_splitter_leaving_a_side_all_minisegs() {
+        let map = square_room();
+        let mut bsp = GlBsp::new(&map, &NodeBuildOptions::strict()).unwrap();
+
+        let a1 = bsp.intern_vertex(64 << 16, 0);
+        let a2 = bsp.intern_vertex(0, 0);
+        let b2 = bsp.intern_vertex(0, 64 << 16);
+        let m1 = bsp.intern_vertex(16 << 16, -(16 << 16));
+        let m2 = bsp.intern_vertex(48 << 16, -(16 << 16));
+        let real = |v1: usize, v2: usize, linedef: usize| GlWorkSeg {
+            v1,
+            v2,
+            linedef: Some(linedef),
+            side: 0,
+            side_sector: 0,
+            partner: None,
+        };
+        bsp.segs.push(real(a1, a2, 0));
+        bsp.segs.push(real(a2, b2, 1));
+        bsp.segs.push(GlWorkSeg {
+            v1: m1,
+            v2: m2,
+            linedef: None,
+            side: 0,
+            side_sector: 0,
+            partner: None,
+        });
+        let set: Vec<usize> = vec![0, 1, 2];
+
+        assert_eq!(
+            bsp.select(&set, false),
+            None,
+            "normal mode: no splitter may strand an all-miniseg side"
+        );
+        assert_eq!(
+            bsp.select(&set, true),
+            None,
+            "relaxed mode: the real-seg rule still applies"
+        );
+    }
+
     /// Partitioning along a fully-segged two-sided wall creates no minisegs: the
     /// span between the wall's two events is covered by colinear geometry, so the
     /// front loop-start's secondary scan sees a real seg running straight from
@@ -3283,6 +3449,42 @@ mod tests {
         assert_eq!(
             built.validate(4).unwrap_err(),
             NodeBuildError::InvalidStructure(NodeStructureError::GlVertexRef { seg: 2, bound: 0 }),
+        );
+    }
+
+    /// A subsector whose first seg is a miniseg is rejected (#376): GZDoom-family
+    /// loaders read `firstline->sidedef->sector` with no null check, so such a
+    /// subsector segfaults the engine at load.
+    #[test]
+    fn validate_rejects_miniseg_led_subsector() {
+        let mut built = gl_square();
+        built.segs[0].linedef = None;
+        let err = built.validate(4).unwrap_err();
+        assert_eq!(
+            err,
+            NodeBuildError::InvalidStructure(NodeStructureError::MinisegLeadsSubsector {
+                subsector: 0,
+                seg: 0,
+            }),
+        );
+        assert_eq!(err.to_string(), "GL subsector 0 leads with miniseg 0");
+    }
+
+    /// An all-miniseg subsector is rejected too — the engine crash does not
+    /// care whether a real seg exists later in the run, and ZDBSP treats such a
+    /// subsector as an outright failure (`CreateSubsectorsForReal`).
+    #[test]
+    fn validate_rejects_all_miniseg_subsector() {
+        let mut built = gl_square();
+        for s in &mut built.segs {
+            s.linedef = None;
+        }
+        assert_eq!(
+            built.validate(4).unwrap_err(),
+            NodeBuildError::InvalidStructure(NodeStructureError::MinisegLeadsSubsector {
+                subsector: 0,
+                seg: 0,
+            }),
         );
     }
 
