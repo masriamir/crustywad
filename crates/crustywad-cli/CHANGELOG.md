@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.3...crustywad-cli-v0.4.4) - 2026-07-29
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.4.3](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.2...crustywad-cli-v0.4.3) - 2026-07-28
 
 ### Added
