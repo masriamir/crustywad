@@ -679,3 +679,14 @@ The `Limits { max_depth }` shorthand above no longer compiles: `Limits` is
 now `#[non_exhaustive]` and also carries `max_composite_pixels` (#157's
 texture-composition cap). Construct via `Limits::new().with_max_depth(..)`.
 The depth-bounding decision this ADR records is unchanged.
+
+## Amendment (2026-07-30, #257): full-fidelity retention supersedes the "dropped" deferral
+
+ADR-0027 supersedes two lossy stances recorded above. The `*.comment` / `user_*`
+"parsed then dropped" deferral (§1 and the field-mapping table) and spike-review
+decision 3's premise that the discrete UDMF thing booleans "stay in `UdmfThing`"
+as the sole store are no longer accurate: `UdmfMap` now retains **every**
+unmodeled assignment — global, per-element, and unrecognized-block — in `extras`
+side-channels (thing booleans are dual-stored), and a lossless
+`UdmfMap::to_textmap` writer round-trips them. See ADR-0027 for the retention
+model; the depth-bounding and format-dispatch decisions here are unchanged.

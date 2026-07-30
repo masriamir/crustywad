@@ -4,7 +4,7 @@
 //! [`write_udmf`] produces the `TEXTMAP` string; [`add_udmf_map`] adds a complete
 //! `MAPxx` + `TEXTMAP` + `ENDMAP` group to a [`WadBuilder`]. Fields are emitted
 //! only when they differ from their UDMF spec default; `f64` coordinates narrow
-//! to integer form when whole. The source of truth is the [`Map`] graph, so only
+//! to integer form when whole and within `i64`'s exact range. The source of truth is the [`Map`] graph, so only
 //! standardized, modeled fields are written; for lossless round-trip of `comment`
 //! fields, `user_*` fields, and port extensions, write from the parsed
 //! [`UdmfMap`] via [`UdmfMap::to_textmap`] instead (ADR-0027).
@@ -650,7 +650,11 @@ impl UdmfMap {
     /// covers every character). Canonical form — blocks grouped by kind,
     /// spec-default typed fields elided, extras always emitted — with the
     /// ADR-0027 semantic round-trip guarantee: re-parsing the output yields a
-    /// value equal to `self`.
+    /// value equal to `self`, for a `self` as produced by
+    /// [`parse_udmf`](crate::map::udmf::parse_udmf) (its
+    /// retained names are lexer-validated identifiers; because every field is
+    /// `pub`, a caller that injects a non-identifier name is outside this
+    /// guarantee).
     ///
     /// Emission order: `namespace`, global extras, vertices, linedefs,
     /// sidedefs, sectors, things, then unknown blocks. Within each element the
@@ -691,7 +695,8 @@ impl UdmfMap {
 /// Serializes an assembled map to UDMF `TEXTMAP` text.
 ///
 /// Fields are emitted only when they differ from their UDMF spec default;
-/// `f64` coordinates narrow to integer form when whole. See the module docs.
+/// `f64` coordinates narrow to integer form when whole and within `i64`'s
+/// exact range. See the module docs.
 ///
 /// # Errors
 /// - [`UdmfWriteError::UnrepresentableField`] — includes `map.format()`
