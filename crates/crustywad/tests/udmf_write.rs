@@ -752,3 +752,41 @@ proptest! {
         prop_assert_eq!(second, first);
     }
 }
+
+#[test]
+fn to_textmap_emits_every_non_default_typed_field() {
+    let text = r#"
+        namespace = "zdoom";
+        vertex { x = 1.25; y = -3.5; }
+        vertex { x = 4.0; y = 5.0; }
+        sidedef { sector = 0; offsetx = 4; offsety = -2; texturetop = "T"; texturebottom = "B"; texturemiddle = "M"; }
+        sector { texturefloor = "F"; textureceiling = "C"; heightfloor = 8; heightceiling = 128; lightlevel = 192; special = 9; id = 7; }
+        linedef { v1 = 0; v2 = 1; sidefront = 0; sideback = 0; id = 5; special = 97; arg0 = 1; arg1 = 2; arg2 = 3; arg3 = 4; arg4 = 5; twosided = true; }
+        thing { x = 0.5; y = -0.5; type = 3001; height = 24.5; angle = 90; id = 9; special = 80; arg0 = 6; arg1 = 7; arg2 = 8; arg3 = 9; arg4 = 10; }
+    "#;
+    let written = parse_udmf(text, Limits::default())
+        .expect("fixture must parse")
+        .to_textmap();
+    for expected in [
+        "sideback = 0;",
+        "id = 5;",
+        "special = 97;",
+        "arg4 = 5;",
+        "twosided = true;",
+        "offsety = -2;",
+        "heightfloor = 8;",
+        "heightceiling = 128;",
+        "lightlevel = 192;",
+        "id = 7;",
+        "height = 24.5;",
+        "angle = 90;",
+        "special = 80;",
+        "arg4 = 10;",
+    ] {
+        assert!(
+            written.contains(expected),
+            "missing '{expected}' in: {written}"
+        );
+    }
+    assert_roundtrip(text);
+}
