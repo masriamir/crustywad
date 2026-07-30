@@ -175,3 +175,29 @@ fn thing_recognized_booleans_are_dual_stored() {
     assert_eq!(names, ["skill1", "ambush", "single"]);
     assert!(t.extras.iter().all(|a| a.value == UdmfValue::Bool(true)));
 }
+
+#[test]
+fn unknown_blocks_are_retained_with_fields() {
+    let text = r#"
+        namespace = "zdoom";
+        FancyPortal { target = 3; opacity = 0.5; name = "p"; }
+        vertex { x = 0.0; y = 0.0; }
+        fancyportal { target = 4; }
+    "#;
+    let map = parse_udmf(text, crustywad::Limits::default()).unwrap();
+    assert_eq!(map.unknown_blocks.len(), 2);
+    assert_eq!(map.unknown_blocks[0].name, "fancyportal");
+    assert_eq!(map.unknown_blocks[0].fields.len(), 3);
+    assert_eq!(map.unknown_blocks[0].fields[0].name, "target");
+    assert_eq!(map.unknown_blocks[0].fields[0].value, UdmfValue::Int(3));
+    assert_eq!(map.unknown_blocks[1].fields[0].value, UdmfValue::Int(4));
+}
+
+#[test]
+fn non_namespace_global_assignments_are_retained() {
+    let text = "namespace = \"doom\";\nver = 2;\nvertex { x = 0.0; y = 0.0; }\nver = 3;";
+    let map = parse_udmf(text, crustywad::Limits::default()).unwrap();
+    assert_eq!(map.global_extras.len(), 1);
+    assert_eq!(map.global_extras[0].name, "ver");
+    assert_eq!(map.global_extras[0].value, UdmfValue::Int(3));
+}

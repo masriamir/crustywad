@@ -9,8 +9,8 @@ use crate::Limits;
 use super::UdmfParseError;
 use super::lex::{Lexer, Spanned, Token};
 use super::model::{
-    UdmfAssignment, UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfValue,
-    UdmfVertex,
+    UdmfAssignment, UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfUnknownBlock,
+    UdmfValue, UdmfVertex,
 };
 
 /// Parses UDMF `TEXTMAP` text into a typed, un-normalized [`UdmfMap`].
@@ -33,6 +33,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
     let mut last_pos: (usize, usize) = (1, 1);
 
     let mut namespace: Option<String> = None;
+    let mut global_extras = ExtrasBuilder::default();
     let mut collections = Collections::default();
     let mut current_block: Option<BlockState> = None;
 
@@ -50,6 +51,8 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
                             expect_semicolon(&mut lexer, &mut last_pos)?;
                             if name == "namespace" {
                                 namespace = Some(as_str(&value)?);
+                            } else {
+                                global_extras.set(&name, to_value(&value)?);
                             }
                         }
                         Token::LBrace => {
@@ -62,7 +65,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
                                 });
                             }
                             depth = new_depth;
-                            current_block = Some(BlockState::new(&name));
+                            current_block = Some(BlockState::new(name));
                             state = State::ExpectBlockItem;
                         }
                         _ => {
@@ -123,7 +126,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
         message: "TEXTMAP is missing a required 'namespace' declaration".to_owned(),
     })?;
 
-    Ok(collections.into_map(namespace))
+    Ok(collections.into_map(namespace, global_extras.finish()))
 }
 
 /// The two states of the flat parser loop, keyed by `depth`.
@@ -136,7 +139,8 @@ enum State {
 }
 
 /// Per-block accumulator, built from spec defaults and overwritten by
-/// recognized field assignments. Unknown blocks accumulate nothing.
+/// recognized field assignments. Unknown blocks accumulate their header name
+/// and every field verbatim for lossless round-trip (ADR-0027).
 enum BlockState {
     /// A `vertex` block.
     Vertex(VertexBuilder),
@@ -148,13 +152,18 @@ enum BlockState {
     Sector(SectorBuilder),
     /// A `thing` block.
     Thing(ThingBuilder),
-    /// Any block header not otherwise recognized; fields are validated for
-    /// syntax but dropped.
-    Unknown,
+    /// Any block header not otherwise recognized; its header name and fields
+    /// are retained verbatim (ADR-0027).
+    Unknown {
+        /// The block header identifier, folded to ASCII lowercase.
+        name: String,
+        /// The block's assignments, retained in first-assignment order.
+        fields: ExtrasBuilder,
+    },
 }
 
-/// The typed element produced by [`BlockState::finish`], or `None` for an
-/// unrecognized block header.
+/// The typed element produced by [`BlockState::finish`], or an
+/// [`UdmfUnknownBlock`] retaining an unrecognized block header verbatim.
 enum BlockResult {
     /// A finished `vertex` block.
     Vertex(UdmfVertex),
@@ -166,8 +175,8 @@ enum BlockResult {
     Sector(UdmfSector),
     /// A finished `thing` block.
     Thing(UdmfThing),
-    /// An unrecognized block header; nothing to record.
-    None,
+    /// A retained unrecognized block, in declaration order (ADR-0027).
+    Unknown(UdmfUnknownBlock),
 }
 
 /// Accumulates finished blocks into their typed collections, kept separate
@@ -185,11 +194,13 @@ struct Collections {
     sectors: Vec<UdmfSector>,
     /// The map's things, in declaration order.
     things: Vec<UdmfThing>,
+    /// Unrecognized blocks, in declaration order (ADR-0027).
+    unknown_blocks: Vec<UdmfUnknownBlock>,
 }
 
 impl Collections {
     /// Routes a finished block into its typed collection; unrecognized
-    /// blocks (`BlockResult::None`) are dropped.
+    /// blocks (`BlockResult::Unknown`) are retained in `unknown_blocks`.
     fn push(&mut self, result: BlockResult) {
         match result {
             BlockResult::Vertex(v) => self.vertices.push(v),
@@ -197,12 +208,12 @@ impl Collections {
             BlockResult::Sidedef(s) => self.sidedefs.push(s),
             BlockResult::Sector(s) => self.sectors.push(s),
             BlockResult::Thing(t) => self.things.push(t),
-            BlockResult::None => {}
+            BlockResult::Unknown(b) => self.unknown_blocks.push(b),
         }
     }
 
     /// Consumes the accumulated collections into a finished [`UdmfMap`].
-    fn into_map(self, namespace: String) -> UdmfMap {
+    fn into_map(self, namespace: String, global_extras: Vec<UdmfAssignment>) -> UdmfMap {
         UdmfMap {
             namespace,
             vertices: self.vertices,
@@ -210,22 +221,27 @@ impl Collections {
             sidedefs: self.sidedefs,
             sectors: self.sectors,
             things: self.things,
-            unknown_blocks: Vec::new(),
-            global_extras: Vec::new(),
+            unknown_blocks: self.unknown_blocks,
+            global_extras,
         }
     }
 }
 
 impl BlockState {
-    /// Selects the accumulator for a block header identifier.
-    fn new(header: &str) -> Self {
-        match header {
+    /// Selects the accumulator for a block header identifier. Takes the header
+    /// by value so an unrecognized header is retained without a clone (the
+    /// recognized arms simply drop it); the lexer has already lowercased it.
+    fn new(header: String) -> Self {
+        match header.as_str() {
             "vertex" => BlockState::Vertex(VertexBuilder::default()),
             "linedef" => BlockState::Linedef(LinedefBuilder::default()),
             "sidedef" => BlockState::Sidedef(SidedefBuilder::default()),
             "sector" => BlockState::Sector(SectorBuilder::default()),
             "thing" => BlockState::Thing(ThingBuilder::default()),
-            _ => BlockState::Unknown,
+            _ => BlockState::Unknown {
+                name: header,
+                fields: ExtrasBuilder::default(),
+            },
         }
     }
 
@@ -238,7 +254,7 @@ impl BlockState {
             BlockState::Sidedef(builder) => builder.set_field(name, value)?,
             BlockState::Sector(builder) => builder.set_field(name, value)?,
             BlockState::Thing(builder) => builder.set_field(name, value)?,
-            BlockState::Unknown => {}
+            BlockState::Unknown { fields, .. } => fields.set(name, to_value(value)?),
         }
         Ok(())
     }
@@ -252,7 +268,10 @@ impl BlockState {
             BlockState::Sidedef(builder) => Ok(BlockResult::Sidedef(builder.finish()?)),
             BlockState::Sector(builder) => Ok(BlockResult::Sector(builder.finish()?)),
             BlockState::Thing(builder) => Ok(BlockResult::Thing(builder.finish()?)),
-            BlockState::Unknown => Ok(BlockResult::None),
+            BlockState::Unknown { name, fields } => Ok(BlockResult::Unknown(UdmfUnknownBlock {
+                name,
+                fields: fields.finish(),
+            })),
         }
     }
 }
@@ -980,12 +999,21 @@ mod tests {
     }
 
     #[test]
-    fn unknown_block_and_field_are_skipped() {
+    fn unknown_block_and_field_are_retained() {
         let text =
             "namespace=\"doom\"; widget { foo = 1; bar = \"x\"; } vertex { x=1.0; y=2.0; z=9.0; }";
         let m = parse_udmf(text, Limits::default()).unwrap();
         assert_eq!(m.vertices.len(), 1);
         assert_eq!((m.vertices[0].x, m.vertices[0].y), (1.0, 2.0));
+        // The unrecognized `widget` block is retained verbatim (ADR-0027).
+        assert_eq!(m.unknown_blocks.len(), 1);
+        let block = &m.unknown_blocks[0];
+        assert_eq!(block.name, "widget");
+        assert_eq!(block.fields.len(), 2);
+        assert_eq!(block.fields[0].name, "foo");
+        assert_eq!(block.fields[0].value, UdmfValue::Int(1));
+        assert_eq!(block.fields[1].name, "bar");
+        assert_eq!(block.fields[1].value, UdmfValue::Str("x".to_owned()));
     }
 
     #[test]
@@ -1130,14 +1158,17 @@ mod tests {
     }
 
     #[test]
-    fn global_non_namespace_assignment_is_dropped() {
-        // A top-level assignment to an identifier other than `namespace` must
-        // be accepted (no error) and simply have no effect: only `namespace`
-        // is tracked at file scope, and no other global state exists.
+    fn global_non_namespace_assignment_is_retained() {
+        // A top-level assignment to an identifier other than `namespace` is
+        // accepted and retained verbatim in `global_extras` (ADR-0027); only
+        // `namespace` is promoted to its dedicated field.
         let text = "namespace=\"doom\"; author=\"me\"; vertex { x=1.0; y=2.0; }";
         let m = parse_udmf(text, Limits::default()).unwrap();
         assert_eq!(m.namespace, "doom");
         assert_eq!(m.vertices.len(), 1);
+        assert_eq!(m.global_extras.len(), 1);
+        assert_eq!(m.global_extras[0].name, "author");
+        assert_eq!(m.global_extras[0].value, UdmfValue::Str("me".to_owned()));
     }
 
     #[test]
