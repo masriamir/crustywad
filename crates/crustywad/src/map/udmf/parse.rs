@@ -212,6 +212,8 @@ impl Collections {
             sidedefs: self.sidedefs,
             sectors: self.sectors,
             things: self.things,
+            unknown_blocks: Vec::new(),
+            global_extras: Vec::new(),
         }
     }
 }
@@ -257,7 +259,11 @@ impl BlockState {
                 let y = y.ok_or_else(|| UdmfParseError::Semantic {
                     message: "vertex block is missing required field 'y'".to_owned(),
                 })?;
-                Ok(BlockResult::Vertex(UdmfVertex { x, y }))
+                Ok(BlockResult::Vertex(UdmfVertex {
+                    x,
+                    y,
+                    extras: Vec::new(),
+                }))
             }
             BlockState::Linedef(builder) => Ok(BlockResult::Linedef(builder.finish()?)),
             BlockState::Sidedef(builder) => Ok(BlockResult::Sidedef(builder.finish()?)),
@@ -369,6 +375,7 @@ impl LinedefBuilder {
             special: self.special,
             args: self.args,
             flags: self.flags,
+            extras: Vec::new(),
         })
     }
 }
@@ -429,6 +436,7 @@ impl SidedefBuilder {
             texturebottom: self.texturebottom,
             texturemiddle: self.texturemiddle,
             sector,
+            extras: Vec::new(),
         })
     }
 }
@@ -498,6 +506,7 @@ impl SectorBuilder {
             lightlevel: self.lightlevel,
             special: self.special,
             id: self.id,
+            extras: Vec::new(),
         })
     }
 }
@@ -621,6 +630,7 @@ impl ThingBuilder {
             special: self.special,
             args: self.args,
             flags,
+            extras: Vec::new(),
         })
     }
 }
