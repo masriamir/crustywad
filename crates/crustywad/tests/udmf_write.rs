@@ -577,3 +577,99 @@ fn hexen_thing_present_in_all_modes_writes_all_three_udmf_game_modes() {
     assert!(thing.contains("skill1 = true; skill2 = true; "), "{thing}");
     assert!(!thing.contains("friend"), "{thing}");
 }
+
+// --- ADR-0027 lossless canonical writer: `UdmfMap::to_textmap`. ---
+
+use crustywad::Limits;
+use crustywad::map::udmf::parse_udmf;
+
+/// Asserts the ADR-0027 semantic round-trip contract on `text`.
+fn assert_roundtrip(text: &str) {
+    let first = parse_udmf(text, Limits::default()).expect("fixture must parse");
+    let written = first.to_textmap();
+    let second = parse_udmf(&written, Limits::default())
+        .unwrap_or_else(|e| panic!("canonical output failed to reparse: {e}\n---\n{written}"));
+    assert_eq!(second, first, "round-trip mismatch\n---\n{written}");
+}
+
+#[test]
+fn roundtrip_retains_every_extras_category() {
+    assert_roundtrip(
+        r#"
+        namespace = "zdoom";
+        ver = 2;
+        vertex { x = 1.5; y = -2.0; zfloor = 8.0; }
+        vertex { x = 3.0; y = 4.0; }
+        linedef { v1 = 0; v2 = 1; sidefront = 0; blocking = true; playercross = true; passuse = true; comment = "door"; }
+        sidedef { sector = 0; offsetx = 4; texturemiddle = "WALL"; user_pref = "keep"; }
+        sector { texturefloor = "F1"; textureceiling = "C1"; lightlevel = 128; special = 9; user_depth = 0.25; }
+        thing { x = 0.5; y = 0.5; type = 3001; skill1 = true; skill2 = true; single = true; dormant = true; class1 = true; }
+        portalgroup { anchor = 1; label = "a"; }
+        "#,
+    );
+}
+
+#[test]
+fn roundtrip_canonicalizes_hex_and_exponent_spellings() {
+    let text = "namespace = \"doom\";\nvertex { x = 1.5e1; y = 0.0; user_mask = 0xFF; }";
+    let first = parse_udmf(text, Limits::default()).unwrap();
+    let written = first.to_textmap();
+    assert!(
+        written.contains("x = 15;"),
+        "e-notation collapses: {written}"
+    );
+    assert!(
+        written.contains("user_mask = 255;"),
+        "hex emits decimal: {written}"
+    );
+    assert_roundtrip(text);
+}
+
+#[test]
+fn roundtrip_survives_skill_pair_asymmetry() {
+    // skill1 set, skill2 unset share flags bit 0 — only extras can tell
+    // them apart; this is the case the dual-store exists for.
+    let text = "namespace = \"doom\";\nthing { x = 0.0; y = 0.0; type = 1; skill1 = true; }";
+    let first = parse_udmf(text, Limits::default()).unwrap();
+    let written = first.to_textmap();
+    assert!(written.contains("skill1 = true;"), "{written}");
+    assert!(!written.contains("skill2"), "{written}");
+    assert_roundtrip(text);
+}
+
+#[test]
+fn roundtrip_string_escapes_and_float_extremes() {
+    assert_roundtrip(
+        "namespace = \"doom\";\nvertex { x = 1e300; y = 1e-300; comment = \"a\\\"b\\\\c\\nd\\te\"; }",
+    );
+}
+
+#[test]
+fn to_textmap_emits_required_fields_and_elides_defaults() {
+    let text = r#"
+        namespace = "doom";
+        linedef { v1 = 0; v2 = 1; sidefront = 0; sideback = -1; id = -1; special = 0; }
+        sector { texturefloor = "F"; textureceiling = "C"; lightlevel = 160; }
+        thing { x = 0.0; y = 0.0; type = 1; angle = 0; height = 0.0; }
+    "#;
+    let first = parse_udmf(text, Limits::default()).unwrap();
+    let written = first.to_textmap();
+    assert!(
+        written.contains("v1 = 0; v2 = 1; sidefront = 0;"),
+        "{written}"
+    );
+    for elided in [
+        "sideback",
+        "id =",
+        "special",
+        "lightlevel",
+        "angle",
+        "height",
+    ] {
+        assert!(
+            !written.contains(elided),
+            "default '{elided}' must elide: {written}"
+        );
+    }
+    assert_roundtrip(text);
+}

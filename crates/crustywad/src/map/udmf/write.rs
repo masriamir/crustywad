@@ -17,8 +17,29 @@ use crate::map::graph::{
 };
 use crate::write::{WadBuilder, WriteOptions};
 
+use super::model::{
+    UdmfAssignment, UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfUnknownBlock,
+    UdmfValue, UdmfVertex,
+};
+
 /// Message for the infallible `write!`-into-`String` calls.
 const INFALLIBLE: &str = "writing to a String never fails";
+
+/// UDMF linedef flag booleans by their linedef-`flags` bit (reverse of the read
+/// mapping in `udmf/parse.rs`). Shared by both writers: the assembled-[`Map`]
+/// path ([`Writer::push_linedef`]) and the lossless [`UdmfMap::to_textmap`]
+/// path, whose `flags` bit layouts are identical (ADR-0027).
+const LINEDEF_FLAGS: [(u32, &str); 9] = [
+    (0, "blocking"),
+    (1, "blockmonsters"),
+    (2, "twosided"),
+    (3, "dontpegtop"),
+    (4, "dontpegbottom"),
+    (5, "secret"),
+    (6, "blocksound"),
+    (7, "dontdraw"),
+    (8, "mapped"),
+];
 
 /// An error that prevents writing a map to UDMF text.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -254,20 +275,6 @@ impl Writer {
         Ok(())
     }
 
-    /// UDMF linedef flag booleans by their `MapLinedef.flags` bit (reverse of the
-    /// read mapping in `udmf/parse.rs`).
-    const LINEDEF_FLAGS: [(u32, &str); 9] = [
-        (0, "blocking"),
-        (1, "blockmonsters"),
-        (2, "twosided"),
-        (3, "dontpegtop"),
-        (4, "dontpegbottom"),
-        (5, "secret"),
-        (6, "blocksound"),
-        (7, "dontdraw"),
-        (8, "mapped"),
-    ];
-
     fn push_linedef(
         &mut self,
         index: usize,
@@ -313,7 +320,7 @@ impl Writer {
                 write!(self.out, "arg{i} = {arg}; ").expect(INFALLIBLE);
             }
         }
-        for (bit, name) in Self::LINEDEF_FLAGS {
+        for (bit, name) in LINEDEF_FLAGS {
             if l.flags & (1 << bit) != 0 {
                 write!(self.out, "{name} = true; ").expect(INFALLIBLE);
             }
@@ -457,6 +464,226 @@ impl Writer {
         }
         self.out.push_str("}\n");
         Ok(())
+    }
+}
+
+/// Formats a retained [`UdmfValue`] as UDMF source text.
+///
+/// A [`UdmfValue::Float`] is emitted via Rust's shortest-round-trip `{:?}`
+/// form, which always carries a `.` or exponent — so it re-lexes as a
+/// [`Token::Float`][super::lex::Token::Float] and re-parses to the identical
+/// [`UdmfValue::Float`]. Unlike the typed coordinate fields (which pass through
+/// [`fmt_roundtrip_float`] and may narrow a whole value to bare integer
+/// digits, harmless there because the typed-float readers widen an integer
+/// literal), a retained extra must preserve its exact `UdmfValue` variant: a
+/// whole float emitted as bare digits would re-lex as an integer and violate
+/// the ADR-0027 round-trip (`Float(8.0)` vs `Int(8)`).
+fn fmt_value(value: &UdmfValue) -> String {
+    match value {
+        UdmfValue::Bool(b) => b.to_string(),
+        UdmfValue::Int(i) => i.to_string(),
+        UdmfValue::Float(f) => format!("{f:?}"),
+        UdmfValue::Str(s) => escape_udmf_string(s),
+    }
+}
+
+/// Appends `name = value; ` pairs for a retained extras list, in retained
+/// order, with no default elision (every extra is emitted verbatim; ADR-0027).
+fn push_extras(out: &mut String, extras: &[UdmfAssignment]) {
+    for a in extras {
+        write!(out, "{} = {}; ", a.name, fmt_value(&a.value)).expect(INFALLIBLE);
+    }
+}
+
+/// Appends one canonical `vertex { … }` line. Both coordinates are required
+/// and always emitted via [`fmt_roundtrip_float`], then the retained extras.
+fn push_udmf_vertex(out: &mut String, v: &UdmfVertex) {
+    write!(
+        out,
+        "vertex {{ x = {}; y = {}; ",
+        fmt_roundtrip_float(v.x),
+        fmt_roundtrip_float(v.y)
+    )
+    .expect(INFALLIBLE);
+    push_extras(out, &v.extras);
+    out.push_str("}\n");
+}
+
+/// Appends one canonical `linedef { … }` line: the three required refs, then
+/// each non-default typed field, then the nine [`LINEDEF_FLAGS`] booleans that
+/// are set, then the retained extras.
+fn push_udmf_linedef(out: &mut String, l: &UdmfLinedef) {
+    write!(
+        out,
+        "linedef {{ v1 = {}; v2 = {}; sidefront = {}; ",
+        l.v1, l.v2, l.sidefront
+    )
+    .expect(INFALLIBLE);
+    if let Some(back) = l.sideback {
+        write!(out, "sideback = {back}; ").expect(INFALLIBLE);
+    }
+    // `UdmfLinedef.id`'s UDMF spec default is a plain -1 (unlike the
+    // assembled-`Map` path, which keys off `linedef_id_unset(format)`).
+    if l.id != -1 {
+        write!(out, "id = {}; ", l.id).expect(INFALLIBLE);
+    }
+    if l.special != 0 {
+        write!(out, "special = {}; ", l.special).expect(INFALLIBLE);
+    }
+    for (i, arg) in l.args.iter().enumerate() {
+        if *arg != 0 {
+            write!(out, "arg{i} = {arg}; ").expect(INFALLIBLE);
+        }
+    }
+    for (bit, name) in LINEDEF_FLAGS {
+        if l.flags & (1 << bit) != 0 {
+            write!(out, "{name} = true; ").expect(INFALLIBLE);
+        }
+    }
+    push_extras(out, &l.extras);
+    out.push_str("}\n");
+}
+
+/// Appends one canonical `sidedef { … }` line: the required `sector`, then the
+/// non-default offsets and any texture differing from the UDMF `"-"` default,
+/// then the retained extras.
+fn push_udmf_sidedef(out: &mut String, s: &UdmfSidedef) {
+    write!(out, "sidedef {{ sector = {}; ", s.sector).expect(INFALLIBLE);
+    if s.offsetx != 0 {
+        write!(out, "offsetx = {}; ", s.offsetx).expect(INFALLIBLE);
+    }
+    if s.offsety != 0 {
+        write!(out, "offsety = {}; ", s.offsety).expect(INFALLIBLE);
+    }
+    for (key, tex) in [
+        ("texturetop", &s.texturetop),
+        ("texturebottom", &s.texturebottom),
+        ("texturemiddle", &s.texturemiddle),
+    ] {
+        if tex != "-" {
+            write!(out, "{key} = {}; ", escape_udmf_string(tex)).expect(INFALLIBLE);
+        }
+    }
+    push_extras(out, &s.extras);
+    out.push_str("}\n");
+}
+
+/// Appends one canonical `sector { … }` line: the two required flat textures,
+/// then each non-default typed field (`lightlevel` elided against the UDMF
+/// default 160), then the retained extras.
+fn push_udmf_sector(out: &mut String, s: &UdmfSector) {
+    write!(
+        out,
+        "sector {{ texturefloor = {}; textureceiling = {}; ",
+        escape_udmf_string(&s.texturefloor),
+        escape_udmf_string(&s.textureceiling)
+    )
+    .expect(INFALLIBLE);
+    if s.heightfloor != 0 {
+        write!(out, "heightfloor = {}; ", s.heightfloor).expect(INFALLIBLE);
+    }
+    if s.heightceiling != 0 {
+        write!(out, "heightceiling = {}; ", s.heightceiling).expect(INFALLIBLE);
+    }
+    if s.lightlevel != 160 {
+        write!(out, "lightlevel = {}; ", s.lightlevel).expect(INFALLIBLE);
+    }
+    if s.special != 0 {
+        write!(out, "special = {}; ", s.special).expect(INFALLIBLE);
+    }
+    if s.id != 0 {
+        write!(out, "id = {}; ", s.id).expect(INFALLIBLE);
+    }
+    push_extras(out, &s.extras);
+    out.push_str("}\n");
+}
+
+/// Appends one canonical `thing { … }` line: the required `x`/`y`/`type`, then
+/// each non-default typed field, then the retained extras. `flags` is **never**
+/// emitted — it is a derived projection of the dual-stored skill/multiplayer
+/// booleans, which round-trip through `extras` and re-derive `flags` on reparse
+/// (ADR-0027).
+fn push_udmf_thing(out: &mut String, t: &UdmfThing) {
+    write!(
+        out,
+        "thing {{ x = {}; y = {}; type = {}; ",
+        fmt_roundtrip_float(t.x),
+        fmt_roundtrip_float(t.y),
+        t.type_id
+    )
+    .expect(INFALLIBLE);
+    if t.height != 0.0 {
+        write!(out, "height = {}; ", fmt_roundtrip_float(t.height)).expect(INFALLIBLE);
+    }
+    if t.angle != 0 {
+        write!(out, "angle = {}; ", t.angle).expect(INFALLIBLE);
+    }
+    if t.id != 0 {
+        write!(out, "id = {}; ", t.id).expect(INFALLIBLE);
+    }
+    if t.special != 0 {
+        write!(out, "special = {}; ", t.special).expect(INFALLIBLE);
+    }
+    for (i, arg) in t.args.iter().enumerate() {
+        if *arg != 0 {
+            write!(out, "arg{i} = {arg}; ").expect(INFALLIBLE);
+        }
+    }
+    push_extras(out, &t.extras);
+    out.push_str("}\n");
+}
+
+/// Appends one retained unrecognized block, `<name> { <fields> }`, verbatim in
+/// declaration order (ADR-0027).
+fn push_udmf_unknown_block(out: &mut String, b: &UdmfUnknownBlock) {
+    write!(out, "{} {{ ", b.name).expect(INFALLIBLE);
+    push_extras(out, &b.fields);
+    out.push_str("}\n");
+}
+
+impl UdmfMap {
+    /// Serializes this document to canonical UDMF `TEXTMAP` text.
+    ///
+    /// Infallible by construction: every value a parsed `UdmfMap` can hold is
+    /// representable (the lexer rejects non-finite floats, and string escaping
+    /// covers every character). Canonical form — blocks grouped by kind,
+    /// spec-default typed fields elided, extras always emitted — with the
+    /// ADR-0027 semantic round-trip guarantee: re-parsing the output yields a
+    /// value equal to `self`.
+    ///
+    /// Emission order: `namespace`, global extras, vertices, linedefs,
+    /// sidedefs, sectors, things, then unknown blocks. Within each element the
+    /// standardized fields are written at their non-default values first
+    /// (required fields always), then that element's retained extras. A
+    /// thing's `flags` is never emitted — it is a derived projection of the
+    /// dual-stored skill/multiplayer booleans, which round-trip through the
+    /// element's extras instead.
+    #[must_use]
+    pub fn to_textmap(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "namespace = {};", escape_udmf_string(&self.namespace)).expect(INFALLIBLE);
+        for a in &self.global_extras {
+            writeln!(out, "{} = {};", a.name, fmt_value(&a.value)).expect(INFALLIBLE);
+        }
+        for v in &self.vertices {
+            push_udmf_vertex(&mut out, v);
+        }
+        for l in &self.linedefs {
+            push_udmf_linedef(&mut out, l);
+        }
+        for s in &self.sidedefs {
+            push_udmf_sidedef(&mut out, s);
+        }
+        for s in &self.sectors {
+            push_udmf_sector(&mut out, s);
+        }
+        for t in &self.things {
+            push_udmf_thing(&mut out, t);
+        }
+        for b in &self.unknown_blocks {
+            push_udmf_unknown_block(&mut out, b);
+        }
+        out
     }
 }
 
