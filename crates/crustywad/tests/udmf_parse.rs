@@ -1,7 +1,7 @@
 //! Integration tests for the public UDMF text-map parser.
 
 use crustywad::Limits;
-use crustywad::map::udmf::{UdmfParseError, parse_udmf};
+use crustywad::map::udmf::{UdmfParseError, UdmfValue, parse_udmf};
 
 const MINIMAL: &str = concat!(
     "namespace = \"doom\";\n",
@@ -109,4 +109,52 @@ fn committed_fuzz_seeds_parse_as_intended() {
 
     // seed_malformed: must exercise an error path.
     assert!(parse_udmf(&seed("seed_malformed"), Limits::default()).is_err());
+}
+
+#[test]
+fn unrecognized_fields_are_retained_as_extras_per_block_kind() {
+    let text = r#"
+        namespace = "zdoom";
+        vertex { x = 1.0; y = 2.0; zfloor = 8.5; }
+        linedef { v1 = 0; v2 = 0; sidefront = 0; playercross = true; comment = "hi"; }
+        sidedef { sector = 0; scalex_top = 2.0; }
+        sector { texturefloor = "F"; textureceiling = "C"; user_note = "mine"; }
+        thing { x = 0.0; y = 0.0; type = 1; dormant = true; }
+    "#;
+    let map = parse_udmf(text, Limits::default()).unwrap();
+    assert_eq!(map.vertices[0].extras.len(), 1);
+    assert_eq!(map.vertices[0].extras[0].name, "zfloor");
+    assert_eq!(map.vertices[0].extras[0].value, UdmfValue::Float(8.5));
+    assert_eq!(map.linedefs[0].extras.len(), 2);
+    assert_eq!(map.linedefs[0].extras[0].name, "playercross");
+    assert_eq!(map.linedefs[0].extras[0].value, UdmfValue::Bool(true));
+    assert_eq!(
+        map.linedefs[0].extras[1].value,
+        UdmfValue::Str("hi".to_owned())
+    );
+    assert_eq!(map.sidedefs[0].extras[0].name, "scalex_top");
+    assert_eq!(map.sectors[0].extras[0].name, "user_note");
+    assert_eq!(map.things[0].extras[0].name, "dormant");
+}
+
+#[test]
+fn duplicate_extras_keep_first_position_and_last_value() {
+    let text = r#"
+        namespace = "doom";
+        vertex { x = 0.0; user_a = 1; user_b = 2; user_a = 3; y = 0.0; }
+    "#;
+    let map = parse_udmf(text, Limits::default()).unwrap();
+    let extras = &map.vertices[0].extras;
+    assert_eq!(extras.len(), 2);
+    assert_eq!(extras[0].name, "user_a");
+    assert_eq!(extras[0].value, UdmfValue::Int(3));
+    assert_eq!(extras[1].name, "user_b");
+}
+
+#[test]
+fn extras_names_are_lowercased_and_hex_values_typed_as_int() {
+    let text = "namespace = \"doom\";\nvertex { x = 0.0; y = 0.0; User_Flag = 0x1A; }";
+    let map = parse_udmf(text, Limits::default()).unwrap();
+    assert_eq!(map.vertices[0].extras[0].name, "user_flag");
+    assert_eq!(map.vertices[0].extras[0].value, UdmfValue::Int(26));
 }
