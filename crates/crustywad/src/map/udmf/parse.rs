@@ -607,6 +607,12 @@ impl SectorBuilder {
 /// defaults for all skill, gamemode, and player class flags is true rather
 /// than the UDMF default of false"* is a hint for what an editor pre-fills in
 /// its UI — it is **not** parse semantics, and must not be read as one.
+///
+/// The ten booleans are dual-stored (ADR-0027): each assignment both updates
+/// its typed field (for the `flags` fold below) and is recorded verbatim in
+/// `extras` via [`ExtrasBuilder::set`]. `flags` is a derived Doom-engine
+/// projection of the recognized booleans; `extras` is the authoritative,
+/// round-trippable record of what the UDMF text actually assigned.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 struct ThingBuilder {
@@ -652,9 +658,11 @@ struct ThingBuilder {
 
 impl ThingBuilder {
     /// Applies a recognized field assignment. The skill/multiplayer booleans are
-    /// packed into `flags` at [`finish`][Self::finish]; unmodeled recognized
-    /// fields (`class1`–`class3`, `dormant`, `standing`, Strife booleans) and
-    /// unknown fields are retained in `extras`.
+    /// packed into `flags` at [`finish`][Self::finish] AND recorded verbatim in
+    /// `extras` (ADR-0027 dual-store: `flags` is derived, `extras` is
+    /// authoritative); unmodeled recognized fields (`class1`–`class3`,
+    /// `dormant`, `standing`, Strife booleans) and unknown fields are retained
+    /// in `extras` only.
     fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
         match name {
             "x" => self.x = Some(as_f64(value)?),
@@ -669,16 +677,46 @@ impl ThingBuilder {
             "arg2" => self.args[2] = as_i32(value)?,
             "arg3" => self.args[3] = as_i32(value)?,
             "arg4" => self.args[4] = as_i32(value)?,
-            "skill1" => self.skill1 = as_bool(value)?,
-            "skill2" => self.skill2 = as_bool(value)?,
-            "skill3" => self.skill3 = as_bool(value)?,
-            "skill4" => self.skill4 = as_bool(value)?,
-            "skill5" => self.skill5 = as_bool(value)?,
-            "ambush" => self.ambush = as_bool(value)?,
-            "single" => self.single = as_bool(value)?,
-            "dm" => self.dm = as_bool(value)?,
-            "coop" => self.coop = as_bool(value)?,
-            "friend" => self.friend = as_bool(value)?,
+            "skill1" => {
+                self.skill1 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill1));
+            }
+            "skill2" => {
+                self.skill2 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill2));
+            }
+            "skill3" => {
+                self.skill3 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill3));
+            }
+            "skill4" => {
+                self.skill4 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill4));
+            }
+            "skill5" => {
+                self.skill5 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill5));
+            }
+            "ambush" => {
+                self.ambush = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.ambush));
+            }
+            "single" => {
+                self.single = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.single));
+            }
+            "dm" => {
+                self.dm = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.dm));
+            }
+            "coop" => {
+                self.coop = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.coop));
+            }
+            "friend" => {
+                self.friend = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.friend));
+            }
             _ => self.extras.set(name, to_value(value)?),
         }
         Ok(())

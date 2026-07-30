@@ -158,3 +158,20 @@ fn extras_names_are_lowercased_and_hex_values_typed_as_int() {
     assert_eq!(map.vertices[0].extras[0].name, "user_flag");
     assert_eq!(map.vertices[0].extras[0].value, UdmfValue::Int(26));
 }
+
+#[test]
+fn thing_recognized_booleans_are_dual_stored() {
+    let text = r#"
+        namespace = "doom";
+        thing { x = 0.0; y = 0.0; type = 1; skill1 = true; ambush = true; single = true; }
+    "#;
+    let map = parse_udmf(text, Limits::default()).unwrap();
+    let t = &map.things[0];
+    // Fold unchanged (ADR-0019): skill1 -> bit 0, ambush -> bit 3,
+    // single=true clears bit 4; dm/coop absent (false) set bits 5-6.
+    assert_eq!(t.flags, 0b0110_1001);
+    // Dual store: the booleans appear verbatim in extras too.
+    let names: Vec<&str> = t.extras.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["skill1", "ambush", "single"]);
+    assert!(t.extras.iter().all(|a| a.value == UdmfValue::Bool(true)));
+}
