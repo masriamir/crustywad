@@ -645,6 +645,27 @@ fn roundtrip_string_escapes_and_float_extremes() {
 }
 
 #[test]
+fn add_udmf_textmap_builds_a_reparsable_group() {
+    use crustywad::map::udmf::add_udmf_textmap;
+
+    let text = "namespace = \"zdoom\";\nvertex { x = 1.0; y = 2.0; zfloor = 3.0; }";
+    let map = parse_udmf(text, Limits::default()).unwrap();
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    add_udmf_textmap(&mut builder, "MAP01", &map);
+    let bytes = builder.build().unwrap();
+
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::default()).unwrap();
+    let names: Vec<&str> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(names, vec!["MAP01", "TEXTMAP", "ENDMAP"]);
+    let reparsed = parse_udmf(
+        std::str::from_utf8(wad.lump_bytes(1).unwrap()).unwrap(),
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(reparsed, map);
+}
+
+#[test]
 fn to_textmap_emits_required_fields_and_elides_defaults() {
     let text = r#"
         namespace = "doom";

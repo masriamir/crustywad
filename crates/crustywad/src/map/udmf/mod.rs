@@ -16,7 +16,7 @@ pub use model::{
 };
 pub use parse::parse_udmf;
 #[cfg(feature = "write")]
-pub use write::{UdmfWriteError, UdmfWriteWarning, add_udmf_map, write_udmf};
+pub use write::{UdmfWriteError, UdmfWriteWarning, add_udmf_map, add_udmf_textmap, write_udmf};
 
 use thiserror::Error;
 

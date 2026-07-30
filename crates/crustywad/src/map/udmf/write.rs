@@ -821,6 +821,19 @@ pub fn add_udmf_map(
     Ok(warnings)
 }
 
+/// Adds a complete UDMF map group — the `name` marker lump, a `TEXTMAP`
+/// lump holding [`UdmfMap::to_textmap`]'s output, and an `ENDMAP` lump — to
+/// `builder`. Infallible, unlike the [`Map`]-sourced [`add_udmf_map`]: a
+/// parsed [`UdmfMap`] contains only representable values (ADR-0027).
+///
+/// The caller invokes [`WadBuilder::build`] afterward (which returns
+/// [`WriteError`](crate::WriteError)).
+pub fn add_udmf_textmap(builder: &mut WadBuilder, name: &str, map: &UdmfMap) {
+    builder.add_lump(name, b"");
+    builder.add_lump("TEXTMAP", map.to_textmap().into_bytes());
+    builder.add_lump("ENDMAP", b"");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

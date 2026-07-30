@@ -72,7 +72,7 @@ pub use graph::{
 pub use group::{MapGroup, detect_map_format};
 pub use udmf::{UdmfParseError, parse_udmf};
 #[cfg(feature = "write")]
-pub use udmf::{UdmfWriteError, UdmfWriteWarning, add_udmf_map, write_udmf};
+pub use udmf::{UdmfWriteError, UdmfWriteWarning, add_udmf_map, add_udmf_textmap, write_udmf};
 
 /// Errors returned when decoding typed map records from a lump byte slice.
 #[derive(Debug, Error)]
