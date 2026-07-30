@@ -183,6 +183,25 @@ fn texture_name<'a>(
     })
 }
 
+/// Formats a finite `f64` so the text re-lexes as a single numeric token and
+/// re-parses to an equal value. Whole values within `i64` emit as bare
+/// integer digits (`i64 → f64` is exact for any integer obtained from a
+/// whole in-range `f64`); everything else emits Rust's shortest-round-trip
+/// `{:?}` form, which always carries a `.` or exponent — both accepted by
+/// the UDMF lexer — and re-parses to the identical `f64` by construction.
+/// A bare-digits emission of a huge whole value (e.g. `1e300` under `{}`)
+/// would re-lex as an integer and overflow `i64` (ADR-0027 §2).
+fn fmt_roundtrip_float(value: f64) -> String {
+    const I64_MIN_F: f64 = -9_223_372_036_854_775_808.0; // -2^63, exact
+    const I64_MAX_BOUND: f64 = 9_223_372_036_854_775_808.0; // 2^63, exact
+    if value.fract() == 0.0 && (I64_MIN_F..I64_MAX_BOUND).contains(&value) {
+        // Guarded by the range check above.
+        #[allow(clippy::cast_possible_truncation)]
+        return format!("{}", value as i64);
+    }
+    format!("{value:?}")
+}
+
 /// Accumulates UDMF text and lenient-mode warnings.
 struct Writer {
     out: String,
@@ -209,7 +228,7 @@ impl Writer {
         value: f64,
     ) -> Result<String, UdmfWriteError> {
         if value.is_finite() {
-            return Ok(format!("{value}"));
+            return Ok(fmt_roundtrip_float(value));
         }
         match self.strictness {
             Strictness::Strict => Err(UdmfWriteError::NonFiniteCoordinate {
@@ -1012,6 +1031,47 @@ mod tests {
             UdmfWriteWarning::ColoredLightingDropped.to_string(),
             "the map's Doom 64 colored lighting (sector color references and lights table) has no UDMF slot and was dropped"
         );
+    }
+
+    #[test]
+    fn fmt_roundtrip_float_covers_extremes() {
+        // (input, expected text) — whole-in-range values emit integer digits.
+        assert_eq!(fmt_roundtrip_float(3.0), "3");
+        assert_eq!(fmt_roundtrip_float(-0.0), "0");
+        assert_eq!(fmt_roundtrip_float(2.0_f64.powi(60)), "1152921504606846976");
+        assert_eq!(fmt_roundtrip_float(0.5), "0.5");
+        // Out-of-i64-range whole float must NOT emit bare digits (they would
+        // re-lex as an integer and overflow i64): shortest-roundtrip form.
+        assert_eq!(fmt_roundtrip_float(1e300), "1e300");
+        assert_eq!(fmt_roundtrip_float(1e-300), "1e-300");
+    }
+
+    #[test]
+    // Exact `==` is the point of this test: the interface guarantee is
+    // "bit-identical or `==`-equal", so a fuzzy comparison would defeat it.
+    #[allow(clippy::float_cmp)]
+    fn fmt_roundtrip_float_output_reparses_equal() {
+        for v in [
+            3.0,
+            -0.0,
+            0.5,
+            -12345.678,
+            1e300,
+            -1e300,
+            1e-300,
+            2.0_f64.powi(60),
+            9.007_199_254_740_993e15, // 2^53 + 1 as parsed: exercises the exactness edge
+            f64::MAX,
+            f64::MIN_POSITIVE,
+        ] {
+            let text = format!(
+                "namespace = \"doom\";\nvertex {{ x = {}; y = 0.0; }}",
+                fmt_roundtrip_float(v)
+            );
+            let map = crate::map::udmf::parse_udmf(&text, crate::Limits::default())
+                .unwrap_or_else(|e| panic!("output for {v:?} failed to reparse: {e}"));
+            assert_eq!(map.vertices[0].x, v, "value {v:?} did not round-trip");
+        }
     }
 
     #[test]
