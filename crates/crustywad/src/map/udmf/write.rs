@@ -5,8 +5,10 @@
 //! `MAPxx` + `TEXTMAP` + `ENDMAP` group to a [`WadBuilder`]. Fields are emitted
 //! only when they differ from their UDMF spec default; `f64` coordinates narrow
 //! to integer form when whole. The source of truth is the [`Map`] graph, so only
-//! standardized, modeled fields are written (comments/custom fields are not
-//! round-tripped — they are dropped on read).
+//! standardized, modeled fields are written (the `Map` graph carries only
+//! standardized, modeled fields; for lossless round-trip of comments, `user_*`,
+//! and port extensions, write from the parsed [`UdmfMap`] via
+//! [`UdmfMap::to_textmap`] instead (ADR-0027)).
 
 use std::fmt::Write as _;
 

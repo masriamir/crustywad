@@ -158,9 +158,10 @@ representation for every Doom bit:
 **UDMF → Doom → UDMF is one-way.** Converting a UDMF map to Doom and back
 does not reproduce the original UDMF map: `f64` coordinates are rounded to
 `i16` map units, and fields Doom has no slot for (tier 3 below) are dropped
-permanently. There is no lossless UDMF → UDMF path through this API; a
-caller needing full text-level fidelity should keep the parsed `UdmfMap`
-intermediate instead of round-tripping through `Map`.
+permanently. For a lossless UDMF → UDMF round-trip — preserving comments,
+`user_*`, and unmodeled port fields — keep the parsed `UdmfMap` intermediate
+and re-emit it with `UdmfMap::to_textmap` instead of round-tripping through
+`Map` (ADR-0027).
 
 ## Strict vs. lenient conversion
 

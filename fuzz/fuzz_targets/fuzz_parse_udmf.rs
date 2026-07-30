@@ -25,6 +25,30 @@ fuzz_target!(|data: &[u8]| {
                 "element count {elements} exceeds O(input) bound {}",
                 data.len()
             );
+            // ADR-0027 O(input) bound on retention: each retained assignment
+            // consumes at least the bytes of `n=v;` in the input.
+            let retained = map.global_extras.len()
+                + map
+                    .unknown_blocks
+                    .iter()
+                    .map(|b| b.fields.len())
+                    .sum::<usize>()
+                + map.vertices.iter().map(|v| v.extras.len()).sum::<usize>()
+                + map.linedefs.iter().map(|l| l.extras.len()).sum::<usize>()
+                + map.sidedefs.iter().map(|s| s.extras.len()).sum::<usize>()
+                + map.sectors.iter().map(|s| s.extras.len()).sum::<usize>()
+                + map.things.iter().map(|t| t.extras.len()).sum::<usize>();
+            assert!(
+                retained <= data.len(),
+                "retained assignment count {retained} exceeds O(input) bound {}",
+                data.len()
+            );
+            // ADR-0027 semantic round-trip oracle: canonical output must
+            // reparse to an equal document.
+            let written = map.to_textmap();
+            let reparsed = parse_udmf(&written, Limits::default())
+                .expect("canonical to_textmap output must reparse");
+            assert_eq!(reparsed, map, "round-trip mismatch");
             std::hint::black_box(&map);
         }
     }
