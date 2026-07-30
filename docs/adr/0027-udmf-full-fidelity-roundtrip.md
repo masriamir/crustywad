@@ -220,17 +220,24 @@ all semantic-equality-preserving, none data-losing:
   re-parse of the original would observe anyway).
 
 **Float formatting rule** (shared with the `Map`-sourced writer, fixing the
-latent hazard described in Context): a finite `f64` that is whole and within
-`i64`'s exact conversion range emits as bare integer digits (`i64 → f64`
-round-trips exactly for any integer obtained from a whole `f64` in range);
-any other finite value emits Rust's shortest-round-trip form
-(`format!("{value:?}")`), with a decimal point or exponent guaranteed present
-— the lexer accepts exponent floats without a dot, and shortest-round-trip
-formatting re-parses to the identical `f64` by construction. Non-finite
-values cannot occur in a parsed `UdmfMap` (lexer guarantee), which is what
-makes the new writer infallible; the `Map`-sourced path keeps its existing
-strict-error/lenient-warn handling for non-finite coordinates, since `Map`
-values do not come with the lexer's guarantee.
+latent hazard described in Context). For **typed float fields** (`x`, `y`,
+`height`), whose re-parse coerces through `as_f64` (which accepts integer
+tokens): a finite `f64` that is whole and within `i64`'s exact conversion
+range emits as bare integer digits (`i64 → f64` round-trips exactly for any
+integer obtained from a whole `f64` in range); any other finite value emits
+Rust's shortest-round-trip form (`format!("{value:?}")`), with a decimal
+point or exponent guaranteed present — the lexer accepts exponent floats
+without a dot, and shortest-round-trip formatting re-parses to the identical
+`f64` by construction. A retained **extras `Float` value** is different: its
+re-parse preserves the token's shape as the `UdmfValue` variant, so bare
+digits would come back as `UdmfValue::Int` and break equality — extras
+floats therefore always emit in the float-shaped `{:?}` form, whole or not
+(amended during implementation, which caught the unscoped original rule
+contradicting the contract). Non-finite values cannot occur in a parsed
+`UdmfMap` (lexer guarantee), which is what makes the new writer infallible;
+the `Map`-sourced path keeps its existing strict-error/lenient-warn handling
+for non-finite coordinates, since `Map` values do not come with the lexer's
+guarantee.
 
 ### 3. Writer API (`write` feature, `map/udmf/write.rs`)
 
