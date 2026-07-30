@@ -694,3 +694,62 @@ fn to_textmap_emits_required_fields_and_elides_defaults() {
     }
     assert_roundtrip(text);
 }
+
+/// Renders one extras assignment from generated parts.
+fn extra_src(name: &str, value: &str) -> String {
+    format!("{name} = {value}; ")
+}
+
+proptest! {
+    // ADR-0027: any generated document that parses must round-trip through
+    // to_textmap with equality — exercising all four `UdmfValue` shapes in
+    // extras (Int/Float/Str via user_*, Bool via skill*), the skill1/skill2
+    // dual-store pair, and a multi-block document (several vertices plus a
+    // thing).
+    #[test]
+    fn generated_documents_roundtrip(
+        ints in proptest::collection::vec(any::<i64>(), 0..4),
+        floats in proptest::collection::vec(
+            (-1e12_f64..1e12).prop_filter("finite", |f| f.is_finite()), 0..4),
+        strs in proptest::collection::vec("[ -~]{0,12}", 0..3),
+        skills in proptest::collection::vec(any::<bool>(), 5),
+        n_vertices in 1usize..4,
+    ) {
+        use std::fmt::Write as _;
+
+        let mut text = String::from("namespace = \"zdoom\";\n");
+        for (i, v) in ints.iter().enumerate() {
+            writeln!(
+                text,
+                "vertex {{ x = 0.0; y = 0.0; {}}}",
+                extra_src(&format!("user_i{i}"), &v.to_string())
+            )
+            .unwrap();
+        }
+        for _ in 0..n_vertices {
+            text.push_str("vertex { x = 1.0; y = 2.0; }\n");
+        }
+        let mut thing = String::from("thing { x = 0.0; y = 0.0; type = 1; ");
+        for (i, s) in skills.iter().enumerate() {
+            thing.push_str(&extra_src(&format!("skill{}", i + 1), &s.to_string()));
+        }
+        for (i, f) in floats.iter().enumerate() {
+            // `{f:?}` is load-bearing: it always re-lexes as Float, even for
+            // integer-valued floats (e.g. `3.0`), matching the canonical
+            // writer's own extras formatting. Any other formatting risks an
+            // integer-valued float reparsing back as `Int`.
+            thing.push_str(&extra_src(&format!("user_f{i}"), &format!("{f:?}")));
+        }
+        for (i, s) in strs.iter().enumerate() {
+            let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+            thing.push_str(&extra_src(&format!("user_s{i}"), &format!("\"{escaped}\"")));
+        }
+        thing.push('}');
+        text.push_str(&thing);
+
+        let first = parse_udmf(&text, Limits::default()).expect("generated text parses");
+        let second = parse_udmf(&first.to_textmap(), Limits::default())
+            .expect("canonical output reparses");
+        prop_assert_eq!(second, first);
+    }
+}
