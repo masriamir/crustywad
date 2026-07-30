@@ -1220,7 +1220,10 @@ mod tests {
         assert_eq!(m.sidedefs[0].sector, 3);
         assert_eq!(m.sidedefs[0].extras.len(), 1);
         assert_eq!(m.sidedefs[0].extras[0].name, "extra");
-        assert_eq!(m.sidedefs[0].extras[0].value, UdmfValue::Str("x".to_owned()));
+        assert_eq!(
+            m.sidedefs[0].extras[0].value,
+            UdmfValue::Str("x".to_owned())
+        );
     }
 
     #[test]
