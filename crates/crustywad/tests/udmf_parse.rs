@@ -109,6 +109,44 @@ fn committed_fuzz_seeds_parse_as_intended() {
 
     // seed_malformed: must exercise an error path.
     assert!(parse_udmf(&seed("seed_malformed"), Limits::default()).is_err());
+
+    // seed_extras: exercises the retention surface — global/typed extras across
+    // all four `UdmfValue` shapes, a dual-stored thing boolean, and an unknown
+    // block carrying a duplicated field (last-wins).
+    let extras = parse_udmf(&seed("seed_extras"), Limits::default()).expect("seed_extras parses");
+    // Unknown block retained with its duplicated `anchor` resolved last-wins.
+    let block = extras
+        .unknown_blocks
+        .iter()
+        .find(|b| b.name == "portalgroup")
+        .expect("portalgroup block retained");
+    let anchor = block
+        .fields
+        .iter()
+        .find(|f| f.name == "anchor")
+        .expect("anchor field retained");
+    assert_eq!(anchor.value, UdmfValue::Int(2));
+    // The thing's dual-stored boolean survives in extras.
+    assert!(
+        extras.things[0]
+            .extras
+            .iter()
+            .any(|a| a.name == "skill1" && a.value == UdmfValue::Bool(true))
+    );
+    // A typed string extra (linedef comment) survives with its value.
+    assert!(
+        extras.linedefs[0]
+            .extras
+            .iter()
+            .any(|a| a.name == "comment" && a.value == UdmfValue::Str("door".to_owned()))
+    );
+    // A `user_*` sector extra survives.
+    assert!(
+        extras.sectors[0]
+            .extras
+            .iter()
+            .any(|a| a.name == "user_note")
+    );
 }
 
 #[test]

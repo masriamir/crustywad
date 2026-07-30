@@ -709,8 +709,7 @@ proptest! {
     #[test]
     fn generated_documents_roundtrip(
         ints in proptest::collection::vec(any::<i64>(), 0..4),
-        floats in proptest::collection::vec(
-            (-1e12_f64..1e12).prop_filter("finite", |f| f.is_finite()), 0..4),
+        floats in proptest::collection::vec(-1e12_f64..1e12, 0..4),
         strs in proptest::collection::vec("[ -~]{0,12}", 0..3),
         skills in proptest::collection::vec(any::<bool>(), 5),
         n_vertices in 1usize..4,
