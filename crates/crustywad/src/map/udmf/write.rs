@@ -698,7 +698,7 @@ impl UdmfMap {
 ///
 /// Fields are emitted only when they differ from their UDMF spec default;
 /// `f64` coordinates narrow to integer form when whole and within `i64`'s
-/// exact range. See the module docs.
+/// bounds. See the module docs.
 ///
 /// # Errors
 /// - [`UdmfWriteError::UnrepresentableField`] — includes `map.format()`
