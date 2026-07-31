@@ -159,8 +159,8 @@ representation for every Doom bit:
 does not reproduce the original UDMF map: `f64` coordinates are rounded to
 `i16` map units, and fields Doom has no slot for (tier 3 below) are dropped
 permanently. For a lossless UDMF → UDMF round-trip — preserving `comment`
-fields, `user_*` fields, and unmodeled port fields (lexical `//` comments are
-trivia and do not survive) — keep the parsed `UdmfMap` intermediate
+fields, `user_*` fields, and unmodeled port fields (lexical `//` and `/* */`
+comments are trivia and do not survive) — keep the parsed `UdmfMap` intermediate
 and re-emit it with `UdmfMap::to_textmap` instead of round-tripping through
 `Map` (ADR-0027).
 

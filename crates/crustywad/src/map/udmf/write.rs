@@ -4,7 +4,9 @@
 //! [`write_udmf`] produces the `TEXTMAP` string; [`add_udmf_map`] adds a complete
 //! `MAPxx` + `TEXTMAP` + `ENDMAP` group to a [`WadBuilder`]. Fields are emitted
 //! only when they differ from their UDMF spec default; `f64` coordinates narrow
-//! to integer form when whole and within `i64`'s exact range. The source of truth is the [`Map`] graph, so only
+//! to integer form when whole and within `i64`'s bounds (out-of-bounds whole
+//! values keep their float spelling so the emitted literal re-lexes as a
+//! float). The source of truth is the [`Map`] graph, so only
 //! standardized, modeled fields are written; for lossless round-trip of `comment`
 //! fields, `user_*` fields, and port extensions, write from the parsed
 //! [`UdmfMap`] via [`UdmfMap::to_textmap`] instead (ADR-0027).
