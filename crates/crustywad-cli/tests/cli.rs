@@ -2075,7 +2075,7 @@ fn build_nodes_with_no_map_is_a_noop() {
         .assert()
         .code(0)
         .stderr(predicate::str::contains(
-            "no Doom map groups found; --nodes had no effect",
+            "no buildable map groups found; --nodes had no effect",
         ));
     assert_eq!(lump_bytes(out.path(), "PLAYPAL"), vec![1_u8, 2, 3]);
     // No map means no SEGS lump was added at all (not merely an empty one) —
@@ -2202,8 +2202,10 @@ fn build_nodes_skips_doom64_group_with_note() {
 }
 
 #[test]
-fn build_nodes_skips_udmf_group_with_note() {
-    // A UDMF map: skipped with a note (#354); its nodes are a GL/ZNODES concern.
+fn build_nodes_builds_znodes_for_udmf_group() {
+    // A UDMF map: build --nodes builds GL nodes into a fresh ZNODES lump
+    // inserted immediately after TEXTMAP; the auto-format note fires and the
+    // TEXTMAP bytes survive byte-identical.
     let fixture = write_udmf_square_room_wad();
     let (specs, _files) = explode_wad_to_build_specs(fixture.path());
     let out = NamedTempFile::new().unwrap();
@@ -2220,8 +2222,146 @@ fn build_nodes_skips_udmf_group_with_note() {
         .args(&args)
         .assert()
         .code(0)
-        .stderr(predicate::str::contains("is a UDMF map"))
-        .stderr(predicate::str::contains("#354"));
+        .stderr(predicate::str::contains("building GL nodes"));
+
+    // The group grew a ZNODES lump inserted immediately after TEXTMAP; the
+    // trailing COLORMAP passes through.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
+    );
+    // TEXTMAP bytes are byte-identical to the input map text.
+    assert_eq!(
+        lump_bytes(out.path(), "TEXTMAP"),
+        udmf_square_room().into_bytes()
+    );
+    // The ZNODES lump is a GL stream; the square room resolves to the minimal
+    // XGLN dialect under the default (auto) GL format.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[test]
+fn build_nodes_replaces_stale_znodes_and_preserves_port_lumps() {
+    // A UDMF group carrying a stale/garbage ZNODES plus a DIALOGUE port lump
+    // between TEXTMAP and ENDMAP: build --nodes replaces the ZNODES bytes in
+    // place and preserves DIALOGUE (bytes and position) verbatim; the lump
+    // count is unchanged.
+    let textmap = udmf_square_room();
+    let fixture = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ZNODES", b"JUNK"),
+            ("DIALOGUE", &[7, 8, 9]),
+            ("ENDMAP", b""),
+        ],
+    );
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    // Same lumps, same order, same count — the stale ZNODES was replaced in
+    // place, not appended.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "DIALOGUE", "ENDMAP"]
+    );
+    // The ZNODES bytes are a real GL stream now, not the garbage payload.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert_ne!(znodes, b"JUNK");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+    // The DIALOGUE port lump survived verbatim.
+    assert_eq!(lump_bytes(out.path(), "DIALOGUE"), vec![7_u8, 8, 9]);
+    // TEXTMAP bytes are byte-identical.
+    assert_eq!(
+        lump_bytes(out.path(), "TEXTMAP"),
+        udmf_square_room().into_bytes()
+    );
+}
+
+#[test]
+fn build_nodes_skips_udmf_group_for_non_gl_format_with_note() {
+    // --node-format xnod has no GL stream, so a UDMF group is passed through
+    // untouched with a note (#384).
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "xnod".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("not valid for ZNODES"))
+        .stderr(predicate::str::contains("#384"));
+
+    // Passed through untouched: no ZNODES lump was added.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+    );
+}
+
+#[test]
+fn build_nodes_udmf_honors_explicit_gl_dialect() {
+    // An explicit --node-format xgl3 forces the XGL3 dialect for the ZNODES
+    // stream (overriding the auto XGLN selection).
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "xgl3".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGL3"),
+        "ZNODES should be an XGL3 stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
 }
 
 #[test]
