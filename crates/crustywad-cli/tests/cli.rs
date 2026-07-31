@@ -3863,8 +3863,10 @@ fn convert_doom_to_doom_without_nodes_passes_through_empty_node_lumps() {
 }
 
 #[test]
-fn convert_nodes_ignored_for_udmf_target_with_note() {
-    let wad = write_udmf_square_room_wad();
+fn convert_to_udmf_with_nodes_emits_znodes() {
+    // Doom-source WAD -> UDMF target with --nodes: the converted group carries a
+    // built GL ZNODES stream, and the result validates deeply.
+    let wad = write_doom_square_room_empty_nodes_wad();
     let out = NamedTempFile::new().unwrap();
 
     Command::cargo_bin("cwad")
@@ -3880,8 +3882,118 @@ fn convert_nodes_ignored_for_udmf_target_with_note() {
         ])
         .assert()
         .code(0)
+        // The default (Classic) node-format resolves to the GL auto-format; the
+        // run notes it once.
         .stderr(predicate::str::contains(
-            "--nodes has no effect with --to udmf",
+            "--to udmf --nodes builds GL nodes (gl auto-format) into ZNODES",
+        ));
+
+    // The converted group is [marker, TEXTMAP, ZNODES, ENDMAP], with the
+    // trailing non-map lump passed through in order.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
+    );
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+
+    // The synthesized UDMF map with built nodes passes deep validation.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", out.path().to_str().unwrap()])
+        .assert()
+        .code(0);
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_rejects_non_gl_format() {
+    // A non-GL extended format has no ZNODES carrier: the UDMF target rejects it
+    // up front (exit 3) before writing anything.
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "xnod",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("not valid for a UDMF target"))
+        .stderr(predicate::str::contains("#384"));
+
+    // Rejected before conversion, so nothing was written to the output file.
+    assert_eq!(
+        std::fs::metadata(out.path()).unwrap().len(),
+        0,
+        "no output should be written on the up-front rejection"
+    );
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn convert_to_udmf_with_nodes_zgl3_compresses() {
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "zgl3",
+        ])
+        .assert()
+        .code(0);
+
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"ZGL3"),
+        "ZNODES should be a ZGL3 stream"
+    );
+}
+
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn convert_to_udmf_with_nodes_zgl3_without_feature_errors_clearly() {
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "zgl3",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "--node-format zgl3 requires cwad built with the extended-nodes-zlib feature",
         ));
 }
 

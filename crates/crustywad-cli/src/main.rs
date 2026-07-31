@@ -1383,7 +1383,9 @@ fn run(cli: Cli) -> Result<i32> {
             nodes,
             node_format,
         } => {
-            use crustywad::map::build::{NodeBuildOptions, add_doom_map_with_nodes};
+            use crustywad::map::build::{
+                NodeBuildOptions, NodeFormat, add_doom_map_with_nodes, add_udmf_map_with_nodes,
+            };
             use crustywad::map::detect_map_format;
             use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
 
@@ -1410,22 +1412,16 @@ fn run(cli: Cli) -> Result<i32> {
             } else {
                 NodeBuildOptions::strict()
             };
-            // `--nodes` builds binary node lumps, which only the Doom format
-            // has; UDMF stores geometry as text and lets the engine (or an
-            // external tool) build nodes, so the flag is a no-op there. Note it
-            // once rather than silently ignoring it.
-            if nodes && matches!(to, MapFormatArg::Udmf) {
-                eprintln!(
-                    "note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring"
-                );
-            }
-            // `--node-format` only takes effect when `--nodes` builds Doom node
-            // lumps (`--to doom`); note-and-ignore rather than silently dropping
-            // it (house style; no auto-implying `--nodes`).
+            // `--node-format` only takes effect when `--nodes` builds node lumps;
+            // note-and-ignore rather than silently dropping it (house style; no
+            // auto-implying `--nodes`).
             if !matches!(node_format, NodeFormatArg::Classic) && !nodes {
                 eprintln!("note: --node-format has no effect without --nodes; ignoring");
             }
-            if nodes && matches!(to, MapFormatArg::Doom) {
+            // Both node targets translate `--node-format` into `build_opts`: the
+            // Doom target writes the classic (or `X/ZNOD`) node lumps, the UDMF
+            // target the GL `ZNODES` carrier.
+            if nodes && matches!(to, MapFormatArg::Doom | MapFormatArg::Udmf) {
                 #[cfg(feature = "extended-nodes-zlib")]
                 {
                     build_opts.format = node_format_arg_to_lib(node_format);
@@ -1439,6 +1435,30 @@ fn run(cli: Cli) -> Result<i32> {
                             return Ok(3);
                         }
                     };
+                }
+            }
+            // UDMF stores geometry as text, so its only built node lump is the GL
+            // `ZNODES` carrier: a non-GL extended format has no place to go
+            // (rejected up front), while the `Classic` default auto-selects the
+            // GL dialect (noted once).
+            if nodes && matches!(to, MapFormatArg::Udmf) {
+                if effective_udmf_format(&build_opts).is_none() {
+                    // Only the non-GL extended formats reach here; Xnod is the
+                    // sole non-zlib case, so `_` names it.
+                    let requested = match build_opts.format {
+                        #[cfg(feature = "extended-nodes-zlib")]
+                        NodeFormat::Znod => "znod",
+                        _ => "xnod",
+                    };
+                    eprintln!(
+                        "error: --node-format {requested} is not valid for a UDMF target (ZNODES is GL-only; see #384)"
+                    );
+                    return Ok(3);
+                }
+                if matches!(build_opts.format, NodeFormat::Classic) {
+                    eprintln!(
+                        "note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES"
+                    );
                 }
             }
             // `target` is only compared against `detect_map_format` (to skip a
@@ -1578,6 +1598,26 @@ fn run(cli: Cli) -> Result<i32> {
                                     lenient_recoverable: e.is_lenient_recoverable(),
                                     message: e.to_string(),
                                 })
+                        }
+                        MapFormatArg::Udmf if nodes => {
+                            // The up-front UDMF check already rejected any non-GL
+                            // format, so `effective_udmf_format` is always `Some`
+                            // here; swap it into a clone so `Classic` builds GL.
+                            let mut effective_opts = build_opts.clone();
+                            effective_opts.format = effective_udmf_format(&build_opts)
+                                .expect("UDMF --nodes format validated up front");
+                            add_udmf_map_with_nodes(
+                                &mut builder,
+                                &group.name,
+                                &assembled,
+                                &write_opts,
+                                &effective_opts,
+                            )
+                            .map(|ws| ws.iter().map(ToString::to_string).collect())
+                            .map_err(|e| Refusal {
+                                lenient_recoverable: e.is_lenient_recoverable(),
+                                message: e.to_string(),
+                            })
                         }
                         MapFormatArg::Udmf => {
                             add_udmf_map(&mut builder, &group.name, &assembled, &write_opts)
