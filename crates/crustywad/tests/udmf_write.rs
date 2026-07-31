@@ -577,3 +577,216 @@ fn hexen_thing_present_in_all_modes_writes_all_three_udmf_game_modes() {
     assert!(thing.contains("skill1 = true; skill2 = true; "), "{thing}");
     assert!(!thing.contains("friend"), "{thing}");
 }
+
+// --- ADR-0027 lossless canonical writer: `UdmfMap::to_textmap`. ---
+
+use crustywad::Limits;
+use crustywad::map::udmf::parse_udmf;
+
+/// Asserts the ADR-0027 semantic round-trip contract on `text`.
+fn assert_roundtrip(text: &str) {
+    let first = parse_udmf(text, Limits::default()).expect("fixture must parse");
+    let written = first.to_textmap();
+    let second = parse_udmf(&written, Limits::default())
+        .unwrap_or_else(|e| panic!("canonical output failed to reparse: {e}\n---\n{written}"));
+    assert_eq!(second, first, "round-trip mismatch\n---\n{written}");
+}
+
+#[test]
+fn roundtrip_retains_every_extras_category() {
+    assert_roundtrip(
+        r#"
+        namespace = "zdoom";
+        ver = 2;
+        vertex { x = 1.5; y = -2.0; zfloor = 8.0; }
+        vertex { x = 3.0; y = 4.0; }
+        linedef { v1 = 0; v2 = 1; sidefront = 0; blocking = true; playercross = true; passuse = true; comment = "door"; }
+        sidedef { sector = 0; offsetx = 4; texturemiddle = "WALL"; user_pref = "keep"; }
+        sector { texturefloor = "F1"; textureceiling = "C1"; lightlevel = 128; special = 9; user_depth = 0.25; }
+        thing { x = 0.5; y = 0.5; type = 3001; skill1 = true; skill2 = true; single = true; dormant = true; class1 = true; }
+        portalgroup { anchor = 1; label = "a"; }
+        "#,
+    );
+}
+
+#[test]
+fn roundtrip_canonicalizes_hex_and_exponent_spellings() {
+    let text = "namespace = \"doom\";\nvertex { x = 1.5e1; y = 0.0; user_mask = 0xFF; }";
+    let first = parse_udmf(text, Limits::default()).unwrap();
+    let written = first.to_textmap();
+    assert!(
+        written.contains("x = 15;"),
+        "e-notation collapses: {written}"
+    );
+    assert!(
+        written.contains("user_mask = 255;"),
+        "hex emits decimal: {written}"
+    );
+    assert_roundtrip(text);
+}
+
+#[test]
+fn roundtrip_survives_skill_pair_asymmetry() {
+    // skill1 set, skill2 unset share flags bit 0 — only extras can tell
+    // them apart; this is the case the dual-store exists for.
+    let text = "namespace = \"doom\";\nthing { x = 0.0; y = 0.0; type = 1; skill1 = true; }";
+    let first = parse_udmf(text, Limits::default()).unwrap();
+    let written = first.to_textmap();
+    assert!(written.contains("skill1 = true;"), "{written}");
+    assert!(!written.contains("skill2"), "{written}");
+    assert_roundtrip(text);
+}
+
+#[test]
+fn roundtrip_string_escapes_and_float_extremes() {
+    assert_roundtrip(
+        "namespace = \"doom\";\nvertex { x = 1e300; y = 1e-300; comment = \"a\\\"b\\\\c\\nd\\te\"; }",
+    );
+}
+
+#[test]
+fn add_udmf_textmap_builds_a_reparsable_group() {
+    use crustywad::map::udmf::add_udmf_textmap;
+
+    let text = "namespace = \"zdoom\";\nvertex { x = 1.0; y = 2.0; zfloor = 3.0; }";
+    let map = parse_udmf(text, Limits::default()).unwrap();
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    add_udmf_textmap(&mut builder, "MAP01", &map);
+    let bytes = builder.build().unwrap();
+
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::default()).unwrap();
+    let names: Vec<&str> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(names, vec!["MAP01", "TEXTMAP", "ENDMAP"]);
+    let reparsed = parse_udmf(
+        std::str::from_utf8(wad.lump_bytes(1).unwrap()).unwrap(),
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(reparsed, map);
+}
+
+#[test]
+fn to_textmap_emits_required_fields_and_elides_defaults() {
+    let text = r#"
+        namespace = "doom";
+        linedef { v1 = 0; v2 = 1; sidefront = 0; sideback = -1; id = -1; special = 0; }
+        sector { texturefloor = "F"; textureceiling = "C"; lightlevel = 160; }
+        thing { x = 0.0; y = 0.0; type = 1; angle = 0; height = 0.0; }
+    "#;
+    let first = parse_udmf(text, Limits::default()).unwrap();
+    let written = first.to_textmap();
+    assert!(
+        written.contains("v1 = 0; v2 = 1; sidefront = 0;"),
+        "{written}"
+    );
+    for elided in [
+        "sideback",
+        "id =",
+        "special",
+        "lightlevel",
+        "angle",
+        "height",
+    ] {
+        assert!(
+            !written.contains(elided),
+            "default '{elided}' must elide: {written}"
+        );
+    }
+    assert_roundtrip(text);
+}
+
+/// Renders one extras assignment from generated parts.
+fn extra_src(name: &str, value: &str) -> String {
+    format!("{name} = {value}; ")
+}
+
+proptest! {
+    // ADR-0027: any generated document that parses must round-trip through
+    // to_textmap with equality — exercising all four `UdmfValue` shapes in
+    // extras (Int/Float/Str via user_*, Bool via skill*), the skill1/skill2
+    // dual-store pair, and a multi-block document (several vertices plus a
+    // thing).
+    #[test]
+    fn generated_documents_roundtrip(
+        ints in proptest::collection::vec(any::<i64>(), 0..4),
+        floats in proptest::collection::vec(-1e12_f64..1e12, 0..4),
+        strs in proptest::collection::vec("[ -~]{0,12}", 0..3),
+        skills in proptest::collection::vec(any::<bool>(), 5),
+        n_vertices in 1usize..4,
+    ) {
+        use std::fmt::Write as _;
+
+        let mut text = String::from("namespace = \"zdoom\";\n");
+        for (i, v) in ints.iter().enumerate() {
+            writeln!(
+                text,
+                "vertex {{ x = 0.0; y = 0.0; {}}}",
+                extra_src(&format!("user_i{i}"), &v.to_string())
+            )
+            .unwrap();
+        }
+        for _ in 0..n_vertices {
+            text.push_str("vertex { x = 1.0; y = 2.0; }\n");
+        }
+        let mut thing = String::from("thing { x = 0.0; y = 0.0; type = 1; ");
+        for (i, s) in skills.iter().enumerate() {
+            thing.push_str(&extra_src(&format!("skill{}", i + 1), &s.to_string()));
+        }
+        for (i, f) in floats.iter().enumerate() {
+            // `{f:?}` is load-bearing: it always re-lexes as Float, even for
+            // integer-valued floats (e.g. `3.0`), matching the canonical
+            // writer's own extras formatting. Any other formatting risks an
+            // integer-valued float reparsing back as `Int`.
+            thing.push_str(&extra_src(&format!("user_f{i}"), &format!("{f:?}")));
+        }
+        for (i, s) in strs.iter().enumerate() {
+            let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+            thing.push_str(&extra_src(&format!("user_s{i}"), &format!("\"{escaped}\"")));
+        }
+        thing.push('}');
+        text.push_str(&thing);
+
+        let first = parse_udmf(&text, Limits::default()).expect("generated text parses");
+        let second = parse_udmf(&first.to_textmap(), Limits::default())
+            .expect("canonical output reparses");
+        prop_assert_eq!(second, first);
+    }
+}
+
+#[test]
+fn to_textmap_emits_every_non_default_typed_field() {
+    let text = r#"
+        namespace = "zdoom";
+        vertex { x = 1.25; y = -3.5; }
+        vertex { x = 4.0; y = 5.0; }
+        sidedef { sector = 0; offsetx = 4; offsety = -2; texturetop = "T"; texturebottom = "B"; texturemiddle = "M"; }
+        sector { texturefloor = "F"; textureceiling = "C"; heightfloor = 8; heightceiling = 128; lightlevel = 192; special = 9; id = 7; }
+        linedef { v1 = 0; v2 = 1; sidefront = 0; sideback = 0; id = 5; special = 97; arg0 = 1; arg1 = 2; arg2 = 3; arg3 = 4; arg4 = 5; twosided = true; }
+        thing { x = 0.5; y = -0.5; type = 3001; height = 24.5; angle = 90; id = 9; special = 80; arg0 = 6; arg1 = 7; arg2 = 8; arg3 = 9; arg4 = 10; }
+    "#;
+    let written = parse_udmf(text, Limits::default())
+        .expect("fixture must parse")
+        .to_textmap();
+    for expected in [
+        "sideback = 0;",
+        "id = 5;",
+        "special = 97;",
+        "arg4 = 5;",
+        "twosided = true;",
+        "offsety = -2;",
+        "heightfloor = 8;",
+        "heightceiling = 128;",
+        "lightlevel = 192;",
+        "id = 7;",
+        "height = 24.5;",
+        "angle = 90;",
+        "special = 80;",
+        "arg4 = 10;",
+    ] {
+        assert!(
+            written.contains(expected),
+            "missing '{expected}' in: {written}"
+        );
+    }
+    assert_roundtrip(text);
+}

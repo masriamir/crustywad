@@ -8,7 +8,10 @@ use crate::Limits;
 
 use super::UdmfParseError;
 use super::lex::{Lexer, Spanned, Token};
-use super::model::{UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfVertex};
+use super::model::{
+    UdmfAssignment, UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfUnknownBlock,
+    UdmfValue, UdmfVertex,
+};
 
 /// Parses UDMF `TEXTMAP` text into a typed, un-normalized [`UdmfMap`].
 ///
@@ -30,6 +33,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
     let mut last_pos: (usize, usize) = (1, 1);
 
     let mut namespace: Option<String> = None;
+    let mut global_extras = ExtrasBuilder::default();
     let mut collections = Collections::default();
     let mut current_block: Option<BlockState> = None;
 
@@ -47,6 +51,8 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
                             expect_semicolon(&mut lexer, &mut last_pos)?;
                             if name == "namespace" {
                                 namespace = Some(as_str(&value)?);
+                            } else {
+                                global_extras.set(&name, to_value(&value)?);
                             }
                         }
                         Token::LBrace => {
@@ -59,7 +65,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
                                 });
                             }
                             depth = new_depth;
-                            current_block = Some(BlockState::new(&name));
+                            current_block = Some(BlockState::new(name));
                             state = State::ExpectBlockItem;
                         }
                         _ => {
@@ -120,7 +126,7 @@ pub fn parse_udmf(text: &str, limits: Limits) -> Result<UdmfMap, UdmfParseError>
         message: "TEXTMAP is missing a required 'namespace' declaration".to_owned(),
     })?;
 
-    Ok(collections.into_map(namespace))
+    Ok(collections.into_map(namespace, global_extras.finish()))
 }
 
 /// The two states of the flat parser loop, keyed by `depth`.
@@ -133,15 +139,11 @@ enum State {
 }
 
 /// Per-block accumulator, built from spec defaults and overwritten by
-/// recognized field assignments. Unknown blocks accumulate nothing.
+/// recognized field assignments. Unknown blocks accumulate their header name
+/// and every field verbatim for lossless round-trip (ADR-0027).
 enum BlockState {
-    /// A `vertex` block; both fields are required (no spec default).
-    Vertex {
-        /// The `x` field, if assigned.
-        x: Option<f64>,
-        /// The `y` field, if assigned.
-        y: Option<f64>,
-    },
+    /// A `vertex` block.
+    Vertex(VertexBuilder),
     /// A `linedef` block.
     Linedef(LinedefBuilder),
     /// A `sidedef` block.
@@ -150,13 +152,18 @@ enum BlockState {
     Sector(SectorBuilder),
     /// A `thing` block.
     Thing(ThingBuilder),
-    /// Any block header not otherwise recognized; fields are validated for
-    /// syntax but dropped.
-    Unknown,
+    /// Any block header not otherwise recognized; its header name and fields
+    /// are retained verbatim (ADR-0027).
+    Unknown {
+        /// The block header identifier, folded to ASCII lowercase.
+        name: String,
+        /// The block's assignments, retained in first-assignment order.
+        fields: ExtrasBuilder,
+    },
 }
 
-/// The typed element produced by [`BlockState::finish`], or `None` for an
-/// unrecognized block header.
+/// The typed element produced by [`BlockState::finish`], or an
+/// [`UdmfUnknownBlock`] retaining an unrecognized block header verbatim.
 enum BlockResult {
     /// A finished `vertex` block.
     Vertex(UdmfVertex),
@@ -168,8 +175,8 @@ enum BlockResult {
     Sector(UdmfSector),
     /// A finished `thing` block.
     Thing(UdmfThing),
-    /// An unrecognized block header; nothing to record.
-    None,
+    /// A retained unrecognized block, in declaration order (ADR-0027).
+    Unknown(UdmfUnknownBlock),
 }
 
 /// Accumulates finished blocks into their typed collections, kept separate
@@ -187,11 +194,13 @@ struct Collections {
     sectors: Vec<UdmfSector>,
     /// The map's things, in declaration order.
     things: Vec<UdmfThing>,
+    /// Unrecognized blocks, in declaration order (ADR-0027).
+    unknown_blocks: Vec<UdmfUnknownBlock>,
 }
 
 impl Collections {
     /// Routes a finished block into its typed collection; unrecognized
-    /// blocks (`BlockResult::None`) are dropped.
+    /// blocks (`BlockResult::Unknown`) are retained in `unknown_blocks`.
     fn push(&mut self, result: BlockResult) {
         match result {
             BlockResult::Vertex(v) => self.vertices.push(v),
@@ -199,12 +208,12 @@ impl Collections {
             BlockResult::Sidedef(s) => self.sidedefs.push(s),
             BlockResult::Sector(s) => self.sectors.push(s),
             BlockResult::Thing(t) => self.things.push(t),
-            BlockResult::None => {}
+            BlockResult::Unknown(b) => self.unknown_blocks.push(b),
         }
     }
 
     /// Consumes the accumulated collections into a finished [`UdmfMap`].
-    fn into_map(self, namespace: String) -> UdmfMap {
+    fn into_map(self, namespace: String, global_extras: Vec<UdmfAssignment>) -> UdmfMap {
         UdmfMap {
             namespace,
             vertices: self.vertices,
@@ -212,36 +221,40 @@ impl Collections {
             sidedefs: self.sidedefs,
             sectors: self.sectors,
             things: self.things,
+            unknown_blocks: self.unknown_blocks,
+            global_extras,
         }
     }
 }
 
 impl BlockState {
-    /// Selects the accumulator for a block header identifier.
-    fn new(header: &str) -> Self {
-        match header {
-            "vertex" => BlockState::Vertex { x: None, y: None },
+    /// Selects the accumulator for a block header identifier. Takes the header
+    /// by value so an unrecognized header is retained without a clone (the
+    /// recognized arms simply drop it); the lexer has already lowercased it.
+    fn new(header: String) -> Self {
+        match header.as_str() {
+            "vertex" => BlockState::Vertex(VertexBuilder::default()),
             "linedef" => BlockState::Linedef(LinedefBuilder::default()),
             "sidedef" => BlockState::Sidedef(SidedefBuilder::default()),
             "sector" => BlockState::Sector(SectorBuilder::default()),
             "thing" => BlockState::Thing(ThingBuilder::default()),
-            _ => BlockState::Unknown,
+            _ => BlockState::Unknown {
+                name: header,
+                fields: ExtrasBuilder::default(),
+            },
         }
     }
 
-    /// Applies a recognized field assignment; unknown fields are dropped.
+    /// Applies a recognized field assignment; unknown fields are retained in
+    /// the block's `extras`.
     fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
         match self {
-            BlockState::Vertex { x, y } => match name {
-                "x" => *x = Some(as_f64(value)?),
-                "y" => *y = Some(as_f64(value)?),
-                _ => {}
-            },
+            BlockState::Vertex(builder) => builder.set_field(name, value)?,
             BlockState::Linedef(builder) => builder.set_field(name, value)?,
             BlockState::Sidedef(builder) => builder.set_field(name, value)?,
             BlockState::Sector(builder) => builder.set_field(name, value)?,
             BlockState::Thing(builder) => builder.set_field(name, value)?,
-            BlockState::Unknown => {}
+            BlockState::Unknown { fields, .. } => fields.set(name, to_value(value)?),
         }
         Ok(())
     }
@@ -250,20 +263,15 @@ impl BlockState {
     /// or a [`UdmfParseError::Semantic`] if a required field was never set.
     fn finish(self) -> Result<BlockResult, UdmfParseError> {
         match self {
-            BlockState::Vertex { x, y } => {
-                let x = x.ok_or_else(|| UdmfParseError::Semantic {
-                    message: "vertex block is missing required field 'x'".to_owned(),
-                })?;
-                let y = y.ok_or_else(|| UdmfParseError::Semantic {
-                    message: "vertex block is missing required field 'y'".to_owned(),
-                })?;
-                Ok(BlockResult::Vertex(UdmfVertex { x, y }))
-            }
+            BlockState::Vertex(builder) => Ok(BlockResult::Vertex(builder.finish()?)),
             BlockState::Linedef(builder) => Ok(BlockResult::Linedef(builder.finish()?)),
             BlockState::Sidedef(builder) => Ok(BlockResult::Sidedef(builder.finish()?)),
             BlockState::Sector(builder) => Ok(BlockResult::Sector(builder.finish()?)),
             BlockState::Thing(builder) => Ok(BlockResult::Thing(builder.finish()?)),
-            BlockState::Unknown => Ok(BlockResult::None),
+            BlockState::Unknown { name, fields } => Ok(BlockResult::Unknown(UdmfUnknownBlock {
+                name,
+                fields: fields.finish(),
+            })),
         }
     }
 }
@@ -281,6 +289,93 @@ fn set_flag_bit(flags: &mut u32, bit: u32, value: bool) {
         *flags |= 1 << bit;
     } else {
         *flags &= !(1 << bit);
+    }
+}
+
+/// Converts a value token (post-`read_value`, so one of the four value
+/// shapes) to its retained [`UdmfValue`].
+///
+/// # Errors
+/// Returns [`UdmfParseError::Syntax`] if `spanned` is not a value literal;
+/// `read_value` already rejects non-literal tokens, so this arm is defensive.
+fn to_value(spanned: &Spanned) -> Result<UdmfValue, UdmfParseError> {
+    match &spanned.token {
+        Token::Bool(b) => Ok(UdmfValue::Bool(*b)),
+        Token::Int(i) => Ok(UdmfValue::Int(*i)),
+        Token::Float(f) => Ok(UdmfValue::Float(*f)),
+        Token::Str(s) => Ok(UdmfValue::Str(s.clone())),
+        _ => Err(syntax_error(
+            spanned.line,
+            spanned.column,
+            "expected a value literal",
+        )),
+    }
+}
+
+/// Ordered extras accumulator: first-assignment position, last-assignment
+/// value, O(1) per duplicate (a linear scan would be quadratic on
+/// adversarial many-field blocks, violating ADR-0016's bounded-work rule).
+#[derive(Default)]
+struct ExtrasBuilder {
+    /// Retained assignments in first-assignment order.
+    entries: Vec<UdmfAssignment>,
+    /// Field name -> index into `entries`.
+    index: std::collections::HashMap<String, usize>,
+}
+
+impl ExtrasBuilder {
+    /// Records `name = value`, overwriting an earlier value in place.
+    fn set(&mut self, name: &str, value: UdmfValue) {
+        if let Some(&i) = self.index.get(name) {
+            self.entries[i].value = value;
+        } else {
+            self.index.insert(name.to_owned(), self.entries.len());
+            self.entries.push(UdmfAssignment {
+                name: name.to_owned(),
+                value,
+            });
+        }
+    }
+
+    /// Consumes the accumulator into the retained, ordered assignment list.
+    fn finish(self) -> Vec<UdmfAssignment> {
+        self.entries
+    }
+}
+
+/// Accumulator for a `vertex` block; both coordinate fields are required (no
+/// spec default).
+#[derive(Default)]
+struct VertexBuilder {
+    /// The `x` field, if assigned.
+    x: Option<f64>,
+    /// The `y` field, if assigned.
+    y: Option<f64>,
+    /// Assignments other than `x`/`y`, retained in `extras`.
+    extras: ExtrasBuilder,
+}
+
+impl VertexBuilder {
+    /// Applies a recognized field assignment; unknown fields are retained in
+    /// `extras`.
+    fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
+        match name {
+            "x" => self.x = Some(as_f64(value)?),
+            "y" => self.y = Some(as_f64(value)?),
+            _ => self.extras.set(name, to_value(value)?),
+        }
+        Ok(())
+    }
+
+    /// Finalizes the block, erroring if `x`/`y` were never assigned.
+    fn finish(self) -> Result<UdmfVertex, UdmfParseError> {
+        let x = self.x.ok_or_else(|| missing_field("vertex", "x"))?;
+        let y = self.y.ok_or_else(|| missing_field("vertex", "y"))?;
+        Ok(UdmfVertex {
+            x,
+            y,
+            extras: self.extras.finish(),
+        })
     }
 }
 
@@ -302,6 +397,8 @@ struct LinedefBuilder {
     args: [i32; 5],
     /// The nine Doom-mapped boolean fields, packed into bits 0–8.
     flags: u32,
+    /// Assignments not held by a typed field, retained in `extras`.
+    extras: ExtrasBuilder,
 }
 
 impl Default for LinedefBuilder {
@@ -315,13 +412,15 @@ impl Default for LinedefBuilder {
             special: 0,
             args: [0; 5],
             flags: 0,
+            extras: ExtrasBuilder::default(),
         }
     }
 }
 
 impl LinedefBuilder {
     /// Applies a recognized field assignment; unmodeled recognized fields
-    /// (activation/Strife booleans) and unknown fields are dropped.
+    /// (activation/Strife booleans) and unknown fields are retained in
+    /// `extras`.
     fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
         match name {
             "v1" => self.v1 = Some(as_i32(value)?),
@@ -344,7 +443,7 @@ impl LinedefBuilder {
             "blocksound" => set_flag_bit(&mut self.flags, 6, as_bool(value)?),
             "dontdraw" => set_flag_bit(&mut self.flags, 7, as_bool(value)?),
             "mapped" => set_flag_bit(&mut self.flags, 8, as_bool(value)?),
-            _ => {}
+            _ => self.extras.set(name, to_value(value)?),
         }
         Ok(())
     }
@@ -369,6 +468,7 @@ impl LinedefBuilder {
             special: self.special,
             args: self.args,
             flags: self.flags,
+            extras: self.extras.finish(),
         })
     }
 }
@@ -387,6 +487,8 @@ struct SidedefBuilder {
     texturemiddle: String,
     /// The `sector` field, if assigned (required; no default).
     sector: Option<i32>,
+    /// Assignments not held by a typed field, retained in `extras`.
+    extras: ExtrasBuilder,
 }
 
 impl Default for SidedefBuilder {
@@ -398,12 +500,14 @@ impl Default for SidedefBuilder {
             texturebottom: "-".to_owned(),
             texturemiddle: "-".to_owned(),
             sector: None,
+            extras: ExtrasBuilder::default(),
         }
     }
 }
 
 impl SidedefBuilder {
-    /// Applies a recognized field assignment; unknown fields are dropped.
+    /// Applies a recognized field assignment; unknown fields are retained in
+    /// `extras`.
     fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
         match name {
             "offsetx" => self.offsetx = as_i32(value)?,
@@ -412,7 +516,7 @@ impl SidedefBuilder {
             "texturebottom" => self.texturebottom = as_str(value)?,
             "texturemiddle" => self.texturemiddle = as_str(value)?,
             "sector" => self.sector = Some(as_i32(value)?),
-            _ => {}
+            _ => self.extras.set(name, to_value(value)?),
         }
         Ok(())
     }
@@ -429,6 +533,7 @@ impl SidedefBuilder {
             texturebottom: self.texturebottom,
             texturemiddle: self.texturemiddle,
             sector,
+            extras: self.extras.finish(),
         })
     }
 }
@@ -449,6 +554,8 @@ struct SectorBuilder {
     special: i32,
     /// The `id` field (default 0).
     id: i32,
+    /// Assignments not held by a typed field, retained in `extras`.
+    extras: ExtrasBuilder,
 }
 
 impl Default for SectorBuilder {
@@ -461,12 +568,14 @@ impl Default for SectorBuilder {
             lightlevel: 160,
             special: 0,
             id: 0,
+            extras: ExtrasBuilder::default(),
         }
     }
 }
 
 impl SectorBuilder {
-    /// Applies a recognized field assignment; unknown fields are dropped.
+    /// Applies a recognized field assignment; unknown fields are retained in
+    /// `extras`.
     fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
         match name {
             "heightfloor" => self.heightfloor = as_i32(value)?,
@@ -476,7 +585,7 @@ impl SectorBuilder {
             "lightlevel" => self.lightlevel = as_i32(value)?,
             "special" => self.special = as_i32(value)?,
             "id" => self.id = as_i32(value)?,
-            _ => {}
+            _ => self.extras.set(name, to_value(value)?),
         }
         Ok(())
     }
@@ -498,6 +607,7 @@ impl SectorBuilder {
             lightlevel: self.lightlevel,
             special: self.special,
             id: self.id,
+            extras: self.extras.finish(),
         })
     }
 }
@@ -516,6 +626,12 @@ impl SectorBuilder {
 /// defaults for all skill, gamemode, and player class flags is true rather
 /// than the UDMF default of false"* is a hint for what an editor pre-fills in
 /// its UI — it is **not** parse semantics, and must not be read as one.
+///
+/// The ten booleans are dual-stored (ADR-0027): each assignment both updates
+/// its typed field (for the `flags` fold below) and is recorded verbatim in
+/// `extras` via [`ExtrasBuilder::set`]. `flags` is a derived Doom-engine
+/// projection of the recognized booleans; `extras` is the authoritative,
+/// round-trippable record of what the UDMF text actually assigned.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 struct ThingBuilder {
@@ -555,13 +671,17 @@ struct ThingBuilder {
     coop: bool,
     /// The `friend` field (default false).
     friend: bool,
+    /// Assignments not held by a typed field, retained in `extras`.
+    extras: ExtrasBuilder,
 }
 
 impl ThingBuilder {
     /// Applies a recognized field assignment. The skill/multiplayer booleans are
-    /// packed into `flags` at [`finish`][Self::finish]; unmodeled recognized
-    /// fields (`class1`–`class3`, `dormant`, `standing`, Strife booleans) and
-    /// unknown fields are dropped.
+    /// packed into `flags` at [`finish`][Self::finish] AND recorded verbatim in
+    /// `extras` (ADR-0027 dual-store: `flags` is derived, `extras` is
+    /// authoritative); unmodeled recognized fields (`class1`–`class3`,
+    /// `dormant`, `standing`, Strife booleans) and unknown fields are retained
+    /// in `extras` only.
     fn set_field(&mut self, name: &str, value: &Spanned) -> Result<(), UdmfParseError> {
         match name {
             "x" => self.x = Some(as_f64(value)?),
@@ -576,17 +696,47 @@ impl ThingBuilder {
             "arg2" => self.args[2] = as_i32(value)?,
             "arg3" => self.args[3] = as_i32(value)?,
             "arg4" => self.args[4] = as_i32(value)?,
-            "skill1" => self.skill1 = as_bool(value)?,
-            "skill2" => self.skill2 = as_bool(value)?,
-            "skill3" => self.skill3 = as_bool(value)?,
-            "skill4" => self.skill4 = as_bool(value)?,
-            "skill5" => self.skill5 = as_bool(value)?,
-            "ambush" => self.ambush = as_bool(value)?,
-            "single" => self.single = as_bool(value)?,
-            "dm" => self.dm = as_bool(value)?,
-            "coop" => self.coop = as_bool(value)?,
-            "friend" => self.friend = as_bool(value)?,
-            _ => {}
+            "skill1" => {
+                self.skill1 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill1));
+            }
+            "skill2" => {
+                self.skill2 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill2));
+            }
+            "skill3" => {
+                self.skill3 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill3));
+            }
+            "skill4" => {
+                self.skill4 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill4));
+            }
+            "skill5" => {
+                self.skill5 = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.skill5));
+            }
+            "ambush" => {
+                self.ambush = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.ambush));
+            }
+            "single" => {
+                self.single = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.single));
+            }
+            "dm" => {
+                self.dm = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.dm));
+            }
+            "coop" => {
+                self.coop = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.coop));
+            }
+            "friend" => {
+                self.friend = as_bool(value)?;
+                self.extras.set(name, UdmfValue::Bool(self.friend));
+            }
+            _ => self.extras.set(name, to_value(value)?),
         }
         Ok(())
     }
@@ -621,6 +771,7 @@ impl ThingBuilder {
             special: self.special,
             args: self.args,
             flags,
+            extras: self.extras.finish(),
         })
     }
 }
@@ -768,7 +919,7 @@ fn syntax_error(line: usize, column: usize, message: &str) -> UdmfParseError {
 mod tests {
     use super::parse_udmf;
     use crate::Limits;
-    use crate::map::udmf::UdmfParseError;
+    use crate::map::udmf::{UdmfParseError, UdmfValue};
 
     #[test]
     fn parses_namespace_and_vertices() {
@@ -785,6 +936,27 @@ mod tests {
     fn missing_namespace_is_semantic() {
         let err = parse_udmf("vertex { x = 1.0; y = 2.0; }", Limits::default()).unwrap_err();
         assert!(matches!(err, UdmfParseError::Semantic { .. }));
+    }
+
+    #[test]
+    fn to_value_rejects_a_non_literal_token_defensively() {
+        // `read_value` filters non-literal tokens before `to_value` ever
+        // sees one; exercise the defensive arm directly on the private
+        // helper so its contract is pinned.
+        let spanned = crate::map::udmf::lex::Spanned {
+            token: crate::map::udmf::lex::Token::LBrace,
+            line: 3,
+            column: 7,
+        };
+        let err = super::to_value(&spanned).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfParseError::Syntax {
+                line: 3,
+                column: 7,
+                message: "expected a value literal".to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -848,12 +1020,21 @@ mod tests {
     }
 
     #[test]
-    fn unknown_block_and_field_are_skipped() {
+    fn unknown_block_and_field_are_retained() {
         let text =
             "namespace=\"doom\"; widget { foo = 1; bar = \"x\"; } vertex { x=1.0; y=2.0; z=9.0; }";
         let m = parse_udmf(text, Limits::default()).unwrap();
         assert_eq!(m.vertices.len(), 1);
         assert_eq!((m.vertices[0].x, m.vertices[0].y), (1.0, 2.0));
+        // The unrecognized `widget` block is retained verbatim (ADR-0027).
+        assert_eq!(m.unknown_blocks.len(), 1);
+        let block = &m.unknown_blocks[0];
+        assert_eq!(block.name, "widget");
+        assert_eq!(block.fields.len(), 2);
+        assert_eq!(block.fields[0].name, "foo");
+        assert_eq!(block.fields[0].value, UdmfValue::Int(1));
+        assert_eq!(block.fields[1].name, "bar");
+        assert_eq!(block.fields[1].value, UdmfValue::Str("x".to_owned()));
     }
 
     #[test]
@@ -998,14 +1179,17 @@ mod tests {
     }
 
     #[test]
-    fn global_non_namespace_assignment_is_dropped() {
-        // A top-level assignment to an identifier other than `namespace` must
-        // be accepted (no error) and simply have no effect: only `namespace`
-        // is tracked at file scope, and no other global state exists.
+    fn global_non_namespace_assignment_is_retained() {
+        // A top-level assignment to an identifier other than `namespace` is
+        // accepted and retained verbatim in `global_extras` (ADR-0027); only
+        // `namespace` is promoted to its dedicated field.
         let text = "namespace=\"doom\"; author=\"me\"; vertex { x=1.0; y=2.0; }";
         let m = parse_udmf(text, Limits::default()).unwrap();
         assert_eq!(m.namespace, "doom");
         assert_eq!(m.vertices.len(), 1);
+        assert_eq!(m.global_extras.len(), 1);
+        assert_eq!(m.global_extras[0].name, "author");
+        assert_eq!(m.global_extras[0].value, UdmfValue::Str("me".to_owned()));
     }
 
     #[test]
@@ -1048,17 +1232,23 @@ mod tests {
     }
 
     #[test]
-    fn sidedef_unknown_field_is_dropped() {
+    fn sidedef_unknown_field_is_retained() {
         let m = parse_udmf(
             "namespace=\"doom\"; sidedef { sector = 3; extra = \"x\"; }",
             Limits::default(),
         )
         .unwrap();
         assert_eq!(m.sidedefs[0].sector, 3);
+        assert_eq!(m.sidedefs[0].extras.len(), 1);
+        assert_eq!(m.sidedefs[0].extras[0].name, "extra");
+        assert_eq!(
+            m.sidedefs[0].extras[0].value,
+            UdmfValue::Str("x".to_owned())
+        );
     }
 
     #[test]
-    fn sector_unknown_field_is_dropped() {
+    fn sector_unknown_field_is_retained() {
         let m = parse_udmf(
             concat!(
                 "namespace=\"doom\"; sector { texturefloor=\"F\";",
@@ -1068,20 +1258,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(m.sectors[0].texturefloor, "F");
+        assert_eq!(m.sectors[0].extras.len(), 1);
+        assert_eq!(m.sectors[0].extras[0].name, "extra");
+        assert_eq!(m.sectors[0].extras[0].value, UdmfValue::Int(5));
     }
 
     #[test]
-    fn thing_all_optional_fields_and_unknown_field() {
+    fn thing_all_optional_fields_and_unknown_field_is_retained() {
         let text = concat!(
             "namespace=\"doom\"; thing { x=1.0; y=2.0; height=8.0; angle=90;",
             " type=5; id=9; special=3; arg0=1; arg1=2; arg2=3; arg3=4; arg4=5;",
-            " extra=\"dropped\"; }",
+            " extra=\"kept\"; }",
         );
         let m = parse_udmf(text, Limits::default()).unwrap();
         let th = &m.things[0];
         assert_eq!((th.height, th.angle), (8.0, 90));
         assert_eq!((th.id, th.special), (9, 3));
         assert_eq!(th.args, [1, 2, 3, 4, 5]);
+        assert_eq!(th.extras.len(), 1);
+        assert_eq!(th.extras[0].name, "extra");
+        assert_eq!(th.extras[0].value, UdmfValue::Str("kept".to_owned()));
     }
 
     #[test]

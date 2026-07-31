@@ -2511,6 +2511,7 @@ mod tests {
             special: 80,
             args: [1, 2, 0, 0, 0],
             flags: 0b101,
+            extras: Vec::new(),
         }];
         let out = normalize_udmf_linedefs(&lines, 2, 2, Strictness::Strict, &mut w).unwrap();
         assert_eq!(out[0].start, VertexIdx(0));
@@ -2531,6 +2532,7 @@ mod tests {
             special: 0,
             args: [0; 5],
             flags: 0,
+            extras: Vec::new(),
         }];
         let out2 = normalize_udmf_linedefs(&one_sided, 2, 2, Strictness::Strict, &mut w).unwrap();
         assert_eq!(out2[0].left, None);
@@ -2549,6 +2551,7 @@ mod tests {
             special: 0,
             args: [0; 5],
             flags: 0,
+            extras: Vec::new(),
         }];
         let out = normalize_udmf_things(&things, Strictness::Strict, &mut w).unwrap();
         assert_eq!((out[0].x, out[0].y, out[0].height), (1.0, 2.0, 3.0));
@@ -2571,6 +2574,7 @@ mod tests {
             special: 0,
             args: [0; 5],
             flags: 0,
+            extras: Vec::new(),
         }];
         assert!(normalize_udmf_things(&bad, Strictness::Strict, &mut w).is_err());
         let out = normalize_udmf_things(&bad, Strictness::Lenient, &mut w).unwrap();
@@ -2592,6 +2596,7 @@ mod tests {
             texturebottom: "-".to_owned(),
             texturemiddle: "-".to_owned(),
             sector: 99,
+            extras: Vec::new(),
         }];
         let err = normalize_udmf_sidedefs(&sides, 1, Strictness::Strict, &mut w).unwrap_err();
         assert!(matches!(err, MapAssembleError::DanglingReference { .. }));
@@ -2611,6 +2616,7 @@ mod tests {
             special: 0,
             args: [0; 5],
             flags: 0,
+            extras: Vec::new(),
         }];
         let err = normalize_udmf_linedefs(&lines, 2, 1, Strictness::Strict, &mut w).unwrap_err();
         assert!(matches!(err, MapAssembleError::DanglingReference { .. }));
@@ -2630,6 +2636,7 @@ mod tests {
             special: 0,
             args: [0; 5],
             flags: 0,
+            extras: Vec::new(),
         }];
         let err = normalize_udmf_linedefs(&lines, 2, 1, Strictness::Strict, &mut w).unwrap_err();
         assert!(matches!(err, MapAssembleError::DanglingReference { .. }));

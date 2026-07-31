@@ -10,10 +10,13 @@ mod parse;
 #[cfg(feature = "write")]
 mod write;
 
-pub use model::{UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfVertex};
+pub use model::{
+    UdmfAssignment, UdmfLinedef, UdmfMap, UdmfSector, UdmfSidedef, UdmfThing, UdmfUnknownBlock,
+    UdmfValue, UdmfVertex,
+};
 pub use parse::parse_udmf;
 #[cfg(feature = "write")]
-pub use write::{UdmfWriteError, UdmfWriteWarning, add_udmf_map, write_udmf};
+pub use write::{UdmfWriteError, UdmfWriteWarning, add_udmf_map, add_udmf_textmap, write_udmf};
 
 use thiserror::Error;
 
