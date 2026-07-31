@@ -939,6 +939,27 @@ mod tests {
     }
 
     #[test]
+    fn to_value_rejects_a_non_literal_token_defensively() {
+        // `read_value` filters non-literal tokens before `to_value` ever
+        // sees one; exercise the defensive arm directly on the private
+        // helper so its contract is pinned.
+        let spanned = crate::map::udmf::lex::Spanned {
+            token: crate::map::udmf::lex::Token::LBrace,
+            line: 3,
+            column: 7,
+        };
+        let err = super::to_value(&spanned).unwrap_err();
+        assert_eq!(
+            err,
+            UdmfParseError::Syntax {
+                line: 3,
+                column: 7,
+                message: "expected a value literal".to_owned(),
+            }
+        );
+    }
+
+    #[test]
     fn vertex_missing_required_field_is_semantic() {
         let err =
             parse_udmf("namespace=\"doom\"; vertex { x = 1.0; }", Limits::default()).unwrap_err();
