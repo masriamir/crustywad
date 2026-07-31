@@ -130,6 +130,7 @@ Three new public types (verified absent from the codebase today):
 ```rust
 /// A UDMF assignment value. Mirrors the lexer's four value token shapes.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum UdmfValue {
     /// A `true`/`false` literal.
     Bool(bool),
@@ -144,6 +145,7 @@ pub enum UdmfValue {
 
 /// A retained `name = value;` assignment.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct UdmfAssignment {
     /// The field name (lowercased, as the parser normalizes identifiers).
     pub name: String,
@@ -154,6 +156,7 @@ pub struct UdmfAssignment {
 /// A retained block whose header identifier is not one of the five
 /// standardized kinds (e.g. a port-specific block).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct UdmfUnknownBlock {
     /// The block header identifier (lowercased).
     pub name: String,

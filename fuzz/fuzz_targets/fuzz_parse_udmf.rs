@@ -19,7 +19,8 @@ fuzz_target!(|data: &[u8]| {
                 + map.linedefs.len()
                 + map.sidedefs.len()
                 + map.sectors.len()
-                + map.things.len();
+                + map.things.len()
+                + map.unknown_blocks.len();
             assert!(
                 elements <= data.len(),
                 "element count {elements} exceeds O(input) bound {}",
