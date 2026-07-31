@@ -248,6 +248,12 @@ note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES
 wrote out.wad: converted 1 map to udmf
 ```
 
+A source map already in UDMF is not converted, so `--to udmf --nodes` passes
+it through unchanged and does **not** retrofit a `ZNODES` stream onto it (a
+per-group note says so; the in-place UDMF node rebuild is tracked by
+[#385](https://github.com/masriamir/crustywad/issues/385)). Use
+`cwad build --nodes` to rebuild an existing UDMF group's `ZNODES` in place.
+
 `--node-format <FORMAT>` selects the on-disk form of the nodes `--nodes`
 builds; default `classic`. It has no effect without `--nodes`; a
 non-`classic` value passed without `--nodes` prints a note on stderr and is

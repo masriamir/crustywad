@@ -321,7 +321,12 @@ describe the source geometry, so carrying either across would look intact
 while being subtly wrong. That is data loss under the same policy as any
 other: strict mode refuses (exit `3`, naming each lump), `--lenient` drops
 them and warns. A map already in the target format is not converted, so
-nothing in its group is dropped.
+nothing in its group is dropped. Such a same-format map passes through
+unchanged even under `--nodes`: `--nodes` does not retrofit a `ZNODES` stream
+onto a group that is already UDMF (the in-place UDMF node rebuild is tracked by
+[#385](https://github.com/masriamir/crustywad/issues/385)) — the per-group note
+says so. Use `cwad build --nodes` to rebuild an existing UDMF group's `ZNODES`
+in place.
 
 See [CLI Usage](cli.md#convert) for the full flag reference, example output,
 and exit codes.

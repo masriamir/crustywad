@@ -1237,6 +1237,17 @@ fn run(cli: Cli) -> Result<i32> {
                             // requiring the old nodes to parse would make
                             // `--nodes` unable to *fix* a broken ZNODES (strict
                             // assembly rejects an unrecognized ZNODES signature).
+                            //
+                            // The in-place patch below re-emits the TEXTMAP
+                            // verbatim, so it depends on assembly staying
+                            // element-count-faithful to that text: lenient
+                            // repairs today only clamp/coerce fields, never
+                            // drop elements, so the built ZNODES indexes the
+                            // same vertices/lines/sides the verbatim TEXTMAP
+                            // declares. If a future lenient repair ever *drops*
+                            // an element, the emitted ZNODES would desync from
+                            // the untouched TEXTMAP and this path would need to
+                            // re-serialize the map instead.
                             let assemble_group = MapGroup {
                                 marker_index: group.marker_index,
                                 name: group.name.clone(),
@@ -1306,6 +1317,12 @@ fn run(cli: Cli) -> Result<i32> {
                             // order: replace an existing ZNODES's bytes in place;
                             // if the group has none, insert one right after
                             // TEXTMAP.
+                            //
+                            // Pathological groups with duplicate TEXTMAP/ZNODES
+                            // lumps are handled deterministically (garbage in):
+                            // every ZNODES is replaced with the built stream and
+                            // the insert fires once per TEXTMAP, so the output is
+                            // a fixed function of the malformed input.
                             let has_znodes = std::iter::once(group.marker_index)
                                 .chain(group.data_indices.iter().copied())
                                 .any(|idx| wad.lumps()[idx].name() == "ZNODES");
@@ -1509,6 +1526,19 @@ fn run(cli: Cli) -> Result<i32> {
                 if detect_map_format(&wad, &group) == target
                     && !(nodes && matches!(to, MapFormatArg::Doom))
                 {
+                    // `--to udmf --nodes` on a group that is *already* UDMF
+                    // passes it through untouched: unlike the Doom target
+                    // (re-routed above to rebuild its node lumps in place), an
+                    // in-place UDMF ZNODES retrofit is not yet implemented
+                    // (#385). The up-front "builds GL nodes into ZNODES" note
+                    // does not apply to this group, so say so per group rather
+                    // than let the run-level note imply otherwise.
+                    if nodes && matches!(to, MapFormatArg::Udmf) {
+                        eprintln!(
+                            "note: {} is already UDMF; passed through unchanged (no ZNODES built — see #385)",
+                            group.name
+                        );
+                    }
                     continue; // already in the target format: pass through
                 }
                 let extra = dropped_group_lumps(&wad, &group);

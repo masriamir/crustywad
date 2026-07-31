@@ -2365,6 +2365,63 @@ fn build_nodes_udmf_honors_explicit_gl_dialect() {
 }
 
 #[test]
+fn build_nodes_handles_mixed_doom_and_udmf_groups() {
+    // A single WAD carrying BOTH a Doom map group (empty node lumps) and a UDMF
+    // map group, plus a loose non-map lump: build --nodes (default format)
+    // rebuilds the Doom group's classic node lumps and builds a GL ZNODES for
+    // the UDMF group, while the non-map lump survives verbatim.
+    let doom_fixture = write_doom_square_room_empty_nodes_wad();
+    let doom_bytes = std::fs::read(doom_fixture.path()).unwrap();
+    let doom_wad = crustywad::Wad::from_bytes(doom_bytes).expect("doom fixture parses");
+    // The Doom fixture is [MAP01 .. BLOCKMAP, COLORMAP]; take it whole, then
+    // append a UDMF group so the WAD holds one group of each format.
+    let mut lumps: Vec<(String, Vec<u8>)> = doom_wad
+        .lumps()
+        .iter()
+        .map(|l| (l.name().to_string(), doom_wad.lump_data(l).to_vec()))
+        .collect();
+    lumps.push(("MAP02".to_string(), Vec::new()));
+    lumps.push(("TEXTMAP".to_string(), udmf_square_room().into_bytes()));
+    lumps.push(("ENDMAP".to_string(), Vec::new()));
+
+    let combined = write_wad_owned(*b"PWAD", &lumps);
+    let (specs, _files) = explode_wad_to_build_specs(combined.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    // Doom group: classic node lumps rebuilt (SEGS non-empty, NODES present).
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "the Doom group's SEGS should be rebuilt non-empty"
+    );
+    assert!(
+        lump_names(out.path()).iter().any(|n| n == "NODES"),
+        "the Doom group's NODES lump should be present"
+    );
+    // UDMF group: a GL ZNODES stream was built (XGLN under the default format).
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "the UDMF group's ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+    // The loose non-map lump survived verbatim.
+    assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4_u8, 5, 6]);
+}
+
+#[test]
 fn build_without_nodes_leaves_packed_node_lumps_untouched() {
     // Regression: without --nodes, packed (empty) node lumps are not rebuilt.
     let fixture = write_doom_square_room_empty_nodes_wad();
@@ -3907,6 +3964,46 @@ fn convert_to_udmf_with_nodes_emits_znodes() {
         .args(["validate", "--deep", out.path().to_str().unwrap()])
         .assert()
         .code(0);
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_passes_udmf_source_through_unchanged() {
+    // A source group already in the target format (UDMF -> UDMF) passes through
+    // untouched: --nodes does NOT retrofit a ZNODES onto it (that in-place
+    // rebuild is tracked by #385). The per-group note makes the pass-through
+    // honest despite the run-level "builds GL nodes into ZNODES" note.
+    let wad = write_udmf_square_room_wad();
+    let input_textmap = lump_bytes(wad.path(), "TEXTMAP");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+        ])
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "MAP01 is already UDMF; passed through unchanged (no ZNODES built — see #385)",
+        ));
+
+    // The group passed through byte-identical: same lumps in order, no ZNODES
+    // inserted, and the TEXTMAP bytes are untouched.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+    );
+    assert!(
+        !lump_names(out.path()).iter().any(|n| n == "ZNODES"),
+        "no ZNODES should be built for an already-UDMF pass-through"
+    );
+    assert_eq!(lump_bytes(out.path(), "TEXTMAP"), input_textmap);
 }
 
 #[test]
