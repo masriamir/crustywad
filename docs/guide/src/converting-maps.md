@@ -310,7 +310,11 @@ strict mode refuses any UDMF field the Doom format cannot represent.
 
 A converted group contains only what the target format defines — the marker
 plus `TEXTMAP`/`ENDMAP`, or the marker plus the classic data lumps and the
-empty node lumps. Any other lump that lived inside the map group (`BEHAVIOR`,
+empty node lumps. Pass `--nodes` to build real node lumps in place of the
+empty ones for either target — `SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`
+for `--to doom`, a GL `ZNODES` stream for `--to udmf` — see
+[Building nodes](building-nodes.md). Any other lump that lived inside the
+source map group (`BEHAVIOR`,
 `SCRIPTS`, `ZNODES`, `DIALOGUE`, GL nodes) is **dropped**, not passed
 through: compiled ACS is bound to the source map's specials and node lumps
 describe the source geometry, so carrying either across would look intact

@@ -64,24 +64,37 @@ hand.
 
 ## From the CLI: `cwad convert --nodes`
 
-`cwad convert --to doom --nodes` is the turnkey path — it runs the one-shot for
-every converted map, so the output WAD is engine-playable with no external step:
+`cwad convert --to doom --nodes` is the turnkey path — it runs the
+`add_doom_map_with_nodes` one-shot for every converted map, so the output WAD
+is engine-playable with no external step:
 
 ```bash
 cwad convert udmf.wad -o doom.wad --to doom --nodes --lenient
 cwad validate --deep doom.wad
 ```
 
-`--nodes` only affects classic Doom output; it is ignored (with a note on
-stderr) for `--to udmf`, which has no binary node lumps. The global `--lenient`
-flag selects lenient mode for both the conversion and the node build. See
+`--to udmf --nodes` instead runs `add_udmf_map_with_nodes`: UDMF has no binary
+node lumps, so the only thing to build is a GL `ZNODES` stream carrying the
+minimal-sufficient dialect (`gl` auto-format, noted on stderr):
+
+```bash
+cwad convert doom.wad -o udmf.wad --to udmf --nodes
+```
+
+`--node-format` still selects the dialect, but a UDMF target only accepts a GL
+value — the non-GL extended pair (`xnod`/`znod`) has no GL stream to become,
+so passing either exits `3` (see #384). The global `--lenient` flag selects
+lenient mode for both the conversion and the node build. See
 [CLI Usage](cli.md#convert) for the full flag reference.
 
 ### Choosing the on-disk node format
 
-`--node-format` selects how the built nodes are stored (Doom output only; it
-has no effect without `--nodes`, and a non-`classic` value passed without
-`--nodes` prints a note on stderr and is ignored):
+`--node-format` selects how the built nodes are stored for a Doom target, or
+which GL dialect fills a UDMF target's `ZNODES` stream. It has no effect
+without `--nodes`, and a non-`classic` value passed without `--nodes` prints
+a note on stderr and is ignored. A UDMF target only accepts a GL value (or
+the default `classic`, which auto-selects `gl`) — the non-GL extended pair
+(`xnod`/`znod`) has no GL stream to become and is rejected (see #384):
 
 | Value | On-disk form | Notes |
 |---|---|---|
@@ -101,13 +114,15 @@ cwad convert udmf.wad -o doom.wad --to doom --nodes --node-format gl
 
 ### `cwad build --nodes`
 
-`cwad build --nodes` runs the same one-shot for a WAD assembled from scratch
+`cwad build --nodes` runs the same builders for a WAD assembled from scratch
 out of `NAME=FILE` lump specifications: after packing, it rebuilds every
 Doom-format map group in the result with real, engine-playable node lumps —
 `SEGS`/`SSECTORS`/`NODES`, `REJECT`, and `BLOCKMAP` — overwriting whatever
 was packed for those lumps, whether empty placeholders or existing data. The
 packed `VERTEXES` lump can also grow, since the BSP pass appends any split
-vertices it creates to it:
+vertices it creates to it. It also rebuilds every UDMF-format map group's
+`ZNODES` stream in place (replacing an existing one, or inserting it right
+after `TEXTMAP`), the rest of the group's lumps carried through unchanged:
 
 ```bash
 cwad build --nodes MAP01=map01.lmp THINGS=things.lmp ... -o playable.wad
@@ -115,10 +130,13 @@ cwad build --nodes --node-format gl MAP01=map01.lmp THINGS=things.lmp ... -o pla
 ```
 
 `build --nodes` accepts the same `--node-format` values as `convert --nodes`
-(the table above), including the GL dialects and their `z*` zlib twins.
-Hexen, Doom 64, and UDMF map groups are not yet supported by `build --nodes`
-and are passed through unchanged with a note on stderr (follow-up issues
-#352/#353/#354); non-map lumps always pass through unchanged. See
+(the table above), including the GL dialects and their `z*` zlib twins. As
+with `convert --to udmf --nodes`, a UDMF map group's `ZNODES` only accepts a
+GL dialect: `classic` auto-selects `gl` (noted on stderr); an explicit
+`xnod`/`znod` skips that one group with a note instead of failing the whole
+build (see #384). Hexen (#352) and Doom 64 (#353) map groups are not yet
+supported by `build --nodes` and are passed through unchanged with a note on
+stderr; non-map lumps always pass through unchanged. See
 [CLI Usage](cli.md#build) for the full flag reference.
 
 ## The tolerated mixed-sector fan
@@ -149,7 +167,9 @@ The clean-room builder now spans three tiers of output:
 - **GL extended** — the `XGLN`/`XGL2`/`XGL3` streams (and their zlib twins
   `ZGLN`/`ZGL2`/`ZGL3` with `extended-nodes-zlib`) via `build_gl_nodes`
   + `BuiltGlNodes::to_extended_lump_bytes`, or the `add_doom_map_with_nodes` one-shot,
-  which carries the GL stream in `SSECTORS` (ADR-0026, #364, #365).
+  which carries the GL stream in `SSECTORS` (ADR-0026, #364, #365). The
+  `add_udmf_map_with_nodes` one-shot builds the same GL stream for a UDMF map
+  group, carried in `ZNODES` instead (#354).
   `NodeFormat::Gl`/`NodeFormat::Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
   real linedef index collides with `XGLN`'s `0xFFFF` miniseg sentinel (forcing `XGL2`'s
   32-bit linedefs) or a fractional partition forces `XGL3`.

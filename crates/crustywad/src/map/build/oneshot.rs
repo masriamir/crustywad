@@ -2,6 +2,8 @@
 //! five data lumps with real, built node lumps (`SEGS`/`SSECTORS`/`NODES`,
 //! `REJECT`, `BLOCKMAP`) into a [`WadBuilder`], so the resulting WAD runs in a
 //! vanilla engine without an external nodebuilder pass (ADR-0024 §4).
+//! [`add_udmf_map_with_nodes`] is its UDMF counterpart: it bundles a UDMF map
+//! group (`TEXTMAP`) with a built GL `ZNODES` stream.
 
 use crate::map::Map;
 use crate::map::doom::DoomWriteWarning;
