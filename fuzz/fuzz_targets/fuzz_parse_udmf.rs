@@ -26,7 +26,10 @@ fuzz_target!(|data: &[u8]| {
                 data.len()
             );
             // ADR-0027 O(input) bound on retention: each retained assignment
-            // consumes at least the bytes of `n=v;` in the input.
+            // consumes at least the 4 bytes of `n=v;` in the input, and no
+            // input assignment ever produces more than one retained entry
+            // (dual-stored thing booleans fold into `flags` without a second
+            // extras entry; duplicates collapse last-wins).
             let retained = map.global_extras.len()
                 + map
                     .unknown_blocks
@@ -39,9 +42,9 @@ fuzz_target!(|data: &[u8]| {
                 + map.sectors.iter().map(|s| s.extras.len()).sum::<usize>()
                 + map.things.iter().map(|t| t.extras.len()).sum::<usize>();
             assert!(
-                retained <= data.len(),
+                retained <= data.len() / 4,
                 "retained assignment count {retained} exceeds O(input) bound {}",
-                data.len()
+                data.len() / 4
             );
             // ADR-0027 semantic round-trip oracle: canonical output must
             // reparse to an equal document.
