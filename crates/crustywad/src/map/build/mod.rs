@@ -44,6 +44,7 @@
 use crate::Strictness;
 use crate::map::DoomWriteError;
 use crate::map::doom::DoomWriteWarning;
+use crate::map::udmf::{UdmfWriteError, UdmfWriteWarning};
 
 mod blockmap;
 mod geom;
@@ -55,7 +56,7 @@ mod reject;
 pub use blockmap::build_blockmap;
 pub use gl_nodes::{BuiltGlNode, BuiltGlNodes, build_gl_nodes};
 pub use nodes::{BuiltNodeLumps, BuiltNodes, build_nodes};
-pub use oneshot::add_doom_map_with_nodes;
+pub use oneshot::{add_doom_map_with_nodes, add_udmf_map_with_nodes};
 pub use reject::build_reject;
 
 /// Default [`NodeBuildOptions::split_cost`] (ADR-0024 §B.3): the observed
@@ -410,6 +411,14 @@ pub enum NodeBuildError {
     /// whole-structure check (subsector partition, seg/child index domains).
     #[error(transparent)]
     InvalidStructure(#[from] NodeStructureError),
+    /// The UDMF text serialization failed (`write_udmf`) while emitting a
+    /// UDMF map group with nodes (ADR-0026 §3's ZNODES carrier, #354).
+    #[error("failed to write UDMF text: {source}")]
+    UdmfWrite {
+        /// The underlying UDMF write error.
+        #[source]
+        source: UdmfWriteError,
+    },
 }
 
 impl NodeBuildError {
@@ -444,6 +453,7 @@ impl NodeBuildError {
     pub fn is_lenient_recoverable(&self) -> bool {
         match self {
             Self::Write(inner) => inner.is_lenient_recoverable(),
+            Self::UdmfWrite { source } => source.is_lenient_recoverable(),
             Self::MixedSectorSubsector { .. } => true,
             Self::EmptyGeometry
             | Self::BlockmapOverflow { .. }
@@ -694,6 +704,9 @@ pub enum NodeBuildWarning {
     /// *empty*-node write path, not of a real build.
     #[error(transparent)]
     Write(DoomWriteWarning),
+    /// A warning recovered by the UDMF text serialization pass.
+    #[error(transparent)]
+    UdmfWrite(UdmfWriteWarning),
     /// Lenient mode: a packed `BLOCKMAP` blocklist starts past the vanilla
     /// signed-offset ceiling (> 32,767) but still fits an unsigned 16-bit word.
     /// The lump was emitted; a limit-removing port is needed to read it
