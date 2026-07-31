@@ -326,7 +326,8 @@ unchanged even under `--nodes`: `--nodes` does not retrofit a `ZNODES` stream
 onto a group that is already UDMF (the in-place UDMF node rebuild is tracked by
 [#385](https://github.com/masriamir/crustywad/issues/385)) — the per-group note
 says so. Use `cwad build --nodes` to rebuild an existing UDMF group's `ZNODES`
-in place.
+in place (after extracting the WAD's lumps — `build` takes `NAME=FILE` specs,
+not a WAD).
 
 See [CLI Usage](cli.md#convert) for the full flag reference, example output,
 and exit codes.
