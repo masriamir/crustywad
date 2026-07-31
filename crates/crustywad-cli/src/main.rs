@@ -607,10 +607,9 @@ fn effective_udmf_format(
         NodeFormat::Zgln | NodeFormat::Zgl2 | NodeFormat::Zgl3 | NodeFormat::Zgl => {
             Some(opts.format)
         }
-        #[cfg(feature = "extended-nodes-zlib")]
-        NodeFormat::Znod => None,
-        // `NodeFormat` is `#[non_exhaustive]`; a future variant is treated as
-        // "no GL stream" (skip) until it is deliberately placed above.
+        // `Znod` (zlib feature) and — `NodeFormat` being `#[non_exhaustive]` —
+        // any future variant are treated as "no GL stream" (skip) until
+        // deliberately placed above.
         _ => None,
     }
 }
@@ -1280,39 +1279,34 @@ fn run(cli: Cli) -> Result<i32> {
                                 .expect("udmf_starts holds only GL-format groups");
                             let mut effective_opts = build_opts.clone();
                             effective_opts.format = effective_format;
-                            let gl = match build_gl_nodes(&map, &effective_opts) {
-                                Ok((gl, ws)) => {
+                            // Both build stages share one error arm: the
+                            // serialization step's failures (arena overflow,
+                            // unnarrowable coordinate) report identically to
+                            // the BSP pass's.
+                            let znodes =
+                                match build_gl_nodes(&map, &effective_opts).and_then(|(gl, ws)| {
                                     for w in &ws {
                                         eprintln!("warning: {}: {w}", group.name);
                                     }
-                                    gl
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "error: failed to build nodes for map {}: {e}",
-                                        group.name
-                                    );
-                                    if e.is_lenient_recoverable() && !cli.lenient {
-                                        eprintln!("note: re-run with --lenient to build anyway");
+                                    gl.to_extended_lump_bytes(
+                                        map.vertices().len(),
+                                        effective_format,
+                                    )
+                                }) {
+                                    Ok(bytes) => bytes,
+                                    Err(e) => {
+                                        eprintln!(
+                                            "error: failed to build nodes for map {}: {e}",
+                                            group.name
+                                        );
+                                        if e.is_lenient_recoverable() && !cli.lenient {
+                                            eprintln!(
+                                                "note: re-run with --lenient to build anyway"
+                                            );
+                                        }
+                                        return Ok(3);
                                     }
-                                    return Ok(3);
-                                }
-                            };
-                            let znodes = match gl
-                                .to_extended_lump_bytes(map.vertices().len(), effective_format)
-                            {
-                                Ok(bytes) => bytes,
-                                Err(e) => {
-                                    eprintln!(
-                                        "error: failed to build nodes for map {}: {e}",
-                                        group.name
-                                    );
-                                    if e.is_lenient_recoverable() && !cli.lenient {
-                                        eprintln!("note: re-run with --lenient to build anyway");
-                                    }
-                                    return Ok(3);
-                                }
-                            };
+                                };
                             // Re-emit the group's lumps in original directory
                             // order: replace an existing ZNODES's bytes in place;
                             // if the group has none, insert one right after

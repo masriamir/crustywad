@@ -1545,3 +1545,20 @@ fn add_udmf_map_with_nodes_rejects_non_gl_formats() {
     let wad = Wad::from_bytes_with_options(bytes, ParseOptions::strict()).expect("parse");
     assert!(wad.lumps().is_empty());
 }
+
+#[test]
+fn udmf_write_error_recoverability_delegates_through_node_build_error() {
+    use crustywad::map::MapFormat;
+    use crustywad::map::udmf::UdmfWriteError;
+
+    let recoverable = NodeBuildError::UdmfWrite {
+        source: UdmfWriteError::EmptyNamespace,
+    };
+    assert!(recoverable.is_lenient_recoverable());
+    let unrecoverable = NodeBuildError::UdmfWrite {
+        source: UdmfWriteError::UnsupportedSourceFormat {
+            format: MapFormat::Doom,
+        },
+    };
+    assert!(!unrecoverable.is_lenient_recoverable());
+}
