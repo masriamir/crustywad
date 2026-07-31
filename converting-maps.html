@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e65550a5.js";
+            window.path_to_searchindex_js = "searchindex-173a269d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -329,9 +329,11 @@ is not hypothetical — 226 things across 10 Freedoom maps store a literal
 <p><strong>UDMF → Doom → UDMF is one-way.</strong> Converting a UDMF map to Doom and back
 does not reproduce the original UDMF map: <code>f64</code> coordinates are rounded to
 <code>i16</code> map units, and fields Doom has no slot for (tier 3 below) are dropped
-permanently. There is no lossless UDMF → UDMF path through this API; a
-caller needing full text-level fidelity should keep the parsed <code>UdmfMap</code>
-intermediate instead of round-tripping through <code>Map</code>.</p>
+permanently. For a lossless UDMF → UDMF round-trip — preserving <code>comment</code>
+fields, <code>user_*</code> fields, and unmodeled port fields (lexical <code>//</code> and <code>/* */</code>
+comments are trivia and do not survive) — keep the parsed <code>UdmfMap</code> intermediate
+and re-emit it with <code>UdmfMap::to_textmap</code> (also behind the <code>write</code> feature)
+instead of round-tripping through <code>Map</code> (ADR-0027).</p>
 <h2 id="strict-vs-lenient-conversion"><a class="header" href="#strict-vs-lenient-conversion">Strict vs. lenient conversion</a></h2>
 <p><code>write_doom_map()</code> / <code>add_doom_map()</code> share the crate’s usual
 <a href="writing-wads.html#strict-vs-lenient-write-validation"><code>WriteOptions</code></a>
