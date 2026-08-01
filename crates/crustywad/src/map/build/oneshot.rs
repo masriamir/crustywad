@@ -289,31 +289,52 @@ pub fn add_udmf_map_with_nodes(
     write_opts: &WriteOptions,
     build_opts: &NodeBuildOptions,
 ) -> Result<Vec<NodeBuildWarning>, NodeBuildError> {
-    // Every fallible step runs before the first `add_lump`, so the builder is
-    // untouched on error (asserted by the reject-Classic and cfg tests): the
-    // UDMF text first, then the node build, then the stream serialization.
-    let (text, udmf_ws) =
-        write_udmf(map, write_opts).map_err(|source| NodeBuildError::UdmfWrite { source })?;
+    /// The two ZNODES stream families this one-shot can build.
+    enum StreamFamily {
+        /// XGL*/ZGL* via the GL kernel.
+        Gl,
+        /// XNOD/ZNOD via the classic BSP pass.
+        NonGlExtended,
+    }
 
-    // Build the ZNODES stream per the target format family. UDMF stores no
-    // classic binary node lumps, so `Classic` (neither GL nor extended) is
-    // rejected explicitly with `UnsupportedNodeFormat`; a GL format runs the GL
-    // kernel and carries an XGL*/ZGL* stream; a non-GL extended format (`Xnod`/
-    // `Znod`) runs the classic BSP pass and carries an XNOD/ZNOD stream. Every
-    // fallible call in each arm runs before any `add_lump`, preserving fail-fast.
-    let (znodes, build_ws): (Vec<u8>, Vec<NodeBuildWarning>) = if build_opts.format.is_gl() {
-        let (gl, gl_ws) = build_gl_nodes(map, build_opts)?;
-        let stream = gl.to_extended_lump_bytes(map.vertices().len(), build_opts.format)?;
-        (stream, gl_ws)
+    // The format family is statically checkable, so it is validated before
+    // any per-map work: a `Classic` (neither GL nor extended) call gets the
+    // deterministic `UnsupportedNodeFormat` regardless of whether the map
+    // would also fail UDMF serialization.
+    let family = if build_opts.format.is_gl() {
+        StreamFamily::Gl
     } else if build_opts.format.is_extended() {
-        let (nodes, node_ws) = build_nodes(map, build_opts)?;
-        let stream =
-            nodes.to_extended_lump_bytes(map.vertices().len(), build_opts.format.compressed())?;
-        (stream, node_ws)
+        StreamFamily::NonGlExtended
     } else {
         return Err(NodeBuildError::UnsupportedNodeFormat {
             format: build_opts.format,
         });
+    };
+
+    // Every remaining fallible step runs before the first `add_lump`, so the
+    // builder is untouched on error (asserted by the reject-Classic and cfg
+    // tests): the UDMF text first, then the node build, then the stream
+    // serialization.
+    let (text, udmf_ws) =
+        write_udmf(map, write_opts).map_err(|source| NodeBuildError::UdmfWrite { source })?;
+
+    // Build the ZNODES stream per the target format family: a GL format runs
+    // the GL kernel and carries an XGL*/ZGL* stream; a non-GL extended format
+    // (`Xnod`/`Znod`) runs the classic BSP pass and carries an XNOD/ZNOD
+    // stream. Every fallible call in each arm runs before any `add_lump`,
+    // preserving fail-fast.
+    let (znodes, build_ws): (Vec<u8>, Vec<NodeBuildWarning>) = match family {
+        StreamFamily::Gl => {
+            let (gl, gl_ws) = build_gl_nodes(map, build_opts)?;
+            let stream = gl.to_extended_lump_bytes(map.vertices().len(), build_opts.format)?;
+            (stream, gl_ws)
+        }
+        StreamFamily::NonGlExtended => {
+            let (nodes, node_ws) = build_nodes(map, build_opts)?;
+            let stream = nodes
+                .to_extended_lump_bytes(map.vertices().len(), build_opts.format.compressed())?;
+            (stream, node_ws)
+        }
     };
 
     // Deterministic warning order: UDMF write-path warnings first, then the
