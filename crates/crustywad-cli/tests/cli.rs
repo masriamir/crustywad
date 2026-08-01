@@ -5619,3 +5619,44 @@ fn extract_malformed_midi_falls_back_to_raw() {
     assert!(dir.path().join("SHORTMID.bin").exists());
     assert!(!dir.path().join("SHORTMID.mid").exists());
 }
+
+#[test]
+fn convert_to_udmf_with_nodes_retrofit_node_build_failure_exits_3() {
+    // The retrofit path's error propagation: an already-UDMF source that
+    // assembles under --lenient (dangling `sidefront` clamped with a warning)
+    // but whose degenerate single-linedef geometry fails the GL node build.
+    let textmap = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 128; y = 0; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 99; blocking = true; }\n",
+    );
+    let fixture = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            fixture.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ));
+}
