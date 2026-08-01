@@ -765,7 +765,7 @@ fn patch_hexen_group_nodes(
     lenient: bool,
 ) -> Result<(), i32> {
     use crustywad::map::build::{
-        NodeBuildError, NodeFormat, build_blockmap, build_gl_nodes, build_nodes, build_reject,
+        NodeFormat, build_blockmap, build_gl_nodes, build_nodes, build_reject,
     };
     use crustywad::map::{Map, MapGroup};
 
@@ -842,80 +842,71 @@ fn patch_hexen_group_nodes(
         );
     }
 
-    // Shared build-error arm (blockmap and BSP/GL failures report identically).
-    let report_build_err = |e: &NodeBuildError| {
-        eprintln!("error: failed to build nodes for map {}: {e}", group.name);
-        if e.is_lenient_recoverable() && !lenient {
-            eprintln!("note: re-run with --lenient to build anyway");
-        }
-    };
-
-    // REJECT (infallible, all-zeros: every sector pair visible) + BLOCKMAP.
+    // REJECT (infallible, all-zeros: every sector pair visible).
     let reject = build_reject(&map).to_lump_bytes();
-    let (blockmap, blockmap_ws) = match build_blockmap(&map, build_opts) {
-        Ok(r) => r,
-        Err(e) => {
-            report_build_err(&e);
-            return Err(3);
-        }
-    };
-    let blockmap = match blockmap.to_lump_bytes() {
-        Ok(b) => b,
-        Err(e) => {
-            report_build_err(&e);
-            return Err(3);
-        }
-    };
 
-    // Build the node lumps per format family, mirroring the one-shot's three
-    // arms. `Classic` is a valid Hexen default, so it gets its own arm (unlike
-    // the UDMF sibling, which has no classic carrier); `Xnod`/`Znod` carry a
-    // non-GL extended stream; every remaining (GL) format runs the GL kernel.
-    // `NodeFormat`'s `is_gl`/`is_extended` predicates are crate-private, so the
-    // non-GL set is matched explicitly (mirroring `node_format_arg_to_lib`'s cfg
-    // style); a future non-GL/non-classic variant falls through to the GL
-    // serializer, whose dispatch rejects it via the shared error arm.
+    // One fallible chain for every buildable lump: BLOCKMAP, its serialization,
+    // and the per-format node build (mirroring the one-shot's arms — `Classic`
+    // is a valid Hexen default with its own arm; `Xnod`/`Znod` carry a non-GL
+    // extended stream; every remaining GL format runs the GL kernel, and a
+    // future non-GL/non-classic variant falls through to the GL serializer,
+    // whose dispatch rejects it). Threading all failures through a single
+    // `Result` collapses the blockmap and BSP/GL error paths into one arm, and
+    // carries both warning vecs so their echo order (blockmap, then BSP/GL)
+    // survives. `NodeFormat`'s `is_gl`/`is_extended` predicates are crate-
+    // private, so the non-GL set is matched explicitly (mirroring
+    // `node_format_arg_to_lib`'s cfg style).
     let orig_vertex_count = map.vertices().len();
-    let built: Result<(NodeLumps, Vec<crustywad::map::build::NodeBuildWarning>), NodeBuildError> =
-        match build_opts.format {
-            NodeFormat::Classic => build_nodes(&map, build_opts).and_then(|(nodes, ws)| {
-                nodes.to_lump_bytes().map(|l| {
-                    (
-                        NodeLumps::Classic(l.segs, l.ssectors, l.nodes, l.split_vertexes),
-                        ws,
-                    )
-                })
-            }),
-            NodeFormat::Xnod => build_nodes(&map, build_opts).and_then(|(nodes, ws)| {
-                nodes
-                    .to_extended_lump_bytes(orig_vertex_count, false)
-                    .map(|b| (NodeLumps::NonGl(b), ws))
-            }),
+    let build_result = build_blockmap(&map, build_opts).and_then(|(blockmap, blockmap_ws)| {
+        let blockmap = blockmap.to_lump_bytes()?;
+        let (node_lumps, node_ws) = match build_opts.format {
+            NodeFormat::Classic => {
+                let (nodes, ws) = build_nodes(&map, build_opts)?;
+                let l = nodes.to_lump_bytes()?;
+                (
+                    NodeLumps::Classic(l.segs, l.ssectors, l.nodes, l.split_vertexes),
+                    ws,
+                )
+            }
+            NodeFormat::Xnod => {
+                let (nodes, ws) = build_nodes(&map, build_opts)?;
+                (
+                    NodeLumps::NonGl(nodes.to_extended_lump_bytes(orig_vertex_count, false)?),
+                    ws,
+                )
+            }
             #[cfg(feature = "extended-nodes-zlib")]
-            NodeFormat::Znod => build_nodes(&map, build_opts).and_then(|(nodes, ws)| {
-                nodes
-                    .to_extended_lump_bytes(orig_vertex_count, true)
-                    .map(|b| (NodeLumps::NonGl(b), ws))
-            }),
-            _ => build_gl_nodes(&map, build_opts).and_then(|(gl, ws)| {
-                gl.to_extended_lump_bytes(orig_vertex_count, build_opts.format)
-                    .map(|b| (NodeLumps::Gl(b), ws))
-            }),
+            NodeFormat::Znod => {
+                let (nodes, ws) = build_nodes(&map, build_opts)?;
+                (
+                    NodeLumps::NonGl(nodes.to_extended_lump_bytes(orig_vertex_count, true)?),
+                    ws,
+                )
+            }
+            _ => {
+                let (gl, ws) = build_gl_nodes(&map, build_opts)?;
+                (
+                    NodeLumps::Gl(gl.to_extended_lump_bytes(orig_vertex_count, build_opts.format)?),
+                    ws,
+                )
+            }
         };
-    let (node_lumps, node_ws) = match built {
+        Ok((blockmap, blockmap_ws, node_lumps, node_ws))
+    });
+    let (blockmap, blockmap_ws, node_lumps, node_ws) = match build_result {
         Ok(v) => v,
         Err(e) => {
-            report_build_err(&e);
+            eprintln!("error: failed to build nodes for map {}: {e}", group.name);
+            if e.is_lenient_recoverable() && !lenient {
+                eprintln!("note: re-run with --lenient to build anyway");
+            }
             return Err(3);
         }
     };
     // Deterministic warning order (matching the one-shot's Global Constraint 6):
     // blockmap warnings, then BSP/GL build warnings. There is no write-path
     // prefix here — the geometry lumps are re-emitted verbatim, not serialized.
-    for w in &blockmap_ws {
-        eprintln!("warning: {}: {w}", group.name);
-    }
-    for w in &node_ws {
+    for w in blockmap_ws.iter().chain(&node_ws) {
         eprintln!("warning: {}: {w}", group.name);
     }
 
