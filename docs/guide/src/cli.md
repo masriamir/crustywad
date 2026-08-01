@@ -248,13 +248,18 @@ note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each co
 wrote out.wad: converted 1 map to udmf
 ```
 
-A source map already in UDMF is not converted, so `--to udmf --nodes` passes
-it through unchanged and does **not** retrofit a `ZNODES` stream onto it (a
-per-group note says so; the in-place UDMF node rebuild is tracked by
-[#385](https://github.com/masriamir/crustywad/issues/385)). Use
-`cwad build --nodes` to rebuild an existing UDMF group's `ZNODES` in place
-(after extracting the WAD's lumps — `build` takes `NAME=FILE` specs, not a
-WAD).
+A source map already in UDMF is not converted — but `--to udmf --nodes`
+retrofits its `ZNODES` stream in place rather than passing the group through
+untouched: the group's `TEXTMAP` bytes are re-emitted verbatim, any port
+lump in the group (`DIALOGUE`, `BEHAVIOR`) is preserved untouched, and a
+stale or corrupt existing `ZNODES` is replaced (or inserted right after
+`TEXTMAP` if the group has none). A per-group note reports the retrofit
+(`is already UDMF; rebuilt ZNODES in place (map not converted)`), and it is
+**not** counted in `converted N maps` — this is a patch, not a conversion. A
+map excluded from the run by `--map` passes through unchanged with no
+retrofit. `cwad build --nodes` remains the spec-based alternative: it
+rebuilds `ZNODES` in place directly from `NAME=FILE` lump specs, without
+needing a whole WAD as input.
 
 `--node-format <FORMAT>` selects the on-disk form of the nodes `--nodes`
 builds; default `classic`. It has no effect without `--nodes`; a
