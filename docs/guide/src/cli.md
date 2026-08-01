@@ -184,11 +184,13 @@ no-op and prints a note.
 (`xnod`/`znod`), the four GL dialects (`xgln`/`xgl2`/`xgl3`/`gl`), and their
 `z*` zlib twins. A UDMF map group's `ZNODES` stream accepts any of them:
 `classic` auto-selects `gl` (noted on stderr once per group); an explicit
-`xnod`/`znod` builds a non-GL extended stream instead. The non-GL formats are
-integer-precision, so a fractional-coordinate UDMF map is rejected in strict
-mode (naming the offending coordinate, with a `--lenient` hint) and rounded
-to the nearest whole unit with a warning in lenient mode — a map that needs
-exact fractional geometry preserved should use a GL dialect instead:
+`xnod`/`znod` builds a non-GL extended stream instead. The classic BSP pass
+behind them is integer-precision, so a fractional-coordinate UDMF map is
+rejected in strict mode (naming the offending coordinate, with a `--lenient`
+hint) and rounded to the nearest whole unit with a warning in lenient mode —
+the rounding applies to the node stream only, the `TEXTMAP` keeps the
+fractional originals; a map that needs exact fractional geometry preserved
+should use a GL dialect instead:
 
 ```text
 $ cwad build --nodes --node-format gl -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
@@ -283,10 +285,11 @@ noted and ignored as described above.
 **`--to udmf --nodes` accepts any `--node-format` value.** The `ZNODES`
 container can carry either a GL stream or the non-GL extended pair
 (`XNOD`/`ZNOD`) — engines accept both. The default `classic` auto-selects
-`gl`; an explicit `xnod`/`znod` builds that non-GL stream instead. Because
-`XNOD`/`ZNOD` store integer coordinates, a fractional-coordinate UDMF map
-exits `3` in strict mode, naming the offending coordinate and hinting at
-`--lenient`:
+`gl`; an explicit `xnod`/`znod` builds that non-GL stream instead. The
+classic BSP pass behind them narrows coordinates through the shared integer
+write path, so a fractional-coordinate UDMF map exits `3` in strict mode,
+naming the offending coordinate and hinting at `--lenient` (lenient rounds
+for the node stream only — the `TEXTMAP` keeps the fractional originals):
 
 ```text
 $ cwad convert fractional.wad -o out.wad --to udmf --nodes --node-format xnod

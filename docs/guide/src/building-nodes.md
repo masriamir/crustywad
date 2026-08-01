@@ -84,11 +84,13 @@ cwad convert doom.wad -o udmf.wad --to udmf --nodes
 
 `--node-format` still selects the dialect, and a UDMF target now accepts any
 of them — the non-GL extended pair (`xnod`/`znod`) builds an `XNOD`/`ZNOD`
-stream inside `ZNODES` just as it would in `NODES` for a Doom target. Because
-those non-GL streams are integer-precision, a fractional-coordinate UDMF map
+stream inside `ZNODES` just as it would in `NODES` for a Doom target. The
+non-GL streams are built by the classic BSP pass, which narrows coordinates
+through the shared integer write path — so a fractional-coordinate UDMF map
 exits `3` in strict mode, naming the offending coordinate and hinting at
 `--lenient`; `--lenient` rounds the coordinate to the nearest whole map unit
-and warns instead. A map that needs fractional geometry preserved exactly
+for the node stream only (the `TEXTMAP` keeps the fractional originals) and
+warns instead. A map that needs fractional geometry preserved exactly
 should use a GL dialect (`gl`, `xgln`, `xgl2`, or `xgl3`), which has no such
 ceiling. The global `--lenient` flag selects lenient mode for both the
 conversion and the node build. See [CLI Usage](cli.md#convert) for the full
@@ -139,10 +141,11 @@ cwad build --nodes --node-format gl MAP01=map01.lmp THINGS=things.lmp ... -o pla
 (the table above), including the GL dialects and their `z*` zlib twins. As
 with `convert --to udmf --nodes`, a UDMF map group's `ZNODES` accepts any of
 them: `classic` auto-selects `gl` (noted on stderr); an explicit `xnod`/`znod`
-builds a non-GL extended stream instead. Those non-GL streams are
+builds a non-GL extended stream instead. The classic BSP pass behind them is
 integer-precision, so a fractional-coordinate UDMF map is rejected in strict
 mode (naming the offending coordinate, with a `--lenient` hint) and rounded
-with a warning in lenient mode; a map needing exact fractional geometry
+with a warning in lenient mode — for the node stream only, the `TEXTMAP`
+keeps the fractional originals; a map needing exact fractional geometry
 should use a GL dialect. Hexen (#352) and Doom 64 (#353) map groups are not yet
 supported by `build --nodes` and are passed through unchanged with a note on
 stderr; non-map lumps always pass through unchanged. See
