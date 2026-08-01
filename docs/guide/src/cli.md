@@ -271,9 +271,12 @@ that actually takes effect (i.e. `--nodes` is in play) exits `3` with a
 clear error rather than a clap parse failure; without `--nodes` the flag is
 noted and ignored as described above.
 
-**`--to udmf --nodes` only accepts a GL `--node-format`.** `ZNODES` has no
-non-GL form, so an explicit `xnod` or `znod` exits `3` naming the problem
-(see #384); the default `classic` auto-selects `gl` instead of failing:
+**`--to udmf --nodes` only accepts a GL `--node-format`.** The `ZNODES`
+container itself can carry non-GL extended nodes (`XNOD`/`ZNOD`) too — engines
+accept both — but `cwad`'s UDMF output is GL-only for now as a deliberate CLI
+policy, so an explicit `xnod` or `znod` exits `3` naming the problem (lifting
+this is tracked by #384); the default `classic` auto-selects `gl` instead of
+failing:
 
 ```text
 $ cwad convert doom.wad -o out.wad --to udmf --nodes --node-format xnod
