@@ -883,6 +883,14 @@ fn patch_hexen_group_nodes(
                     ws,
                 )
             }
+            // The `_` arm cannot silently misroute a future variant: the
+            // library's format predicates and serializer dispatches are
+            // deliberately exhaustive, so a new `NodeFormat` variant is a
+            // compile error there until classified — and one classified as
+            // neither GL nor non-GL-extended reaches the GL serializer
+            // below, whose dispatch rejects it with `UnsupportedNodeFormat`
+            // through the shared error arm (same rationale as the UDMF
+            // sibling's routing match).
             _ => {
                 let (gl, ws) = build_gl_nodes(&map, build_opts)?;
                 (
