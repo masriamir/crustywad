@@ -218,20 +218,24 @@ pub(crate) enum SubCommand {
         #[arg(value_name = "NAME=FILE")]
         lumps: Vec<String>,
         /// After packing, build engine-playable node lumps (plus REJECT and
-        /// BLOCKMAP) for each Doom map group in the result, and a GL `ZNODES`
+        /// BLOCKMAP) for each Doom map group in the result, and a `ZNODES`
         /// stream for each UDMF map group — the lump layout follows
-        /// `--node-format`. UDMF only accepts a GL `--node-format` value:
-        /// `classic` auto-selects `gl`; `xnod`/`znod` skip the group with a
-        /// note (see #384). Hexen/Doom 64 groups are skipped with a note.
+        /// `--node-format`. `classic` auto-selects the GL `gl` dialect for a
+        /// UDMF group; an explicit `xnod`/`znod` builds a non-GL extended
+        /// stream there instead (integer-precision — a fractional-coordinate
+        /// UDMF map is rejected in strict mode and rounded with a warning in
+        /// lenient mode). Hexen/Doom 64 groups are skipped with a note.
         #[arg(long)]
         nodes: bool,
         /// On-disk node format for `--nodes` (applies to the Doom-format map
-        /// groups `--nodes` rebuilds, and selects the GL dialect carried in
+        /// groups `--nodes` rebuilds, and selects the dialect carried in
         /// the `ZNODES` stream it builds for UDMF map groups). GL streams
         /// (`xgln`/`xgl2`/`xgl3`/`gl` and their `z*` twins) are carried in
-        /// `SSECTORS` instead of `NODES` for Doom output; UDMF output only
-        /// accepts a GL value (`classic` auto-selects `gl`; `xnod`/`znod` are
-        /// rejected per group, see #384). When `--nodes` is in effect, every
+        /// `SSECTORS` instead of `NODES` for Doom output; for UDMF output
+        /// `classic` auto-selects `gl`, and an explicit `xnod`/`znod` builds
+        /// a non-GL extended `ZNODES` stream (integer-precision — a
+        /// fractional-coordinate map is rejected in strict mode and rounded
+        /// with a warning in lenient mode). When `--nodes` is in effect, every
         /// `z*` value requires cwad built with the `extended-nodes-zlib`
         /// feature (without `--nodes` the flag is noted and ignored).
         #[arg(long = "node-format", default_value = "classic", value_name = "FORMAT")]
@@ -250,8 +254,8 @@ pub(crate) enum SubCommand {
     /// Converting to `doom` emits empty SEGS/SSECTORS/NODES/REJECT/BLOCKMAP
     /// lumps — pass `--nodes` to build them in place, or run an external
     /// nodebuilder (zdbsp, bsp) before playing the map. Converting to `udmf`
-    /// with `--nodes` builds a GL `ZNODES` stream in place instead (GL-only;
-    /// see `--node-format`).
+    /// with `--nodes` builds a `ZNODES` stream in place instead (`gl` by
+    /// default; see `--node-format`).
     ///
     /// A converted map keeps only the lumps the target format defines. Any
     /// other lump inside the map group — BEHAVIOR (compiled ACS), SCRIPTS,
@@ -282,18 +286,22 @@ pub(crate) enum SubCommand {
         #[arg(long, default_value = "pwad", value_name = "KIND")]
         kind: WadKindArg,
         /// Build engine-playable node lumps: SEGS/SSECTORS/NODES/REJECT/
-        /// BLOCKMAP for `--to doom`, or a GL `ZNODES` stream for `--to udmf`.
-        /// UDMF only accepts a GL `--node-format` value: `classic`
-        /// auto-selects `gl`; `xnod`/`znod` exit 3 (see #384).
+        /// BLOCKMAP for `--to doom`, or a `ZNODES` stream for `--to udmf`.
+        /// For `--to udmf`, `classic` auto-selects the GL `gl` dialect; an
+        /// explicit `xnod`/`znod` builds a non-GL extended stream instead
+        /// (integer-precision — a fractional-coordinate map is rejected in
+        /// strict mode and rounded with a warning in lenient mode).
         #[arg(long)]
         nodes: bool,
         /// On-disk node format for `--nodes` — selects the Doom node layout
-        /// for `--to doom`, or the GL dialect carried in the `ZNODES` stream
+        /// for `--to doom`, or the dialect carried in the `ZNODES` stream
         /// for `--to udmf`. GL streams (`xgln`/`xgl2`/`xgl3`/`gl` and their
         /// `z*` twins) are carried in `SSECTORS` instead of `NODES` for Doom
-        /// output; for `--to udmf` only a GL value is valid (`classic`
-        /// auto-selects `gl`; `xnod`/`znod` exit 3, see #384). When `--nodes`
-        /// is in effect, every `z*` value requires cwad built with the
+        /// output; for `--to udmf`, `classic` auto-selects `gl`, and an
+        /// explicit `xnod`/`znod` builds a non-GL extended `ZNODES` stream
+        /// (integer-precision — a fractional-coordinate map is rejected in
+        /// strict mode and rounded with a warning in lenient mode). When
+        /// `--nodes` is in effect, every `z*` value requires cwad built with the
         /// `extended-nodes-zlib` feature (without `--nodes` the flag is noted
         /// and ignored).
         #[arg(long = "node-format", default_value = "classic", value_name = "FORMAT")]

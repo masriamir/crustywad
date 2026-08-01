@@ -159,10 +159,10 @@ Pass `--nodes` to rebuild, after packing, every **Doom**-format map group in
 the output with engine-playable node lumps via the
 [`add_doom_map_with_nodes`](building-nodes.md) one-shot — the BSP tree
 (`SEGS`/`SSECTORS`/`NODES`), the collision `BLOCKMAP`, and the all-clear
-`REJECT` — and every **UDMF**-format map group with a built GL `ZNODES`
-stream, replacing any existing `ZNODES` (or inserted right after `TEXTMAP` if
-the group has none) with the rest of the group's lumps carried through
-unchanged:
+`REJECT` — and every **UDMF**-format map group with a built `ZNODES`
+stream (a GL dialect by default; see `--node-format` below), replacing any
+existing `ZNODES` (or inserted right after `TEXTMAP` if the group has none)
+with the rest of the group's lumps carried through unchanged:
 
 ```text
 $ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
@@ -182,9 +182,13 @@ no-op and prints a note.
 `build --nodes` takes the same `--node-format <FORMAT>` flag as
 `convert --nodes` — `classic` (default), the non-GL extended pair
 (`xnod`/`znod`), the four GL dialects (`xgln`/`xgl2`/`xgl3`/`gl`), and their
-`z*` zlib twins. A UDMF map group's `ZNODES` stream is GL-only: `classic`
-auto-selects `gl` (noted on stderr once per group); `xnod`/`znod` skip that
-group with a note rather than failing the whole build (see #384):
+`z*` zlib twins. A UDMF map group's `ZNODES` stream accepts any of them:
+`classic` auto-selects `gl` (noted on stderr once per group); an explicit
+`xnod`/`znod` builds a non-GL extended stream instead. The non-GL formats are
+integer-precision, so a fractional-coordinate UDMF map is rejected in strict
+mode (naming the offending coordinate, with a `--lenient` hint) and rounded
+to the nearest whole unit with a warning in lenient mode — a map that needs
+exact fractional geometry preserved should use a GL dialect instead:
 
 ```text
 $ cwad build --nodes --node-format gl -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
@@ -236,11 +240,11 @@ flag applies to the build too — it is often needed for real maps, whose
 geometry can contain the engine-tolerated mixed-sector fan that strict mode
 rejects (see [Building nodes](building-nodes.md#the-tolerated-mixed-sector-fan)).
 
-`--nodes` combined with `--to udmf` instead builds a GL `ZNODES` stream for
-each converted map — UDMF has no binary node lumps, so the GL dialect
-selected by `--node-format` is the only one with anywhere to go. The default
-`classic` auto-selects `gl` and prints a note; an explicit GL value needs no
-note:
+`--nodes` combined with `--to udmf` instead builds a `ZNODES` stream for
+each converted map — UDMF has no binary node lumps, so `ZNODES` is the only
+place the dialect selected by `--node-format` has to go. The default
+`classic` auto-selects `gl` and prints a note; any explicit value (GL or
+non-GL) needs no note:
 
 ```text
 $ cwad convert doom.wad -o out.wad --to udmf --nodes
@@ -276,17 +280,24 @@ that actually takes effect (i.e. `--nodes` is in play) exits `3` with a
 clear error rather than a clap parse failure; without `--nodes` the flag is
 noted and ignored as described above.
 
-**`--to udmf --nodes` only accepts a GL `--node-format`.** The `ZNODES`
-container itself can carry non-GL extended nodes (`XNOD`/`ZNOD`) too — engines
-accept both — but `cwad`'s UDMF output is GL-only for now as a deliberate CLI
-policy, so an explicit `xnod` or `znod` exits `3` naming the problem (lifting
-this is tracked by #384); the default `classic` auto-selects `gl` instead of
-failing:
+**`--to udmf --nodes` accepts any `--node-format` value.** The `ZNODES`
+container can carry either a GL stream or the non-GL extended pair
+(`XNOD`/`ZNOD`) — engines accept both. The default `classic` auto-selects
+`gl`; an explicit `xnod`/`znod` builds that non-GL stream instead. Because
+`XNOD`/`ZNOD` store integer coordinates, a fractional-coordinate UDMF map
+exits `3` in strict mode, naming the offending coordinate and hinting at
+`--lenient`:
 
 ```text
-$ cwad convert doom.wad -o out.wad --to udmf --nodes --node-format xnod
-error: --node-format xnod is not valid for a UDMF target (ZNODES is GL-only; see #384)
+$ cwad convert fractional.wad -o out.wad --to udmf --nodes --node-format xnod
+error: failed to build nodes for map MAP01: fractional x 0.5 in vertex #3 cannot be stored as an i16
+note: re-run with --lenient to build anyway
 ```
+
+`--lenient` instead rounds the fractional coordinate to the nearest whole
+map unit and reports a warning; a map that needs the fractional geometry
+preserved exactly should use a GL dialect (`gl`, or one of `xgln`/`xgl2`/
+`xgl3`), which has no such precision ceiling.
 
 See
 [Choosing the on-disk node format](building-nodes.md#choosing-the-on-disk-node-format)
