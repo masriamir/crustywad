@@ -774,12 +774,21 @@ fn patch_hexen_group_nodes(
     /// the input is repaired rather than a strict-fatal decode of a doomed lump.
     const REBUILT: &[&str] = &["SEGS", "SSECTORS", "NODES", "REJECT", "BLOCKMAP"];
 
-    /// Polyobject anchor/spawn thing editor numbers (Hexen). Verified against the
-    /// id Software Hexen source release (mirror: videogamepreservation/hexen):
-    /// `P_LOCAL.H` defines `enum { PO_ANCHOR_TYPE = 3000, PO_SPAWN_TYPE,
-    /// PO_SPAWNCRUSH_TYPE };` (i.e. 3000/3001/3002), consumed by `PO_MAN.C`'s
-    /// `PO_Init()`.
-    const POLYOBJECT_THING_TYPES: [u16; 3] = [3000, 3001, 3002];
+    /// Polyobject anchor/spawn thing editor numbers.
+    ///
+    /// The vanilla Hexen values are verified against the id Software Hexen source
+    /// release (mirror: videogamepreservation/hexen): `P_LOCAL.H` defines
+    /// `enum { PO_ANCHOR_TYPE = 3000, PO_SPAWN_TYPE, PO_SPAWNCRUSH_TYPE };`
+    /// (i.e. 3000/3001/3002), consumed by `PO_MAN.C`'s `PO_Init()`.
+    ///
+    /// The 9300-series values are the `ZDoom` "Doom-in-Hexen" editor numbers,
+    /// verified against `GZDoom` `wadsrc/static/mapinfo/common.txt` (repo
+    /// `ZDoom/gzdoom`), whose `DoomEdNums` block maps `9300 = "$PolyAnchor"`,
+    /// `9301 = "$PolySpawn"`, `9302 = "$PolySpawnCrush"`, `9303 = "$PolySpawnHurt"`.
+    /// `ZDoom` moved these off 3000–3002 because in Doom-in-Hexen maps the Doom
+    /// editor numbers apply, where 3001/3002 are the Imp/Demon — so the vanilla
+    /// entries below double as monster numbers and the warning is advisory.
+    const POLYOBJECT_THING_TYPES: [u16; 7] = [3000, 3001, 3002, 9300, 9301, 9302, 9303];
 
     // The three carriers a Hexen node build can produce, mirroring
     // `add_doom_map_with_nodes`'s three arms.
@@ -828,7 +837,7 @@ fn patch_hexen_group_nodes(
         .find(|ty| POLYOBJECT_THING_TYPES.contains(ty))
     {
         eprintln!(
-            "warning: {}: map uses polyobjects (thing type {ty}); rebuilt nodes may split polyobject subsectors (see #389)",
+            "warning: {}: thing type {ty} matches a polyobject anchor/spawn editor number; rebuilt nodes may split polyobject subsectors (see #389)",
             group.name
         );
     }

@@ -2200,6 +2200,67 @@ fn build_nodes_repairs_corrupt_hexen_nodes() {
 }
 
 #[test]
+fn build_nodes_refuses_a_hexen_map_that_fails_to_assemble() {
+    // Explode a Hexen map, then blank out VERTEXES so its linedefs reference
+    // out-of-range vertices and strict assembly of the splice's geometry fails
+    // (exit 3, before any output is written) — the Hexen twin of the Doom
+    // `build_nodes_refuses_a_map_that_fails_to_assemble` case.
+    let fixture = write_hexen_map_wad_with_nodes();
+    let (mut specs, mut files) = explode_wad_to_build_specs(fixture.path());
+    let empty = write_bytes(&[]);
+    for spec in &mut specs {
+        if spec.starts_with("VERTEXES=") {
+            *spec = format!("VERTEXES={}", empty.path().to_str().unwrap());
+        }
+    }
+    files.push(empty); // keep the backing file alive for the command's duration
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("failed to assemble map"));
+}
+
+#[test]
+fn build_nodes_splices_hexen_group_under_lenient() {
+    // The corrupt-NODES Hexen fixture run under global `--lenient`: the splice
+    // still exits 0 and rebuilds the node lumps (the garbage `NODES` is replaced),
+    // exercising the lenient parse-options path through the Hexen splice.
+    let fixture = write_hexen_map_wad_with_nodes();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+    assert_ne!(
+        lump_bytes(out.path(), "NODES"),
+        b"JUNK",
+        "corrupt NODES should be replaced under --lenient"
+    );
+}
+
+#[test]
 fn build_nodes_inserts_missing_hexen_node_lumps_canonically() {
     // The no-nodes Hexen fixture: the five missing node lumps are inserted at
     // their canonical positions between the geometry lumps.
@@ -5091,45 +5152,7 @@ fn write_hexen_map_wad() -> NamedTempFile {
 /// The garbage node lumps are safe because the splice excludes all five from
 /// assembly and rebuilds them.
 fn write_hexen_map_wad_with_nodes() -> NamedTempFile {
-    // Square room: vertices (0,0) (128,0) (128,128) (0,128).
-    let mut vertexes = Vec::new();
-    for (x, y) in [(0_i16, 0_i16), (128, 0), (128, 128), (0, 128)] {
-        vertexes.extend_from_slice(&x.to_le_bytes());
-        vertexes.extend_from_slice(&y.to_le_bytes());
-    }
-
-    // Four sidedefs, all in sector 0 with a STARTAN3 middle texture (30 bytes each).
-    let mut sidedefs = Vec::new();
-    for _ in 0..4 {
-        sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // x offset
-        sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // y offset
-        sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // upper
-        sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // lower
-        sidedefs.extend_from_slice(b"STARTAN3"); // middle
-        sidedefs.extend_from_slice(&0_u16.to_le_bytes()); // sector
-    }
-
-    // One sector (26 bytes).
-    let mut sectors = Vec::new();
-    sectors.extend_from_slice(&0_i16.to_le_bytes()); // floor height
-    sectors.extend_from_slice(&128_i16.to_le_bytes()); // ceiling height
-    sectors.extend_from_slice(b"FLOOR4_8");
-    sectors.extend_from_slice(b"CEIL3_5\0");
-    sectors.extend_from_slice(&160_i16.to_le_bytes()); // light
-    sectors.extend_from_slice(&0_i16.to_le_bytes()); // special
-    sectors.extend_from_slice(&0_i16.to_le_bytes()); // tag
-
-    // Four Hexen linedefs (16 bytes each): v1, v2, flags (u16), special + 5 args
-    // (u8), right, left (u16). Each wall is one-sided (left = 0xffff) and blocking.
-    let mut linedefs = Vec::new();
-    for (v1, v2, front) in [(0_u16, 1_u16, 0_u16), (1, 2, 1), (2, 3, 2), (3, 0, 3)] {
-        linedefs.extend_from_slice(&v1.to_le_bytes());
-        linedefs.extend_from_slice(&v2.to_le_bytes());
-        linedefs.extend_from_slice(&1_u16.to_le_bytes()); // flags: blocking
-        linedefs.extend_from_slice(&[0_u8; 6]); // special + 5 args
-        linedefs.extend_from_slice(&front.to_le_bytes());
-        linedefs.extend_from_slice(&0xffff_u16.to_le_bytes()); // no left side
-    }
+    let (vertexes, sidedefs, sectors, linedefs) = hexen_square_room_geometry();
 
     // One Hexen thing (20 bytes): tid, x, y, z, angle, type, flags (u16),
     // special + 5 args (u8). A player-1 start at the room center.
@@ -5239,15 +5262,22 @@ fn write_hexen_square_room_wad() -> NamedTempFile {
 /// Software Hexen source `P_LOCAL.H`: `PO_ANCHOR_TYPE = 3000`), so the splice's
 /// polyobject warning fires.
 fn write_hexen_polyobject_map_wad() -> NamedTempFile {
+    write_hexen_polyobject_map_wad_with_type(3000)
+}
+
+/// As [`write_hexen_polyobject_map_wad`] but with the polyobject thing's editor
+/// number parameterized, so tests can exercise both the vanilla Hexen values
+/// (3000–3002) and the `ZDoom` "Doom-in-Hexen" values (9300–9303, verified
+/// against `GZDoom` `wadsrc/static/mapinfo/common.txt`).
+fn write_hexen_polyobject_map_wad_with_type(poly_type: u16) -> NamedTempFile {
     let (vertexes, sidedefs, sectors, linedefs) = hexen_square_room_geometry();
 
     // Two Hexen things (20 bytes each): tid, x, y, z, angle, type, flags (u16),
-    // special + 5 args (u8). A player-1 start, then a polyobject anchor
-    // (`type == 3000`, `PO_ANCHOR_TYPE`).
+    // special + 5 args (u8). A player-1 start, then a polyobject anchor/spawn.
     let mut things = Vec::new();
     for thing in [
-        [0_u16, 64, 64, 0, 0, 1, 7],    // player-1 start
-        [0_u16, 32, 32, 0, 0, 3000, 7], // polyobject anchor
+        [0_u16, 64, 64, 0, 0, 1, 7],         // player-1 start
+        [0_u16, 32, 32, 0, 0, poly_type, 7], // polyobject anchor/spawn
     ] {
         for v in thing {
             things.extend_from_slice(&v.to_le_bytes());
@@ -5291,7 +5321,7 @@ fn build_nodes_warns_on_hexen_polyobject_map() {
         .assert()
         .code(0)
         .stderr(predicate::str::contains(
-            "MAP01: map uses polyobjects (thing type 3000); rebuilt nodes may split polyobject subsectors (see #389)",
+            "MAP01: thing type 3000 matches a polyobject anchor/spawn editor number; rebuilt nodes may split polyobject subsectors (see #389)",
         ));
 
     // The splice was still performed: the classic node lumps are rebuilt.
@@ -5299,6 +5329,33 @@ fn build_nodes_warns_on_hexen_polyobject_map() {
         !lump_bytes(out.path(), "SEGS").is_empty(),
         "SEGS should still be rebuilt despite the polyobject warning"
     );
+}
+
+#[test]
+fn build_nodes_warns_on_zdoom_polyobject_editor_number() {
+    // A Doom-in-Hexen map whose polyobject spawn uses ZDoom's 9300-series editor
+    // number (9301 = `$PolySpawn`, verified against GZDoom
+    // `wadsrc/static/mapinfo/common.txt`): the splice still rebuilds the node
+    // lumps (exit 0) and the advisory polyobject warning fires (#389).
+    let fixture = write_hexen_polyobject_map_wad_with_type(9301);
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "MAP01: thing type 9301 matches a polyobject anchor/spawn editor number; rebuilt nodes may split polyobject subsectors (see #389)",
+        ));
 }
 
 #[test]
