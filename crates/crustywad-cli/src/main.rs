@@ -773,6 +773,13 @@ fn patch_hexen_group_nodes(
     /// the input is repaired rather than a strict-fatal decode of a doomed lump.
     const REBUILT: &[&str] = &["SEGS", "SSECTORS", "NODES", "REJECT", "BLOCKMAP"];
 
+    /// Polyobject anchor/spawn thing editor numbers (Hexen). Verified against the
+    /// id Software Hexen source release (mirror: videogamepreservation/hexen):
+    /// `P_LOCAL.H` defines `enum { PO_ANCHOR_TYPE = 3000, PO_SPAWN_TYPE,
+    /// PO_SPAWNCRUSH_TYPE };` (i.e. 3000/3001/3002), consumed by `PO_MAN.C`'s
+    /// `PO_Init()`.
+    const POLYOBJECT_THING_TYPES: [u16; 3] = [3000, 3001, 3002];
+
     // The three carriers a Hexen node build can produce, mirroring
     // `add_doom_map_with_nodes`'s three arms.
     enum NodeLumps {
@@ -808,6 +815,21 @@ fn patch_hexen_group_nodes(
     };
     for w in map.warnings() {
         eprintln!("warning: {}: {w}", group.name);
+    }
+
+    // A rebuilt BSP can split a polyobject's subsector, which the engine's
+    // polyobject renderer assumes convex, so warn once per map when any
+    // anchor/spawn thing (`POLYOBJECT_THING_TYPES`) is present (#389).
+    if let Some(ty) = map
+        .things()
+        .iter()
+        .map(|t| t.type_id)
+        .find(|ty| POLYOBJECT_THING_TYPES.contains(ty))
+    {
+        eprintln!(
+            "warning: {}: map uses polyobjects (thing type {ty}); rebuilt nodes may split polyobject subsectors (see #389)",
+            group.name
+        );
     }
 
     // Shared build-error arm (blockmap and BSP/GL failures report identically).
