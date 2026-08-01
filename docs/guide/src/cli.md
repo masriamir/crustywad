@@ -293,7 +293,7 @@ for the node stream only — the `TEXTMAP` keeps the fractional originals):
 
 ```text
 $ cwad convert fractional.wad -o out.wad --to udmf --nodes --node-format xnod
-error: failed to build nodes for map MAP01: fractional x 0.5 in vertex #3 cannot be stored as an i16
+error: failed to build nodes for map MAP01: fractional x 0.5 in vertex #0 cannot be stored as an i16
 note: re-run with --lenient to build anyway
 ```
 
