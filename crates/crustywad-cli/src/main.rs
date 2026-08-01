@@ -614,6 +614,112 @@ fn effective_udmf_format(
     }
 }
 
+/// Patches a UDMF map group in place: assembles it (ignoring any existing
+/// `ZNODES`, so a corrupt one is repaired rather than fatal), builds the GL
+/// stream for `effective_format`, and emits the group's lumps verbatim in
+/// original order with `ZNODES` replaced — or inserted right after `TEXTMAP`
+/// if the group has none. Returns `Err(exit_code)` after printing the same
+/// error/lenient-hint messages the Doom `--nodes` path uses.
+fn patch_udmf_group_znodes(
+    out: &mut WadBuilder,
+    wad: &Wad,
+    group: &crustywad::map::MapGroup,
+    parse_opts: ParseOptions,
+    effective_opts: &crustywad::map::build::NodeBuildOptions,
+    effective_format: crustywad::map::build::NodeFormat,
+    lenient: bool,
+) -> Result<(), i32> {
+    use crustywad::map::build::build_gl_nodes;
+    use crustywad::map::{Map, MapGroup};
+
+    // UDMF groups are patched in place: assemble only to
+    // build GL nodes, then re-emit the group's own lumps
+    // verbatim (TEXTMAP byte-identical) with the built
+    // ZNODES stream slotted in.
+    //
+    // A rebuild discards any existing node lump, so a
+    // stale (possibly corrupt) ZNODES is excluded from
+    // assembly: only the TEXTMAP geometry matters, and
+    // requiring the old nodes to parse would make
+    // `--nodes` unable to *fix* a broken ZNODES (strict
+    // assembly rejects an unrecognized ZNODES signature).
+    //
+    // The in-place patch below re-emits the TEXTMAP
+    // verbatim, so it depends on assembly staying
+    // element-count-faithful to that text: lenient
+    // repairs today only clamp/coerce fields, never
+    // drop elements, so the built ZNODES indexes the
+    // same vertices/lines/sides the verbatim TEXTMAP
+    // declares. If a future lenient repair ever *drops*
+    // an element, the emitted ZNODES would desync from
+    // the untouched TEXTMAP and this path would need to
+    // re-serialize the map instead.
+    let assemble_group = MapGroup {
+        marker_index: group.marker_index,
+        name: group.name.clone(),
+        data_indices: group
+            .data_indices
+            .iter()
+            .copied()
+            .filter(|&idx| wad.lumps()[idx].name() != "ZNODES")
+            .collect(),
+    };
+    let map = match Map::assemble_with_options(wad, &assemble_group, parse_opts) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: failed to assemble map {}: {e}", group.name);
+            return Err(3);
+        }
+    };
+    for w in map.warnings() {
+        eprintln!("warning: {}: {w}", group.name);
+    }
+    // Both build stages share one error arm: the
+    // serialization step's failures (arena overflow,
+    // unnarrowable coordinate) report identically to
+    // the BSP pass's.
+    let znodes = match build_gl_nodes(&map, effective_opts).and_then(|(gl, ws)| {
+        for w in &ws {
+            eprintln!("warning: {}: {w}", group.name);
+        }
+        gl.to_extended_lump_bytes(map.vertices().len(), effective_format)
+    }) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("error: failed to build nodes for map {}: {e}", group.name);
+            if e.is_lenient_recoverable() && !lenient {
+                eprintln!("note: re-run with --lenient to build anyway");
+            }
+            return Err(3);
+        }
+    };
+    // Re-emit the group's lumps in original directory
+    // order: replace an existing ZNODES's bytes in place;
+    // if the group has none, insert one right after
+    // TEXTMAP.
+    //
+    // Pathological groups with duplicate TEXTMAP/ZNODES
+    // lumps are handled deterministically (garbage in):
+    // every ZNODES is replaced with the built stream and
+    // the insert fires once per TEXTMAP, so the output is
+    // a fixed function of the malformed input.
+    let has_znodes = std::iter::once(group.marker_index)
+        .chain(group.data_indices.iter().copied())
+        .any(|idx| wad.lumps()[idx].name() == "ZNODES");
+    for idx in std::iter::once(group.marker_index).chain(group.data_indices.iter().copied()) {
+        let l = &wad.lumps()[idx];
+        if l.name() == "ZNODES" {
+            out.add_lump("ZNODES", znodes.as_slice());
+        } else {
+            out.add_lump(l.name(), wad.lump_data(l));
+            if l.name() == "TEXTMAP" && !has_znodes {
+                out.add_lump("ZNODES", znodes.as_slice());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(c) => c,
@@ -1096,7 +1202,7 @@ fn run(cli: Cli) -> Result<i32> {
             let final_bytes = if nodes {
                 use crustywad::ParseOptions;
                 use crustywad::map::build::{
-                    NodeBuildOptions, NodeFormat, add_doom_map_with_nodes, build_gl_nodes,
+                    NodeBuildOptions, NodeFormat, add_doom_map_with_nodes,
                 };
                 use crustywad::map::{Map, MapFormat, MapGroup, detect_map_format};
                 use std::collections::{HashMap, HashSet};
@@ -1225,53 +1331,6 @@ fn run(cli: Cli) -> Result<i32> {
                                 }
                             }
                         } else if let Some(group) = udmf_starts.get(&i) {
-                            // UDMF groups are patched in place: assemble only to
-                            // build GL nodes, then re-emit the group's own lumps
-                            // verbatim (TEXTMAP byte-identical) with the built
-                            // ZNODES stream slotted in.
-                            //
-                            // A rebuild discards any existing node lump, so a
-                            // stale (possibly corrupt) ZNODES is excluded from
-                            // assembly: only the TEXTMAP geometry matters, and
-                            // requiring the old nodes to parse would make
-                            // `--nodes` unable to *fix* a broken ZNODES (strict
-                            // assembly rejects an unrecognized ZNODES signature).
-                            //
-                            // The in-place patch below re-emits the TEXTMAP
-                            // verbatim, so it depends on assembly staying
-                            // element-count-faithful to that text: lenient
-                            // repairs today only clamp/coerce fields, never
-                            // drop elements, so the built ZNODES indexes the
-                            // same vertices/lines/sides the verbatim TEXTMAP
-                            // declares. If a future lenient repair ever *drops*
-                            // an element, the emitted ZNODES would desync from
-                            // the untouched TEXTMAP and this path would need to
-                            // re-serialize the map instead.
-                            let assemble_group = MapGroup {
-                                marker_index: group.marker_index,
-                                name: group.name.clone(),
-                                data_indices: group
-                                    .data_indices
-                                    .iter()
-                                    .copied()
-                                    .filter(|&idx| wad.lumps()[idx].name() != "ZNODES")
-                                    .collect(),
-                            };
-                            let map =
-                                match Map::assemble_with_options(&wad, &assemble_group, parse_opts)
-                                {
-                                    Ok(m) => m,
-                                    Err(e) => {
-                                        eprintln!(
-                                            "error: failed to assemble map {}: {e}",
-                                            group.name
-                                        );
-                                        return Ok(3);
-                                    }
-                                };
-                            for w in map.warnings() {
-                                eprintln!("warning: {}: {w}", group.name);
-                            }
                             // `udmf_starts` only holds groups whose format
                             // resolves to a GL dialect, so this never yields
                             // `None`.
@@ -1279,59 +1338,16 @@ fn run(cli: Cli) -> Result<i32> {
                                 .expect("udmf_starts holds only GL-format groups");
                             let mut effective_opts = build_opts.clone();
                             effective_opts.format = effective_format;
-                            // Both build stages share one error arm: the
-                            // serialization step's failures (arena overflow,
-                            // unnarrowable coordinate) report identically to
-                            // the BSP pass's.
-                            let znodes =
-                                match build_gl_nodes(&map, &effective_opts).and_then(|(gl, ws)| {
-                                    for w in &ws {
-                                        eprintln!("warning: {}: {w}", group.name);
-                                    }
-                                    gl.to_extended_lump_bytes(
-                                        map.vertices().len(),
-                                        effective_format,
-                                    )
-                                }) {
-                                    Ok(bytes) => bytes,
-                                    Err(e) => {
-                                        eprintln!(
-                                            "error: failed to build nodes for map {}: {e}",
-                                            group.name
-                                        );
-                                        if e.is_lenient_recoverable() && !cli.lenient {
-                                            eprintln!(
-                                                "note: re-run with --lenient to build anyway"
-                                            );
-                                        }
-                                        return Ok(3);
-                                    }
-                                };
-                            // Re-emit the group's lumps in original directory
-                            // order: replace an existing ZNODES's bytes in place;
-                            // if the group has none, insert one right after
-                            // TEXTMAP.
-                            //
-                            // Pathological groups with duplicate TEXTMAP/ZNODES
-                            // lumps are handled deterministically (garbage in):
-                            // every ZNODES is replaced with the built stream and
-                            // the insert fires once per TEXTMAP, so the output is
-                            // a fixed function of the malformed input.
-                            let has_znodes = std::iter::once(group.marker_index)
-                                .chain(group.data_indices.iter().copied())
-                                .any(|idx| wad.lumps()[idx].name() == "ZNODES");
-                            for idx in std::iter::once(group.marker_index)
-                                .chain(group.data_indices.iter().copied())
-                            {
-                                let l = &wad.lumps()[idx];
-                                if l.name() == "ZNODES" {
-                                    out.add_lump("ZNODES", znodes.as_slice());
-                                } else {
-                                    out.add_lump(l.name(), wad.lump_data(l));
-                                    if l.name() == "TEXTMAP" && !has_znodes {
-                                        out.add_lump("ZNODES", znodes.as_slice());
-                                    }
-                                }
+                            if let Err(code) = patch_udmf_group_znodes(
+                                &mut out,
+                                &wad,
+                                group,
+                                parse_opts,
+                                &effective_opts,
+                                effective_format,
+                                cli.lenient,
+                            ) {
+                                return Ok(code);
                             }
                         } else if !absorbed.contains(&i) {
                             out.add_lump(lump.name(), wad.lump_data(lump));
@@ -1504,6 +1520,10 @@ fn run(cli: Cli) -> Result<i32> {
             // skipped on the pass-through walk, so the original binary lumps
             // are not emitted alongside the converted ones.
             let mut starts: HashMap<usize, MapGroup> = HashMap::new();
+            // Already-UDMF groups that `--to udmf --nodes` patches in place (a GL
+            // ZNODES retrofit; #385). Kept apart from `starts` because a retrofit
+            // is not a conversion and must not bump the `converted` count.
+            let mut retrofit: HashMap<usize, MapGroup> = HashMap::new();
             let mut absorbed: std::collections::HashSet<usize> = std::collections::HashSet::new();
             // Per converted group, the lumps a conversion drops (see `dropped_group_lumps`).
             let mut dropped: Vec<(String, Vec<String>)> = Vec::new();
@@ -1521,19 +1541,19 @@ fn run(cli: Cli) -> Result<i32> {
                     && !(nodes && matches!(to, MapFormatArg::Doom))
                 {
                     // `--to udmf --nodes` on a group that is *already* UDMF
-                    // passes it through untouched: unlike the Doom target
-                    // (re-routed above to rebuild its node lumps in place), an
-                    // in-place UDMF ZNODES retrofit is not yet implemented
-                    // (#385). The up-front "builds GL nodes into ZNODES" note
-                    // does not apply to this group, so say so per group rather
-                    // than let the run-level note imply otherwise.
+                    // patches it in place — like the Doom target (re-routed
+                    // above to rebuild its node lumps), it retrofits a GL ZNODES
+                    // onto the group's own verbatim TEXTMAP (#385) rather than
+                    // converting the map. Route it through `retrofit` so the
+                    // emission loop patches it without counting it as a
+                    // conversion; absorb its lumps so the pass-through walk does
+                    // not also copy them.
                     if nodes && matches!(to, MapFormatArg::Udmf) {
-                        eprintln!(
-                            "note: {} is already UDMF; passed through unchanged (no ZNODES built — see #385)",
-                            group.name
-                        );
+                        absorbed.insert(group.marker_index);
+                        absorbed.extend(group.data_indices.iter().copied());
+                        retrofit.insert(group.marker_index, group);
                     }
-                    continue; // already in the target format: pass through
+                    continue; // already in the target format: pass through or retrofit
                 }
                 let extra = dropped_group_lumps(&wad, &group);
                 if !extra.is_empty() {
@@ -1671,6 +1691,33 @@ fn run(cli: Cli) -> Result<i32> {
                         eprintln!("warning: {}: {w}", group.name);
                     }
                     converted += 1;
+                } else if let Some(group) = retrofit.get(&i) {
+                    // Already-UDMF group patched in place: rebuild its GL ZNODES
+                    // onto the verbatim TEXTMAP. This is not a conversion, so it
+                    // does not bump `converted`; the run-level "builds GL nodes
+                    // into ZNODES" note is qualified per group here.
+                    eprintln!(
+                        "note: {} is already UDMF; rebuilt ZNODES in place (map not converted)",
+                        group.name
+                    );
+                    // The up-front UDMF check already rejected any non-GL format,
+                    // so `effective_udmf_format` is always `Some` here; swap it
+                    // into a clone so `Classic` builds GL.
+                    let effective_format = effective_udmf_format(&build_opts)
+                        .expect("UDMF --nodes format validated up front");
+                    let mut effective_opts = build_opts.clone();
+                    effective_opts.format = effective_format;
+                    if let Err(code) = patch_udmf_group_znodes(
+                        &mut builder,
+                        &wad,
+                        group,
+                        options,
+                        &effective_opts,
+                        effective_format,
+                        cli.lenient,
+                    ) {
+                        return Ok(code);
+                    }
                 } else if !absorbed.contains(&i) {
                     builder.add_lump(lump.name(), wad.lump_data(lump));
                 }
