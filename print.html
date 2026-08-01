@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-dcd8642c.js";
+            window.path_to_searchindex_js = "searchindex-7ffdc475.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -833,13 +833,20 @@ describe the source geometry, so carrying either across would look intact
 while being subtly wrong. That is data loss under the same policy as any
 other: strict mode refuses (exit <code>3</code>, naming each lump), <code>--lenient</code> drops
 them and warns. A map already in the target format is not converted, so
-nothing in its group is dropped. Such a same-format map passes through
-unchanged even under <code>--nodes</code>: <code>--nodes</code> does not retrofit a <code>ZNODES</code> stream
-onto a group that is already UDMF (the in-place UDMF node rebuild is tracked by
-<a href="https://github.com/masriamir/crustywad/issues/385">#385</a>) — the per-group note
-says so. Use <code>cwad build --nodes</code> to rebuild an existing UDMF group’s <code>ZNODES</code>
-in place (after extracting the WAD’s lumps — <code>build</code> takes <code>NAME=FILE</code> specs,
-not a WAD).</p>
+nothing in its group is dropped. Under <code>--to doom</code>, such a same-format map
+passes through unchanged (unless <code>--nodes</code> is also given, which re-emits the
+map through the node-building one-shot — see
+<a href="#building-nodes">Building nodes</a>). Under
+<code>--to udmf --nodes</code>, it instead gets its <code>ZNODES</code> stream retrofitted in
+place: the group’s <code>TEXTMAP</code> bytes are re-emitted verbatim, any port lump in
+the group (<code>DIALOGUE</code>, <code>BEHAVIOR</code>) is preserved untouched, and a stale or
+corrupt existing <code>ZNODES</code> is replaced (or inserted right after <code>TEXTMAP</code> if
+the group has none). A per-group note reports the retrofit (<code>is already UDMF; rebuilt ZNODES in place (map not converted)</code>), and the retrofitted map
+is <strong>not</strong> counted in <code>converted N maps</code> — this is a patch, not a
+conversion. A map excluded from the run by <code>--map</code> passes through unchanged
+with no retrofit. <code>cwad build --nodes</code> remains the spec-based alternative
+for rebuilding <code>ZNODES</code>: it works directly from <code>NAME=FILE</code> lump specs
+rather than a whole WAD.</p>
 <p>See <a href="#convert">CLI Usage</a> for the full flag reference, example output,
 and exit codes.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -1974,13 +1981,18 @@ note:</p>
 note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each converted map
 wrote out.wad: converted 1 map to udmf
 </code></pre>
-<p>A source map already in UDMF is not converted, so <code>--to udmf --nodes</code> passes
-it through unchanged and does <strong>not</strong> retrofit a <code>ZNODES</code> stream onto it (a
-per-group note says so; the in-place UDMF node rebuild is tracked by
-<a href="https://github.com/masriamir/crustywad/issues/385">#385</a>). Use
-<code>cwad build --nodes</code> to rebuild an existing UDMF group’s <code>ZNODES</code> in place
-(after extracting the WAD’s lumps — <code>build</code> takes <code>NAME=FILE</code> specs, not a
-WAD).</p>
+<p>A source map already in UDMF is not converted — but <code>--to udmf --nodes</code>
+retrofits its <code>ZNODES</code> stream in place rather than passing the group through
+untouched: the group’s <code>TEXTMAP</code> bytes are re-emitted verbatim, any port
+lump in the group (<code>DIALOGUE</code>, <code>BEHAVIOR</code>) is preserved untouched, and a
+stale or corrupt existing <code>ZNODES</code> is replaced (or inserted right after
+<code>TEXTMAP</code> if the group has none). A per-group note reports the retrofit
+(<code>is already UDMF; rebuilt ZNODES in place (map not converted)</code>), and it is
+<strong>not</strong> counted in <code>converted N maps</code> — this is a patch, not a conversion. A
+map excluded from the run by <code>--map</code> passes through unchanged with no
+retrofit. <code>cwad build --nodes</code> remains the spec-based alternative: it
+rebuilds <code>ZNODES</code> in place directly from <code>NAME=FILE</code> lump specs, without
+needing a whole WAD as input.</p>
 <p><code>--node-format &lt;FORMAT&gt;</code> selects the on-disk form of the nodes <code>--nodes</code>
 builds; default <code>classic</code>. It has no effect without <code>--nodes</code>; a
 non-<code>classic</code> value passed without <code>--nodes</code> prints a note on stderr and is
