@@ -2891,15 +2891,33 @@ fn build_nodes_handles_mixed_format_groups() {
         .assert()
         .code(0);
 
-    // Doom group: classic node lumps rebuilt (SEGS non-empty, NODES present).
-    assert!(
-        !lump_bytes(out.path(), "SEGS").is_empty(),
-        "the Doom group's SEGS should be rebuilt non-empty"
-    );
-    assert!(
-        lump_names(out.path()).iter().any(|n| n == "NODES"),
-        "the Doom group's NODES lump should be present"
-    );
+    // Doom group: classic node lumps rebuilt — scoped to the MAP01 group
+    // specifically, since the Hexen group now also emits SEGS/NODES.
+    {
+        let out_bytes = std::fs::read(out.path()).unwrap();
+        let out_wad = crustywad::Wad::from_bytes(out_bytes).expect("output parses");
+        let doom_group = out_wad
+            .map_groups()
+            .into_iter()
+            .find(|g| g.name == "MAP01")
+            .expect("MAP01 group present in output");
+        let lump_in_group = |name: &str| {
+            doom_group
+                .data_indices
+                .iter()
+                .copied()
+                .find(|&i| out_wad.lumps()[i].name() == name)
+        };
+        let segs_idx = lump_in_group("SEGS").expect("MAP01 has a SEGS lump");
+        assert!(
+            !out_wad.lump_data(&out_wad.lumps()[segs_idx]).is_empty(),
+            "the Doom group's SEGS should be rebuilt non-empty"
+        );
+        assert!(
+            lump_in_group("NODES").is_some(),
+            "the Doom group's NODES lump should be present"
+        );
+    }
     // UDMF group: a GL ZNODES stream was built (XGLN under the default format).
     let znodes = lump_bytes(out.path(), "ZNODES");
     assert!(
