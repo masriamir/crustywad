@@ -2840,16 +2840,18 @@ fn build_nodes_xnod_rounds_fractional_udmf_lenient() {
 }
 
 #[test]
-fn build_nodes_handles_mixed_doom_and_udmf_groups() {
-    // A single WAD carrying BOTH a Doom map group (empty node lumps) and a UDMF
-    // map group, plus a loose non-map lump: build --nodes (default format)
-    // rebuilds the Doom group's classic node lumps and builds a GL ZNODES for
-    // the UDMF group, while the non-map lump survives verbatim.
+fn build_nodes_handles_mixed_format_groups() {
+    // A single WAD carrying a Doom map group (empty node lumps), a UDMF map
+    // group, and a Hexen map group, plus a loose non-map lump: build --nodes
+    // (default format) rebuilds the Doom group's classic node lumps, builds a GL
+    // ZNODES for the UDMF group, and splices classic node lumps into the Hexen
+    // group (BEHAVIOR preserved), while the non-map lump survives verbatim.
     let doom_fixture = write_doom_square_room_empty_nodes_wad();
     let doom_bytes = std::fs::read(doom_fixture.path()).unwrap();
     let doom_wad = crustywad::Wad::from_bytes(doom_bytes).expect("doom fixture parses");
     // The Doom fixture is [MAP01 .. BLOCKMAP, COLORMAP]; take it whole, then
-    // append a UDMF group so the WAD holds one group of each format.
+    // append a UDMF group and a Hexen group so the WAD holds one group of each
+    // format.
     let mut lumps: Vec<(String, Vec<u8>)> = doom_wad
         .lumps()
         .iter()
@@ -2858,6 +2860,19 @@ fn build_nodes_handles_mixed_doom_and_udmf_groups() {
     lumps.push(("MAP02".to_string(), Vec::new()));
     lumps.push(("TEXTMAP".to_string(), udmf_square_room().into_bytes()));
     lumps.push(("ENDMAP".to_string(), Vec::new()));
+
+    // Append a Hexen group (MAP03) by lifting the Hexen fixture's lumps.
+    let hexen_fixture = write_hexen_map_wad_with_nodes();
+    let hexen_bytes = std::fs::read(hexen_fixture.path()).unwrap();
+    let hexen_wad = crustywad::Wad::from_bytes(hexen_bytes).expect("hexen fixture parses");
+    for l in hexen_wad.lumps() {
+        let name = if l.name() == "MAP01" {
+            "MAP03".to_string()
+        } else {
+            l.name().to_string()
+        };
+        lumps.push((name, hexen_wad.lump_data(l).to_vec()));
+    }
 
     let combined = write_wad_owned(*b"PWAD", &lumps);
     let (specs, _files) = explode_wad_to_build_specs(combined.path());
@@ -2891,6 +2906,30 @@ fn build_nodes_handles_mixed_doom_and_udmf_groups() {
         znodes.starts_with(b"XGLN"),
         "the UDMF group's ZNODES should be an XGLN stream, got {:?}",
         &znodes[..znodes.len().min(4)]
+    );
+    // Hexen group: BEHAVIOR is preserved byte-verbatim and its own SEGS are
+    // rebuilt (checked on the MAP03 group specifically, since names repeat).
+    assert_eq!(
+        lump_bytes(out.path(), "BEHAVIOR"),
+        b"BEHAVED!",
+        "the Hexen group's BEHAVIOR should be preserved byte-verbatim"
+    );
+    let out_bytes = std::fs::read(out.path()).unwrap();
+    let out_wad = crustywad::Wad::from_bytes(out_bytes).expect("output parses");
+    let hexen_group = out_wad
+        .map_groups()
+        .into_iter()
+        .find(|g| g.name == "MAP03")
+        .expect("MAP03 group present in output");
+    let segs_idx = hexen_group
+        .data_indices
+        .iter()
+        .copied()
+        .find(|&i| out_wad.lumps()[i].name() == "SEGS")
+        .expect("MAP03 has a SEGS lump");
+    assert!(
+        !out_wad.lump_data(&out_wad.lumps()[segs_idx]).is_empty(),
+        "the Hexen group's SEGS should be rebuilt non-empty"
     );
     // The loose non-map lump survived verbatim.
     assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4_u8, 5, 6]);
@@ -5099,6 +5138,223 @@ fn write_hexen_map_wad_with_nodes() -> NamedTempFile {
             ("BEHAVIOR", b"BEHAVED!"),
         ],
     )
+}
+
+/// The four geometry lumps of a Hexen square-room map — `(vertexes, sidedefs,
+/// sectors, linedefs)` — as real closed geometry (four one-sided walls, one
+/// sector) so a node build succeeds. Shared by the buildable Hexen fixtures
+/// below, which only differ in their `THINGS`.
+fn hexen_square_room_geometry() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+    // Square room: vertices (0,0) (128,0) (128,128) (0,128).
+    let mut vertexes = Vec::new();
+    for (x, y) in [(0_i16, 0_i16), (128, 0), (128, 128), (0, 128)] {
+        vertexes.extend_from_slice(&x.to_le_bytes());
+        vertexes.extend_from_slice(&y.to_le_bytes());
+    }
+
+    // Four sidedefs, all in sector 0 with a STARTAN3 middle texture (30 bytes each).
+    let mut sidedefs = Vec::new();
+    for _ in 0..4 {
+        sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // x offset
+        sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // y offset
+        sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // upper
+        sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // lower
+        sidedefs.extend_from_slice(b"STARTAN3"); // middle
+        sidedefs.extend_from_slice(&0_u16.to_le_bytes()); // sector
+    }
+
+    // One sector (26 bytes).
+    let mut sectors = Vec::new();
+    sectors.extend_from_slice(&0_i16.to_le_bytes()); // floor height
+    sectors.extend_from_slice(&128_i16.to_le_bytes()); // ceiling height
+    sectors.extend_from_slice(b"FLOOR4_8");
+    sectors.extend_from_slice(b"CEIL3_5\0");
+    sectors.extend_from_slice(&160_i16.to_le_bytes()); // light
+    sectors.extend_from_slice(&0_i16.to_le_bytes()); // special
+    sectors.extend_from_slice(&0_i16.to_le_bytes()); // tag
+
+    // Four one-sided Hexen linedefs (16 bytes each).
+    let mut linedefs = Vec::new();
+    for (v1, v2, front) in [(0_u16, 1_u16, 0_u16), (1, 2, 1), (2, 3, 2), (3, 0, 3)] {
+        linedefs.extend_from_slice(&v1.to_le_bytes());
+        linedefs.extend_from_slice(&v2.to_le_bytes());
+        linedefs.extend_from_slice(&1_u16.to_le_bytes()); // flags: blocking
+        linedefs.extend_from_slice(&[0_u8; 6]); // special + 5 args
+        linedefs.extend_from_slice(&front.to_le_bytes());
+        linedefs.extend_from_slice(&0xffff_u16.to_le_bytes()); // no left side
+    }
+
+    (vertexes, sidedefs, sectors, linedefs)
+}
+
+/// A PWAD with a single buildable Hexen-format square-room map (`MAP01`, real
+/// closed geometry) carrying a lone player-1 start and **no pre-built node
+/// lumps** — the node build inserts them cleanly. Used by the Hexen `convert
+/// --to doom --nodes` regression, where assembly decodes every group lump (so a
+/// garbage node lump would be fatal, unlike the build-path splice).
+fn write_hexen_square_room_wad() -> NamedTempFile {
+    let (vertexes, sidedefs, sectors, linedefs) = hexen_square_room_geometry();
+
+    // One Hexen thing (20 bytes): a player-1 start at the room center.
+    let mut things = Vec::new();
+    for v in [0_u16, 64, 64, 0, 0, 1, 7] {
+        things.extend_from_slice(&v.to_le_bytes());
+    }
+    things.extend_from_slice(&[0_u8; 6]); // special + 5 args
+
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SECTORS", &sectors),
+            ("BEHAVIOR", b"BEHAVED!"),
+        ],
+    )
+}
+
+/// A PWAD like [`write_hexen_square_room_wad`] but whose `THINGS` also carries a
+/// **polyobject anchor** thing (editor number `3000`, verified against the id
+/// Software Hexen source `P_LOCAL.H`: `PO_ANCHOR_TYPE = 3000`), so the splice's
+/// polyobject warning fires.
+fn write_hexen_polyobject_map_wad() -> NamedTempFile {
+    let (vertexes, sidedefs, sectors, linedefs) = hexen_square_room_geometry();
+
+    // Two Hexen things (20 bytes each): tid, x, y, z, angle, type, flags (u16),
+    // special + 5 args (u8). A player-1 start, then a polyobject anchor
+    // (`type == 3000`, `PO_ANCHOR_TYPE`).
+    let mut things = Vec::new();
+    for thing in [
+        [0_u16, 64, 64, 0, 0, 1, 7],    // player-1 start
+        [0_u16, 32, 32, 0, 0, 3000, 7], // polyobject anchor
+    ] {
+        for v in thing {
+            things.extend_from_slice(&v.to_le_bytes());
+        }
+        things.extend_from_slice(&[0_u8; 6]); // special + 5 args
+    }
+
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SECTORS", &sectors),
+            ("BEHAVIOR", b"BEHAVED!"),
+        ],
+    )
+}
+
+#[test]
+fn build_nodes_warns_on_hexen_polyobject_map() {
+    // A Hexen map containing a polyobject anchor thing (type 3000): the splice
+    // still rebuilds the node lumps (exit 0, SEGS non-empty) but emits a warning
+    // that the rebuilt BSP may split the polyobject's subsector (#389).
+    let fixture = write_hexen_polyobject_map_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains(
+            "MAP01: map uses polyobjects (thing type 3000); rebuilt nodes may split polyobject subsectors (see #389)",
+        ));
+
+    // The splice was still performed: the classic node lumps are rebuilt.
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "SEGS should still be rebuilt despite the polyobject warning"
+    );
+}
+
+#[test]
+fn build_nodes_no_polyobject_warning_on_plain_hexen_map() {
+    // A plain Hexen map (a single player-1 start, no polyobject things): the
+    // splice runs cleanly and emits no polyobject warning.
+    let fixture = write_hexen_map_wad_with_nodes();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("uses polyobjects").not());
+}
+
+#[test]
+fn convert_hexen_to_doom_with_nodes_builds_playable_lumps() {
+    // A Hexen map converted `--to doom --nodes`: the geometry is rewritten as a
+    // Doom map and real node lumps are built. `--lenient` is required because the
+    // Hexen `BEHAVIOR` lump cannot be carried into the Doom format and is dropped.
+    let wad = write_hexen_square_room_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "doom",
+            "--nodes",
+        ])
+        .assert()
+        .code(0)
+        // With --nodes the node lumps are built for real, so the unconditional
+        // NodesNotBuilt warning must NOT appear.
+        .stderr(predicate::str::contains("run a nodebuilder").not());
+
+    // The canonical Doom lump run, with the node lumps present (BEHAVIOR dropped).
+    assert_eq!(
+        lump_names(out.path()),
+        vec![
+            "MAP01", "THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS", "SSECTORS", "NODES",
+            "SECTORS", "REJECT", "BLOCKMAP",
+        ]
+    );
+
+    // A real geometry build yields non-empty SEGS/SSECTORS.
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "SEGS should be non-empty after a node build"
+    );
+    assert!(!lump_bytes(out.path(), "SSECTORS").is_empty());
+    // NODES is present but legitimately empty for a convex single-subsector room.
+    assert!(
+        lump_names(out.path()).iter().any(|n| n == "NODES"),
+        "NODES lump should be present"
+    );
+
+    // The output is engine-playable: its maps re-read and assemble strict-clean.
+    assert_maps_assemble_strict_clean(out.path());
 }
 
 #[test]
