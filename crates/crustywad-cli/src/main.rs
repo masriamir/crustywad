@@ -744,6 +744,205 @@ fn patch_udmf_group_znodes(
     Ok(())
 }
 
+/// Patches a Hexen map group in place: assembles it (ignoring the five node
+/// lumps, so corrupt ones are repaired rather than fatal), rebuilds
+/// `SEGS`/`SSECTORS`/`NODES`, `REJECT`, and `BLOCKMAP` for `build_opts.format`,
+/// and re-emits the group's lumps in canonical Doom/Hexen order with the node
+/// lumps replaced (or inserted where missing). Returns `Err(exit_code)` after
+/// printing the same error/lenient-hint messages the Doom `--nodes` path uses.
+///
+/// Unlike the UDMF sibling, Hexen accepts every [`NodeFormat`] — including the
+/// [`Classic`](crustywad::map::build::NodeFormat::Classic) default — so
+/// `build_opts` is passed straight through with no effective-format resolution.
+#[allow(clippy::too_many_lines)]
+fn patch_hexen_group_nodes(
+    out: &mut WadBuilder,
+    wad: &Wad,
+    group: &crustywad::map::MapGroup,
+    parse_opts: ParseOptions,
+    build_opts: &crustywad::map::build::NodeBuildOptions,
+    lenient: bool,
+) -> Result<(), i32> {
+    use crustywad::map::build::{
+        NodeBuildError, NodeFormat, build_blockmap, build_gl_nodes, build_nodes, build_reject,
+    };
+    use crustywad::map::{Map, MapGroup};
+
+    /// The five node lumps this splice always rebuilds. All are excluded from
+    /// assembly (below) and re-emitted from the fresh build, so a corrupt one in
+    /// the input is repaired rather than a strict-fatal decode of a doomed lump.
+    const REBUILT: &[&str] = &["SEGS", "SSECTORS", "NODES", "REJECT", "BLOCKMAP"];
+
+    // The three carriers a Hexen node build can produce, mirroring
+    // `add_doom_map_with_nodes`'s three arms.
+    enum NodeLumps {
+        /// Classic three-lump layout: `SEGS`, `SSECTORS`, `NODES`, plus the
+        /// split-vertex tail appended to `VERTEXES`.
+        Classic(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>),
+        /// A single `XNOD`/`ZNOD` stream carried in `NODES`; `SEGS`/`SSECTORS`
+        /// left empty; no `VERTEXES` tail (split verts live in the stream header).
+        NonGl(Vec<u8>),
+        /// A single `XGL*`/`ZGL*` stream carried in `SSECTORS`; `SEGS`/`NODES`
+        /// left empty; no `VERTEXES` tail.
+        Gl(Vec<u8>),
+    }
+
+    // Assemble only the geometry: exclude the five rebuilt node lumps so a
+    // corrupt/garbage one never blocks the rebuild that is about to replace it.
+    let assemble_group = MapGroup {
+        marker_index: group.marker_index,
+        name: group.name.clone(),
+        data_indices: group
+            .data_indices
+            .iter()
+            .copied()
+            .filter(|&idx| !REBUILT.contains(&wad.lumps()[idx].name()))
+            .collect(),
+    };
+    let map = match Map::assemble_with_options(wad, &assemble_group, parse_opts) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: failed to assemble map {}: {e}", group.name);
+            return Err(3);
+        }
+    };
+    for w in map.warnings() {
+        eprintln!("warning: {}: {w}", group.name);
+    }
+
+    // Shared build-error arm (blockmap and BSP/GL failures report identically).
+    let report_build_err = |e: &NodeBuildError| {
+        eprintln!("error: failed to build nodes for map {}: {e}", group.name);
+        if e.is_lenient_recoverable() && !lenient {
+            eprintln!("note: re-run with --lenient to build anyway");
+        }
+    };
+
+    // REJECT (infallible, all-zeros: every sector pair visible) + BLOCKMAP.
+    let reject = build_reject(&map).to_lump_bytes();
+    let (blockmap, blockmap_ws) = match build_blockmap(&map, build_opts) {
+        Ok(r) => r,
+        Err(e) => {
+            report_build_err(&e);
+            return Err(3);
+        }
+    };
+    let blockmap = match blockmap.to_lump_bytes() {
+        Ok(b) => b,
+        Err(e) => {
+            report_build_err(&e);
+            return Err(3);
+        }
+    };
+
+    // Build the node lumps per format family, mirroring the one-shot's three
+    // arms. `Classic` is a valid Hexen default, so it gets its own arm (unlike
+    // the UDMF sibling, which has no classic carrier); `Xnod`/`Znod` carry a
+    // non-GL extended stream; every remaining (GL) format runs the GL kernel.
+    // `NodeFormat`'s `is_gl`/`is_extended` predicates are crate-private, so the
+    // non-GL set is matched explicitly (mirroring `node_format_arg_to_lib`'s cfg
+    // style); a future non-GL/non-classic variant falls through to the GL
+    // serializer, whose dispatch rejects it via the shared error arm.
+    let orig_vertex_count = map.vertices().len();
+    let built: Result<(NodeLumps, Vec<crustywad::map::build::NodeBuildWarning>), NodeBuildError> =
+        match build_opts.format {
+            NodeFormat::Classic => build_nodes(&map, build_opts).and_then(|(nodes, ws)| {
+                nodes.to_lump_bytes().map(|l| {
+                    (
+                        NodeLumps::Classic(l.segs, l.ssectors, l.nodes, l.split_vertexes),
+                        ws,
+                    )
+                })
+            }),
+            NodeFormat::Xnod => build_nodes(&map, build_opts).and_then(|(nodes, ws)| {
+                nodes
+                    .to_extended_lump_bytes(orig_vertex_count, false)
+                    .map(|b| (NodeLumps::NonGl(b), ws))
+            }),
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod => build_nodes(&map, build_opts).and_then(|(nodes, ws)| {
+                nodes
+                    .to_extended_lump_bytes(orig_vertex_count, true)
+                    .map(|b| (NodeLumps::NonGl(b), ws))
+            }),
+            _ => build_gl_nodes(&map, build_opts).and_then(|(gl, ws)| {
+                gl.to_extended_lump_bytes(orig_vertex_count, build_opts.format)
+                    .map(|b| (NodeLumps::Gl(b), ws))
+            }),
+        };
+    let (node_lumps, node_ws) = match built {
+        Ok(v) => v,
+        Err(e) => {
+            report_build_err(&e);
+            return Err(3);
+        }
+    };
+    // Deterministic warning order (matching the one-shot's Global Constraint 6):
+    // blockmap warnings, then BSP/GL build warnings. There is no write-path
+    // prefix here — the geometry lumps are re-emitted verbatim, not serialized.
+    for w in &blockmap_ws {
+        eprintln!("warning: {}: {w}", group.name);
+    }
+    for w in &node_ws {
+        eprintln!("warning: {}: {w}", group.name);
+    }
+
+    // Original bytes of every preserved (non-node) lump, first occurrence wins —
+    // a pathological group with duplicate names is handled deterministically.
+    let mut orig: HashMap<&str, &[u8]> = HashMap::new();
+    for &idx in &group.data_indices {
+        let l = &wad.lumps()[idx];
+        orig.entry(l.name()).or_insert_with(|| wad.lump_data(l));
+    }
+
+    // Re-emit in canonical Doom/Hexen order — THINGS, LINEDEFS, SIDEDEFS,
+    // VERTEXES, SEGS, SSECTORS, NODES, SECTORS, REJECT, BLOCKMAP, BEHAVIOR:
+    // vanilla engines index a map's lumps by offset from the marker, so this
+    // order is load-bearing. Preserved names take their original bytes; the five
+    // node lumps take the fresh build (empty `Vec` for an emptied carrier). Only
+    // names present in the input (or rebuilt) are emitted — a missing geometry
+    // lump would have been assembly-fatal above, and a missing BEHAVIOR would
+    // mean the map is not Hexen, so both are unreachable here; the guards are
+    // defensive.
+    let (segs, ssectors, nodes_bytes): (&[u8], &[u8], &[u8]) = match &node_lumps {
+        NodeLumps::Classic(s, ss, n, _) => (s, ss, n),
+        NodeLumps::NonGl(stream) => (&[], &[], stream),
+        NodeLumps::Gl(stream) => (&[], stream, &[]),
+    };
+
+    let marker = &wad.lumps()[group.marker_index];
+    out.add_lump(marker.name(), wad.lump_data(marker));
+    for name in ["THINGS", "LINEDEFS", "SIDEDEFS"] {
+        if let Some(bytes) = orig.get(name) {
+            out.add_lump(name, *bytes);
+        }
+    }
+    if let Some(vertexes) = orig.get("VERTEXES") {
+        // Classic seg vertex indices reference the split vertices, so the tail
+        // must be appended to the original VERTEXES; the extended/GL carriers
+        // keep their split verts in the stream header and leave VERTEXES as-is.
+        if let NodeLumps::Classic(_, _, _, tail) = &node_lumps {
+            let mut vb = vertexes.to_vec();
+            vb.extend_from_slice(tail);
+            out.add_lump("VERTEXES", vb);
+        } else {
+            out.add_lump("VERTEXES", *vertexes);
+        }
+    }
+    out.add_lump("SEGS", segs);
+    out.add_lump("SSECTORS", ssectors);
+    out.add_lump("NODES", nodes_bytes);
+    if let Some(bytes) = orig.get("SECTORS") {
+        out.add_lump("SECTORS", *bytes);
+    }
+    out.add_lump("REJECT", reject);
+    out.add_lump("BLOCKMAP", blockmap);
+    if let Some(bytes) = orig.get("BEHAVIOR") {
+        out.add_lump("BEHAVIOR", *bytes);
+    }
+    Ok(())
+}
+
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(c) => c,
@@ -1266,6 +1465,7 @@ fn run(cli: Cli) -> Result<i32> {
                 // passed through with a note. `MapFormat` is `#[non_exhaustive]`,
                 // so an unknown future format falls through to plain pass-through.
                 let mut doom_starts: HashMap<usize, MapGroup> = HashMap::new();
+                let mut hexen_starts: HashMap<usize, MapGroup> = HashMap::new();
                 let mut udmf_starts: HashMap<usize, MapGroup> = HashMap::new();
                 let mut absorbed: HashSet<usize> = HashSet::new();
                 for group in wad.map_groups() {
@@ -1275,10 +1475,11 @@ fn run(cli: Cli) -> Result<i32> {
                             absorbed.extend(group.data_indices.iter().copied());
                             doom_starts.insert(group.marker_index, group);
                         }
-                        MapFormat::Hexen => eprintln!(
-                            "note: {} is a Hexen map; node building for Hexen is not yet supported (skipped; see #352)",
-                            group.name
-                        ),
+                        MapFormat::Hexen => {
+                            absorbed.insert(group.marker_index);
+                            absorbed.extend(group.data_indices.iter().copied());
+                            hexen_starts.insert(group.marker_index, group);
+                        }
                         MapFormat::Doom64 => eprintln!(
                             "note: {} is a Doom 64 map; node building is not supported (skipped; see #353)",
                             group.name
@@ -1300,7 +1501,7 @@ fn run(cli: Cli) -> Result<i32> {
                         _ => {}
                     }
                 }
-                if doom_starts.is_empty() && udmf_starts.is_empty() {
+                if doom_starts.is_empty() && hexen_starts.is_empty() && udmf_starts.is_empty() {
                     eprintln!("note: no buildable map groups found; --nodes had no effect");
                     wad.into_bytes()
                 } else {
@@ -1339,6 +1540,19 @@ fn run(cli: Cli) -> Result<i32> {
                                     }
                                     return Ok(3);
                                 }
+                            }
+                        } else if let Some(group) = hexen_starts.get(&i) {
+                            // Hexen accepts every NodeFormat (Classic included),
+                            // so `build_opts` passes straight through.
+                            if let Err(code) = patch_hexen_group_nodes(
+                                &mut out,
+                                &wad,
+                                group,
+                                parse_opts,
+                                &build_opts,
+                                cli.lenient,
+                            ) {
+                                return Ok(code);
                             }
                         } else if let Some(group) = udmf_starts.get(&i) {
                             let effective_format = effective_udmf_format(&build_opts);
