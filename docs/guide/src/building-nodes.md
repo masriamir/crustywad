@@ -146,9 +146,31 @@ integer-precision, so a fractional-coordinate UDMF map is rejected in strict
 mode (naming the offending coordinate, with a `--lenient` hint) and rounded
 with a warning in lenient mode — for the node stream only, the `TEXTMAP`
 keeps the fractional originals; a map needing exact fractional geometry
-should use a GL dialect. Hexen (#352) and Doom 64 (#353) map groups are not yet
-supported by `build --nodes` and are passed through unchanged with a note on
-stderr; non-map lumps always pass through unchanged. See
+should use a GL dialect.
+
+A **Hexen** map group is rebuilt in place rather than reassembled from
+scratch, since Hexen has no `add_*_map_with_nodes` one-shot: `THINGS`,
+`LINEDEFS`, `SIDEDEFS`, `SECTORS`, and `BEHAVIOR` are carried through
+byte-verbatim; `SEGS`/`SSECTORS`/`NODES` are rebuilt for whichever
+`--node-format` is in effect — unlike a UDMF target, Hexen accepts every
+format including the `classic` default, using the same three carrier
+conventions as a Doom group (the classic trio plus a split-vertex tail
+appended to `VERTEXES`; `xnod`/`znod` in `NODES` with `SEGS`/`SSECTORS`
+emptied and `VERTEXES` untouched; a GL dialect in `SSECTORS`). `REJECT` and
+`BLOCKMAP` are always rebuilt — a hand-tuned `REJECT` is replaced with the
+engine-safe all-zeros table `build_reject` produces, and the five rebuilt
+lumps are emitted at their canonical slot even if the input group lacked one
+outright. A corrupt node lump in the input is excluded before assembly and
+so repaired rather than fatal, and the whole group is re-emitted in the
+canonical `THINGS`…`BEHAVIOR` order, since vanilla-class engines index a
+map's lumps by offset from the marker. A map using polyobjects (thing types
+3000–3002, per the Hexen source's `P_LOCAL.H`) gets a warning that the
+rebuilt nodes may split a polyobject's subsector — polyobject-aware
+splitting is the tracked follow-up (#389).
+
+**Doom 64** (#353) map groups remain the only ones not yet supported by
+`build --nodes`; they are passed through unchanged with a note on stderr.
+Non-map lumps always pass through unchanged. See
 [CLI Usage](cli.md#build) for the full flag reference.
 
 ## The tolerated mixed-sector fan

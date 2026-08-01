@@ -751,7 +751,8 @@ fn patch_udmf_group_znodes(
 /// lumps replaced (or inserted where missing). Returns `Err(exit_code)` after
 /// printing the same error/lenient-hint messages the Doom `--nodes` path uses.
 ///
-/// Unlike the UDMF sibling, Hexen accepts every [`NodeFormat`] — including the
+/// Unlike the UDMF sibling, Hexen accepts every
+/// [`NodeFormat`](crustywad::map::build::NodeFormat) — including the
 /// [`Classic`](crustywad::map::build::NodeFormat::Classic) default — so
 /// `build_opts` is passed straight through with no effective-format resolution.
 #[allow(clippy::too_many_lines)]
