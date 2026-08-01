@@ -2372,6 +2372,128 @@ fn build_nodes_hexen_honors_gl() {
 }
 
 #[test]
+fn build_nodes_refuses_hexen_mixed_sector_fan_and_hints_lenient() {
+    // A Hexen mixed-sector fan assembles strict-clean but its node build fails
+    // (MixedSectorSubsector); the splice refuses (exit 3), names the map, and —
+    // the error being lenient-recoverable — hints --lenient. This exercises the
+    // splice's single build-error arm and its --lenient note.
+    let fixture = write_hexen_mixed_sector_fan_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ))
+        .stderr(predicate::str::contains("re-run with --lenient"));
+}
+
+#[test]
+fn build_nodes_lenient_recovers_hexen_mixed_sector_fan() {
+    // Lenient: the Hexen fan's mixed-sector subsector is tolerated, so the node
+    // build succeeds (exit 0) and surfaces its recovery warning on stderr — the
+    // splice's node-build warning-echo path.
+    let fixture = write_hexen_mixed_sector_fan_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("warning: MAP01"));
+}
+
+#[test]
+fn build_nodes_lenient_hexen_echoes_assembly_repair_warning() {
+    // Lenient: a Hexen linedef's dangling front sidedef (99) is clamped to 0 and
+    // recorded as an assembly warning, which the build-walk echoes on stderr
+    // before the node build then fails on the degenerate single-linedef geometry
+    // (exit 3). Exercises the splice's assembly-warning echo path.
+    let fixture = write_hexen_dangling_sidefront_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("warning: MAP01"))
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ));
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn build_nodes_hexen_honors_znod() {
+    // --node-format znod: the single zlib-compressed ZNOD stream lands in NODES,
+    // SEGS/SSECTORS are present-but-empty, and VERTEXES is byte-identical (no
+    // split tail). Exercises the splice's Znod arm (feature-gated).
+    let fixture = write_hexen_map_wad_with_nodes();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "znod".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    assert!(
+        lump_bytes(out.path(), "SEGS").is_empty(),
+        "ZNOD leaves SEGS empty"
+    );
+    assert!(
+        lump_bytes(out.path(), "SSECTORS").is_empty(),
+        "ZNOD leaves SSECTORS empty"
+    );
+    assert_eq!(
+        lump_bytes(out.path(), "VERTEXES"),
+        lump_bytes(fixture.path(), "VERTEXES"),
+        "extended nodes leave VERTEXES untouched"
+    );
+}
+
+#[test]
 fn build_nodes_refuses_a_map_that_fails_to_assemble() {
     // Explode a valid Doom map, then blank out VERTEXES so the linedefs
     // reference out-of-range vertices and strict assembly fails during the
@@ -5226,6 +5348,139 @@ fn hexen_square_room_geometry() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
     }
 
     (vertexes, sidedefs, sectors, linedefs)
+}
+
+/// A PWAD holding a Hexen-format mixed-sector fan (`MAP01`): two coincident
+/// one-sided linedefs `(0,0)->(64,0)`, each fronting a **different** sector.
+/// This is the Hexen twin of [`write_udmf_mixed_sector_fan_wad`] — it assembles
+/// strict-clean but its node build hits `MixedSectorSubsector` (a convex leaf
+/// spanning two sectors with no separating partition), which is strict-fatal and
+/// lenient-recoverable.
+fn write_hexen_mixed_sector_fan_wad() -> NamedTempFile {
+    // Two vertices: (0,0), (64,0).
+    let mut vertexes = Vec::new();
+    for (x, y) in [(0_i16, 0_i16), (64, 0)] {
+        vertexes.extend_from_slice(&x.to_le_bytes());
+        vertexes.extend_from_slice(&y.to_le_bytes());
+    }
+
+    // Two sidedefs, one per sector (30 bytes each).
+    let mut sidedefs = Vec::new();
+    for sector in [0_u16, 1] {
+        sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // x offset
+        sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // y offset
+        sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // upper
+        sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // lower
+        sidedefs.extend_from_slice(b"STARTAN3"); // middle
+        sidedefs.extend_from_slice(&sector.to_le_bytes()); // sector
+    }
+
+    // Two identical sectors (26 bytes each).
+    let mut sectors = Vec::new();
+    for _ in 0..2 {
+        sectors.extend_from_slice(&0_i16.to_le_bytes()); // floor height
+        sectors.extend_from_slice(&128_i16.to_le_bytes()); // ceiling height
+        sectors.extend_from_slice(b"FLOOR4_8");
+        sectors.extend_from_slice(b"CEIL3_5\0");
+        sectors.extend_from_slice(&160_i16.to_le_bytes()); // light
+        sectors.extend_from_slice(&0_i16.to_le_bytes()); // special
+        sectors.extend_from_slice(&0_i16.to_le_bytes()); // tag
+    }
+
+    // Two coincident one-sided Hexen linedefs (16 bytes each), fronting sector
+    // 0 and sector 1 respectively.
+    let mut linedefs = Vec::new();
+    for front in [0_u16, 1] {
+        linedefs.extend_from_slice(&0_u16.to_le_bytes()); // v1
+        linedefs.extend_from_slice(&1_u16.to_le_bytes()); // v2
+        linedefs.extend_from_slice(&1_u16.to_le_bytes()); // flags: blocking
+        linedefs.extend_from_slice(&[0_u8; 6]); // special + 5 args
+        linedefs.extend_from_slice(&front.to_le_bytes());
+        linedefs.extend_from_slice(&0xffff_u16.to_le_bytes()); // no left side
+    }
+
+    // One Hexen thing (20 bytes): a player-1 start on the fan.
+    let mut things = Vec::new();
+    for v in [0_u16, 32, 0, 0, 0, 1, 7] {
+        things.extend_from_slice(&v.to_le_bytes());
+    }
+    things.extend_from_slice(&[0_u8; 6]); // special + 5 args
+
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SECTORS", &sectors),
+            ("BEHAVIOR", b"BEHAVED!"),
+        ],
+    )
+}
+
+/// A PWAD holding a degenerate Hexen-format map (`MAP01`): a lone linedef whose
+/// front sidedef reference (`99`) dangles past the single sidedef. Strict
+/// assembly rejects it; **lenient** assembly clamps the reference to `0` and
+/// records a `DanglingReference` warning, which the `--nodes` build-walk echoes
+/// before the node build then fails on the degenerate single-linedef geometry.
+/// The Hexen twin of [`build_nodes_lenient_udmf_echoes_assembly_repair_warning`].
+fn write_hexen_dangling_sidefront_wad() -> NamedTempFile {
+    // Two vertices: (0,0), (128,0).
+    let mut vertexes = Vec::new();
+    for (x, y) in [(0_i16, 0_i16), (128, 0)] {
+        vertexes.extend_from_slice(&x.to_le_bytes());
+        vertexes.extend_from_slice(&y.to_le_bytes());
+    }
+
+    // One sidedef in sector 0 (30 bytes).
+    let mut sidedefs = Vec::new();
+    sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // x offset
+    sidedefs.extend_from_slice(&0_i16.to_le_bytes()); // y offset
+    sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // upper
+    sidedefs.extend_from_slice(b"-\0\0\0\0\0\0\0"); // lower
+    sidedefs.extend_from_slice(b"STARTAN3"); // middle
+    sidedefs.extend_from_slice(&0_u16.to_le_bytes()); // sector
+
+    // One sector (26 bytes).
+    let mut sectors = Vec::new();
+    sectors.extend_from_slice(&0_i16.to_le_bytes());
+    sectors.extend_from_slice(&128_i16.to_le_bytes());
+    sectors.extend_from_slice(b"FLOOR4_8");
+    sectors.extend_from_slice(b"CEIL3_5\0");
+    sectors.extend_from_slice(&160_i16.to_le_bytes());
+    sectors.extend_from_slice(&0_i16.to_le_bytes());
+    sectors.extend_from_slice(&0_i16.to_le_bytes());
+
+    // One Hexen linedef (16 bytes) whose front sidedef (99) dangles.
+    let mut linedefs = Vec::new();
+    linedefs.extend_from_slice(&0_u16.to_le_bytes()); // v1
+    linedefs.extend_from_slice(&1_u16.to_le_bytes()); // v2
+    linedefs.extend_from_slice(&1_u16.to_le_bytes()); // flags: blocking
+    linedefs.extend_from_slice(&[0_u8; 6]); // special + 5 args
+    linedefs.extend_from_slice(&99_u16.to_le_bytes()); // dangling front side
+    linedefs.extend_from_slice(&0xffff_u16.to_le_bytes()); // no left side
+
+    // One Hexen thing (20 bytes): a player-1 start.
+    let mut things = Vec::new();
+    for v in [0_u16, 32, 0, 0, 0, 1, 7] {
+        things.extend_from_slice(&v.to_le_bytes());
+    }
+    things.extend_from_slice(&[0_u8; 6]);
+
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("THINGS", &things),
+            ("LINEDEFS", &linedefs),
+            ("SIDEDEFS", &sidedefs),
+            ("VERTEXES", &vertexes),
+            ("SECTORS", &sectors),
+            ("BEHAVIOR", b"BEHAVED!"),
+        ],
+    )
 }
 
 /// A PWAD with a single buildable Hexen-format square-room map (`MAP01`, real
