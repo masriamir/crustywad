@@ -205,29 +205,38 @@ pub fn add_doom_map_with_nodes(
     Ok(warnings)
 }
 
-/// Serializes `map` as a UDMF map group with freshly built GL nodes — the
-/// `name` marker, `TEXTMAP`, a `ZNODES` lump carrying the GL node stream,
-/// and `ENDMAP` — and adds all four lumps to `builder` (ADR-0026 §3, #354).
+/// Serializes `map` as a UDMF map group with freshly built nodes — the
+/// `name` marker, `TEXTMAP`, a `ZNODES` lump carrying the node stream,
+/// and `ENDMAP` — and adds all four lumps to `builder` (ADR-0026 §3, #354;
+/// ADR-0025, #384).
 ///
-/// The GL stream is produced by [`build_gl_nodes`] and serialized by
-/// [`BuiltGlNodes::to_extended_lump_bytes`](super::BuiltGlNodes::to_extended_lump_bytes)
-/// with `build_opts.format`, which must be a GL format
-/// ([`Gl`](super::NodeFormat::Gl)/`Zgl` auto-select the minimal dialect); the
-/// non-GL formats ([`Classic`](super::NodeFormat::Classic),
-/// [`Xnod`](super::NodeFormat::Xnod), `Znod`) are rejected with
-/// [`NodeBuildError::UnsupportedNodeFormat`] — UDMF carries no classic binary
-/// node lumps, and non-GL extended nodes in `ZNODES` are a tracked follow-up
-/// (#384).
+/// The `ZNODES` payload depends on [`build_opts.format`](NodeBuildOptions::format):
+///
+/// - A **GL** format ([`Xgln`](super::NodeFormat::Xgln)/`Xgl2`/`Xgl3`, their
+///   `Z`-prefixed zlib twins, or the auto-resolving
+///   [`Gl`](super::NodeFormat::Gl)/`Zgl`) runs the GL kernel [`build_gl_nodes`]
+///   and serializes an `XGL*`/`ZGL*` stream via
+///   [`BuiltGlNodes::to_extended_lump_bytes`](super::BuiltGlNodes::to_extended_lump_bytes)
+///   (`Gl`/`Zgl` auto-select the minimal dialect).
+/// - A **non-GL extended** format ([`Xnod`](super::NodeFormat::Xnod) or `Znod`)
+///   runs the classic BSP pass [`build_nodes`] and serializes an `XNOD`/`ZNOD`
+///   stream via
+///   [`BuiltNodes::to_extended_lump_bytes`](super::BuiltNodes::to_extended_lump_bytes)
+///   (ADR-0025, #384).
+/// - The default [`Classic`](super::NodeFormat::Classic) format is rejected with
+///   [`NodeBuildError::UnsupportedNodeFormat`] — UDMF has no `SEGS`/`SSECTORS`/
+///   `NODES` lumps to carry a classic binary tree; all UDMF node data lives in
+///   the single self-describing `ZNODES` stream.
 ///
 /// The lumps are added in the UDMF canonical order: the `name` marker,
 /// `TEXTMAP`, `ZNODES`, `ENDMAP` — the same layout
 /// [`add_udmf_map`](crate::map::add_udmf_map) emits, with the built `ZNODES`
 /// inserted before `ENDMAP`. Unlike the Doom one-shot, no `VERTEXES` fix-up is
-/// needed: the GL split vertices live in the stream's own vertex header, and
-/// UDMF geometry lives entirely in `TEXTMAP`.
+/// needed for either family: the split (or GL) vertices live in the stream's own
+/// vertex header, and UDMF geometry lives entirely in `TEXTMAP`.
 ///
 /// Warnings are returned in a deterministic order: the UDMF write-path warnings
-/// first (wrapped as [`NodeBuildWarning::UdmfWrite`]), then the GL-build
+/// first (wrapped as [`NodeBuildWarning::UdmfWrite`]), then the node-build
 /// warnings (wrapped as their existing [`NodeBuildWarning`] variants) — the
 /// write-then-build ordering the Doom one-shot uses.
 ///
@@ -236,32 +245,43 @@ pub fn add_doom_map_with_nodes(
 ///
 /// # Errors
 ///
-/// Returns a [`NodeBuildError`] if the UDMF write, the GL build, or the GL
-/// stream serialization fails; the builder is left unmodified in that case
-/// (every fallible step runs before the first lump is added). Reachable
-/// variants:
+/// Returns a [`NodeBuildError`] if the UDMF write, the node build, or the stream
+/// serialization fails; the builder is left unmodified in that case (every
+/// fallible step runs before the first lump is added). Reachable variants:
 ///
 /// - [`NodeBuildError::UdmfWrite`] wrapping any
 ///   [`UdmfWriteError`](crate::map::UdmfWriteError) — e.g. a NaN/∞ coordinate,
 ///   an empty namespace, a linedef with no front sidedef, an unresolved
 ///   texture index, or an unrepresentable/unsupported source format (see
 ///   [`write_udmf`]).
-/// - [`NodeBuildError::UnsupportedNodeFormat`] (**both** modes) — `build_opts.format`
-///   is a non-GL format.
-/// - [`NodeBuildError::EmptyGeometry`] (**both** modes) — the map yields no GL
+/// - [`NodeBuildError::UnsupportedNodeFormat`] (**both** modes) —
+///   `build_opts.format` is [`Classic`](super::NodeFormat::Classic).
+/// - [`NodeBuildError::EmptyGeometry`] (**both** modes) — the map yields no
 ///   segs to build a tree from.
 /// - [`NodeBuildError::MixedSectorSubsector`] (**strict** mode) — a convex
-///   subsector spans multiple sectors with no separating partition.
+///   subsector spans multiple sectors with no separating partition. Reachable
+///   from either [`build_gl_nodes`] or [`build_nodes`].
 /// - [`NodeBuildError::DegeneratePartition`] (**both** modes) — a hardening guard
 ///   for adversarial geometry a selected partition cannot separate.
-/// - The errors documented on
+/// - For a **GL** format, the errors documented on
 ///   [`BuiltGlNodes::to_extended_lump_bytes`](super::BuiltGlNodes::to_extended_lump_bytes)
 ///   propagate as well — e.g. [`NodeBuildError::TooManyElements`] when the GL
 ///   arena overflows the extended index space,
 ///   [`NodeBuildError::PartitionPrecision`] when an explicit `Xgln`/`Xgl2` meets
 ///   a fractional partition, [`NodeBuildError::CompressionUnavailable`] for a
-///   `Z…` format without the `extended-nodes-zlib` feature, or
+///   `Z…` GL format without the `extended-nodes-zlib` feature, or
 ///   [`NodeBuildError::Write`] wrapping a coordinate that will not narrow.
+/// - For a **non-GL extended** format, the errors documented on
+///   [`BuiltNodes::to_extended_lump_bytes`](super::BuiltNodes::to_extended_lump_bytes)
+///   propagate — e.g. [`NodeBuildError::TooManyElements`] when the arena or a
+///   seg's linedef index overflows the extended ceilings, or
+///   [`NodeBuildError::Write`] wrapping a coordinate that will not narrow.
+///   [`NodeBuildError::MinisegUnsupported`] is documented there but is **not**
+///   reachable through this path: the classic BSP pass [`build_nodes`] emits only
+///   linedef-backed segs. [`NodeBuildError::CompressionUnavailable`] is likewise
+///   unreachable here — the compressed [`Znod`](super::NodeFormat::Znod) variant
+///   exists only when the `extended-nodes-zlib` feature (which supplies the
+///   compressor) is enabled.
 pub fn add_udmf_map_with_nodes(
     builder: &mut WadBuilder,
     name: &str,
@@ -270,20 +290,39 @@ pub fn add_udmf_map_with_nodes(
     build_opts: &NodeBuildOptions,
 ) -> Result<Vec<NodeBuildWarning>, NodeBuildError> {
     // Every fallible step runs before the first `add_lump`, so the builder is
-    // untouched on error (asserted by the reject-non-GL test): the UDMF text
-    // first, then the GL build, then the GL stream serialization.
+    // untouched on error (asserted by the reject-Classic and cfg tests): the
+    // UDMF text first, then the node build, then the stream serialization.
     let (text, udmf_ws) =
         write_udmf(map, write_opts).map_err(|source| NodeBuildError::UdmfWrite { source })?;
-    let (gl, gl_ws) = build_gl_nodes(map, build_opts)?;
-    let znodes = gl.to_extended_lump_bytes(map.vertices().len(), build_opts.format)?;
+
+    // Build the ZNODES stream per the target format family. UDMF stores no
+    // classic binary node lumps, so `Classic` (neither GL nor extended) is
+    // rejected explicitly with `UnsupportedNodeFormat`; a GL format runs the GL
+    // kernel and carries an XGL*/ZGL* stream; a non-GL extended format (`Xnod`/
+    // `Znod`) runs the classic BSP pass and carries an XNOD/ZNOD stream. Every
+    // fallible call in each arm runs before any `add_lump`, preserving fail-fast.
+    let (znodes, build_ws): (Vec<u8>, Vec<NodeBuildWarning>) = if build_opts.format.is_gl() {
+        let (gl, gl_ws) = build_gl_nodes(map, build_opts)?;
+        let stream = gl.to_extended_lump_bytes(map.vertices().len(), build_opts.format)?;
+        (stream, gl_ws)
+    } else if build_opts.format.is_extended() {
+        let (nodes, node_ws) = build_nodes(map, build_opts)?;
+        let stream =
+            nodes.to_extended_lump_bytes(map.vertices().len(), build_opts.format.compressed())?;
+        (stream, node_ws)
+    } else {
+        return Err(NodeBuildError::UnsupportedNodeFormat {
+            format: build_opts.format,
+        });
+    };
 
     // Deterministic warning order: UDMF write-path warnings first, then the
-    // GL-build warnings (write-then-build, matching the Doom one-shot).
+    // node-build warnings (write-then-build, matching the Doom one-shot).
     let mut warnings: Vec<NodeBuildWarning> = udmf_ws
         .into_iter()
         .map(NodeBuildWarning::UdmfWrite)
         .collect();
-    warnings.extend(gl_ws);
+    warnings.extend(build_ws);
 
     builder.add_lump(name, b"");
     builder.add_lump("TEXTMAP", text.into_bytes());

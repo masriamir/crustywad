@@ -19,7 +19,7 @@ mod common;
 
 use crustywad::map::build::{
     BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat,
-    add_doom_map_with_nodes, add_udmf_map_with_nodes, build_gl_nodes,
+    add_doom_map_with_nodes, add_udmf_map_with_nodes, build_gl_nodes, build_nodes,
 };
 use crustywad::map::{GlNodeChild, GlVertexRef, Map, NodeChild};
 use crustywad::{ParseOptions, Wad, WadBuilder, WadKind, WriteOptions};
@@ -1528,14 +1528,96 @@ fn add_udmf_map_with_nodes_emits_a_reparsable_znodes_group() {
     assert_eq!(assembled.subsectors().len(), direct.subsectors.len());
 }
 
-/// A non-GL `NodeFormat` is rejected before any lump is added, so the builder is
-/// left untouched (mirrors the Doom one-shot's fail-fast ordering).
+/// The `Xnod` non-GL extended format emits a single `XNOD` stream in `ZNODES`:
+/// the four-lump `MAP01`/`TEXTMAP`/`ZNODES`/`ENDMAP` group re-parses, the
+/// `ZNODES` payload carries the `XNOD` signature, and strict re-assembly yields
+/// seg/subsector arenas whose counts match a direct `build_nodes` run on the
+/// same map.
 #[test]
-fn add_udmf_map_with_nodes_rejects_non_gl_formats() {
+fn add_udmf_map_with_nodes_emits_xnod_znodes() {
     let map = two_room_doorway_map();
     let mut builder = WadBuilder::new(WadKind::Pwad);
     let mut opts = NodeBuildOptions::strict();
     opts.format = NodeFormat::Xnod;
+    let warnings =
+        add_udmf_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+            .expect("one-shot succeeds");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    let bytes = builder.build().expect("build");
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::strict()).expect("parse");
+    let names: Vec<_> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(names, ["MAP01", "TEXTMAP", "ZNODES", "ENDMAP"]);
+    // The ZNODES payload is a non-GL extended stream (XNOD), not a GL one.
+    let znodes = wad.lump_bytes(2).expect("ZNODES lump present");
+    assert_eq!(
+        &znodes[..4],
+        b"XNOD",
+        "the non-GL extended stream carries the XNOD signature"
+    );
+    // Round-trip: the group assembles strictly, and the decoded seg/subsector
+    // counts match what build_nodes produced for the same map.
+    let group = wad.map_groups().into_iter().next().expect("one group");
+    let assembled = Map::assemble_with_options(&wad, &group, ParseOptions::strict())
+        .expect("assembles with ZNODES");
+    let (direct, _) = build_nodes(&map, &opts).expect("direct build");
+    assert_eq!(assembled.segs().len(), direct.segs.len());
+    assert_eq!(assembled.subsectors().len(), direct.subsectors.len());
+}
+
+/// The `Znod` zlib-compressed non-GL twin lands the same stream in `ZNODES`
+/// under the `ZNOD` signature (feature-gated), and the compressed group still
+/// re-assembles strictly with a populated seg arena.
+///
+/// There is no cfg-off twin: without `extended-nodes-zlib` the `NodeFormat::Znod`
+/// variant does not exist and `NodeFormat::compressed()` is always `false`, so
+/// `NodeBuildError::CompressionUnavailable` is unreachable through this one-shot.
+/// (That error's direct coverage lives in `nodes.rs`'s
+/// `compressed_without_feature_errors` unit test, which calls
+/// `to_extended_lump_bytes(.., true)` directly.) This mirrors the file's
+/// single feature-gated `oneshot_emits_zgl3_in_ssectors`.
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn add_udmf_map_with_nodes_emits_znod_znodes() {
+    let map = two_room_doorway_map();
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Znod;
+    let warnings =
+        add_udmf_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+            .expect("one-shot succeeds");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    let bytes = builder.build().expect("build");
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::strict()).expect("parse");
+    let znodes_idx = wad
+        .lumps()
+        .iter()
+        .position(|l| l.name() == "ZNODES")
+        .expect("ZNODES present");
+    let znodes = wad.lump_bytes(znodes_idx).expect("ZNODES bytes present");
+    assert_eq!(
+        &znodes[..4],
+        b"ZNOD",
+        "the compressed non-GL extended stream carries the ZNOD signature"
+    );
+    let group = wad.map_groups().into_iter().next().expect("one group");
+    let assembled = Map::assemble_with_options(&wad, &group, ParseOptions::strict())
+        .expect("assembles with compressed ZNODES");
+    assert!(
+        !assembled.segs().is_empty(),
+        "the doorway map yields at least one seg"
+    );
+}
+
+/// The `Classic` format has no UDMF representation — UDMF carries no classic
+/// binary node lumps — so it is rejected with `UnsupportedNodeFormat` before any
+/// lump is added, leaving the builder untouched (mirrors the Doom one-shot's
+/// fail-fast ordering).
+#[test]
+fn add_udmf_map_with_nodes_rejects_classic_format() {
+    let map = two_room_doorway_map();
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let opts = NodeBuildOptions::strict(); // format defaults to Classic
+    assert_eq!(opts.format, NodeFormat::Classic);
     let err = add_udmf_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
         .unwrap_err();
     assert!(matches!(err, NodeBuildError::UnsupportedNodeFormat { .. }));
