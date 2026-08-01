@@ -310,14 +310,24 @@ strict mode refuses any UDMF field the Doom format cannot represent.
 
 A converted group contains only what the target format defines — the marker
 plus `TEXTMAP`/`ENDMAP`, or the marker plus the classic data lumps and the
-empty node lumps. Any other lump that lived inside the map group (`BEHAVIOR`,
+empty node lumps. Pass `--nodes` to build real node lumps for either target —
+`SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP` replacing the empty placeholders
+for `--to doom`, a GL `ZNODES` lump (otherwise absent) for `--to udmf` — see
+[Building nodes](building-nodes.md). Any other lump that lived inside the
+source map group (`BEHAVIOR`,
 `SCRIPTS`, `ZNODES`, `DIALOGUE`, GL nodes) is **dropped**, not passed
 through: compiled ACS is bound to the source map's specials and node lumps
 describe the source geometry, so carrying either across would look intact
 while being subtly wrong. That is data loss under the same policy as any
 other: strict mode refuses (exit `3`, naming each lump), `--lenient` drops
 them and warns. A map already in the target format is not converted, so
-nothing in its group is dropped.
+nothing in its group is dropped. Such a same-format map passes through
+unchanged even under `--nodes`: `--nodes` does not retrofit a `ZNODES` stream
+onto a group that is already UDMF (the in-place UDMF node rebuild is tracked by
+[#385](https://github.com/masriamir/crustywad/issues/385)) — the per-group note
+says so. Use `cwad build --nodes` to rebuild an existing UDMF group's `ZNODES`
+in place (after extracting the WAD's lumps — `build` takes `NAME=FILE` specs,
+not a WAD).
 
 See [CLI Usage](cli.md#convert) for the full flag reference, example output,
 and exit codes.

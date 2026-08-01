@@ -2,9 +2,12 @@
 //! five data lumps with real, built node lumps (`SEGS`/`SSECTORS`/`NODES`,
 //! `REJECT`, `BLOCKMAP`) into a [`WadBuilder`], so the resulting WAD runs in a
 //! vanilla engine without an external nodebuilder pass (ADR-0024 §4).
+//! [`add_udmf_map_with_nodes`] is its UDMF counterpart: it bundles a UDMF map
+//! group (`TEXTMAP`) with a built GL `ZNODES` stream.
 
 use crate::map::Map;
 use crate::map::doom::DoomWriteWarning;
+use crate::map::udmf::write_udmf;
 use crate::map::write_doom_map;
 use crate::write::{WadBuilder, WriteOptions};
 
@@ -199,5 +202,92 @@ pub fn add_doom_map_with_nodes(
     builder.add_lump("REJECT", reject);
     builder.add_lump("BLOCKMAP", blockmap);
 
+    Ok(warnings)
+}
+
+/// Serializes `map` as a UDMF map group with freshly built GL nodes — the
+/// `name` marker, `TEXTMAP`, a `ZNODES` lump carrying the GL node stream,
+/// and `ENDMAP` — and adds all four lumps to `builder` (ADR-0026 §3, #354).
+///
+/// The GL stream is produced by [`build_gl_nodes`] and serialized by
+/// [`BuiltGlNodes::to_extended_lump_bytes`](super::BuiltGlNodes::to_extended_lump_bytes)
+/// with `build_opts.format`, which must be a GL format
+/// ([`Gl`](super::NodeFormat::Gl)/`Zgl` auto-select the minimal dialect); the
+/// non-GL formats ([`Classic`](super::NodeFormat::Classic),
+/// [`Xnod`](super::NodeFormat::Xnod), `Znod`) are rejected with
+/// [`NodeBuildError::UnsupportedNodeFormat`] — UDMF carries no classic binary
+/// node lumps, and non-GL extended nodes in `ZNODES` are a tracked follow-up
+/// (#384).
+///
+/// The lumps are added in the UDMF canonical order: the `name` marker,
+/// `TEXTMAP`, `ZNODES`, `ENDMAP` — the same layout
+/// [`add_udmf_map`](crate::map::add_udmf_map) emits, with the built `ZNODES`
+/// inserted before `ENDMAP`. Unlike the Doom one-shot, no `VERTEXES` fix-up is
+/// needed: the GL split vertices live in the stream's own vertex header, and
+/// UDMF geometry lives entirely in `TEXTMAP`.
+///
+/// Warnings are returned in a deterministic order: the UDMF write-path warnings
+/// first (wrapped as [`NodeBuildWarning::UdmfWrite`]), then the GL-build
+/// warnings (wrapped as their existing [`NodeBuildWarning`] variants) — the
+/// write-then-build ordering the Doom one-shot uses.
+///
+/// The caller invokes [`WadBuilder::build`] afterward (which returns
+/// [`WriteError`](crate::WriteError)).
+///
+/// # Errors
+///
+/// Returns a [`NodeBuildError`] if the UDMF write, the GL build, or the GL
+/// stream serialization fails; the builder is left unmodified in that case
+/// (every fallible step runs before the first lump is added). Reachable
+/// variants:
+///
+/// - [`NodeBuildError::UdmfWrite`] wrapping any
+///   [`UdmfWriteError`](crate::map::UdmfWriteError) — e.g. a NaN/∞ coordinate,
+///   an empty namespace, a linedef with no front sidedef, an unresolved
+///   texture index, or an unrepresentable/unsupported source format (see
+///   [`write_udmf`]).
+/// - [`NodeBuildError::UnsupportedNodeFormat`] (**both** modes) — `build_opts.format`
+///   is a non-GL format.
+/// - [`NodeBuildError::EmptyGeometry`] (**both** modes) — the map yields no GL
+///   segs to build a tree from.
+/// - [`NodeBuildError::MixedSectorSubsector`] (**strict** mode) — a convex
+///   subsector spans multiple sectors with no separating partition.
+/// - [`NodeBuildError::DegeneratePartition`] (**both** modes) — a hardening guard
+///   for adversarial geometry a selected partition cannot separate.
+/// - The errors documented on
+///   [`BuiltGlNodes::to_extended_lump_bytes`](super::BuiltGlNodes::to_extended_lump_bytes)
+///   propagate as well — e.g. [`NodeBuildError::TooManyElements`] when the GL
+///   arena overflows the extended index space,
+///   [`NodeBuildError::PartitionPrecision`] when an explicit `Xgln`/`Xgl2` meets
+///   a fractional partition, [`NodeBuildError::CompressionUnavailable`] for a
+///   `Z…` format without the `extended-nodes-zlib` feature, or
+///   [`NodeBuildError::Write`] wrapping a coordinate that will not narrow.
+pub fn add_udmf_map_with_nodes(
+    builder: &mut WadBuilder,
+    name: &str,
+    map: &Map,
+    write_opts: &WriteOptions,
+    build_opts: &NodeBuildOptions,
+) -> Result<Vec<NodeBuildWarning>, NodeBuildError> {
+    // Every fallible step runs before the first `add_lump`, so the builder is
+    // untouched on error (asserted by the reject-non-GL test): the UDMF text
+    // first, then the GL build, then the GL stream serialization.
+    let (text, udmf_ws) =
+        write_udmf(map, write_opts).map_err(|source| NodeBuildError::UdmfWrite { source })?;
+    let (gl, gl_ws) = build_gl_nodes(map, build_opts)?;
+    let znodes = gl.to_extended_lump_bytes(map.vertices().len(), build_opts.format)?;
+
+    // Deterministic warning order: UDMF write-path warnings first, then the
+    // GL-build warnings (write-then-build, matching the Doom one-shot).
+    let mut warnings: Vec<NodeBuildWarning> = udmf_ws
+        .into_iter()
+        .map(NodeBuildWarning::UdmfWrite)
+        .collect();
+    warnings.extend(gl_ws);
+
+    builder.add_lump(name, b"");
+    builder.add_lump("TEXTMAP", text.into_bytes());
+    builder.add_lump("ZNODES", znodes);
+    builder.add_lump("ENDMAP", b"");
     Ok(warnings)
 }

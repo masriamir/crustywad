@@ -2075,7 +2075,7 @@ fn build_nodes_with_no_map_is_a_noop() {
         .assert()
         .code(0)
         .stderr(predicate::str::contains(
-            "no Doom map groups found; --nodes had no effect",
+            "no buildable map groups found; --nodes had no effect",
         ));
     assert_eq!(lump_bytes(out.path(), "PLAYPAL"), vec![1_u8, 2, 3]);
     // No map means no SEGS lump was added at all (not merely an empty one) —
@@ -2202,8 +2202,10 @@ fn build_nodes_skips_doom64_group_with_note() {
 }
 
 #[test]
-fn build_nodes_skips_udmf_group_with_note() {
-    // A UDMF map: skipped with a note (#354); its nodes are a GL/ZNODES concern.
+fn build_nodes_builds_znodes_for_udmf_group() {
+    // A UDMF map: build --nodes builds GL nodes into a fresh ZNODES lump
+    // inserted immediately after TEXTMAP; the auto-format note fires and the
+    // TEXTMAP bytes survive byte-identical.
     let fixture = write_udmf_square_room_wad();
     let (specs, _files) = explode_wad_to_build_specs(fixture.path());
     let out = NamedTempFile::new().unwrap();
@@ -2220,8 +2222,370 @@ fn build_nodes_skips_udmf_group_with_note() {
         .args(&args)
         .assert()
         .code(0)
-        .stderr(predicate::str::contains("is a UDMF map"))
-        .stderr(predicate::str::contains("#354"));
+        .stderr(predicate::str::contains("building GL nodes"));
+
+    // The group grew a ZNODES lump inserted immediately after TEXTMAP; the
+    // trailing COLORMAP passes through.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
+    );
+    // TEXTMAP bytes are byte-identical to the input map text.
+    assert_eq!(
+        lump_bytes(out.path(), "TEXTMAP"),
+        udmf_square_room().into_bytes()
+    );
+    // The ZNODES lump is a GL stream; the square room resolves to the minimal
+    // XGLN dialect under the default (auto) GL format.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[test]
+fn build_nodes_replaces_stale_znodes_and_preserves_port_lumps() {
+    // A UDMF group carrying a stale/garbage ZNODES plus a DIALOGUE port lump
+    // between TEXTMAP and ENDMAP: build --nodes replaces the ZNODES bytes in
+    // place and preserves DIALOGUE (bytes and position) verbatim; the lump
+    // count is unchanged.
+    let textmap = udmf_square_room();
+    let fixture = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ZNODES", b"JUNK"),
+            ("DIALOGUE", &[7, 8, 9]),
+            ("ENDMAP", b""),
+        ],
+    );
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    // Same lumps, same order, same count — the stale ZNODES was replaced in
+    // place, not appended.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "DIALOGUE", "ENDMAP"]
+    );
+    // The ZNODES bytes are a real GL stream now, not the garbage payload.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert_ne!(znodes, b"JUNK");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+    // The DIALOGUE port lump survived verbatim.
+    assert_eq!(lump_bytes(out.path(), "DIALOGUE"), vec![7_u8, 8, 9]);
+    // TEXTMAP bytes are byte-identical.
+    assert_eq!(
+        lump_bytes(out.path(), "TEXTMAP"),
+        udmf_square_room().into_bytes()
+    );
+}
+
+#[test]
+fn build_nodes_skips_udmf_group_for_non_gl_format_with_note() {
+    // --node-format xnod has no GL stream, so a UDMF group is passed through
+    // untouched with a note (#384).
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "xnod".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("not valid for ZNODES"))
+        .stderr(predicate::str::contains("#384"));
+
+    // Passed through untouched: no ZNODES lump was added.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+    );
+}
+
+#[test]
+fn build_nodes_refuses_udmf_map_that_fails_to_assemble() {
+    // A UDMF map whose TEXTMAP parses but whose linedef `sidefront` points past
+    // the sidedef count: strict assembly rejects the dangling reference, so the
+    // --nodes build refuses (exit 3) while naming the map.
+    let textmap = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 128; y = 0; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 99; blocking = true; }\n",
+    );
+    let fixture = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("failed to assemble map"));
+}
+
+#[test]
+fn build_nodes_lenient_udmf_echoes_assembly_repair_warning() {
+    // Lenient: the same dangling `sidefront` is clamped and recorded as an
+    // assembly warning, which the build-walk echoes on stderr before the node
+    // build then fails on the degenerate single-linedef geometry (exit 3).
+    let textmap = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 128; y = 0; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 99; blocking = true; }\n",
+    );
+    let fixture = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("warning: MAP01"))
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ));
+}
+
+#[test]
+fn build_nodes_refuses_udmf_mixed_sector_fan_and_hints_lenient() {
+    // The UDMF mixed-sector fan assembles strict-clean but its GL node build
+    // fails (MixedSectorSubsector); the build refuses (exit 3), names the map,
+    // and — the error being lenient-recoverable — hints --lenient.
+    let fixture = write_udmf_mixed_sector_fan_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ))
+        .stderr(predicate::str::contains("re-run with --lenient"));
+}
+
+#[test]
+fn build_nodes_lenient_recovers_udmf_mixed_sector_fan() {
+    // Lenient: the UDMF fan's mixed-sector subsector is tolerated, so the GL
+    // node build succeeds and surfaces its recovery warning on stderr (the
+    // build-walk warning-echo path).
+    let fixture = write_udmf_mixed_sector_fan_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "--lenient".to_string(),
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("warning: MAP01"));
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn build_nodes_skips_udmf_group_for_znod_format_with_note() {
+    // --node-format znod (zlib-only, non-GL) has no ZNODES carrier, so a UDMF
+    // group is passed through untouched with a note naming the requested format.
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "znod".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("znod"))
+        .stderr(predicate::str::contains("not valid for ZNODES"));
+
+    // Passed through untouched: no ZNODES lump was added.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+    );
+}
+
+#[test]
+fn build_nodes_udmf_honors_explicit_gl_dialect() {
+    // An explicit --node-format xgl3 forces the XGL3 dialect for the ZNODES
+    // stream (overriding the auto XGLN selection).
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "xgl3".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGL3"),
+        "ZNODES should be an XGL3 stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[test]
+fn build_nodes_handles_mixed_doom_and_udmf_groups() {
+    // A single WAD carrying BOTH a Doom map group (empty node lumps) and a UDMF
+    // map group, plus a loose non-map lump: build --nodes (default format)
+    // rebuilds the Doom group's classic node lumps and builds a GL ZNODES for
+    // the UDMF group, while the non-map lump survives verbatim.
+    let doom_fixture = write_doom_square_room_empty_nodes_wad();
+    let doom_bytes = std::fs::read(doom_fixture.path()).unwrap();
+    let doom_wad = crustywad::Wad::from_bytes(doom_bytes).expect("doom fixture parses");
+    // The Doom fixture is [MAP01 .. BLOCKMAP, COLORMAP]; take it whole, then
+    // append a UDMF group so the WAD holds one group of each format.
+    let mut lumps: Vec<(String, Vec<u8>)> = doom_wad
+        .lumps()
+        .iter()
+        .map(|l| (l.name().to_string(), doom_wad.lump_data(l).to_vec()))
+        .collect();
+    lumps.push(("MAP02".to_string(), Vec::new()));
+    lumps.push(("TEXTMAP".to_string(), udmf_square_room().into_bytes()));
+    lumps.push(("ENDMAP".to_string(), Vec::new()));
+
+    let combined = write_wad_owned(*b"PWAD", &lumps);
+    let (specs, _files) = explode_wad_to_build_specs(combined.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0);
+
+    // Doom group: classic node lumps rebuilt (SEGS non-empty, NODES present).
+    assert!(
+        !lump_bytes(out.path(), "SEGS").is_empty(),
+        "the Doom group's SEGS should be rebuilt non-empty"
+    );
+    assert!(
+        lump_names(out.path()).iter().any(|n| n == "NODES"),
+        "the Doom group's NODES lump should be present"
+    );
+    // UDMF group: a GL ZNODES stream was built (XGLN under the default format).
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "the UDMF group's ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+    // The loose non-map lump survived verbatim.
+    assert_eq!(lump_bytes(out.path(), "COLORMAP"), vec![4_u8, 5, 6]);
 }
 
 #[test]
@@ -3723,8 +4087,60 @@ fn convert_doom_to_doom_without_nodes_passes_through_empty_node_lumps() {
 }
 
 #[test]
-fn convert_nodes_ignored_for_udmf_target_with_note() {
+fn convert_to_udmf_with_nodes_emits_znodes() {
+    // Doom-source WAD -> UDMF target with --nodes: the converted group carries a
+    // built GL ZNODES stream, and the result validates deeply.
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+        ])
+        .assert()
+        .code(0)
+        // The default (Classic) node-format resolves to the GL auto-format; the
+        // run notes it once.
+        .stderr(predicate::str::contains(
+            "--to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each converted map",
+        ));
+
+    // The converted group is [marker, TEXTMAP, ZNODES, ENDMAP], with the
+    // trailing non-map lump passed through in order.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
+    );
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+
+    // The synthesized UDMF map with built nodes passes deep validation.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", out.path().to_str().unwrap()])
+        .assert()
+        .code(0);
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_passes_udmf_source_through_unchanged() {
+    // A source group already in the target format (UDMF -> UDMF) passes through
+    // untouched: --nodes does NOT retrofit a ZNODES onto it (that in-place
+    // rebuild is tracked by #385). The per-group note makes the pass-through
+    // honest despite the run-level "builds GL nodes into ZNODES" note.
     let wad = write_udmf_square_room_wad();
+    let input_textmap = lump_bytes(wad.path(), "TEXTMAP");
     let out = NamedTempFile::new().unwrap();
 
     Command::cargo_bin("cwad")
@@ -3741,7 +4157,159 @@ fn convert_nodes_ignored_for_udmf_target_with_note() {
         .assert()
         .code(0)
         .stderr(predicate::str::contains(
-            "--nodes has no effect with --to udmf",
+            "MAP01 is already UDMF; passed through unchanged (no ZNODES built — see #385)",
+        ));
+
+    // The group passed through byte-identical: same lumps in order, no ZNODES
+    // inserted, and the TEXTMAP bytes are untouched.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+    );
+    assert!(
+        !lump_names(out.path()).iter().any(|n| n == "ZNODES"),
+        "no ZNODES should be built for an already-UDMF pass-through"
+    );
+    assert_eq!(lump_bytes(out.path(), "TEXTMAP"), input_textmap);
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_rejects_non_gl_format() {
+    // A non-GL extended format has no ZNODES carrier: the UDMF target rejects it
+    // up front (exit 3) before writing anything.
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "xnod",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("not valid for a UDMF target"))
+        .stderr(predicate::str::contains("#384"));
+
+    // Rejected before conversion, so nothing was written to the output file.
+    assert_eq!(
+        std::fs::metadata(out.path()).unwrap().len(),
+        0,
+        "no output should be written on the up-front rejection"
+    );
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_refuses_mixed_sector_fan_and_hints_lenient() {
+    // A Doom-source mixed-sector fan converts to UDMF, but the GL node build in
+    // the one-shot `add_udmf_map_with_nodes` fails (MixedSectorSubsector): the
+    // conversion refuses (exit 3), names the map, and — the error being
+    // lenient-recoverable — hints --lenient.
+    let wad = write_doom_mixed_sector_fan_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("cannot convert map MAP01 to udmf"))
+        .stderr(predicate::str::contains("--lenient"));
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn convert_to_udmf_with_nodes_rejects_znod_format() {
+    // --node-format znod (zlib-only, non-GL) has no ZNODES carrier: the UDMF
+    // target rejects it up front (exit 3) before writing anything.
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "znod",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("not valid for a UDMF target"));
+}
+
+#[cfg(feature = "extended-nodes-zlib")]
+#[test]
+fn convert_to_udmf_with_nodes_zgl3_compresses() {
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "zgl3",
+        ])
+        .assert()
+        .code(0);
+
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"ZGL3"),
+        "ZNODES should be a ZGL3 stream"
+    );
+}
+
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn convert_to_udmf_with_nodes_zgl3_without_feature_errors_clearly() {
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "zgl3",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "--node-format zgl3 requires cwad built with the extended-nodes-zlib feature",
         ));
 }
 

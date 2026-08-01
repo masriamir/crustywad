@@ -159,7 +159,10 @@ Pass `--nodes` to rebuild, after packing, every **Doom**-format map group in
 the output with engine-playable node lumps via the
 [`add_doom_map_with_nodes`](building-nodes.md) one-shot — the BSP tree
 (`SEGS`/`SSECTORS`/`NODES`), the collision `BLOCKMAP`, and the all-clear
-`REJECT`:
+`REJECT` — and every **UDMF**-format map group with a built GL `ZNODES`
+stream, replacing any existing `ZNODES` (or inserted right after `TEXTMAP` if
+the group has none) with the rest of the group's lumps carried through
+unchanged:
 
 ```text
 $ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
@@ -170,17 +173,18 @@ All of a rebuilt Doom group's node lumps — `SEGS`/`SSECTORS`/`NODES`,
 the `REJECT` visibility table, and the `BLOCKMAP` — are overwritten with the
 newly built ones, whether they were packed as empty placeholders or already
 held data. The map's packed `VERTEXES` lump can also grow: the BSP pass
-appends any split vertices it creates to it. **Hexen** (#352), **Doom 64**
-(#353), and **UDMF** (#354)
-map groups are not yet supported by `--nodes` and are passed through
+appends any split vertices it creates to it. **Hexen** (#352) and **Doom 64**
+(#353) map groups are not yet supported by `--nodes` and are passed through
 unchanged with a note on stderr; non-map lumps always pass through
-unchanged; if no Doom map group is found, `--nodes` is a no-op and prints a
-note.
+unchanged; if neither a Doom nor a UDMF map group is found, `--nodes` is a
+no-op and prints a note.
 
 `build --nodes` takes the same `--node-format <FORMAT>` flag as
 `convert --nodes` — `classic` (default), the non-GL extended pair
 (`xnod`/`znod`), the four GL dialects (`xgln`/`xgl2`/`xgl3`/`gl`), and their
-`z*` zlib twins:
+`z*` zlib twins. A UDMF map group's `ZNODES` stream is GL-only: `classic`
+auto-selects `gl` (noted on stderr once per group); `xnod`/`znod` skip that
+group with a note rather than failing the whole build (see #384):
 
 ```text
 $ cwad build --nodes --node-format gl -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
@@ -232,13 +236,25 @@ flag applies to the build too — it is often needed for real maps, whose
 geometry can contain the engine-tolerated mixed-sector fan that strict mode
 rejects (see [Building nodes](building-nodes.md#the-tolerated-mixed-sector-fan)).
 
-`--nodes` only affects classic Doom output; combined with `--to udmf` it has no
-effect (UDMF has no binary node lumps) and prints a note to stderr:
+`--nodes` combined with `--to udmf` instead builds a GL `ZNODES` stream for
+each converted map — UDMF has no binary node lumps, so the GL dialect
+selected by `--node-format` is the only one with anywhere to go. The default
+`classic` auto-selects `gl` and prints a note; an explicit GL value needs no
+note:
 
 ```text
 $ cwad convert doom.wad -o out.wad --to udmf --nodes
-note: --nodes has no effect with --to udmf (UDMF has no binary node lumps); ignoring
+note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each converted map
+wrote out.wad: converted 1 map to udmf
 ```
+
+A source map already in UDMF is not converted, so `--to udmf --nodes` passes
+it through unchanged and does **not** retrofit a `ZNODES` stream onto it (a
+per-group note says so; the in-place UDMF node rebuild is tracked by
+[#385](https://github.com/masriamir/crustywad/issues/385)). Use
+`cwad build --nodes` to rebuild an existing UDMF group's `ZNODES` in place
+(after extracting the WAD's lumps — `build` takes `NAME=FILE` specs, not a
+WAD).
 
 `--node-format <FORMAT>` selects the on-disk form of the nodes `--nodes`
 builds; default `classic`. It has no effect without `--nodes`; a
@@ -253,7 +269,21 @@ values, GL and non-GL alike, require `cwad` built with the
 `extended-nodes-zlib` feature (on by default) — without it, a `z*` value
 that actually takes effect (i.e. `--nodes` is in play) exits `3` with a
 clear error rather than a clap parse failure; without `--nodes` the flag is
-noted and ignored as described above. See
+noted and ignored as described above.
+
+**`--to udmf --nodes` only accepts a GL `--node-format`.** The `ZNODES`
+container itself can carry non-GL extended nodes (`XNOD`/`ZNOD`) too — engines
+accept both — but `cwad`'s UDMF output is GL-only for now as a deliberate CLI
+policy, so an explicit `xnod` or `znod` exits `3` naming the problem (lifting
+this is tracked by #384); the default `classic` auto-selects `gl` instead of
+failing:
+
+```text
+$ cwad convert doom.wad -o out.wad --to udmf --nodes --node-format xnod
+error: --node-format xnod is not valid for a UDMF target (ZNODES is GL-only; see #384)
+```
+
+See
 [Choosing the on-disk node format](building-nodes.md#choosing-the-on-disk-node-format)
 for the full value table.
 

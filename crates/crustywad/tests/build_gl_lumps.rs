@@ -19,7 +19,7 @@ mod common;
 
 use crustywad::map::build::{
     BuiltGlNodes, NodeBuildError, NodeBuildOptions, NodeBuildWarning, NodeFormat,
-    add_doom_map_with_nodes, build_gl_nodes,
+    add_doom_map_with_nodes, add_udmf_map_with_nodes, build_gl_nodes,
 };
 use crustywad::map::{GlNodeChild, GlVertexRef, Map, NodeChild};
 use crustywad::{ParseOptions, Wad, WadBuilder, WadKind, WriteOptions};
@@ -1490,4 +1490,75 @@ fn sweep_builds_gl_nodes_for_every_classic_map() {
         "built GL nodes for {} WAD(s): {maps_built} classic map(s), {doom64_skipped} Doom 64 skipped, {total_segs} total GL segs ({total_minisegs} minisegs); {degenerate_subsectors} degenerate (<=2-vertex) subsector(s), all closed and validate-clean",
         paths.len()
     );
+}
+
+// --- add_udmf_map_with_nodes one-shot (#354) ---------------------------------
+
+/// The UDMF one-shot emits the four-lump `MAP01`/`TEXTMAP`/`ZNODES`/`ENDMAP`
+/// group, the `ZNODES` payload carries the auto-selected minimal GL dialect
+/// (`XGLN` for this whole-unit map), and the group re-parses and re-assembles
+/// strictly with the decoded node arenas matching what `build_gl_nodes` built.
+#[test]
+fn add_udmf_map_with_nodes_emits_a_reparsable_znodes_group() {
+    let map = two_room_doorway_map();
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    // `NodeBuildOptions` is `#[non_exhaustive]`, so a struct-update expression is
+    // unavailable from outside the crate — mutate a strict base instead.
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Gl;
+    let warnings =
+        add_udmf_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+            .expect("one-shot succeeds");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    let bytes = builder.build().expect("build");
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::strict()).expect("parse");
+    let names: Vec<_> = wad.lumps().iter().map(crustywad::Lump::name).collect();
+    assert_eq!(names, ["MAP01", "TEXTMAP", "ZNODES", "ENDMAP"]);
+    // The ZNODES payload starts with a GL signature (gl auto starts at XGLN
+    // and escalates only when needed; this small map needs no escalation).
+    let znodes = wad.lump_bytes(2).expect("ZNODES lump present");
+    assert_eq!(&znodes[..4], b"XGLN");
+    // Round-trip: the group assembles strictly, and the decoded node arrays
+    // match what build_gl_nodes produced for the same map.
+    let group = wad.map_groups().into_iter().next().expect("one group");
+    let assembled = Map::assemble_with_options(&wad, &group, ParseOptions::strict())
+        .expect("assembles with ZNODES");
+    let (direct, _) = build_gl_nodes(&map, &opts).expect("direct build");
+    assert_eq!(assembled.segs().len(), direct.segs.len());
+    assert_eq!(assembled.subsectors().len(), direct.subsectors.len());
+}
+
+/// A non-GL `NodeFormat` is rejected before any lump is added, so the builder is
+/// left untouched (mirrors the Doom one-shot's fail-fast ordering).
+#[test]
+fn add_udmf_map_with_nodes_rejects_non_gl_formats() {
+    let map = two_room_doorway_map();
+    let mut builder = WadBuilder::new(WadKind::Pwad);
+    let mut opts = NodeBuildOptions::strict();
+    opts.format = NodeFormat::Xnod;
+    let err = add_udmf_map_with_nodes(&mut builder, "MAP01", &map, &WriteOptions::strict(), &opts)
+        .unwrap_err();
+    assert!(matches!(err, NodeBuildError::UnsupportedNodeFormat { .. }));
+    // The builder must be left unmodified on error (mirrors the Doom one-shot):
+    // parsing its output yields an empty, lump-less WAD.
+    let bytes = builder.build().expect("empty build");
+    let wad = Wad::from_bytes_with_options(bytes, ParseOptions::strict()).expect("parse");
+    assert!(wad.lumps().is_empty());
+}
+
+#[test]
+fn udmf_write_error_recoverability_delegates_through_node_build_error() {
+    use crustywad::map::MapFormat;
+    use crustywad::map::udmf::UdmfWriteError;
+
+    let recoverable = NodeBuildError::UdmfWrite {
+        source: UdmfWriteError::EmptyNamespace,
+    };
+    assert!(recoverable.is_lenient_recoverable());
+    let unrecoverable = NodeBuildError::UdmfWrite {
+        source: UdmfWriteError::UnsupportedSourceFormat {
+            format: MapFormat::Doom,
+        },
+    };
+    assert!(!unrecoverable.is_lenient_recoverable());
 }
