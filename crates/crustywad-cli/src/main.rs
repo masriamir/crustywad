@@ -673,7 +673,14 @@ fn patch_udmf_group_znodes(
     // so the non-GL set is matched explicitly (mirroring
     // `effective_udmf_format`'s cfg style), yielding the
     // `compressed` flag `BuiltNodes::to_extended_lump_bytes`
-    // needs (`Znod` compresses; `Xnod` does not).
+    // needs (`Znod` compresses; `Xnod` does not). The `_` arm
+    // cannot silently misroute a future variant: the library's
+    // format predicates and serializer dispatches are
+    // deliberately exhaustive, so a new `NodeFormat` variant is
+    // a compile error there until classified — and one
+    // classified as neither GL nor non-GL-extended falls
+    // through here to the GL serializer, whose dispatch rejects
+    // it with `UnsupportedNodeFormat` via the shared error arm.
     let non_gl_compressed = match effective_format {
         NodeFormat::Xnod => Some(false),
         #[cfg(feature = "extended-nodes-zlib")]
