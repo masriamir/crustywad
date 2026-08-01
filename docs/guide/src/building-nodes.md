@@ -160,13 +160,24 @@ emptied and `VERTEXES` untouched; a GL dialect in `SSECTORS`). `REJECT` and
 `BLOCKMAP` are always rebuilt — a hand-tuned `REJECT` is replaced with the
 engine-safe all-zeros table `build_reject` produces, and the five rebuilt
 lumps are emitted at their canonical slot even if the input group lacked one
-outright. A corrupt node lump in the input is excluded before assembly and
-so repaired rather than fatal, and the whole group is re-emitted in the
-canonical `THINGS`…`BEHAVIOR` order, since vanilla-class engines index a
-map's lumps by offset from the marker. A map using polyobjects (thing types
-3000–3002, per the Hexen source's `P_LOCAL.H`) gets a warning that the
-rebuilt nodes may split a polyobject's subsector — polyobject-aware
-splitting is the tracked follow-up (#389).
+outright. A corrupt node lump **among the group's own five** (`SEGS`,
+`SSECTORS`, `NODES`, `REJECT`, `BLOCKMAP`) is excluded before assembly and so
+repaired rather than fatal; the repair claim does not extend to a separate
+in-WAD `GL_<mapname>` sidecar group, which `Map::assemble_with_options`
+decodes unconditionally. A corrupt sidecar therefore still strict-fails
+assembly (exit 3 — `--lenient` recovers), and a valid-but-stale sidecar
+passes through verbatim next to the rebuilt lumps, so a GL-preferring engine
+may load it in preference to the freshly built nodes. The whole group is
+re-emitted in the canonical `THINGS`…`BEHAVIOR` order, since vanilla-class
+engines index a map's lumps by offset from the marker. A map using
+polyobjects gets a warning that the rebuilt nodes may split a polyobject's
+subsector — the warning fires on the vanilla Hexen anchor/spawn editor
+numbers 3000–3002 (per the Hexen source's `P_LOCAL.H`) and on ZDoom's
+9300–9303 "Doom-in-Hexen" numbers (per GZDoom
+`wadsrc/static/mapinfo/common.txt`). It is advisory: in a Doom-in-Hexen map
+the Doom editor numbers apply, where 3001/3002 are the Imp/Demon, so those
+values may instead be ordinary monsters. Polyobject-aware splitting is the
+tracked follow-up (#389).
 
 **Doom 64** (#353) map groups remain the only ones not yet supported by
 `build --nodes`; they are passed through unchanged with a note on stderr.

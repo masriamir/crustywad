@@ -184,10 +184,15 @@ byte-verbatim, while `SEGS`/`SSECTORS`/`NODES` are rebuilt for whichever
 `REJECT` and `BLOCKMAP` are always rebuilt, so a hand-tuned `REJECT` is
 replaced with the engine-safe all-zeros table. The group is re-emitted in
 the canonical `THINGS`…`BEHAVIOR` order, since vanilla-class engines index a
-map's lumps by offset from the marker; a corrupt input node lump is repaired
-rather than fatal. A map using polyobjects (thing types 3000–3002) prints a
-warning that the rebuilt nodes may split a polyobject's subsector
-(polyobject-aware splitting is tracked in #389). See
+map's lumps by offset from the marker; a corrupt node lump among the group's
+own five (`SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`) is repaired rather
+than fatal, but a separate in-WAD `GL_<mapname>` sidecar is not — a corrupt
+sidecar still strict-fails assembly (`--lenient` recovers) and a stale one
+passes through verbatim beside the rebuilt lumps. A map using polyobjects
+prints a warning that the rebuilt nodes may split a polyobject's subsector;
+it fires on both the vanilla Hexen (3000–3002) and ZDoom Doom-in-Hexen
+(9300–9303) editor numbers and is advisory, since 3001/3002 are also the
+Doom Imp/Demon (polyobject-aware splitting is tracked in #389). See
 [Building nodes](building-nodes.md) for the full splice details.
 
 **Doom 64** (#353) map groups remain the only ones not yet supported by
