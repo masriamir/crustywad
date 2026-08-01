@@ -74,27 +74,35 @@ cwad validate --deep doom.wad
 ```
 
 `--to udmf --nodes` instead runs `add_udmf_map_with_nodes`: UDMF has no binary
-node lumps, so the only thing to build is a GL `ZNODES` stream carrying the
-minimal-sufficient dialect (`gl` auto-format, noted on stderr):
+node lumps, so the only thing to build is a `ZNODES` stream carrying the
+dialect `--node-format` selects (`gl` auto-format by default, noted on
+stderr):
 
 ```bash
 cwad convert doom.wad -o udmf.wad --to udmf --nodes
 ```
 
-`--node-format` still selects the dialect, but a UDMF target only accepts a GL
-value — the non-GL extended pair (`xnod`/`znod`) has no GL stream to become,
-so passing either exits `3` (see #384). The global `--lenient` flag selects
-lenient mode for both the conversion and the node build. See
-[CLI Usage](cli.md#convert) for the full flag reference.
+`--node-format` still selects the dialect, and a UDMF target now accepts any
+of them — the non-GL extended pair (`xnod`/`znod`) builds an `XNOD`/`ZNOD`
+stream inside `ZNODES` just as it would in `NODES` for a Doom target. The
+non-GL streams are built by the classic BSP pass, which narrows coordinates
+through the shared integer write path — so a fractional-coordinate UDMF map
+exits `3` in strict mode, naming the offending coordinate and hinting at
+`--lenient`; `--lenient` rounds the coordinate to the nearest whole map unit
+for the node stream only (the `TEXTMAP` keeps the fractional originals) and
+warns instead. A map that needs fractional geometry preserved exactly
+should use a GL dialect (`gl`, `xgln`, `xgl2`, or `xgl3`), which has no such
+ceiling. The global `--lenient` flag selects lenient mode for both the
+conversion and the node build. See [CLI Usage](cli.md#convert) for the full
+flag reference.
 
 ### Choosing the on-disk node format
 
 `--node-format` selects how the built nodes are stored for a Doom target, or
-which GL dialect fills a UDMF target's `ZNODES` stream. It has no effect
-without `--nodes`, and a non-`classic` value passed without `--nodes` prints
-a note on stderr and is ignored. A UDMF target only accepts a GL value (or
-the default `classic`, which auto-selects `gl`) — the non-GL extended pair
-(`xnod`/`znod`) has no GL stream to become and is rejected (see #384):
+which dialect fills a UDMF target's `ZNODES` stream — both GL and the non-GL
+extended pair are accepted for UDMF. It has no effect without `--nodes`, and
+a non-`classic` value passed without `--nodes` prints a note on stderr and is
+ignored. The default `classic` auto-selects `gl` for a UDMF target:
 
 | Value | On-disk form | Notes |
 |---|---|---|
@@ -131,10 +139,14 @@ cwad build --nodes --node-format gl MAP01=map01.lmp THINGS=things.lmp ... -o pla
 
 `build --nodes` accepts the same `--node-format` values as `convert --nodes`
 (the table above), including the GL dialects and their `z*` zlib twins. As
-with `convert --to udmf --nodes`, a UDMF map group's `ZNODES` only accepts a
-GL dialect: `classic` auto-selects `gl` (noted on stderr); an explicit
-`xnod`/`znod` skips that one group with a note instead of failing the whole
-build (see #384). Hexen (#352) and Doom 64 (#353) map groups are not yet
+with `convert --to udmf --nodes`, a UDMF map group's `ZNODES` accepts any of
+them: `classic` auto-selects `gl` (noted on stderr); an explicit `xnod`/`znod`
+builds a non-GL extended stream instead. The classic BSP pass behind them is
+integer-precision, so a fractional-coordinate UDMF map is rejected in strict
+mode (naming the offending coordinate, with a `--lenient` hint) and rounded
+with a warning in lenient mode — for the node stream only, the `TEXTMAP`
+keeps the fractional originals; a map needing exact fractional geometry
+should use a GL dialect. Hexen (#352) and Doom 64 (#353) map groups are not yet
 supported by `build --nodes` and are passed through unchanged with a note on
 stderr; non-map lumps always pass through unchanged. See
 [CLI Usage](cli.md#build) for the full flag reference.
@@ -168,8 +180,8 @@ The clean-room builder now spans three tiers of output:
   `ZGLN`/`ZGL2`/`ZGL3` with `extended-nodes-zlib`) via `build_gl_nodes`
   + `BuiltGlNodes::to_extended_lump_bytes`, or the `add_doom_map_with_nodes` one-shot,
   which carries the GL stream in `SSECTORS` (ADR-0026, #364, #365). The
-  `add_udmf_map_with_nodes` one-shot builds the same GL stream for a UDMF map
-  group, carried in `ZNODES` instead (#354).
+  `add_udmf_map_with_nodes` one-shot builds either family for a UDMF map
+  group, carried in `ZNODES` instead (#354, #384).
   `NodeFormat::Gl`/`NodeFormat::Zgl` auto-select the minimal dialect a map needs — `XGLN` unless a
   real linedef index collides with `XGLN`'s `0xFFFF` miniseg sentinel (forcing `XGL2`'s
   32-bit linedefs) or a fractional partition forces `XGL3`.

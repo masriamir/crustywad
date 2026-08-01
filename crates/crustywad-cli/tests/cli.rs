@@ -2302,9 +2302,10 @@ fn build_nodes_replaces_stale_znodes_and_preserves_port_lumps() {
 }
 
 #[test]
-fn build_nodes_skips_udmf_group_for_non_gl_format_with_note() {
-    // --node-format xnod has no GL stream, so a UDMF group is passed through
-    // untouched with a note (#384).
+fn build_nodes_builds_xnod_znodes_for_udmf_group() {
+    // --node-format xnod runs the classic BSP pass and carries an uncompressed
+    // XNOD stream in the group's ZNODES lump (the in-place patch path); the
+    // TEXTMAP bytes survive byte-identical.
     let fixture = write_udmf_square_room_wad();
     let (specs, _files) = explode_wad_to_build_specs(fixture.path());
     let out = NamedTempFile::new().unwrap();
@@ -2322,14 +2323,25 @@ fn build_nodes_skips_udmf_group_for_non_gl_format_with_note() {
         .unwrap()
         .args(&args)
         .assert()
-        .code(0)
-        .stderr(predicate::str::contains("not valid for ZNODES"))
-        .stderr(predicate::str::contains("#384"));
+        .code(0);
 
-    // Passed through untouched: no ZNODES lump was added.
+    // The group grew a ZNODES lump inserted immediately after TEXTMAP; the
+    // trailing COLORMAP passes through.
     assert_eq!(
         lump_names(out.path()),
-        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
+    );
+    // TEXTMAP bytes are byte-identical to the input map text.
+    assert_eq!(
+        lump_bytes(out.path(), "TEXTMAP"),
+        udmf_square_room().into_bytes()
+    );
+    // The ZNODES lump is a non-GL uncompressed extended stream.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XNOD"),
+        "ZNODES should be an XNOD stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
     );
 }
 
@@ -2469,9 +2481,9 @@ fn build_nodes_lenient_recovers_udmf_mixed_sector_fan() {
 
 #[cfg(feature = "extended-nodes-zlib")]
 #[test]
-fn build_nodes_skips_udmf_group_for_znod_format_with_note() {
-    // --node-format znod (zlib-only, non-GL) has no ZNODES carrier, so a UDMF
-    // group is passed through untouched with a note naming the requested format.
+fn build_nodes_builds_znod_znodes_for_udmf_group() {
+    // --node-format znod (zlib-only, non-GL) runs the classic BSP pass and
+    // carries a zlib-compressed ZNOD stream in the group's ZNODES lump.
     let fixture = write_udmf_square_room_wad();
     let (specs, _files) = explode_wad_to_build_specs(fixture.path());
     let out = NamedTempFile::new().unwrap();
@@ -2489,15 +2501,48 @@ fn build_nodes_skips_udmf_group_for_znod_format_with_note() {
         .unwrap()
         .args(&args)
         .assert()
-        .code(0)
-        .stderr(predicate::str::contains("znod"))
-        .stderr(predicate::str::contains("not valid for ZNODES"));
+        .code(0);
 
-    // Passed through untouched: no ZNODES lump was added.
+    // The group grew a ZNODES lump inserted immediately after TEXTMAP.
     assert_eq!(
         lump_names(out.path()),
-        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
     );
+    // The ZNODES lump is a non-GL zlib-compressed extended stream.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"ZNOD"),
+        "ZNODES should be a ZNOD stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn build_nodes_znod_udmf_without_feature_errors_clearly() {
+    // --node-format znod without the zlib feature is rejected up front (exit 3)
+    // by the shared feature-required gate, before any node building.
+    let fixture = write_udmf_square_room_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "znod".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "--node-format znod requires cwad built with the extended-nodes-zlib feature",
+        ));
 }
 
 #[test]
@@ -2527,6 +2572,73 @@ fn build_nodes_udmf_honors_explicit_gl_dialect() {
     assert!(
         znodes.starts_with(b"XGL3"),
         "ZNODES should be an XGL3 stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[test]
+fn build_nodes_xnod_rejects_fractional_udmf_strict() {
+    // A UDMF group whose first vertex has a fractional x (0.5): the classic BSP
+    // pass driving the XNOD stream narrows coordinates to i16 through the shared
+    // write path, which strict mode rejects (FractionalCoordinate) — exit 3,
+    // named map, and the lenient hint.
+    let fixture = write_udmf_square_room_fractional_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "xnod".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ))
+        .stderr(predicate::str::contains("fractional x 0.5"))
+        .stderr(predicate::str::contains("--lenient"));
+}
+
+#[test]
+fn build_nodes_xnod_rounds_fractional_udmf_lenient() {
+    // The same fractional-vertex UDMF group under --lenient: the write path
+    // rounds the fractional coordinate and warns (CoordinateRounded) rather than
+    // failing, so the XNOD stream still builds — exit 0, warning on stderr.
+    let fixture = write_udmf_square_room_fractional_wad();
+    let (specs, _files) = explode_wad_to_build_specs(fixture.path());
+    let out = NamedTempFile::new().unwrap();
+
+    let mut args = vec![
+        "build".to_string(),
+        "--lenient".to_string(),
+        "--nodes".to_string(),
+        "--node-format".to_string(),
+        "xnod".to_string(),
+        "-o".to_string(),
+        out.path().to_str().unwrap().to_string(),
+    ];
+    args.extend(specs);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(&args)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("fractional x 0.5"))
+        .stderr(predicate::str::contains("rounded to"));
+
+    // The rounded map still produced an XNOD ZNODES stream.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XNOD"),
+        "ZNODES should be an XNOD stream, got {:?}",
         &znodes[..znodes.len().min(4)]
     );
 }
@@ -3409,6 +3521,45 @@ fn write_udmf_square_room_wad() -> NamedTempFile {
     )
 }
 
+/// A UDMF `TEXTMAP` for a square room whose first vertex carries a fractional
+/// `x` (`0.5`). The map assembles fine, but the classic BSP pass narrows
+/// coordinates to `i16` through the shared write path: strict rejects the
+/// fractional value (`FractionalCoordinate`), lenient rounds it and warns
+/// (`CoordinateRounded`).
+fn udmf_square_room_fractional() -> String {
+    concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0.5; y = 0; }\n",
+        "vertex { x = 128; y = 0; }\n",
+        "vertex { x = 128; y = 128; }\n",
+        "vertex { x = 0; y = 128; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 0; blocking = true; }\n",
+        "linedef { v1 = 1; v2 = 2; sidefront = 1; blocking = true; }\n",
+        "linedef { v1 = 2; v2 = 3; sidefront = 2; blocking = true; }\n",
+        "linedef { v1 = 3; v2 = 0; sidefront = 3; blocking = true; }\n",
+        "thing { x = 64; y = 64; type = 1; skill1 = true; skill2 = true; skill3 = true; }\n",
+    )
+    .to_owned()
+}
+
+/// A PWAD holding the fractional-vertex UDMF square-room map (`MAP01`).
+fn write_udmf_square_room_fractional_wad() -> NamedTempFile {
+    let textmap = udmf_square_room_fractional();
+    write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    )
+}
+
 /// A UDMF `TEXTMAP` for a mixed-sector fan: two coincident one-sided walls
 /// facing *different* sectors, which no seg line can separate. The classic BSP
 /// pass rejects this in strict mode (`NodeBuildError::MixedSectorSubsector`) and
@@ -4180,6 +4331,48 @@ fn convert_to_udmf_with_nodes_retrofits_znodes_onto_udmf_source() {
 }
 
 #[test]
+fn convert_to_udmf_with_nodes_retrofits_xnod_onto_udmf_source() {
+    // An already-UDMF source with --node-format xnod: the retrofit path patches
+    // the group in place with a non-GL XNOD ZNODES (not a conversion), noting the
+    // in-place rebuild and preserving the TEXTMAP byte-identical.
+    let wad = write_udmf_square_room_wad();
+    let input_textmap = lump_bytes(wad.path(), "TEXTMAP");
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "xnod",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 0 maps"))
+        .stderr(predicate::str::contains(
+            "MAP01 is already UDMF; rebuilt ZNODES in place (map not converted)",
+        ));
+
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
+    );
+    assert_eq!(lump_bytes(out.path(), "TEXTMAP"), input_textmap);
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XNOD"),
+        "ZNODES should be an XNOD stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[test]
 fn convert_to_udmf_with_nodes_repairs_corrupt_znodes() {
     // A UDMF source group carrying a garbage ZNODES plus a DIALOGUE port lump:
     // --to udmf --nodes rebuilds the ZNODES in place (repairing the corrupt one
@@ -4286,9 +4479,10 @@ fn convert_to_udmf_with_nodes_map_filter_retrofits_only_named() {
 }
 
 #[test]
-fn convert_to_udmf_with_nodes_rejects_non_gl_format() {
-    // A non-GL extended format has no ZNODES carrier: the UDMF target rejects it
-    // up front (exit 3) before writing anything.
+fn convert_to_udmf_with_nodes_emits_xnod_znodes() {
+    // Doom-source WAD -> UDMF target with --node-format xnod: the converted group
+    // carries an uncompressed XNOD stream in its ZNODES lump, and the result
+    // validates deeply (proving the XNOD-in-ZNODES reads back).
     let wad = write_doom_square_room_empty_nodes_wad();
     let out = NamedTempFile::new().unwrap();
 
@@ -4306,16 +4500,27 @@ fn convert_to_udmf_with_nodes_rejects_non_gl_format() {
             "xnod",
         ])
         .assert()
-        .code(3)
-        .stderr(predicate::str::contains("not valid for a UDMF target"))
-        .stderr(predicate::str::contains("#384"));
+        .code(0);
 
-    // Rejected before conversion, so nothing was written to the output file.
+    // The converted group is [marker, TEXTMAP, ZNODES, ENDMAP], with the
+    // trailing non-map lump passed through in order.
     assert_eq!(
-        std::fs::metadata(out.path()).unwrap().len(),
-        0,
-        "no output should be written on the up-front rejection"
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
     );
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XNOD"),
+        "ZNODES should be an XNOD stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+
+    // The synthesized UDMF map with an XNOD ZNODES passes deep validation.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", out.path().to_str().unwrap()])
+        .assert()
+        .code(0);
 }
 
 #[test]
@@ -4346,9 +4551,46 @@ fn convert_to_udmf_with_nodes_refuses_mixed_sector_fan_and_hints_lenient() {
 
 #[cfg(feature = "extended-nodes-zlib")]
 #[test]
-fn convert_to_udmf_with_nodes_rejects_znod_format() {
-    // --node-format znod (zlib-only, non-GL) has no ZNODES carrier: the UDMF
-    // target rejects it up front (exit 3) before writing anything.
+fn convert_to_udmf_with_nodes_emits_znod_znodes() {
+    // Doom-source WAD -> UDMF target with --node-format znod (zlib-only, non-GL):
+    // the converted group carries a zlib-compressed ZNOD stream in its ZNODES
+    // lump.
+    let wad = write_doom_square_room_empty_nodes_wad();
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--node-format",
+            "znod",
+        ])
+        .assert()
+        .code(0);
+
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
+    );
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"ZNOD"),
+        "ZNODES should be a ZNOD stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[cfg(not(feature = "extended-nodes-zlib"))]
+#[test]
+fn convert_to_udmf_with_nodes_znod_without_feature_errors_clearly() {
+    // --node-format znod without the zlib feature is rejected up front (exit 3)
+    // by the shared feature-required gate, before any conversion.
     let wad = write_doom_square_room_empty_nodes_wad();
     let out = NamedTempFile::new().unwrap();
 
@@ -4367,7 +4609,9 @@ fn convert_to_udmf_with_nodes_rejects_znod_format() {
         ])
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("not valid for a UDMF target"));
+        .stderr(predicate::str::contains(
+            "--node-format znod requires cwad built with the extended-nodes-zlib feature",
+        ));
 }
 
 #[cfg(feature = "extended-nodes-zlib")]
