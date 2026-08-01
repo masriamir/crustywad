@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7ffdc475.js";
+            window.path_to_searchindex_js = "searchindex-6fcd7a33.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -918,22 +918,30 @@ is engine-playable with no external step:</p>
 cwad validate --deep doom.wad
 </code></pre>
 <p><code>--to udmf --nodes</code> instead runs <code>add_udmf_map_with_nodes</code>: UDMF has no binary
-node lumps, so the only thing to build is a GL <code>ZNODES</code> stream carrying the
-minimal-sufficient dialect (<code>gl</code> auto-format, noted on stderr):</p>
+node lumps, so the only thing to build is a <code>ZNODES</code> stream carrying the
+dialect <code>--node-format</code> selects (<code>gl</code> auto-format by default, noted on
+stderr):</p>
 <pre><code class="language-bash">cwad convert doom.wad -o udmf.wad --to udmf --nodes
 </code></pre>
-<p><code>--node-format</code> still selects the dialect, but a UDMF target only accepts a GL
-value — the non-GL extended pair (<code>xnod</code>/<code>znod</code>) has no GL stream to become,
-so passing either exits <code>3</code> (see #384). The global <code>--lenient</code> flag selects
-lenient mode for both the conversion and the node build. See
-<a href="#convert">CLI Usage</a> for the full flag reference.</p>
+<p><code>--node-format</code> still selects the dialect, and a UDMF target now accepts any
+of them — the non-GL extended pair (<code>xnod</code>/<code>znod</code>) builds an <code>XNOD</code>/<code>ZNOD</code>
+stream inside <code>ZNODES</code> just as it would in <code>NODES</code> for a Doom target. The
+non-GL streams are built by the classic BSP pass, which narrows coordinates
+through the shared integer write path — so a fractional-coordinate UDMF map
+exits <code>3</code> in strict mode, naming the offending coordinate and hinting at
+<code>--lenient</code>; <code>--lenient</code> rounds the coordinate to the nearest whole map unit
+for the node stream only (the <code>TEXTMAP</code> keeps the fractional originals) and
+warns instead. A map that needs fractional geometry preserved exactly
+should use a GL dialect (<code>gl</code>, <code>xgln</code>, <code>xgl2</code>, or <code>xgl3</code>), which has no such
+ceiling. The global <code>--lenient</code> flag selects lenient mode for both the
+conversion and the node build. See <a href="#convert">CLI Usage</a> for the full
+flag reference.</p>
 <h3 id="choosing-the-on-disk-node-format"><a class="header" href="#choosing-the-on-disk-node-format">Choosing the on-disk node format</a></h3>
 <p><code>--node-format</code> selects how the built nodes are stored for a Doom target, or
-which GL dialect fills a UDMF target’s <code>ZNODES</code> stream. It has no effect
-without <code>--nodes</code>, and a non-<code>classic</code> value passed without <code>--nodes</code> prints
-a note on stderr and is ignored. A UDMF target only accepts a GL value (or
-the default <code>classic</code>, which auto-selects <code>gl</code>) — the non-GL extended pair
-(<code>xnod</code>/<code>znod</code>) has no GL stream to become and is rejected (see #384):</p>
+which dialect fills a UDMF target’s <code>ZNODES</code> stream — both GL and the non-GL
+extended pair are accepted for UDMF. It has no effect without <code>--nodes</code>, and
+a non-<code>classic</code> value passed without <code>--nodes</code> prints a note on stderr and is
+ignored. The default <code>classic</code> auto-selects <code>gl</code> for a UDMF target:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -969,10 +977,14 @@ cwad build --nodes --node-format gl MAP01=map01.lmp THINGS=things.lmp ... -o pla
 </code></pre>
 <p><code>build --nodes</code> accepts the same <code>--node-format</code> values as <code>convert --nodes</code>
 (the table above), including the GL dialects and their <code>z*</code> zlib twins. As
-with <code>convert --to udmf --nodes</code>, a UDMF map group’s <code>ZNODES</code> only accepts a
-GL dialect: <code>classic</code> auto-selects <code>gl</code> (noted on stderr); an explicit
-<code>xnod</code>/<code>znod</code> skips that one group with a note instead of failing the whole
-build (see #384). Hexen (#352) and Doom 64 (#353) map groups are not yet
+with <code>convert --to udmf --nodes</code>, a UDMF map group’s <code>ZNODES</code> accepts any of
+them: <code>classic</code> auto-selects <code>gl</code> (noted on stderr); an explicit <code>xnod</code>/<code>znod</code>
+builds a non-GL extended stream instead. The classic BSP pass behind them is
+integer-precision, so a fractional-coordinate UDMF map is rejected in strict
+mode (naming the offending coordinate, with a <code>--lenient</code> hint) and rounded
+with a warning in lenient mode — for the node stream only, the <code>TEXTMAP</code>
+keeps the fractional originals; a map needing exact fractional geometry
+should use a GL dialect. Hexen (#352) and Doom 64 (#353) map groups are not yet
 supported by <code>build --nodes</code> and are passed through unchanged with a note on
 stderr; non-map lumps always pass through unchanged. See
 <a href="#build">CLI Usage</a> for the full flag reference.</p>
@@ -1003,8 +1015,8 @@ lifting the vanilla node ceilings (ADR-0025 §Amendment #323).</li>
 <ul>
 <li><code>BuiltGlNodes::to_extended_lump_bytes</code>, or the <code>add_doom_map_with_nodes</code> one-shot,
 which carries the GL stream in <code>SSECTORS</code> (ADR-0026, #364, #365). The
-<code>add_udmf_map_with_nodes</code> one-shot builds the same GL stream for a UDMF map
-group, carried in <code>ZNODES</code> instead (#354).
+<code>add_udmf_map_with_nodes</code> one-shot builds either family for a UDMF map
+group, carried in <code>ZNODES</code> instead (#354, #384).
 <code>NodeFormat::Gl</code>/<code>NodeFormat::Zgl</code> auto-select the minimal dialect a map needs — <code>XGLN</code> unless a
 real linedef index collides with <code>XGLN</code>’s <code>0xFFFF</code> miniseg sentinel (forcing <code>XGL2</code>’s
 32-bit linedefs) or a fractional partition forces <code>XGL3</code>.</li>
@@ -1913,10 +1925,10 @@ size validation failures exit <code>3</code>.</p>
 the output with engine-playable node lumps via the
 <a href="#building-nodes"><code>add_doom_map_with_nodes</code></a> one-shot — the BSP tree
 (<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the collision <code>BLOCKMAP</code>, and the all-clear
-<code>REJECT</code> — and every <strong>UDMF</strong>-format map group with a built GL <code>ZNODES</code>
-stream, replacing any existing <code>ZNODES</code> (or inserted right after <code>TEXTMAP</code> if
-the group has none) with the rest of the group’s lumps carried through
-unchanged:</p>
+<code>REJECT</code> — and every <strong>UDMF</strong>-format map group with a built <code>ZNODES</code>
+stream (a GL dialect by default; see <code>--node-format</code> below), replacing any
+existing <code>ZNODES</code> (or inserted right after <code>TEXTMAP</code> if the group has none)
+with the rest of the group’s lumps carried through unchanged:</p>
 <pre><code class="language-text">$ cwad build --nodes -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
 wrote playable.wad: kind=Pwad lumps: 11
 </code></pre>
@@ -1932,9 +1944,15 @@ no-op and prints a note.</p>
 <p><code>build --nodes</code> takes the same <code>--node-format &lt;FORMAT&gt;</code> flag as
 <code>convert --nodes</code> — <code>classic</code> (default), the non-GL extended pair
 (<code>xnod</code>/<code>znod</code>), the four GL dialects (<code>xgln</code>/<code>xgl2</code>/<code>xgl3</code>/<code>gl</code>), and their
-<code>z*</code> zlib twins. A UDMF map group’s <code>ZNODES</code> stream is GL-only: <code>classic</code>
-auto-selects <code>gl</code> (noted on stderr once per group); <code>xnod</code>/<code>znod</code> skip that
-group with a note rather than failing the whole build (see #384):</p>
+<code>z*</code> zlib twins. A UDMF map group’s <code>ZNODES</code> stream accepts any of them:
+<code>classic</code> auto-selects <code>gl</code> (noted on stderr once per group); an explicit
+<code>xnod</code>/<code>znod</code> builds a non-GL extended stream instead. The classic BSP pass
+behind them is integer-precision, so a fractional-coordinate UDMF map is
+rejected in strict mode (naming the offending coordinate, with a <code>--lenient</code>
+hint) and rounded to the nearest whole unit with a warning in lenient mode —
+the rounding applies to the node stream only, the <code>TEXTMAP</code> keeps the
+fractional originals; a map that needs exact fractional geometry preserved
+should use a GL dialect instead:</p>
 <pre><code class="language-text">$ cwad build --nodes --node-format gl -o playable.wad MAP01=map01.lmp THINGS=things.lmp ...
 wrote playable.wad: kind=Pwad lumps: 11
 </code></pre>
@@ -1972,11 +1990,11 @@ tree, the collision <code>BLOCKMAP</code>, and the all-clear <code>REJECT</code>
 flag applies to the build too — it is often needed for real maps, whose
 geometry can contain the engine-tolerated mixed-sector fan that strict mode
 rejects (see <a href="#the-tolerated-mixed-sector-fan">Building nodes</a>).</p>
-<p><code>--nodes</code> combined with <code>--to udmf</code> instead builds a GL <code>ZNODES</code> stream for
-each converted map — UDMF has no binary node lumps, so the GL dialect
-selected by <code>--node-format</code> is the only one with anywhere to go. The default
-<code>classic</code> auto-selects <code>gl</code> and prints a note; an explicit GL value needs no
-note:</p>
+<p><code>--nodes</code> combined with <code>--to udmf</code> instead builds a <code>ZNODES</code> stream for
+each converted map — UDMF has no binary node lumps, so <code>ZNODES</code> is the only
+place the dialect selected by <code>--node-format</code> has to go. The default
+<code>classic</code> auto-selects <code>gl</code> and prints a note; any explicit value (GL or
+non-GL) needs no note:</p>
 <pre><code class="language-text">$ cwad convert doom.wad -o out.wad --to udmf --nodes
 note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each converted map
 wrote out.wad: converted 1 map to udmf
@@ -2007,15 +2025,22 @@ values, GL and non-GL alike, require <code>cwad</code> built with the
 that actually takes effect (i.e. <code>--nodes</code> is in play) exits <code>3</code> with a
 clear error rather than a clap parse failure; without <code>--nodes</code> the flag is
 noted and ignored as described above.</p>
-<p><strong><code>--to udmf --nodes</code> only accepts a GL <code>--node-format</code>.</strong> The <code>ZNODES</code>
-container itself can carry non-GL extended nodes (<code>XNOD</code>/<code>ZNOD</code>) too — engines
-accept both — but <code>cwad</code>’s UDMF output is GL-only for now as a deliberate CLI
-policy, so an explicit <code>xnod</code> or <code>znod</code> exits <code>3</code> naming the problem (lifting
-this is tracked by #384); the default <code>classic</code> auto-selects <code>gl</code> instead of
-failing:</p>
-<pre><code class="language-text">$ cwad convert doom.wad -o out.wad --to udmf --nodes --node-format xnod
-error: --node-format xnod is not valid for a UDMF target (ZNODES is GL-only; see #384)
+<p><strong><code>--to udmf --nodes</code> accepts any <code>--node-format</code> value.</strong> The <code>ZNODES</code>
+container can carry either a GL stream or the non-GL extended pair
+(<code>XNOD</code>/<code>ZNOD</code>) — engines accept both. The default <code>classic</code> auto-selects
+<code>gl</code>; an explicit <code>xnod</code>/<code>znod</code> builds that non-GL stream instead. The
+classic BSP pass behind them narrows coordinates through the shared integer
+write path, so a fractional-coordinate UDMF map exits <code>3</code> in strict mode,
+naming the offending coordinate and hinting at <code>--lenient</code> (lenient rounds
+for the node stream only — the <code>TEXTMAP</code> keeps the fractional originals):</p>
+<pre><code class="language-text">$ cwad convert fractional.wad -o out.wad --to udmf --nodes --node-format xnod
+error: failed to build nodes for map MAP01: fractional x 0.5 in vertex #0 cannot be stored as an i16
+note: re-run with --lenient to build anyway
 </code></pre>
+<p><code>--lenient</code> instead rounds the fractional coordinate to the nearest whole
+map unit and reports a warning; a map that needs the fractional geometry
+preserved exactly should use a GL dialect (<code>gl</code>, or one of <code>xgln</code>/<code>xgl2</code>/
+<code>xgl3</code>), which has no such precision ceiling.</p>
 <p>See
 <a href="#choosing-the-on-disk-node-format">Choosing the on-disk node format</a>
 for the full value table.</p>
@@ -2163,7 +2188,7 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
 <tr><td><a href="#guide-doctests"><code>guide-doctests</code></a></td><td>no</td><td><strong>Internal, CI-only.</strong> Compiles this guide’s Rust code samples as crate doctests (enabled by <code>--all-features</code>); not a runtime capability</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
-<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; also emits the <code>XNOD</code>/<code>ZNOD</code> non-GL stream via <code>NodeFormat</code>, plus the GL <code>XGLN</code>/<code>XGL2</code>/<code>XGL3</code> streams (and their <code>Z*</code> twins with <code>extended-nodes-zlib</code>), with <code>NodeFormat::Gl</code> auto-selecting the minimal dialect, via <code>build_gl_nodes</code> (ADR-0025, ADR-0026), and a UDMF one-shot (<code>add_udmf_map_with_nodes</code>) that builds a GL <code>ZNODES</code> stream for a UDMF map group; powers <code>cwad convert --nodes</code> and <code>cwad build --nodes</code>, including UDMF <code>ZNODES</code> output (GL-only; see #384)</td></tr>
+<tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; also emits the <code>XNOD</code>/<code>ZNOD</code> non-GL stream via <code>NodeFormat</code>, plus the GL <code>XGLN</code>/<code>XGL2</code>/<code>XGL3</code> streams (and their <code>Z*</code> twins with <code>extended-nodes-zlib</code>), with <code>NodeFormat::Gl</code> auto-selecting the minimal dialect, via <code>build_gl_nodes</code> (ADR-0025, ADR-0026), and a UDMF one-shot (<code>add_udmf_map_with_nodes</code>) that builds a <code>ZNODES</code> stream for a UDMF map group; powers <code>cwad convert --nodes</code> and <code>cwad build --nodes</code>, including UDMF <code>ZNODES</code> output — GL dialects by default, <code>xnod</code>/<code>znod</code> on explicit request</td></tr>
 <tr><td><a href="#doom64-gfx"><code>doom64-gfx</code></a></td><td>no</td><td>Doom 64 PNG texture/sprite decoding via <code>png</code> — <code>Doom64Png</code>, capped by <code>Limits::max_decoded_pixels</code></td></tr>
 <tr><td><a href="#extended-nodes-zlib"><code>extended-nodes-zlib</code></a></td><td>no</td><td>Decode the zlib-compressed ZDoom extended node formats (<code>ZNOD</code>/<code>ZGLN</code>/<code>ZGL2</code>/<code>ZGL3</code>) via <code>miniz_oxide</code>, bounded by <code>Limits::max_decoded_node_bytes</code>; with <code>nodebuild</code> also enabled, also powers the <code>nodebuild</code> <code>ZNOD</code> and <code>Z*</code> GL writers</td></tr>
 </tbody>

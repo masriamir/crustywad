@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7ffdc475.js";
+            window.path_to_searchindex_js = "searchindex-6fcd7a33.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -245,22 +245,30 @@ is engine-playable with no external step:</p>
 cwad validate --deep doom.wad
 </code></pre>
 <p><code>--to udmf --nodes</code> instead runs <code>add_udmf_map_with_nodes</code>: UDMF has no binary
-node lumps, so the only thing to build is a GL <code>ZNODES</code> stream carrying the
-minimal-sufficient dialect (<code>gl</code> auto-format, noted on stderr):</p>
+node lumps, so the only thing to build is a <code>ZNODES</code> stream carrying the
+dialect <code>--node-format</code> selects (<code>gl</code> auto-format by default, noted on
+stderr):</p>
 <pre><code class="language-bash">cwad convert doom.wad -o udmf.wad --to udmf --nodes
 </code></pre>
-<p><code>--node-format</code> still selects the dialect, but a UDMF target only accepts a GL
-value — the non-GL extended pair (<code>xnod</code>/<code>znod</code>) has no GL stream to become,
-so passing either exits <code>3</code> (see #384). The global <code>--lenient</code> flag selects
-lenient mode for both the conversion and the node build. See
-<a href="cli.html#convert">CLI Usage</a> for the full flag reference.</p>
+<p><code>--node-format</code> still selects the dialect, and a UDMF target now accepts any
+of them — the non-GL extended pair (<code>xnod</code>/<code>znod</code>) builds an <code>XNOD</code>/<code>ZNOD</code>
+stream inside <code>ZNODES</code> just as it would in <code>NODES</code> for a Doom target. The
+non-GL streams are built by the classic BSP pass, which narrows coordinates
+through the shared integer write path — so a fractional-coordinate UDMF map
+exits <code>3</code> in strict mode, naming the offending coordinate and hinting at
+<code>--lenient</code>; <code>--lenient</code> rounds the coordinate to the nearest whole map unit
+for the node stream only (the <code>TEXTMAP</code> keeps the fractional originals) and
+warns instead. A map that needs fractional geometry preserved exactly
+should use a GL dialect (<code>gl</code>, <code>xgln</code>, <code>xgl2</code>, or <code>xgl3</code>), which has no such
+ceiling. The global <code>--lenient</code> flag selects lenient mode for both the
+conversion and the node build. See <a href="cli.html#convert">CLI Usage</a> for the full
+flag reference.</p>
 <h3 id="choosing-the-on-disk-node-format"><a class="header" href="#choosing-the-on-disk-node-format">Choosing the on-disk node format</a></h3>
 <p><code>--node-format</code> selects how the built nodes are stored for a Doom target, or
-which GL dialect fills a UDMF target’s <code>ZNODES</code> stream. It has no effect
-without <code>--nodes</code>, and a non-<code>classic</code> value passed without <code>--nodes</code> prints
-a note on stderr and is ignored. A UDMF target only accepts a GL value (or
-the default <code>classic</code>, which auto-selects <code>gl</code>) — the non-GL extended pair
-(<code>xnod</code>/<code>znod</code>) has no GL stream to become and is rejected (see #384):</p>
+which dialect fills a UDMF target’s <code>ZNODES</code> stream — both GL and the non-GL
+extended pair are accepted for UDMF. It has no effect without <code>--nodes</code>, and
+a non-<code>classic</code> value passed without <code>--nodes</code> prints a note on stderr and is
+ignored. The default <code>classic</code> auto-selects <code>gl</code> for a UDMF target:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -296,10 +304,14 @@ cwad build --nodes --node-format gl MAP01=map01.lmp THINGS=things.lmp ... -o pla
 </code></pre>
 <p><code>build --nodes</code> accepts the same <code>--node-format</code> values as <code>convert --nodes</code>
 (the table above), including the GL dialects and their <code>z*</code> zlib twins. As
-with <code>convert --to udmf --nodes</code>, a UDMF map group’s <code>ZNODES</code> only accepts a
-GL dialect: <code>classic</code> auto-selects <code>gl</code> (noted on stderr); an explicit
-<code>xnod</code>/<code>znod</code> skips that one group with a note instead of failing the whole
-build (see #384). Hexen (#352) and Doom 64 (#353) map groups are not yet
+with <code>convert --to udmf --nodes</code>, a UDMF map group’s <code>ZNODES</code> accepts any of
+them: <code>classic</code> auto-selects <code>gl</code> (noted on stderr); an explicit <code>xnod</code>/<code>znod</code>
+builds a non-GL extended stream instead. The classic BSP pass behind them is
+integer-precision, so a fractional-coordinate UDMF map is rejected in strict
+mode (naming the offending coordinate, with a <code>--lenient</code> hint) and rounded
+with a warning in lenient mode — for the node stream only, the <code>TEXTMAP</code>
+keeps the fractional originals; a map needing exact fractional geometry
+should use a GL dialect. Hexen (#352) and Doom 64 (#353) map groups are not yet
 supported by <code>build --nodes</code> and are passed through unchanged with a note on
 stderr; non-map lumps always pass through unchanged. See
 <a href="cli.html#build">CLI Usage</a> for the full flag reference.</p>
@@ -330,8 +342,8 @@ lifting the vanilla node ceilings (ADR-0025 §Amendment #323).</li>
 <ul>
 <li><code>BuiltGlNodes::to_extended_lump_bytes</code>, or the <code>add_doom_map_with_nodes</code> one-shot,
 which carries the GL stream in <code>SSECTORS</code> (ADR-0026, #364, #365). The
-<code>add_udmf_map_with_nodes</code> one-shot builds the same GL stream for a UDMF map
-group, carried in <code>ZNODES</code> instead (#354).
+<code>add_udmf_map_with_nodes</code> one-shot builds either family for a UDMF map
+group, carried in <code>ZNODES</code> instead (#354, #384).
 <code>NodeFormat::Gl</code>/<code>NodeFormat::Zgl</code> auto-select the minimal dialect a map needs — <code>XGLN</code> unless a
 real linedef index collides with <code>XGLN</code>’s <code>0xFFFF</code> miniseg sentinel (forcing <code>XGL2</code>’s
 32-bit linedefs) or a fractional partition forces <code>XGL3</code>.</li>
