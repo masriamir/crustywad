@@ -322,8 +322,9 @@ while being subtly wrong. That is data loss under the same policy as any
 other: strict mode refuses (exit `3`, naming each lump), `--lenient` drops
 them and warns. A map already in the target format is not converted, so
 nothing in its group is dropped. Under `--to doom`, such a same-format map
-passes through unchanged (unless `--nodes` is also given, which rebuilds its
-node lumps in place — see [Building nodes](building-nodes.md)). Under
+passes through unchanged (unless `--nodes` is also given, which re-emits the
+map through the node-building one-shot — see
+[Building nodes](building-nodes.md)). Under
 `--to udmf --nodes`, it instead gets its `ZNODES` stream retrofitted in
 place: the group's `TEXTMAP` bytes are re-emitted verbatim, any port lump in
 the group (`DIALOGUE`, `BEHAVIOR`) is preserved untouched, and a stale or
