@@ -321,13 +321,21 @@ describe the source geometry, so carrying either across would look intact
 while being subtly wrong. That is data loss under the same policy as any
 other: strict mode refuses (exit `3`, naming each lump), `--lenient` drops
 them and warns. A map already in the target format is not converted, so
-nothing in its group is dropped. Such a same-format map passes through
-unchanged even under `--nodes`: `--nodes` does not retrofit a `ZNODES` stream
-onto a group that is already UDMF (the in-place UDMF node rebuild is tracked by
-[#385](https://github.com/masriamir/crustywad/issues/385)) — the per-group note
-says so. Use `cwad build --nodes` to rebuild an existing UDMF group's `ZNODES`
-in place (after extracting the WAD's lumps — `build` takes `NAME=FILE` specs,
-not a WAD).
+nothing in its group is dropped. Under `--to doom`, such a same-format map
+passes through unchanged (unless `--nodes` is also given, which re-emits the
+map through the node-building one-shot — see
+[Building nodes](building-nodes.md)). Under
+`--to udmf --nodes`, it instead gets its `ZNODES` stream retrofitted in
+place: the group's `TEXTMAP` bytes are re-emitted verbatim, any port lump in
+the group (`DIALOGUE`, `BEHAVIOR`) is preserved untouched, and a stale or
+corrupt existing `ZNODES` is replaced (or inserted right after `TEXTMAP` if
+the group has none). A per-group note reports the retrofit (`is already
+UDMF; rebuilt ZNODES in place (map not converted)`), and the retrofitted map
+is **not** counted in `converted N maps` — this is a patch, not a
+conversion. A map excluded from the run by `--map` passes through unchanged
+with no retrofit. `cwad build --nodes` remains the spec-based alternative
+for rebuilding `ZNODES`: it works directly from `NAME=FILE` lump specs
+rather than a whole WAD.
 
 See [CLI Usage](cli.md#convert) for the full flag reference, example output,
 and exit codes.

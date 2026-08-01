@@ -4134,11 +4134,11 @@ fn convert_to_udmf_with_nodes_emits_znodes() {
 }
 
 #[test]
-fn convert_to_udmf_with_nodes_passes_udmf_source_through_unchanged() {
-    // A source group already in the target format (UDMF -> UDMF) passes through
-    // untouched: --nodes does NOT retrofit a ZNODES onto it (that in-place
-    // rebuild is tracked by #385). The per-group note makes the pass-through
-    // honest despite the run-level "builds GL nodes into ZNODES" note.
+fn convert_to_udmf_with_nodes_retrofits_znodes_onto_udmf_source() {
+    // A source group already in the target format (UDMF -> UDMF) is patched in
+    // place: --nodes retrofits a freshly built GL ZNODES onto it (#385) while
+    // re-emitting the group's own lumps verbatim (TEXTMAP byte-identical). The
+    // retrofit is not a conversion, so the summary reports "converted 0 maps".
     let wad = write_udmf_square_room_wad();
     let input_textmap = lump_bytes(wad.path(), "TEXTMAP");
     let out = NamedTempFile::new().unwrap();
@@ -4156,21 +4156,133 @@ fn convert_to_udmf_with_nodes_passes_udmf_source_through_unchanged() {
         ])
         .assert()
         .code(0)
+        .stdout(predicate::str::contains("converted 0 maps"))
         .stderr(predicate::str::contains(
-            "MAP01 is already UDMF; passed through unchanged (no ZNODES built — see #385)",
+            "MAP01 is already UDMF; rebuilt ZNODES in place (map not converted)",
         ));
 
-    // The group passed through byte-identical: same lumps in order, no ZNODES
-    // inserted, and the TEXTMAP bytes are untouched.
+    // The group grew a ZNODES lump slotted in right after TEXTMAP; the trailing
+    // non-map lump passes through in order.
     assert_eq!(
         lump_names(out.path()),
-        vec!["MAP01", "TEXTMAP", "ENDMAP", "COLORMAP"]
+        vec!["MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "COLORMAP"]
     );
-    assert!(
-        !lump_names(out.path()).iter().any(|n| n == "ZNODES"),
-        "no ZNODES should be built for an already-UDMF pass-through"
-    );
+    // TEXTMAP bytes survive byte-identical to the input map text.
     assert_eq!(lump_bytes(out.path(), "TEXTMAP"), input_textmap);
+    // The ZNODES lump is a GL stream; the square room resolves to the minimal
+    // XGLN dialect under the default (auto) GL format.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_repairs_corrupt_znodes() {
+    // A UDMF source group carrying a garbage ZNODES plus a DIALOGUE port lump:
+    // --to udmf --nodes rebuilds the ZNODES in place (repairing the corrupt one
+    // rather than failing) and preserves DIALOGUE (bytes and position) verbatim;
+    // the lump count is unchanged.
+    let textmap = udmf_square_room();
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ZNODES", b"JUNK"),
+            ("DIALOGUE", &[7, 8, 9]),
+            ("ENDMAP", b""),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+        ])
+        .assert()
+        .code(0);
+
+    // Same lumps, same order, same count — the stale ZNODES was replaced in
+    // place, not appended.
+    assert_eq!(
+        lump_names(out.path()),
+        vec!["MAP01", "TEXTMAP", "ZNODES", "DIALOGUE", "ENDMAP"]
+    );
+    // The ZNODES bytes are a real GL stream now, not the garbage payload.
+    let znodes = lump_bytes(out.path(), "ZNODES");
+    assert_ne!(znodes, b"JUNK");
+    assert!(
+        znodes.starts_with(b"XGLN"),
+        "ZNODES should be an XGLN stream, got {:?}",
+        &znodes[..znodes.len().min(4)]
+    );
+    // The DIALOGUE port lump survived verbatim in place.
+    assert_eq!(lump_bytes(out.path(), "DIALOGUE"), vec![7_u8, 8, 9]);
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_map_filter_retrofits_only_named() {
+    // Two UDMF maps, `--map MAP01`: only MAP01 is retrofitted with a ZNODES.
+    // MAP02 is filtered out before the already-UDMF branch, so it takes the
+    // plain verbatim pass-through copy (no ZNODES, no per-group note).
+    let textmap = udmf_square_room();
+    let wad = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+            ("MAP02", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "convert",
+            wad.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+            "--map",
+            "MAP01",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("converted 0 maps"))
+        .stderr(predicate::str::contains(
+            "MAP01 is already UDMF; rebuilt ZNODES in place (map not converted)",
+        ));
+
+    // MAP01 got a ZNODES; MAP02 passed through verbatim with none. Exactly one
+    // ZNODES lump exists in the output.
+    let names = lump_names(out.path());
+    assert_eq!(
+        names,
+        vec![
+            "MAP01", "TEXTMAP", "ZNODES", "ENDMAP", "MAP02", "TEXTMAP", "ENDMAP"
+        ]
+    );
+    assert_eq!(
+        names.iter().filter(|n| *n == "ZNODES").count(),
+        1,
+        "only the named map should be retrofitted with a ZNODES"
+    );
 }
 
 #[test]
@@ -5506,4 +5618,45 @@ fn extract_malformed_midi_falls_back_to_raw() {
         .stderr(predicate::str::contains("could not index MIDI chunks"));
     assert!(dir.path().join("SHORTMID.bin").exists());
     assert!(!dir.path().join("SHORTMID.mid").exists());
+}
+
+#[test]
+fn convert_to_udmf_with_nodes_retrofit_node_build_failure_exits_3() {
+    // The retrofit path's error propagation: an already-UDMF source that
+    // assembles under --lenient (dangling `sidefront` clamped with a warning)
+    // but whose degenerate single-linedef geometry fails the GL node build.
+    let textmap = concat!(
+        "namespace = \"doom\";\n",
+        "vertex { x = 0; y = 0; }\n",
+        "vertex { x = 128; y = 0; }\n",
+        "sector { texturefloor = \"FLOOR4_8\"; textureceiling = \"CEIL3_5\"; }\n",
+        "sidedef { sector = 0; texturemiddle = \"STARTAN3\"; }\n",
+        "linedef { v1 = 0; v2 = 1; sidefront = 99; blocking = true; }\n",
+    );
+    let fixture = write_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", b""),
+            ("TEXTMAP", textmap.as_bytes()),
+            ("ENDMAP", b""),
+        ],
+    );
+    let out = NamedTempFile::new().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "convert",
+            fixture.path().to_str().unwrap(),
+            "-o",
+            out.path().to_str().unwrap(),
+            "--to",
+            "udmf",
+            "--nodes",
+        ])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "failed to build nodes for map MAP01",
+        ));
 }
