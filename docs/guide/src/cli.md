@@ -244,7 +244,7 @@ note:
 
 ```text
 $ cwad convert doom.wad -o out.wad --to udmf --nodes
-note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES
+note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each converted map
 wrote out.wad: converted 1 map to udmf
 ```
 

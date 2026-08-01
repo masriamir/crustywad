@@ -1468,7 +1468,7 @@ fn run(cli: Cli) -> Result<i32> {
                 }
                 if matches!(build_opts.format, NodeFormat::Classic) {
                     eprintln!(
-                        "note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES"
+                        "note: --to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each converted map"
                     );
                 }
             }

@@ -4109,7 +4109,7 @@ fn convert_to_udmf_with_nodes_emits_znodes() {
         // The default (Classic) node-format resolves to the GL auto-format; the
         // run notes it once.
         .stderr(predicate::str::contains(
-            "--to udmf --nodes builds GL nodes (gl auto-format) into ZNODES",
+            "--to udmf --nodes builds GL nodes (gl auto-format) into ZNODES for each converted map",
         ));
 
     // The converted group is [marker, TEXTMAP, ZNODES, ENDMAP], with the
