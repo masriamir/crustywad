@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.1...crustywad-v0.9.2) - 2026-08-02
+
+### Added
+
+- *(cli)* non-GL xnod/znod support for UDMF ZNODES output ([#388](https://github.com/masriamir/crustywad/pull/388))
+- *(cli)* UDMF ZNODES node output through --nodes ([#386](https://github.com/masriamir/crustywad/pull/386))
+- *(map)* UDMF full-fidelity retention and semantic round-trip (ADR-0027) ([#381](https://github.com/masriamir/crustywad/pull/381))
+
 ## [0.9.1](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.0...crustywad-v0.9.1) - 2026-07-28
 
 ### Added
