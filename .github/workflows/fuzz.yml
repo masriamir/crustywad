@@ -19,7 +19,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch pin
         with:
-          toolchain: stable
+          # fuzz/rust-toolchain.toml pins the directory to nightly (cargo-fuzz
+          # requires it), so rustup overrides any other installed toolchain the
+          # moment a cargo command runs under fuzz/ — install nightly WITH the
+          # lint components or the job dies on "cargo-fmt is not installed".
+          toolchain: nightly
+          components: clippy,rustfmt
       - name: Check formatting
         run: cargo fmt --all --check
         working-directory: fuzz
