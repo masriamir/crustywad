@@ -7,6 +7,9 @@ on:
   pull_request:
     paths:
       - 'fuzz/**'
+      # The workflow file itself: a PR editing only the lint/fuzz pipeline must
+      # validate here in the PR, not first fail on the weekly schedule.
+      - '.github/workflows/fuzz.yml'
 
 jobs:
   # The fuzz workspace is not covered by the main CI pipeline's fmt/clippy
