@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6fcd7a33.js";
+            window.path_to_searchindex_js = "searchindex-070033f5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -984,9 +984,40 @@ integer-precision, so a fractional-coordinate UDMF map is rejected in strict
 mode (naming the offending coordinate, with a <code>--lenient</code> hint) and rounded
 with a warning in lenient mode — for the node stream only, the <code>TEXTMAP</code>
 keeps the fractional originals; a map needing exact fractional geometry
-should use a GL dialect. Hexen (#352) and Doom 64 (#353) map groups are not yet
-supported by <code>build --nodes</code> and are passed through unchanged with a note on
-stderr; non-map lumps always pass through unchanged. See
+should use a GL dialect.</p>
+<p>A <strong>Hexen</strong> map group is rebuilt in place rather than reassembled from
+scratch, since Hexen has no <code>add_*_map_with_nodes</code> one-shot: <code>THINGS</code>,
+<code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>SECTORS</code>, and <code>BEHAVIOR</code> are carried through
+byte-verbatim; <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code> are rebuilt for whichever
+<code>--node-format</code> is in effect — unlike a UDMF target, Hexen accepts every
+format including the <code>classic</code> default, using the same three carrier
+conventions as a Doom group (the classic trio plus a split-vertex tail
+appended to <code>VERTEXES</code>; <code>xnod</code>/<code>znod</code> in <code>NODES</code> with <code>SEGS</code>/<code>SSECTORS</code>
+emptied and <code>VERTEXES</code> untouched; a GL dialect in <code>SSECTORS</code>). <code>REJECT</code> and
+<code>BLOCKMAP</code> are always rebuilt — a hand-tuned <code>REJECT</code> is replaced with the
+engine-safe all-zeros table <code>build_reject</code> produces, and the five rebuilt
+lumps are emitted at their canonical slot even if the input group lacked one
+outright. A corrupt node lump <strong>among the group’s own five</strong> (<code>SEGS</code>,
+<code>SSECTORS</code>, <code>NODES</code>, <code>REJECT</code>, <code>BLOCKMAP</code>) is excluded before assembly and so
+repaired rather than fatal; the repair claim does not extend to a separate
+in-WAD <code>GL_&lt;mapname&gt;</code> sidecar group, which <code>Map::assemble_with_options</code>
+decodes unconditionally. A corrupt sidecar therefore still strict-fails
+assembly (exit 3 — <code>--lenient</code> recovers), and a valid-but-stale sidecar
+passes through verbatim next to the rebuilt lumps, so a GL-preferring engine
+may load it in preference to the freshly built nodes. The whole group is
+re-emitted in the canonical <code>THINGS</code>…<code>BEHAVIOR</code> order, since vanilla-class
+engines index a map’s lumps by offset from the marker. A map using
+polyobjects gets a warning that the rebuilt nodes may split a polyobject’s
+subsector — the warning fires on the vanilla Hexen anchor/spawn editor
+numbers 3000–3002 (per the Hexen source’s <code>P_LOCAL.H</code>) and on ZDoom’s
+9300–9303 “Doom-in-Hexen” numbers (per GZDoom
+<code>wadsrc/static/mapinfo/common.txt</code>). It is advisory: in a Doom-in-Hexen map
+the Doom editor numbers apply, where 3001/3002 are the Imp/Demon, so those
+values may instead be ordinary monsters. Polyobject-aware splitting is the
+tracked follow-up (#389).</p>
+<p><strong>Doom 64</strong> (#353) map groups remain the only ones not yet supported by
+<code>build --nodes</code>; they are passed through unchanged with a note on stderr.
+Non-map lumps always pass through unchanged. See
 <a href="#build">CLI Usage</a> for the full flag reference.</p>
 <h2 id="the-tolerated-mixed-sector-fan"><a class="header" href="#the-tolerated-mixed-sector-fan">The tolerated mixed-sector fan</a></h2>
 <p>Real geometry occasionally produces a convex leaf that spans more than one
@@ -1925,7 +1956,8 @@ size validation failures exit <code>3</code>.</p>
 the output with engine-playable node lumps via the
 <a href="#building-nodes"><code>add_doom_map_with_nodes</code></a> one-shot — the BSP tree
 (<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the collision <code>BLOCKMAP</code>, and the all-clear
-<code>REJECT</code> — and every <strong>UDMF</strong>-format map group with a built <code>ZNODES</code>
+<code>REJECT</code> — every <strong>Hexen</strong>-format map group via an in-place node-lump splice
+(below), and every <strong>UDMF</strong>-format map group with a built <code>ZNODES</code>
 stream (a GL dialect by default; see <code>--node-format</code> below), replacing any
 existing <code>ZNODES</code> (or inserted right after <code>TEXTMAP</code> if the group has none)
 with the rest of the group’s lumps carried through unchanged:</p>
@@ -1936,11 +1968,29 @@ wrote playable.wad: kind=Pwad lumps: 11
 the <code>REJECT</code> visibility table, and the <code>BLOCKMAP</code> — are overwritten with the
 newly built ones, whether they were packed as empty placeholders or already
 held data. The map’s packed <code>VERTEXES</code> lump can also grow: the BSP pass
-appends any split vertices it creates to it. <strong>Hexen</strong> (#352) and <strong>Doom 64</strong>
-(#353) map groups are not yet supported by <code>--nodes</code> and are passed through
-unchanged with a note on stderr; non-map lumps always pass through
-unchanged; if neither a Doom nor a UDMF map group is found, <code>--nodes</code> is a
-no-op and prints a note.</p>
+appends any split vertices it creates to it.</p>
+<p>A <strong>Hexen</strong> group is patched in place instead of reassembled: <code>THINGS</code>,
+<code>LINEDEFS</code>, <code>SIDEDEFS</code>, <code>SECTORS</code>, and <code>BEHAVIOR</code> carry through
+byte-verbatim, while <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code> are rebuilt for whichever
+<code>--node-format</code> is in effect — Hexen accepts every format, including the
+<code>classic</code> default, using the same carrier conventions as a Doom group.
+<code>REJECT</code> and <code>BLOCKMAP</code> are always rebuilt, so a hand-tuned <code>REJECT</code> is
+replaced with the engine-safe all-zeros table. The group is re-emitted in
+the canonical <code>THINGS</code>…<code>BEHAVIOR</code> order, since vanilla-class engines index a
+map’s lumps by offset from the marker; a corrupt node lump among the group’s
+own five (<code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>/<code>REJECT</code>/<code>BLOCKMAP</code>) is repaired rather
+than fatal, but a separate in-WAD <code>GL_&lt;mapname&gt;</code> sidecar is not — a corrupt
+sidecar still strict-fails assembly (<code>--lenient</code> recovers) and a stale one
+passes through verbatim beside the rebuilt lumps. A map using polyobjects
+prints a warning that the rebuilt nodes may split a polyobject’s subsector;
+it fires on both the vanilla Hexen (3000–3002) and ZDoom Doom-in-Hexen
+(9300–9303) editor numbers and is advisory, since 3001/3002 are also the
+Doom Imp/Demon (polyobject-aware splitting is tracked in #389). See
+<a href="#building-nodes">Building nodes</a> for the full splice details.</p>
+<p><strong>Doom 64</strong> (#353) map groups remain the only ones not yet supported by
+<code>--nodes</code>; they are passed through unchanged with a note on stderr. Non-map
+lumps always pass through unchanged; if none of a Doom, Hexen, or UDMF map
+group is found, <code>--nodes</code> is a no-op and prints a note.</p>
 <p><code>build --nodes</code> takes the same <code>--node-format &lt;FORMAT&gt;</code> flag as
 <code>convert --nodes</code> — <code>classic</code> (default), the non-GL extended pair
 (<code>xnod</code>/<code>znod</code>), the four GL dialects (<code>xgln</code>/<code>xgl2</code>/<code>xgl3</code>/<code>gl</code>), and their
