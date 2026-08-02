@@ -372,3 +372,14 @@ recovery rules, consistent with ADR-0003.
   parsing (breaking the `BinRead<Args = ()>` assumption in item 4), or if a port
   requires distinguishing Heretic from Doom by map bytes (breaking the "Heretic ==
   Doom format" assumption in item 2).
+
+## Amendment (2026-08-02, #246): the game-identity axis gains its first representation
+
+The spike behind ADR-0028 verified that classic Strife uses the Doom binary
+layout byte-for-byte — so the line-193 possibility that Strife "may add
+layouts" did not materialize, and `MapFormat` is unchanged. Instead, the
+game/engine-identity axis this ADR deferred receives its first, deliberately
+minimal representation: a WAD-level `WadGame` enum (`#[non_exhaustive]`,
+initially `Strife` only) detected from lump-content fingerprints, surfaced
+per-map as `Map::game()`. Game-semantic *tables* (the Non-goals bullet above)
+remain deferred. See ADR-0028 for the detection rule and staging.
