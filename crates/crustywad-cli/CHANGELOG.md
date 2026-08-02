@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.4...crustywad-cli-v0.4.5) - 2026-08-02
+
+### Added
+
+- *(cli)* Hexen node building via the node-lump splice ([#390](https://github.com/masriamir/crustywad/pull/390))
+- *(cli)* non-GL xnod/znod support for UDMF ZNODES output ([#388](https://github.com/masriamir/crustywad/pull/388))
+- *(cli)* same-format ZNODES retrofit for convert --to udmf --nodes ([#387](https://github.com/masriamir/crustywad/pull/387))
+- *(cli)* UDMF ZNODES node output through --nodes ([#386](https://github.com/masriamir/crustywad/pull/386))
+
 ## [0.4.4](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.3...crustywad-cli-v0.4.4) - 2026-07-29
 
 ### Other
