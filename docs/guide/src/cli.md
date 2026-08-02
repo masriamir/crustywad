@@ -159,7 +159,8 @@ Pass `--nodes` to rebuild, after packing, every **Doom**-format map group in
 the output with engine-playable node lumps via the
 [`add_doom_map_with_nodes`](building-nodes.md) one-shot — the BSP tree
 (`SEGS`/`SSECTORS`/`NODES`), the collision `BLOCKMAP`, and the all-clear
-`REJECT` — and every **UDMF**-format map group with a built `ZNODES`
+`REJECT` — every **Hexen**-format map group via an in-place node-lump splice
+(below), and every **UDMF**-format map group with a built `ZNODES`
 stream (a GL dialect by default; see `--node-format` below), replacing any
 existing `ZNODES` (or inserted right after `TEXTMAP` if the group has none)
 with the rest of the group's lumps carried through unchanged:
@@ -173,11 +174,31 @@ All of a rebuilt Doom group's node lumps — `SEGS`/`SSECTORS`/`NODES`,
 the `REJECT` visibility table, and the `BLOCKMAP` — are overwritten with the
 newly built ones, whether they were packed as empty placeholders or already
 held data. The map's packed `VERTEXES` lump can also grow: the BSP pass
-appends any split vertices it creates to it. **Hexen** (#352) and **Doom 64**
-(#353) map groups are not yet supported by `--nodes` and are passed through
-unchanged with a note on stderr; non-map lumps always pass through
-unchanged; if neither a Doom nor a UDMF map group is found, `--nodes` is a
-no-op and prints a note.
+appends any split vertices it creates to it.
+
+A **Hexen** group is patched in place instead of reassembled: `THINGS`,
+`LINEDEFS`, `SIDEDEFS`, `SECTORS`, and `BEHAVIOR` carry through
+byte-verbatim, while `SEGS`/`SSECTORS`/`NODES` are rebuilt for whichever
+`--node-format` is in effect — Hexen accepts every format, including the
+`classic` default, using the same carrier conventions as a Doom group.
+`REJECT` and `BLOCKMAP` are always rebuilt, so a hand-tuned `REJECT` is
+replaced with the engine-safe all-zeros table. The group is re-emitted in
+the canonical `THINGS`…`BEHAVIOR` order, since vanilla-class engines index a
+map's lumps by offset from the marker; a corrupt node lump among the group's
+own five (`SEGS`/`SSECTORS`/`NODES`/`REJECT`/`BLOCKMAP`) is repaired rather
+than fatal, but a separate in-WAD `GL_<mapname>` sidecar is not — a corrupt
+sidecar still strict-fails assembly (`--lenient` recovers) and a stale one
+passes through verbatim beside the rebuilt lumps. A map using polyobjects
+prints a warning that the rebuilt nodes may split a polyobject's subsector;
+it fires on both the vanilla Hexen (3000–3002) and ZDoom Doom-in-Hexen
+(9300–9303) editor numbers and is advisory, since 3001/3002 are also the
+Doom Imp/Demon (polyobject-aware splitting is tracked in #389). See
+[Building nodes](building-nodes.md) for the full splice details.
+
+**Doom 64** (#353) map groups remain the only ones not yet supported by
+`--nodes`; they are passed through unchanged with a note on stderr. Non-map
+lumps always pass through unchanged; if none of a Doom, Hexen, or UDMF map
+group is found, `--nodes` is a no-op and prints a note.
 
 `build --nodes` takes the same `--node-format <FORMAT>` flag as
 `convert --nodes` — `classic` (default), the non-GL extended pair
