@@ -376,8 +376,9 @@ recovery rules, consistent with ADR-0003.
 ## Amendment (2026-08-02, #246): the game-identity axis gains its first representation
 
 The spike behind ADR-0028 verified that classic Strife uses the Doom binary
-layout byte-for-byte — so the line-193 possibility that Strife "may add
-layouts" did not materialize, and `MapFormat` is unchanged. Instead, the
+layout byte-for-byte — so the possibility left open under the `MapFormat`
+sketch above, that future ports such as Strife "may add layouts", did not
+materialize, and `MapFormat` is unchanged. Instead, the
 game/engine-identity axis this ADR deferred receives its first, deliberately
 minimal representation: a WAD-level `WadGame` enum (`#[non_exhaustive]`,
 initially `Strife` only) detected from lump-content fingerprints, surfaced
