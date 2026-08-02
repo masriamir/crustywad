@@ -64,7 +64,10 @@ fuzz_target!(|data: &[u8]| {
 /// The ADR-0024 §5 output bounds a successful build must satisfy.
 fn assert_output_bounds(map: &Map, built: &BuiltNodes) {
     let vertices = map.vertices().len() + built.split_vertices.len();
-    assert!(vertices <= MAX_U16_INDEXED, "vertices {vertices} exceed the u16 ceiling");
+    assert!(
+        vertices <= MAX_U16_INDEXED,
+        "vertices {vertices} exceed the u16 ceiling"
+    );
     assert!(
         built.segs.len() <= MAX_U16_INDEXED,
         "segs {} exceed the u16 ceiling",
@@ -83,7 +86,10 @@ fn assert_output_bounds(map: &Map, built: &BuiltNodes) {
 
     // A full binary tree of leaves: exactly one more subsector than node, and at
     // least one subsector (an empty build is an `Err`, filtered above).
-    assert!(!built.subsectors.is_empty(), "a successful build has >= 1 subsector");
+    assert!(
+        !built.subsectors.is_empty(),
+        "a successful build has >= 1 subsector"
+    );
     assert_eq!(
         built.subsectors.len(),
         built.nodes.len() + 1,
@@ -93,9 +99,19 @@ fn assert_output_bounds(map: &Map, built: &BuiltNodes) {
     // Subsector seg ranges are contiguous and partition the seg arena exactly.
     let mut cursor = 0;
     for subsector in &built.subsectors {
-        assert_eq!(subsector.segs.start, cursor, "subsector segs are not contiguous");
-        assert!(subsector.segs.end >= subsector.segs.start, "inverted subsector seg range");
+        assert_eq!(
+            subsector.segs.start, cursor,
+            "subsector segs are not contiguous"
+        );
+        assert!(
+            subsector.segs.end >= subsector.segs.start,
+            "inverted subsector seg range"
+        );
         cursor = subsector.segs.end;
     }
-    assert_eq!(cursor, built.segs.len(), "subsectors must partition segs exactly");
+    assert_eq!(
+        cursor,
+        built.segs.len(),
+        "subsectors must partition segs exactly"
+    );
 }
