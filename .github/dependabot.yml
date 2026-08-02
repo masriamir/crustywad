@@ -8,6 +8,13 @@ updates:
     directory: "/tools"
     schedule:
       interval: weekly
+  # fuzz/ is its own cargo workspace (excluded from the root workspace), so
+  # neither "/" nor "/tools" reaches its Cargo.toml — without this stanza its
+  # deps (libfuzzer-sys, ...) are never scanned.
+  - package-ecosystem: cargo
+    directory: "/fuzz"
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
