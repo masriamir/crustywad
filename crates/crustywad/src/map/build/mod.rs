@@ -155,22 +155,28 @@ impl NodeFormat {
 
     /// Whether this format's stream is zlib-compressed (`Znod`/`Zgln`/`Zgl2`/
     /// `Zgl3`/`Zgl`).
+    ///
+    /// Written as an exhaustive match (like [`NodeFormat::is_extended`] above)
+    /// rather than a cfg-split body so a future `NodeFormat` variant cannot
+    /// silently fall through unclassified — adding one is a compile error here
+    /// until it is placed on a side — and so the feature-off build still reads
+    /// `self` (the old cfg-split arm tripped `clippy::unused_self` under
+    /// `--no-default-features`).
     #[must_use]
     pub(crate) fn compressed(self) -> bool {
-        #[cfg(feature = "extended-nodes-zlib")]
-        {
-            matches!(
-                self,
-                NodeFormat::Znod
-                    | NodeFormat::Zgln
-                    | NodeFormat::Zgl2
-                    | NodeFormat::Zgl3
-                    | NodeFormat::Zgl
-            )
-        }
-        #[cfg(not(feature = "extended-nodes-zlib"))]
-        {
-            false
+        match self {
+            NodeFormat::Classic
+            | NodeFormat::Xnod
+            | NodeFormat::Xgln
+            | NodeFormat::Xgl2
+            | NodeFormat::Xgl3
+            | NodeFormat::Gl => false,
+            #[cfg(feature = "extended-nodes-zlib")]
+            NodeFormat::Znod
+            | NodeFormat::Zgln
+            | NodeFormat::Zgl2
+            | NodeFormat::Zgl3
+            | NodeFormat::Zgl => true,
         }
     }
 
