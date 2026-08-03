@@ -2,7 +2,8 @@
 
 mod common;
 
-use crustywad::{Wad, WadGame};
+use crustywad::map::{Map, MapFormat, MapWarning};
+use crustywad::{ParseOptions, Wad, WadGame};
 
 /// Builds a PWAD holding one lump of the given name and size (zero-filled).
 fn wad_with_lump(name: &str, size: usize) -> Wad {
@@ -66,9 +67,6 @@ fn no_fingerprint_means_none() {
     assert_eq!(empty.detect_game(), None);
 }
 
-use crustywad::ParseOptions;
-use crustywad::map::Map;
-
 /// A minimal Doom-format map (marker + empty classic member lumps) plus one
 /// qualifying SCRIPT lump when `with_script` is set.
 fn strife_flavored_map_wad(with_script: bool) -> Wad {
@@ -116,8 +114,6 @@ fn unfingerprinted_wad_maps_have_no_game() {
         assert_eq!(map.game(), None, "{:?}", options.strictness);
     }
 }
-
-use crustywad::map::{MapFormat, MapWarning};
 
 #[test]
 fn strife_doom_format_map_warns_in_lenient_mode_only() {

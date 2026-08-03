@@ -280,6 +280,32 @@ fn info_detects_strife_human() {
 }
 
 #[test]
+fn info_detects_strife_json() {
+    // Same fingerprint as `info_detects_strife_human`, asserted against the
+    // JSON `game` field (ADR-0028 §1).
+    let wad = write_wad(*b"IWAD", &[("SCRIPT01", &[0; 1516])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"game\":\"strife\""));
+}
+
+#[test]
+fn info_detects_strife_csv() {
+    // Same fingerprint as `info_detects_strife_human`, asserted against the
+    // CSV row's trailing `game` column (ADR-0028 §1).
+    let wad = write_wad(*b"IWAD", &[("SCRIPT01", &[0; 1516])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(",strife\n"));
+}
+
+#[test]
 fn info_lenient_emits_warning_for_bad_magic() {
     let mut bytes = build_wad(*b"NOPE", &[("TEST", &[1])]);
     // Keep lump count and directory offset valid so lenient mode produces a warning, not a hard error.
