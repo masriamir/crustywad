@@ -116,3 +116,85 @@ fn unfingerprinted_wad_maps_have_no_game() {
         assert_eq!(map.game(), None, "{:?}", options.strictness);
     }
 }
+
+use crustywad::map::{MapFormat, MapWarning};
+
+#[test]
+fn strife_doom_format_map_warns_in_lenient_mode_only() {
+    let wad = strife_flavored_map_wad(true);
+    let group = &wad.map_groups()[0];
+
+    let strict =
+        Map::assemble_with_options(&wad, group, ParseOptions::strict()).expect("assembles");
+    assert!(
+        strict.warnings().is_empty(),
+        "strict must not warn: {:?}",
+        strict.warnings()
+    );
+
+    let lenient =
+        Map::assemble_with_options(&wad, group, ParseOptions::lenient()).expect("assembles");
+    assert_eq!(lenient.format(), MapFormat::Doom);
+    assert_eq!(
+        lenient.warnings(),
+        &[MapWarning::UnmodeledGameSemantics {
+            game: WadGame::Strife
+        }][..],
+        "exactly one advisory, once per map"
+    );
+}
+
+#[test]
+fn non_strife_map_never_gets_the_advisory() {
+    let wad = strife_flavored_map_wad(false);
+    let group = &wad.map_groups()[0];
+    let lenient =
+        Map::assemble_with_options(&wad, group, ParseOptions::lenient()).expect("assembles");
+    assert!(lenient.warnings().is_empty());
+}
+
+#[test]
+fn udmf_map_in_strife_wad_gets_attribution_but_no_advisory() {
+    let script = vec![0_u8; 1516];
+    let textmap = b"namespace = \"zdoom\";\n";
+    let lumps: Vec<(&str, &[u8])> = vec![
+        ("MAP01", &[]),
+        ("TEXTMAP", textmap.as_slice()),
+        ("ENDMAP", &[]),
+        ("SCRIPT01", script.as_slice()),
+    ];
+    let wad = Wad::from_bytes(common::build_wad(*b"PWAD", &lumps)).expect("parses");
+    let group = &wad.map_groups()[0];
+    let map = Map::assemble_with_options(&wad, group, ParseOptions::lenient()).expect("assembles");
+    assert_eq!(map.format(), MapFormat::Udmf);
+    assert_eq!(map.game(), Some(WadGame::Strife));
+    assert!(map.warnings().is_empty(), "{:?}", map.warnings());
+}
+
+#[test]
+fn hexen_map_in_strife_wad_gets_attribution_but_no_advisory() {
+    // BEHAVIOR in the group makes this a Hexen-format map; the advisory is
+    // Doom-format-only even when the WAD fingerprints as Strife.
+    let script = vec![0_u8; 1516];
+    let lumps: Vec<(&str, &[u8])> = vec![
+        ("MAP01", &[]),
+        ("THINGS", &[]),
+        ("LINEDEFS", &[]),
+        ("SIDEDEFS", &[]),
+        ("VERTEXES", &[]),
+        ("SEGS", &[]),
+        ("SSECTORS", &[]),
+        ("NODES", &[]),
+        ("SECTORS", &[]),
+        ("REJECT", &[]),
+        ("BLOCKMAP", &[]),
+        ("BEHAVIOR", &[]),
+        ("SCRIPT01", script.as_slice()),
+    ];
+    let wad = Wad::from_bytes(common::build_wad(*b"PWAD", &lumps)).expect("parses");
+    let group = &wad.map_groups()[0];
+    let map = Map::assemble_with_options(&wad, group, ParseOptions::lenient()).expect("assembles");
+    assert_eq!(map.format(), MapFormat::Hexen);
+    assert_eq!(map.game(), Some(WadGame::Strife));
+    assert!(map.warnings().is_empty(), "{:?}", map.warnings());
+}

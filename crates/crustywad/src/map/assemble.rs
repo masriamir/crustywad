@@ -12,7 +12,7 @@ use crate::map::graph::{
     SubsectorIdx, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
-use crate::{ParseOptions, Strictness, Wad};
+use crate::{ParseOptions, Strictness, Wad, WadGame};
 
 /// Fatal errors from [`Map::assemble_with_options`].
 #[derive(Debug, thiserror::Error)]
@@ -1706,6 +1706,14 @@ impl Map {
         let game = wad.detect_game();
         let mut map = Self::assemble_dispatch(wad, group, gl_wad, options)?;
         map.game = game;
+        if options.strictness == Strictness::Lenient
+            && game == Some(WadGame::Strife)
+            && map.format() == MapFormat::Doom
+        {
+            map.warnings.push(MapWarning::UnmodeledGameSemantics {
+                game: WadGame::Strife,
+            });
+        }
         Ok(map)
     }
 

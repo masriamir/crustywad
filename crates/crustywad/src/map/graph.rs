@@ -822,6 +822,18 @@ pub enum MapWarning {
     /// GL nodes were malformed; GL arenas degraded to empty (Lenient).
     #[error("GL nodes malformed; GL data skipped")]
     GlNodesDegraded,
+    /// The source WAD was positively identified as a game whose record
+    /// semantics (thing/linedef flags, specials, thing types) the assembled
+    /// graph does not model; raw values are preserved but follow that game's
+    /// meaning, not Doom's (ADR-0028 §3). Emitted during lenient assembly
+    /// only, once per binary Doom-format map of a fingerprinted WAD.
+    #[error(
+        "map belongs to a {game:?} WAD; record semantics beyond the Doom baseline are not modeled"
+    )]
+    UnmodeledGameSemantics {
+        /// The positively identified game family.
+        game: crate::WadGame,
+    },
 }
 
 /// An assembled Doom map graph: normalized elements addressed by index,
