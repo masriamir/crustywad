@@ -1,6 +1,6 @@
 # ADR-0028: Strife game identification and semantic attribution
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-02
 - **Deciders:** @masriamir
 - **Tracking issue:** https://github.com/masriamir/crustywad/issues/246

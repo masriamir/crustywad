@@ -58,6 +58,6 @@ implementation begins.**
 | [0025](0025-extended-node-formats.md) | Extended and GL node-format reading | Accepted |
 | [0026](0026-gl-node-building.md) | GL node building and the XGLN/XGL2/XGL3 extended-node writer | Accepted |
 | [0027](0027-udmf-full-fidelity-roundtrip.md) | UDMF full-fidelity retention and semantic round-trip | Accepted |
-| [0028](0028-strife-game-identification.md) | Strife game identification and semantic attribution | Proposed |
+| [0028](0028-strife-game-identification.md) | Strife game identification and semantic attribution | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->
