@@ -35,9 +35,13 @@ kind:      Iwad
 lumps:     1264
 data size: 4194304 bytes
 maps:      E1M1, E1M2
-game:      strife
 audio:     midi: 3, digital: 12
 ```
+
+A `game:` line appears only when the WAD positively identifies as a specific
+game family (currently Strife, via its dialogue lumps — see
+[Game identification](map-records.md#game-identification-strife)); a Doom WAD
+prints none.
 
 ### list
 
@@ -451,8 +455,11 @@ cwad -F csv info doom.wad
 
 ```text
 kind,lumps,data_size,maps,game
-Iwad,1264,4194304,E1M1 E1M2,strife
+Iwad,1264,4194304,E1M1 E1M2,
 ```
+
+The trailing `game` field is empty unless the WAD positively identifies
+(e.g. `strife` for a Strife WAD).
 
 ```bash
 cwad -F csv list doom.wad
