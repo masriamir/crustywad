@@ -275,7 +275,7 @@ fn csv_field(s: &str) -> String {
     }
 }
 
-/// Lowercase display name for a detected [`WadGame`][crustywad::WadGame].
+/// Lowercase display name for a detected [`WadGame`].
 ///
 /// `WadGame` is `#[non_exhaustive]` (ADR-0028 §1), so this crate cannot get a
 /// compile-time guarantee that every variant is handled — the wildcard arm
