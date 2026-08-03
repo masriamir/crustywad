@@ -139,7 +139,7 @@ pub enum WadGame {
     /// Strife (Rogue Entertainment) — identified by its dialogue `SCRIPTnn`
     /// lumps. Strife maps use the byte-identical Doom binary layout, so this
     /// is the only signal that thing/linedef flag and special values carry
-    /// Strife semantics (see [`map::strife`][crate::map::strife]).
+    /// Strife semantics (see [`map::strife`]).
     Strife,
 }
 
