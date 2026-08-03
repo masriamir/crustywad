@@ -11,7 +11,9 @@
 //!
 //! The sweep asserts the hard invariant established by the 2026-07-13 gap
 //! analysis and #252/ADR-0020: every map in the retail collection parses and
-//! assembles cleanly in **both** modes with **zero warnings** — no allowlist.
+//! assembles cleanly in **both** modes with **zero warnings, except the single
+//! expected ADR-0028 Strife advisory on lenient Doom-format maps of a
+//! Strife-fingerprinted WAD — asserted exactly, not tolerated** — no allowlist.
 //! A WAD that legitimately breaks this invariant is a bug to fix (or a policy
 //! decision to record), not an exception to carve out here.
 //!
@@ -46,8 +48,8 @@
 
 mod common;
 
-use crustywad::map::{Map, MapFormat, detect_map_format};
-use crustywad::{ParseOptions, Wad};
+use crustywad::map::{Map, MapFormat, MapWarning, detect_map_format};
+use crustywad::{ParseOptions, Strictness, Wad, WadGame};
 
 #[test]
 fn sweep_assembles_every_map_of_every_wad() {
@@ -71,6 +73,23 @@ fn sweep_assembles_every_map_of_every_wad() {
             wad.warnings()
         );
 
+        // ADR-0028 acceptance pin (#247): the collection's two Strife WADs
+        // must positively identify; every other WAD must not — the #246
+        // false-positive matrix, made executable.
+        let expected_game = wad.detect_game();
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let is_strife_file = file_name == "strife1.wad" || file_name == "sve.wad";
+        assert_eq!(
+            expected_game,
+            is_strife_file.then_some(WadGame::Strife),
+            "{}: detect_game() disagrees with the collection's known Strife set",
+            path.display()
+        );
+
         // Classic marker+run maps (Doom / Heretic / Hexen / UDMF) and Doom 64
         // nested-WAD maps all surface through `Wad::map_groups` now, so a
         // single loop covers all four formats.
@@ -87,13 +106,30 @@ fn sweep_assembles_every_map_of_every_wad() {
                         options.strictness
                     )
                 });
-                assert!(
-                    map.warnings().is_empty(),
-                    "{}: map {} produced {:?} warnings: {:?}",
+                assert_eq!(
+                    map.game(),
+                    expected_game,
+                    "{}: map {} game attribution mismatch",
+                    path.display(),
+                    group.name
+                );
+                let advisory_expected = options.strictness == Strictness::Lenient
+                    && expected_game == Some(WadGame::Strife)
+                    && map.format() == MapFormat::Doom;
+                let expected_warnings: &[MapWarning] = if advisory_expected {
+                    &[MapWarning::UnmodeledGameSemantics {
+                        game: WadGame::Strife,
+                    }]
+                } else {
+                    &[]
+                };
+                assert_eq!(
+                    map.warnings(),
+                    expected_warnings,
+                    "{}: map {} produced unexpected {:?} warnings",
                     path.display(),
                     group.name,
-                    options.strictness,
-                    map.warnings()
+                    options.strictness
                 );
             }
             groups_swept += 1;

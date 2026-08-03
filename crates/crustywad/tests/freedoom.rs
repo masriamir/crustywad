@@ -21,6 +21,24 @@ fn parses_freedoom_when_fixtures_are_available() {
     }
 }
 
+/// Freedoom is a Doom-format IWAD, not Strife: the ADR-0028 fingerprint must
+/// never fire on it (the #246 false-positive guard, held against real geometry).
+#[test]
+fn freedoom_is_not_detected_as_strife() {
+    for path in common::iwad_files(
+        "CRUSTYWAD_FREEDOOM_DIR",
+        &["freedoom1.wad", "freedoom2.wad"],
+    ) {
+        let wad = Wad::from_path(&path).expect("fixture should parse");
+        assert_eq!(
+            wad.detect_game(),
+            None,
+            "{}: Freedoom must not fingerprint as Strife",
+            path.display()
+        );
+    }
+}
+
 /// Every real Freedoom map must survive Doom → UDMF → Doom with full fidelity:
 /// the round-trip guarantee of ADR-0019, held against real-world geometry rather
 /// than synthetic fixtures. Every map in both IWADs is checked.
