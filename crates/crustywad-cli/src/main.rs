@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
 use crustywad::audio::{AudioKind, DmxSound, MidiInfo, MusScore, WavSound};
-use crustywad::{ParseOptions, Wad, WadBuilder, WadKind};
+use crustywad::{ParseOptions, Wad, WadBuilder, WadGame, WadKind};
 
 use cli::{Cli, Format, MapFormatArg, NodeFormatArg, SubCommand, WadKindArg};
 
@@ -272,6 +272,20 @@ fn csv_field(s: &str) -> String {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_owned()
+    }
+}
+
+/// Lowercase display name for a detected [`WadGame`][crustywad::WadGame].
+///
+/// `WadGame` is `#[non_exhaustive]` (ADR-0028 §1), so this crate cannot get a
+/// compile-time guarantee that every variant is handled — the wildcard arm
+/// below is required by the compiler even though only one variant exists
+/// today. A future variant added upstream falls back to `"unknown"` here
+/// rather than panicking, until this match is updated to name it explicitly.
+fn game_name(game: WadGame) -> &'static str {
+    match game {
+        WadGame::Strife => "strife",
+        _ => "unknown",
     }
 }
 
@@ -1012,6 +1026,7 @@ fn run(cli: Cli) -> Result<i32> {
             let maps = detect_maps(&wad);
             // Per-kind tally of detected audio lumps (detect-only, no parse).
             let audio = audio_summary(&wad);
+            let game = wad.detect_game();
             match cli.format {
                 Format::Human => {
                     println!("kind:      {:?}", wad.kind());
@@ -1020,6 +1035,9 @@ fn run(cli: Cli) -> Result<i32> {
                     println!("data size: {data_size} {unit}");
                     if !maps.is_empty() {
                         println!("maps:      {}", maps.join(", "));
+                    }
+                    if let Some(game) = game {
+                        println!("game:      {}", game_name(game));
                     }
                     if !audio.is_empty() {
                         let rendered = audio
@@ -1041,23 +1059,28 @@ fn run(cli: Cli) -> Result<i32> {
                         .map(|(kind, count)| format!(r#""{kind}":{count}"#))
                         .collect::<Vec<_>>()
                         .join(",");
+                    let game_json = game
+                        .map(|g| format!(r#","game":"{}""#, game_name(g)))
+                        .unwrap_or_default();
                     println!(
-                        r#"{{"kind":"{:?}","lumps":{},"data_size":{},"maps":[{}],"audio":{{{}}}}}"#,
+                        r#"{{"kind":"{:?}","lumps":{},"data_size":{},"maps":[{}],"audio":{{{}}}{}}}"#,
                         wad.kind(),
                         wad.lump_count(),
                         data_size,
                         maps_json,
-                        audio_json
+                        audio_json,
+                        game_json
                     );
                 }
                 Format::Csv => {
-                    println!("kind,lumps,data_size,maps");
+                    println!("kind,lumps,data_size,maps,game");
                     println!(
-                        "{},{},{},{}",
+                        "{},{},{},{},{}",
                         csv_field(&format!("{:?}", wad.kind())),
                         wad.lump_count(),
                         data_size,
-                        csv_field(&maps.join(" "))
+                        csv_field(&maps.join(" ")),
+                        csv_field(game.map_or("", game_name))
                     );
                 }
             }
@@ -1994,7 +2017,7 @@ fn run(cli: Cli) -> Result<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_lump_name;
+    use super::{game_name, sanitize_lump_name};
 
     #[test]
     fn sanitize_lump_name_reserved_windows_names_get_prefixed() {
@@ -2025,5 +2048,10 @@ mod tests {
     fn sanitize_lump_name_path_traversal_replaced() {
         assert_eq!(sanitize_lump_name("A/B"), "A_B");
         assert_eq!(sanitize_lump_name("../etc"), "___ETC");
+    }
+
+    #[test]
+    fn game_name_is_lowercase_variant() {
+        assert_eq!(game_name(crustywad::WadGame::Strife), "strife");
     }
 }

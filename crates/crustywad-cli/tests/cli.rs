@@ -122,7 +122,7 @@ fn info_csv_format_with_maps() {
         .assert()
         .success()
         .stdout(predicate::str::contains("kind,lumps,data_size,maps"))
-        .stdout(predicate::str::contains("Iwad,5,8,E1M1 E1M2\n"));
+        .stdout(predicate::str::contains("Iwad,5,8,E1M1 E1M2,\n"));
 }
 
 #[test]
@@ -264,6 +264,19 @@ fn info_data_size_sums_all_lumps() {
         .assert()
         .success()
         .stdout(predicate::str::contains("data size: 14 bytes"));
+}
+
+#[test]
+fn info_detects_strife_human() {
+    // A SCRIPT01 lump whose size is an exact multiple of the 1516-byte
+    // retail dialogue record fingerprints the WAD as Strife (ADR-0028 §1).
+    let wad = write_wad(*b"IWAD", &[("SCRIPT01", &[0; 1516])]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", wad.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("game:      strife"));
 }
 
 #[test]
