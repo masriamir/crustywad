@@ -694,8 +694,9 @@ for group in wad.map_groups() {
 
 The Strife-specific flag-bit constants live in the
 [`map::strife`](https://docs.rs/crustywad/latest/crustywad/map/strife/index.html) module. The
-headline divergence: thing-flag bit 8 is `MTF_AMBUSH` (deaf) in Doom but `MTF_STAND` in Strife,
-with Strife's own AMBUSH relocated to bit 32 — the reason attribution matters at all, since
+headline divergence: thing-flag bit 3 (`0x0008`) is `MTF_AMBUSH` (deaf) in Doom but `MTF_STAND`
+in Strife, with Strife's own AMBUSH relocated to bit 5 (`0x0020`) — the reason attribution
+matters at all, since
 reading a Strife map's raw bits as Doom's would misclassify a standing NPC as a deaf one.
 `crustywad` does not reinterpret those values for you: the assembled `Map` still exposes the
 raw Doom-layout records. During **lenient** assembly of a Doom-format map from a
