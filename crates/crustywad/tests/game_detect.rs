@@ -65,3 +65,54 @@ fn no_fingerprint_means_none() {
     let empty = Wad::from_bytes(common::build_wad(*b"PWAD", &[])).expect("empty WAD parses");
     assert_eq!(empty.detect_game(), None);
 }
+
+use crustywad::ParseOptions;
+use crustywad::map::Map;
+
+/// A minimal Doom-format map (marker + empty classic member lumps) plus one
+/// qualifying SCRIPT lump when `with_script` is set.
+fn strife_flavored_map_wad(with_script: bool) -> Wad {
+    let script = vec![0_u8; 1516];
+    let mut lumps: Vec<(&str, &[u8])> = vec![
+        ("MAP01", &[]),
+        ("THINGS", &[]),
+        ("LINEDEFS", &[]),
+        ("SIDEDEFS", &[]),
+        ("VERTEXES", &[]),
+        ("SEGS", &[]),
+        ("SSECTORS", &[]),
+        ("NODES", &[]),
+        ("SECTORS", &[]),
+        ("REJECT", &[]),
+        ("BLOCKMAP", &[]),
+    ];
+    if with_script {
+        lumps.push(("SCRIPT01", script.as_slice()));
+    }
+    Wad::from_bytes(common::build_wad(*b"IWAD", &lumps)).expect("synthetic WAD parses")
+}
+
+#[test]
+fn strife_wad_maps_carry_game_attribution_in_both_modes() {
+    let wad = strife_flavored_map_wad(true);
+    let group = &wad.map_groups()[0];
+    for options in [ParseOptions::strict(), ParseOptions::lenient()] {
+        let map = Map::assemble_with_options(&wad, group, options).expect("assembles");
+        assert_eq!(
+            map.game(),
+            Some(WadGame::Strife),
+            "{:?}",
+            options.strictness
+        );
+    }
+}
+
+#[test]
+fn unfingerprinted_wad_maps_have_no_game() {
+    let wad = strife_flavored_map_wad(false);
+    let group = &wad.map_groups()[0];
+    for options in [ParseOptions::strict(), ParseOptions::lenient()] {
+        let map = Map::assemble_with_options(&wad, group, options).expect("assembles");
+        assert_eq!(map.game(), None, "{:?}", options.strictness);
+    }
+}
