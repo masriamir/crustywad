@@ -60,7 +60,8 @@ pub const ML_JUMPOVER: u16 = 512;
 pub const ML_BLOCKFLOATERS: u16 = 1024;
 
 /// Linedef flag bit 2048: translucency variant 1 (`ML_TRANSPARENT1`); the
-/// engine source is unsure of the percentage ("25% or 75% transcluency?").
+/// engine source is unsure of the percentage ("25% or 75% transcluency?"
+/// [sic]).
 pub const ML_TRANSPARENT1: u16 = 2048;
 
 /// Linedef flag bit 4096: translucency variant 2 (`ML_TRANSPARENT2`); same
