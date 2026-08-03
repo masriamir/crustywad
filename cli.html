@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-070033f5.js";
+            window.path_to_searchindex_js = "searchindex-cf31c10a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -192,11 +192,20 @@ inspection from the command line.</p>
 </code></pre>
 <h2 id="subcommands"><a class="header" href="#subcommands">Subcommands</a></h2>
 <h3 id="info"><a class="header" href="#info">info</a></h3>
-<p>Print the WAD kind (<code>Iwad</code> or <code>Pwad</code>) and total lump count.</p>
+<p>Print a WAD summary: the kind (<code>Iwad</code> or <code>Pwad</code>), total lump count, data
+size, detected maps, an audio-lump tally, and — when the WAD positively
+identifies as a specific game family — a <code>game:</code> line.</p>
 <pre><code class="language-text">$ cwad info doom.wad
-kind:  Iwad
-lumps: 1264
+kind:      Iwad
+lumps:     1264
+data size: 4194304 bytes
+maps:      E1M1, E1M2
+audio:     midi: 3, digital: 12
 </code></pre>
+<p>A <code>game:</code> line appears only when the WAD positively identifies as a specific
+game family (currently Strife, via its dialogue lumps — see
+<a href="map-records.html#game-identification-strife">Game identification</a>); a Doom WAD
+prints none.</p>
 <h3 id="list"><a class="header" href="#list">list</a></h3>
 <p>Print the full lump directory. Each line contains the zero-based index, the
 file offset (<code>filepos</code>), the byte size, and the lump name.</p>
@@ -502,9 +511,11 @@ piping into tools like <code>jq</code>.</p>
 newlines are wrapped in double-quotes with internal quotes doubled.</p>
 <pre><code class="language-bash">cwad -F csv info doom.wad
 </code></pre>
-<pre><code class="language-text">kind,lumps
-Iwad,1264
+<pre><code class="language-text">kind,lumps,data_size,maps,game
+Iwad,1264,4194304,E1M1 E1M2,
 </code></pre>
+<p>The trailing <code>game</code> field is empty unless the WAD positively identifies
+(e.g. <code>strife</code> for a Strife WAD).</p>
 <pre><code class="language-bash">cwad -F csv list doom.wad
 </code></pre>
 <pre><code class="language-text">index,filepos,size,name

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-070033f5.js";
+            window.path_to_searchindex_js = "searchindex-cf31c10a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -1659,6 +1659,42 @@ nonexistent linedef are each a strict error
 table, truncating the list, or emptying the one affected block, respectively. An empty <code>REJECT</code>
 or <code>BLOCKMAP</code> lump (as <code>crustywad</code>’s own writer emits, ADR-0019 §4) is read back as simply
 absent, in both modes, with no warning.</p>
+<h2 id="game-identification-strife"><a class="header" href="#game-identification-strife">Game identification (Strife)</a></h2>
+<p>Strife ships its maps in the <em>byte-identical</em> classic Doom binary layout — same
+record sizes, same lump names — yet its <code>flags</code>, <code>special</code>, and <code>type</code> values carry
+different meanings. Left unidentified, a Strife WAD reads silently as Doom: the bytes
+decode without error, but their semantics are wrong. <code>crustywad</code> distinguishes the two
+without changing how records are decoded.</p>
+<p><code>Wad::detect_game</code> fingerprints the container by scanning its lump directory for the
+signature lumps a Strife IWAD/PWAD carries (names and sizes only — no record decoding,
+so detection adds no parse surface). It returns <code>Some(WadGame::Strife)</code> for a Strife WAD
+and <code>None</code> otherwise; <code>Map::game</code> reports the same attribution for an assembled map, so
+callers know a Doom-format map’s raw values follow Strife’s meaning rather than Doom’s.</p>
+<pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::{Wad, WadGame};
+use crustywad::map::Map;
+
+let wad = Wad::from_path("strife1.wad")?;
+assert_eq!(wad.detect_game(), Some(WadGame::Strife));
+for group in wad.map_groups() {
+    let map = Map::assemble(&amp;wad, &amp;group)?;
+    // Raw flags follow Strife semantics — see the map::strife constants.
+    assert_eq!(map.game(), Some(WadGame::Strife));
+}
+<span class="boring">Ok::&lt;(), Box&lt;dyn std::error::Error&gt;&gt;(())
+</span><span class="boring">}</span></code></pre>
+<p>The Strife-specific flag-bit constants live in the
+<a href="https://docs.rs/crustywad/latest/crustywad/map/strife/index.html"><code>map::strife</code></a> module. The
+headline divergence: thing-flag bit 3 (<code>0x0008</code>) is <code>MTF_AMBUSH</code> (deaf) in Doom but <code>MTF_STAND</code>
+in Strife, with Strife’s own AMBUSH relocated to bit 5 (<code>0x0020</code>) — the reason attribution
+matters at all, since
+reading a Strife map’s raw bits as Doom’s would misclassify a standing NPC as a deaf one.
+<code>crustywad</code> does not reinterpret those values for you: the assembled <code>Map</code> still exposes the
+raw Doom-layout records. During <strong>lenient</strong> assembly of a Doom-format map from a
+fingerprinted WAD, <code>Map::assemble_with_options</code> records one
+<code>MapWarning::UnmodeledGameSemantics</code> per map, flagging that the graph’s flag/special/type
+semantics beyond the Doom baseline are not modeled (ADR-0028). Strict assembly is unaffected.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="graphics"><a class="header" href="#graphics">Graphics</a></h1>
 <p><code>crustywad::gfx</code> decodes the classic Doom graphics lumps: the picture format used by
@@ -1867,11 +1903,20 @@ inspection from the command line.</p>
 </code></pre>
 <h2 id="subcommands"><a class="header" href="#subcommands">Subcommands</a></h2>
 <h3 id="info"><a class="header" href="#info">info</a></h3>
-<p>Print the WAD kind (<code>Iwad</code> or <code>Pwad</code>) and total lump count.</p>
+<p>Print a WAD summary: the kind (<code>Iwad</code> or <code>Pwad</code>), total lump count, data
+size, detected maps, an audio-lump tally, and — when the WAD positively
+identifies as a specific game family — a <code>game:</code> line.</p>
 <pre><code class="language-text">$ cwad info doom.wad
-kind:  Iwad
-lumps: 1264
+kind:      Iwad
+lumps:     1264
+data size: 4194304 bytes
+maps:      E1M1, E1M2
+audio:     midi: 3, digital: 12
 </code></pre>
+<p>A <code>game:</code> line appears only when the WAD positively identifies as a specific
+game family (currently Strife, via its dialogue lumps — see
+<a href="#game-identification-strife">Game identification</a>); a Doom WAD
+prints none.</p>
 <h3 id="list"><a class="header" href="#list">list</a></h3>
 <p>Print the full lump directory. Each line contains the zero-based index, the
 file offset (<code>filepos</code>), the byte size, and the lump name.</p>
@@ -2177,9 +2222,11 @@ piping into tools like <code>jq</code>.</p>
 newlines are wrapped in double-quotes with internal quotes doubled.</p>
 <pre><code class="language-bash">cwad -F csv info doom.wad
 </code></pre>
-<pre><code class="language-text">kind,lumps
-Iwad,1264
+<pre><code class="language-text">kind,lumps,data_size,maps,game
+Iwad,1264,4194304,E1M1 E1M2,
 </code></pre>
+<p>The trailing <code>game</code> field is empty unless the WAD positively identifies
+(e.g. <code>strife</code> for a Strife WAD).</p>
 <pre><code class="language-bash">cwad -F csv list doom.wad
 </code></pre>
 <pre><code class="language-text">index,filepos,size,name
