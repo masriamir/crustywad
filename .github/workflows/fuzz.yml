@@ -4,9 +4,41 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 2 * * 0'  # weekly, Sunday 02:00 UTC
+  pull_request:
+    paths:
+      - 'fuzz/**'
+      # The workflow file itself: a PR editing only the lint/fuzz pipeline must
+      # validate here in the PR, not first fail on the weekly schedule.
+      - '.github/workflows/fuzz.yml'
 
 jobs:
+  # The fuzz workspace is not covered by the main CI pipeline's fmt/clippy
+  # gates (it is a separate cargo workspace), so lint drift only ever surfaced
+  # when someone ran clippy there by hand (#372). This job closes that gap:
+  # it runs on the weekly schedule, on dispatch, and on any PR touching fuzz/.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch pin
+        with:
+          # fuzz/rust-toolchain.toml pins the directory to nightly (cargo-fuzz
+          # requires it), so rustup overrides any other installed toolchain the
+          # moment a cargo command runs under fuzz/ — install nightly WITH the
+          # lint components or the job dies on "cargo-fmt is not installed".
+          toolchain: nightly
+          components: clippy,rustfmt
+      - name: Check formatting
+        run: cargo fmt --all --check
+        working-directory: fuzz
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: fuzz
+
   fuzz:
+    # Fuzzing stays schedule/dispatch-only: a fuzz/-touching PR triggers the
+    # lint job above, not 20+ minutes of libFuzzer runs.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

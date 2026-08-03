@@ -39,25 +39,24 @@ fuzz_target!(|data: &[u8]| {
     let Some(wad_bytes) = wrap_textmap(data) else {
         return;
     };
-    if let Ok(wad) = Wad::from_bytes_with_options(wad_bytes, ParseOptions::lenient()) {
-        if let Some(group) = wad.map_group("MAP01") {
-            if let Ok(map) = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()) {
-                if map.format() == MapFormat::Udmf {
-                    // O(input) invariant (ADR-0016 §1): each Map element derives from a
-                    // parsed UDMF block, each backed by >= one `{`...`}` in the input text.
-                    let elements = map.vertices().len()
-                        + map.linedefs().len()
-                        + map.sidedefs().len()
-                        + map.sectors().len()
-                        + map.things().len();
-                    assert!(
-                        elements <= data.len(),
-                        "element count {elements} exceeds O(input) bound {}",
-                        data.len()
-                    );
-                }
-                std::hint::black_box(&map);
-            }
+    if let Ok(wad) = Wad::from_bytes_with_options(wad_bytes, ParseOptions::lenient())
+        && let Some(group) = wad.map_group("MAP01")
+        && let Ok(map) = Map::assemble_with_options(&wad, &group, ParseOptions::lenient())
+    {
+        if map.format() == MapFormat::Udmf {
+            // O(input) invariant (ADR-0016 §1): each Map element derives from a
+            // parsed UDMF block, each backed by >= one `{`...`}` in the input text.
+            let elements = map.vertices().len()
+                + map.linedefs().len()
+                + map.sidedefs().len()
+                + map.sectors().len()
+                + map.things().len();
+            assert!(
+                elements <= data.len(),
+                "element count {elements} exceeds O(input) bound {}",
+                data.len()
+            );
         }
+        std::hint::black_box(&map);
     }
 });

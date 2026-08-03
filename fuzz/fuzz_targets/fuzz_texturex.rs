@@ -17,8 +17,7 @@ fn wrap_as_texture1(data: &[u8]) -> Vec<u8> {
         12, 0, 0, 0, // column offset -> 12
         0, 1, 0, 7, 0, 0xFF, // post @0 len1 pad 7 pad, terminator
     ];
-    let lumps: [(&str, &[u8]); 3] =
-        [("PNAMES", &pnames), ("TEXTURE1", data), ("FUZZPAT", &patch)];
+    let lumps: [(&str, &[u8]); 3] = [("PNAMES", &pnames), ("TEXTURE1", data), ("FUZZPAT", &patch)];
     // Minimal WAD writer (12-byte header + lumps + directory).
     let mut body = Vec::new();
     let mut dir = Vec::new();
@@ -58,12 +57,9 @@ fuzz_target!(|data: &[u8]| {
             // Saturating fold: a wrap here could mask a parser bug, and
             // saturation only makes the oracle stricter (a saturated value
             // still fails the <= len assert).
-            let consumed: usize = tx
-                .textures()
-                .iter()
-                .fold(0usize, |acc, t| {
-                    acc.saturating_add(22usize.saturating_add(10usize.saturating_mul(t.patches.len())))
-                });
+            let consumed: usize = tx.textures().iter().fold(0usize, |acc, t| {
+                acc.saturating_add(22usize.saturating_add(10usize.saturating_mul(t.patches.len())))
+            });
             assert!(consumed <= data.len(), "texture budget exceeded the lump");
         }
     }

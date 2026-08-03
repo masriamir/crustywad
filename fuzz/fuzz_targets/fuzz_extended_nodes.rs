@@ -130,8 +130,8 @@ fn build_map_wad(nodes_bytes: &[u8]) -> Vec<u8> {
     }
 
     let lump_count = 7i32;
-    let directory_offset =
-        i32::try_from(12 + payload.len()).expect("fixture payload stays within i32 range (the fuzz body caps input length)");
+    let directory_offset = i32::try_from(12 + payload.len())
+        .expect("fixture payload stays within i32 range (the fuzz body caps input length)");
 
     let mut wad = Vec::new();
     wad.extend_from_slice(b"PWAD");
