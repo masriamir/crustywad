@@ -163,6 +163,8 @@ map to the classic Doom binary lumps with `write_doom_map` / `add_doom_map` — 
 [Converting maps](https://crustywad.dev/converting-maps.html) in the guide for the
 round-trip envelope and the three-tier data-loss policy.
 
+- WAD-level game identification (`Wad::detect_game` / `Map::game`) — Strife WADs no longer read silently as Doom (ADR-0028).
+
 ### CLI
 
 ```text

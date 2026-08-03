@@ -663,3 +663,39 @@ nonexistent linedef are each a strict error
 table, truncating the list, or emptying the one affected block, respectively. An empty `REJECT`
 or `BLOCKMAP` lump (as `crustywad`'s own writer emits, ADR-0019 §4) is read back as simply
 absent, in both modes, with no warning.
+
+## Game identification (Strife)
+
+Strife ships its maps in the *byte-identical* classic Doom binary layout — same
+record sizes, same lump names — yet its `flags`, `special`, and `type` values carry
+different meanings. Left unidentified, a Strife WAD reads silently as Doom: the bytes
+decode without error, but their semantics are wrong. `crustywad` distinguishes the two
+without changing how records are decoded.
+
+`Wad::detect_game` fingerprints the container by scanning its lump directory for the
+signature lumps a Strife IWAD/PWAD carries (names and sizes only — no record decoding,
+so detection adds no parse surface). It returns `Some(WadGame::Strife)` for a Strife WAD
+and `None` otherwise; `Map::game` reports the same attribution for an assembled map, so
+callers know a Doom-format map's raw values follow Strife's meaning rather than Doom's.
+
+```rust,no_run
+use crustywad::{Wad, WadGame};
+use crustywad::map::Map;
+
+let wad = Wad::from_path("strife1.wad")?;
+assert_eq!(wad.detect_game(), Some(WadGame::Strife));
+for group in wad.map_groups() {
+    let map = Map::assemble(&wad, &group)?;
+    // Raw flags follow Strife semantics — see the map::strife constants.
+    assert_eq!(map.game(), Some(WadGame::Strife));
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The Strife-specific flag and special values live in the
+[`map::strife`](https://docs.rs/crustywad/latest/crustywad/map/strife/index.html) module.
+`crustywad` does not reinterpret those values for you: the assembled `Map` still exposes the
+raw Doom-layout records. During **lenient** assembly of a Doom-format map from a
+fingerprinted WAD, `Map::assemble_with_options` records one
+`MapWarning::UnmodeledGameSemantics` per map, flagging that the graph's flag/special/type
+semantics beyond the Doom baseline are not modeled (ADR-0028). Strict assembly is unaffected.
