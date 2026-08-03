@@ -428,6 +428,7 @@ mod tests {
             macros: Vec::new(),
             reject: None,
             blockmap: None,
+            game: None,
             warnings: Vec::new(),
         }
     }

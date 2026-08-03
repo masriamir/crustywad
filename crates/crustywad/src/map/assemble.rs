@@ -12,7 +12,7 @@ use crate::map::graph::{
     SubsectorIdx, TextureRef, VertexIdx,
 };
 use crate::map::{MapGroup, MapParseError, common, doom, doom64, hexen, parse_records};
-use crate::{ParseOptions, Strictness, Wad};
+use crate::{ParseOptions, Strictness, Wad, WadGame};
 
 /// Fatal errors from [`Map::assemble_with_options`].
 #[derive(Debug, thiserror::Error)]
@@ -1697,8 +1697,32 @@ impl Map {
     /// Doom 64 group, [`MapAssembleError::Doom64`] wraps a failure to read the
     /// marker's nested WAD (both modes) or a missing/undecodable sub-lump
     /// (strict mode; ADR-0021 §2).
-    #[allow(clippy::too_many_lines)]
     pub fn assemble_with_gl_source(
+        wad: &Wad,
+        group: &MapGroup,
+        gl_wad: Option<&Wad>,
+        options: ParseOptions,
+    ) -> Result<Map, MapAssembleError> {
+        let game = wad.detect_game();
+        let mut map = Self::assemble_dispatch(wad, group, gl_wad, options)?;
+        map.game = game;
+        if options.strictness == Strictness::Lenient
+            && game == Some(WadGame::Strife)
+            && map.format() == MapFormat::Doom
+        {
+            map.warnings.push(MapWarning::UnmodeledGameSemantics {
+                game: WadGame::Strife,
+            });
+        }
+        Ok(map)
+    }
+
+    /// The former body of [`Map::assemble_with_gl_source`], extracted verbatim
+    /// so game attribution (ADR-0028 §2) has a single seam in the wrapper above;
+    /// this dispatch owns the format match, including the inner defensive
+    /// Doom 64 `return` that would otherwise bypass post-match stamping.
+    #[allow(clippy::too_many_lines)]
+    fn assemble_dispatch(
         wad: &Wad,
         group: &MapGroup,
         gl_wad: Option<&Wad>,
@@ -1857,6 +1881,7 @@ impl Map {
                     macros: Vec::new(),
                     reject,
                     blockmap,
+                    game: None,
                     warnings,
                 })
             }
@@ -2225,6 +2250,7 @@ fn assemble_doom64(
         macros,
         reject,
         blockmap,
+        game: None,
         warnings,
     })
 }
@@ -2354,6 +2380,7 @@ fn assemble_udmf(
         macros: Vec::new(),
         reject,
         blockmap,
+        game: None,
         warnings,
     })
 }

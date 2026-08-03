@@ -126,6 +126,23 @@ pub enum WadKind {
     Unknown([u8; 4]),
 }
 
+/// A game family positively identified from WAD-level lump content
+/// (ADR-0028 §1).
+///
+/// This is the game-identity axis ADR-0014 deferred — orthogonal to both
+/// [`WadKind`] (container) and [`MapFormat`][crate::map::MapFormat] (byte/text
+/// layout). `#[non_exhaustive]`: further families gain variants when they gain
+/// verified fingerprints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WadGame {
+    /// Strife (Rogue Entertainment) — identified by its dialogue `SCRIPTnn`
+    /// lumps. Strife maps use the byte-identical Doom binary layout, so this
+    /// is the only signal that thing/linedef flag and special values carry
+    /// Strife semantics (see [`map::strife`]).
+    Strife,
+}
+
 /// Controls how strictly `crustywad` validates WAD data during both reading and
 /// writing.
 ///
@@ -737,6 +754,39 @@ impl Wad {
     #[must_use]
     pub fn map_groups(&self) -> Vec<crate::map::MapGroup> {
         crate::map::group::map_groups(self)
+    }
+
+    /// Detects the game family this WAD targets, if it can be positively
+    /// identified from lump content (ADR-0028 §1).
+    ///
+    /// The only fingerprint today is Strife's dialogue lumps: a lump named
+    /// `SCRIPT` plus two ASCII digits (`SCRIPT00`–`SCRIPT99`) whose size is a
+    /// nonzero exact multiple of the 1516-byte retail dialogue record or of
+    /// the 1488-byte demo-format record. The size condition makes the rule
+    /// content-validated: a stray empty or junk lump named like a script does
+    /// not fire. Returns [`None`] when no fingerprint matches — a
+    /// Doom/Heretic/Hexen WAD, or a content-free PWAD.
+    #[must_use]
+    pub fn detect_game(&self) -> Option<WadGame> {
+        /// Retail dialogue record size (0x5EC; Chocolate Strife
+        /// `ORIG_MAPDIALOG_SIZE`).
+        const RETAIL_DIALOG_RECORD: usize = 1516;
+        /// Demo/teaser dialogue record size (0x5D0; Strife: Veteran Edition
+        /// `DEMO_MAPDIALOG_SIZE`).
+        const DEMO_DIALOG_RECORD: usize = 1488;
+        self.lumps()
+            .iter()
+            .any(|lump| {
+                let name = lump.name().as_bytes();
+                name.len() == 8
+                    && name.starts_with(b"SCRIPT")
+                    && name[6].is_ascii_digit()
+                    && name[7].is_ascii_digit()
+                    && lump.size() > 0
+                    && (lump.size() % RETAIL_DIALOG_RECORD == 0
+                        || lump.size() % DEMO_DIALOG_RECORD == 0)
+            })
+            .then_some(WadGame::Strife)
     }
 
     /// Returns the first map group whose marker lump is named `name`

@@ -51,6 +51,7 @@ mod gl;
 pub mod graph;
 pub mod group;
 pub mod hexen;
+pub mod strife;
 pub mod udmf;
 
 pub use assemble::MapAssembleError;

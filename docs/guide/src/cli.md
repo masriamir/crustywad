@@ -27,13 +27,23 @@ cwad [OPTIONS] <COMMAND>
 
 ### info
 
-Print the WAD kind (`Iwad` or `Pwad`) and total lump count.
+Print a WAD summary: the kind (`Iwad` or `Pwad`), total lump count, data
+size, detected maps, an audio-lump tally, and — when the WAD positively
+identifies as a specific game family — a `game:` line.
 
 ```text
 $ cwad info doom.wad
-kind:  Iwad
-lumps: 1264
+kind:      Iwad
+lumps:     1264
+data size: 4194304 bytes
+maps:      E1M1, E1M2
+audio:     midi: 3, digital: 12
 ```
+
+A `game:` line appears only when the WAD positively identifies as a specific
+game family (currently Strife, via its dialogue lumps — see
+[Game identification](map-records.md#game-identification-strife)); a Doom WAD
+prints none.
 
 ### list
 
@@ -446,9 +456,12 @@ cwad -F csv info doom.wad
 ```
 
 ```text
-kind,lumps
-Iwad,1264
+kind,lumps,data_size,maps,game
+Iwad,1264,4194304,E1M1 E1M2,
 ```
+
+The trailing `game` field is empty unless the WAD positively identifies
+(e.g. `strife` for a Strife WAD).
 
 ```bash
 cwad -F csv list doom.wad
