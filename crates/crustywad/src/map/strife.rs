@@ -44,7 +44,8 @@ pub const MTF_UNKNOWN1: u16 = 128;
 pub const MTF_TRANSLUCENT: u16 = 256;
 
 /// Thing flag bit 512: alternate translucency (`MTF_MVIS`, mapped to
-/// `MF_MVIS`). Degree likewise engine-uncertain; unused by retail map data.
+/// `MF_MVIS`). The engine source's own comment: "thing is more - or less? -
+/// translucent - STRIFE-TODO". Unused by retail map data.
 pub const MTF_MVIS: u16 = 512;
 
 /// Thing flag bit 1024: unidentified (`MTF_UNKNOWN2`) — engine source "TODO -

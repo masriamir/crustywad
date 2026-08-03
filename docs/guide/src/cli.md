@@ -31,8 +31,12 @@ Print the WAD kind (`Iwad` or `Pwad`) and total lump count.
 
 ```text
 $ cwad info doom.wad
-kind:  Iwad
-lumps: 1264
+kind:      Iwad
+lumps:     1264
+data size: 4194304 bytes
+maps:      E1M1, E1M2
+game:      strife
+audio:     midi: 3, digital: 12
 ```
 
 ### list
@@ -446,8 +450,8 @@ cwad -F csv info doom.wad
 ```
 
 ```text
-kind,lumps
-Iwad,1264
+kind,lumps,data_size,maps,game
+Iwad,1264,4194304,E1M1 E1M2,strife
 ```
 
 ```bash
