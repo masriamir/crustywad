@@ -27,7 +27,9 @@ cwad [OPTIONS] <COMMAND>
 
 ### info
 
-Print the WAD kind (`Iwad` or `Pwad`) and total lump count.
+Print a WAD summary: the kind (`Iwad` or `Pwad`), total lump count, data
+size, detected maps, an audio-lump tally, and — when the WAD positively
+identifies as a specific game family — a `game:` line.
 
 ```text
 $ cwad info doom.wad
