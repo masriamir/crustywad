@@ -13,28 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  # Classify each PR as code-affecting or docs-only. The heavy jobs below skip
-  # for pure-documentation changes; a skipped required check reports as passed,
-  # so merge stays unblocked without spending compile time. See ADR / issue #397.
-  changes:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      code: ${{ steps.detect.outputs.code }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - id: detect
-        uses: ./.github/actions/detect-changes
-
   fmt:
-    needs: changes
-    # Run unless the classifier positively determined docs-only (code=false).
-    # Two-layer fail-safe: the classifier itself defaults to code=true on any
-    # error, and `!cancelled()` additionally forces this job to run even if the
-    # `changes` job died outright (leaving `code` empty → `!= 'false'` is true).
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,8 +24,6 @@ jobs:
       - run: cargo fmt --all --check
 
   clippy:
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -57,8 +34,6 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -71,8 +46,6 @@ jobs:
         run: cargo test --workspace --all-features
 
   msrv:
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -85,8 +58,6 @@ jobs:
       - run: cargo test --workspace --all-features
 
   docs:
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     env:
       RUSTDOCFLAGS: --cfg docsrs -D warnings
@@ -97,8 +68,6 @@ jobs:
       - run: cargo doc --workspace --all-features --no-deps
 
   coverage:
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -114,8 +83,6 @@ jobs:
           fail_ci_if_error: false
 
   security-deny:
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -124,9 +91,6 @@ jobs:
       - uses: taiki-e/install-action@bd62ac5c7f48306b3ae8d936b8868709cab7d6c3 # cargo-deny
       - run: cargo deny check
 
-  # Intentionally NOT gated on `changes`: this validates the anchors and version
-  # pins in the docs themselves, so it must run precisely on docs-only PRs. It is
-  # python-only (~5s) and never compiles, so it costs nothing to always run.
   docs-sync:
     runs-on: ubuntu-latest
     steps:
