@@ -60,4 +60,4 @@ implementation begins.**
 | [0027](0027-udmf-full-fidelity-roundtrip.md) | UDMF full-fidelity retention and semantic round-trip | Accepted |
 | [0028](0028-strife-game-identification.md) | Strife game identification and semantic attribution | Accepted |
 
-<!-- Add new ADRs to the table above in ascending order. -->
+<!-- Add new ADRs to the table above in ascending numerical order. -->
