@@ -30,8 +30,10 @@ jobs:
 
   fmt:
     needs: changes
-    # Fail safe: run unless the classifier positively determined docs-only. If
-    # the `changes` job errored, `code` is empty → the job still runs.
+    # Run unless the classifier positively determined docs-only (code=false).
+    # Two-layer fail-safe: the classifier itself defaults to code=true on any
+    # error, and `!cancelled()` additionally forces this job to run even if the
+    # `changes` job died outright (leaving `code` empty → `!= 'false'` is true).
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:

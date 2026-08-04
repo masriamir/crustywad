@@ -21,7 +21,11 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        set -euo pipefail
+        # No `set -e`: errors are handled explicitly so this job ALWAYS succeeds
+        # with a definite `code` value. The safe default is `code=true` (run the
+        # full pipeline) — the job only ever emits `code=false` after positively
+        # confirming every changed path is non-compiled docs.
+        set -uo pipefail
 
         # Only pull_request events are ever classified as docs-only. Pushes to
         # main (and any other trigger) always run the full pipeline.
@@ -31,12 +35,16 @@ runs:
           exit 0
         fi
 
-        # List every file the PR touches. A failure here exits non-zero under
-        # `set -e` without writing an output, so the gate's `!= 'false'` default
-        # runs the full pipeline — the classifier fails safe, never green-skips.
-        files=$(gh api --paginate \
+        # List every file the PR touches. If the API call fails for any reason,
+        # default to `code=true` and exit 0 — a classifier that cannot see the
+        # diff must never green-skip required checks.
+        if ! files=$(gh api --paginate \
           "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-          --jq '.[].filename')
+          --jq '.[].filename'); then
+          echo "code=true" >> "$GITHUB_OUTPUT"
+          echo "::warning::Could not list PR files; defaulting to full pipeline (code=true)."
+          exit 0
+        fi
 
         echo "Changed files:"
         printf '%s\n' "$files"
