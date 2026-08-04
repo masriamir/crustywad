@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.2...crustywad-v0.9.3) - 2026-08-04
+
+### Added
+
+- *(map)* Strife dialogue lump parsing (ADR-0028 §5) ([#393](https://github.com/masriamir/crustywad/pull/393)) ([#410](https://github.com/masriamir/crustywad/pull/410))
+- *(map)* Strife game identification and semantic attribution (ADR-0028) ([#247](https://github.com/masriamir/crustywad/pull/247)) ([#409](https://github.com/masriamir/crustywad/pull/409))
+
+### Other
+
+- *(deps)* update miniz_oxide requirement from 0.8 to 0.9 in /fuzz ([#399](https://github.com/masriamir/crustywad/pull/399))
+- *(map)* exhaustive-match NodeFormat::compressed ([#374](https://github.com/masriamir/crustywad/pull/374)) ([#392](https://github.com/masriamir/crustywad/pull/392))
+
 ## [0.9.2](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.1...crustywad-v0.9.2) - 2026-08-02
 
 ### Added
