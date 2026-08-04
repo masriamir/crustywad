@@ -2,18 +2,26 @@
 use libfuzzer_sys::fuzz_target;
 
 use crustywad::ParseOptions;
-use crustywad::map::strife::{DEMO_DIALOG_RECORD_SIZE, RETAIL_DIALOG_RECORD_SIZE, parse_dialogue};
+use crustywad::map::strife::{
+    DEMO_DIALOG_RECORD_SIZE, DialogueFormat, RETAIL_DIALOG_RECORD_SIZE, parse_dialogue,
+};
 
 fuzz_target!(|data: &[u8]| {
     for options in [ParseOptions::strict(), ParseOptions::lenient()] {
         match parse_dialogue(data, &options) {
-            Ok((records, _format, _warnings)) => {
+            Ok((records, format, _warnings)) => {
                 // O(input) allocation invariant (ADR-0016 §1): every record
-                // consumes at least DEMO_DIALOG_RECORD_SIZE input bytes.
+                // consumes at least its format's full record size of input.
+                // Division keeps the bound tight (a record materialized from
+                // fewer input bytes than its record size fails) and cannot
+                // overflow, unlike a records * size multiplication.
+                let record_size = match format {
+                    DialogueFormat::Retail => RETAIL_DIALOG_RECORD_SIZE,
+                    DialogueFormat::Demo => DEMO_DIALOG_RECORD_SIZE,
+                };
                 assert!(
-                    records.len() * DEMO_DIALOG_RECORD_SIZE
-                        <= data.len().max(DEMO_DIALOG_RECORD_SIZE),
-                    "{} records exceed the O(input) bound for {} bytes",
+                    records.len() <= data.len() / record_size,
+                    "{} {format:?} records exceed the O(input) bound for {} bytes",
                     records.len(),
                     data.len()
                 );
