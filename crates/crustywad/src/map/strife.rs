@@ -331,9 +331,27 @@ pub fn parse_dialogue(
     Ok((records, format, warnings))
 }
 
+/// The dialogue lump name for a map number: the engine looks up
+/// `"script%02d"` of the current map (`SCRIPT07` for MAP07), with `SCRIPT00`
+/// (map number 0) doubling as the global fallback lump. Returns [`None`] for
+/// map numbers above 99 — three digits cannot fit the 8-byte lump name field.
+#[must_use]
+pub fn script_lump_name(map_number: u8) -> Option<String> {
+    (map_number <= 99).then(|| format!("SCRIPT{map_number:02}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn script_lump_names_cover_the_two_digit_range() {
+        assert_eq!(script_lump_name(0).as_deref(), Some("SCRIPT00"));
+        assert_eq!(script_lump_name(7).as_deref(), Some("SCRIPT07"));
+        assert_eq!(script_lump_name(99).as_deref(), Some("SCRIPT99"));
+        assert_eq!(script_lump_name(100), None);
+        assert_eq!(script_lump_name(255), None);
+    }
 
     #[test]
     fn bit_values_match_chocolate_strife() {

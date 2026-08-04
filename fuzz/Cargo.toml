@@ -138,6 +138,12 @@ path = "fuzz_targets/fuzz_audio_scripts.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_strife_dialogue"
+path = "fuzz_targets/fuzz_strife_dialogue.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 crustywad = { path = "../crates/crustywad", features = [
