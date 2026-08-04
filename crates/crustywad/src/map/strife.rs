@@ -184,6 +184,20 @@ pub enum DialogueWarning {
     },
 }
 
+/// On-disk demo/teaser dialogue record (1488 bytes; strife-ve
+/// `P_ParseDemoDialogLump` @ ac2381d — `voice_number` sits before `name`,
+/// and `check_items`/`jump_to_conversation`/`backpic` do not exist on disk).
+#[derive(Debug, Clone, Copy, BinRead)]
+#[br(little)]
+struct RawDemoDialogue {
+    speaker_id: i32,
+    drop_item: i32,
+    voice_number: i32,
+    name: [u8; 16],
+    text: [u8; 320],
+    choices: [RawChoice; 5],
+}
+
 /// On-disk retail dialogue record (1516 bytes). Private: decodes into
 /// [`DialogueRecord`].
 #[derive(Debug, Clone, Copy, BinRead)]
@@ -241,6 +255,32 @@ fn normalize_retail(raw: &RawRetailDialogue) -> DialogueRecord {
     }
 }
 
+/// The engine's demo voice reconstruction: `M_snprintf(voice, 8, "VOC%d", n)`
+/// for positive `n` (truncating to 7 characters + NUL), all-NUL otherwise.
+fn demo_voice(number: i32) -> [u8; 8] {
+    let mut voice = [0_u8; 8];
+    if number > 0 {
+        let s = format!("VOC{number}");
+        let take = s.len().min(7);
+        voice[..take].copy_from_slice(&s.as_bytes()[..take]);
+    }
+    voice
+}
+
+fn normalize_demo(raw: &RawDemoDialogue) -> DialogueRecord {
+    DialogueRecord {
+        speaker_id: raw.speaker_id,
+        drop_item: raw.drop_item,
+        check_items: None,
+        jump_to_conversation: None,
+        name: raw.name,
+        voice: demo_voice(raw.voice_number),
+        backpic: None,
+        text: raw.text,
+        choices: raw.choices.map(normalize_choice),
+    }
+}
+
 /// Parses a Strife dialogue lump (`SCRIPT00`–`SCRIPT99`) into normalized
 /// records (ADR-0028 §5).
 ///
@@ -283,14 +323,12 @@ pub fn parse_dialogue(
             .iter()
             .map(normalize_retail)
             .collect(),
-        DialogueFormat::Demo => todo_demo(kept)?, // Task 2 replaces this call
+        DialogueFormat::Demo => crate::map::parse_records::<RawDemoDialogue>(kept)?
+            .iter()
+            .map(normalize_demo)
+            .collect(),
     };
     Ok((records, format, warnings))
-}
-
-/// Placeholder for the demo dialogue layout, implemented by Task 2.
-fn todo_demo(_: &[u8]) -> Result<Vec<DialogueRecord>, DialogueError> {
-    unimplemented!("Task 2: demo layout")
 }
 
 #[cfg(test)]
