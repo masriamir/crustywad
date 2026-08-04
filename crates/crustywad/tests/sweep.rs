@@ -48,6 +48,7 @@
 
 mod common;
 
+use crustywad::map::strife::{DialogueFormat, parse_dialogue};
 use crustywad::map::{Map, MapFormat, MapWarning, detect_map_format};
 use crustywad::{ParseOptions, Strictness, Wad, WadGame};
 
@@ -89,6 +90,12 @@ fn sweep_assembles_every_map_of_every_wad() {
             "{}: detect_game() disagrees with the collection's known Strife set",
             path.display()
         );
+
+        // ADR-0028 §5 acceptance (#393): every dialogue lump in a
+        // Strife-fingerprinted WAD parses strict-clean as the retail layout.
+        if expected_game == Some(WadGame::Strife) {
+            assert_strife_dialogue(path, &wad, &file_name);
+        }
 
         // Classic marker+run maps (Doom / Heretic / Hexen / UDMF) and Doom 64
         // nested-WAD maps all surface through `Wad::map_groups` now, so a
@@ -146,6 +153,55 @@ fn sweep_assembles_every_map_of_every_wad() {
     eprintln!(
         "swept {} WAD(s): {groups_swept} map group(s) ({doom64_groups} Doom 64), all clean in both modes",
         paths.len()
+    );
+}
+
+/// ADR-0028 §5 acceptance (#393): asserts that every `SCRIPTnn` dialogue lump
+/// in a Strife-fingerprinted WAD parses strict-clean as the retail layout with
+/// no warnings and at least one record — and that `strife1.wad`'s global
+/// `SCRIPT00` decodes to exactly 42 records.
+fn assert_strife_dialogue(path: &std::path::Path, wad: &Wad, file_name: &str) {
+    let mut script_lumps = 0usize;
+    for lump in wad.lumps() {
+        let name = lump.name().as_bytes();
+        let is_script = name.len() == 8
+            && name.starts_with(b"SCRIPT")
+            && name[6].is_ascii_digit()
+            && name[7].is_ascii_digit();
+        if !is_script {
+            continue;
+        }
+        script_lumps += 1;
+        let (records, format, dialogue_warnings) =
+            parse_dialogue(wad.lump_data(lump), &ParseOptions::strict()).unwrap_or_else(|e| {
+                panic!(
+                    "{}: {} failed strict dialogue parse: {e}",
+                    path.display(),
+                    lump.name()
+                )
+            });
+        assert_eq!(
+            format,
+            DialogueFormat::Retail,
+            "{}: {} is not the retail layout",
+            path.display(),
+            lump.name()
+        );
+        assert!(dialogue_warnings.is_empty());
+        assert!(
+            !records.is_empty(),
+            "{}: {} parsed to zero records",
+            path.display(),
+            lump.name()
+        );
+        if file_name == "strife1.wad" && lump.name() == "SCRIPT00" {
+            assert_eq!(records.len(), 42, "SCRIPT00 record count");
+        }
+    }
+    assert!(
+        script_lumps > 0,
+        "{}: Strife-fingerprinted WAD had no dialogue lumps",
+        path.display()
     );
 }
 
