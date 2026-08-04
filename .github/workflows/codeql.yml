@@ -19,7 +19,27 @@ permissions:
   security-events: write
 
 jobs:
+  # Classify each PR as code-affecting or docs-only (shared with ci.yml). CodeQL
+  # is the long pole of PR latency (~4 min); skipping it on docs-only PRs is the
+  # goal of #397. NOTE: CodeQL is guarded by BOTH the `CodeQL` required status
+  # check and the ruleset's separate `code_scanning` merge-protection rule —
+  # whether a skipped analysis satisfies the latter is what this change tests.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: detect
+        uses: ./.github/actions/detect-changes
+
   analyze:
+    needs: changes
+    # Fail safe: analyze unless the classifier positively determined docs-only.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
 
