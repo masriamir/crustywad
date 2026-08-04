@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.5...crustywad-cli-v0.4.6) - 2026-08-04
+
+### Added
+
+- *(map)* Strife dialogue lump parsing (ADR-0028 §5) ([#393](https://github.com/masriamir/crustywad/pull/393)) ([#410](https://github.com/masriamir/crustywad/pull/410))
+- *(map)* Strife game identification and semantic attribution (ADR-0028) ([#247](https://github.com/masriamir/crustywad/pull/247)) ([#409](https://github.com/masriamir/crustywad/pull/409))
+
 ## [0.4.5](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.4...crustywad-cli-v0.4.5) - 2026-08-02
 
 ### Added
