@@ -162,7 +162,8 @@ UDMF (`TEXTMAP`) maps are read into the `Map` graph and can be written back out 
 map to the classic Doom binary lumps with `write_doom_map` / `add_doom_map` — see
 [Converting maps](https://crustywad.dev/converting-maps.html) in the guide for the
 round-trip envelope and the three-tier data-loss policy. WAD-level game identification
-(`Wad::detect_game` / `Map::game`) means Strife WADs no longer read silently as Doom (ADR-0028).
+(`Wad::detect_game` / `Map::game`) means Strife WADs no longer read silently as Doom (ADR-0028),
+and typed parsing for its dialogue lumps (`map::strife::parse_dialogue`).
 
 ### CLI
 

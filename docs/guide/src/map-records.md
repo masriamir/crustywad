@@ -703,3 +703,28 @@ raw Doom-layout records. During **lenient** assembly of a Doom-format map from a
 fingerprinted WAD, `Map::assemble_with_options` records one
 `MapWarning::UnmodeledGameSemantics` per map, flagging that the graph's flag/special/type
 semantics beyond the Doom baseline are not modeled (ADR-0028). Strict assembly is unaffected.
+
+Strife also carries branching NPC conversations in dedicated `SCRIPTnn` lumps —
+one per map (`SCRIPT03` for MAP03), with `SCRIPT00` doubling as the global
+fallback script. `map::strife::parse_dialogue` decodes such a lump into
+normalized `DialogueRecord`s, auto-selecting between the retail and demo
+on-disk layouts by lump length and reporting which via the returned
+`DialogueFormat`; both layouts normalize to the same record type, with the
+demo layout's absent fields carried as `Option`s and its speaker voice
+reconstructed. `script_lump_name` builds the lump name for a map number.
+
+```rust,no_run
+use crustywad::ParseOptions;
+use crustywad::Wad;
+use crustywad::map::strife::{parse_dialogue, script_lump_name};
+
+let wad = Wad::from_path("strife1.wad")?;
+let name = script_lump_name(3).expect("map numbers 0-99 have script lumps");
+if let Some(lump) = wad.lump_by_name(&name) {
+    let (records, format, warnings) =
+        parse_dialogue(wad.lump_data(lump), &ParseOptions::strict())?;
+    println!("{name}: {} {format:?} dialogue record(s)", records.len());
+    assert!(warnings.is_empty());
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
