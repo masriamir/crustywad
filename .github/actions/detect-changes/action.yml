@@ -1,0 +1,71 @@
+name: Detect code changes
+description: >-
+  Classify a pull request as code-affecting or docs-only, so heavy CI jobs can
+  be skipped for pure-documentation changes. Single source of truth shared by
+  ci.yml and codeql.yml — keep the classification in one place so the two
+  workflows can never drift apart.
+
+outputs:
+  code:
+    description: >-
+      'true' when any changed path can affect compilation, tests, or
+      dependencies (the safe default); 'false' only when every changed path is
+      non-compiled documentation. Non-pull_request events always yield 'true'.
+    value: ${{ steps.classify.outputs.code }}
+
+runs:
+  using: composite
+  steps:
+    - id: classify
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # No `set -e`: errors are handled explicitly so this job ALWAYS succeeds
+        # with a definite `code` value. The safe default is `code=true` (run the
+        # full pipeline) — the job only ever emits `code=false` after positively
+        # confirming every changed path is non-compiled docs.
+        set -uo pipefail
+
+        # Only pull_request events are ever classified as docs-only. Pushes to
+        # main (and any other trigger) always run the full pipeline.
+        if [ "${{ github.event_name }}" != "pull_request" ]; then
+          echo "code=true" >> "$GITHUB_OUTPUT"
+          echo "Non-pull_request event (${{ github.event_name }}) → full pipeline."
+          exit 0
+        fi
+
+        # List every file the PR touches. If the API call fails for any reason,
+        # default to `code=true` and exit 0 — a classifier that cannot see the
+        # diff must never green-skip required checks.
+        if ! files=$(gh api --paginate \
+          "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+          --jq '.[].filename'); then
+          echo "code=true" >> "$GITHUB_OUTPUT"
+          echo "::warning::Could not list PR files; defaulting to full pipeline (code=true)."
+          exit 0
+        fi
+
+        echo "Changed files:"
+        printf '%s\n' "$files"
+
+        code=false
+        while IFS= read -r f; do
+          [ -z "$f" ] && continue
+          case "$f" in
+            # Guide pages are include_str!'d as doctests under --all-features
+            # (crates/crustywad/src/guide_doctests.rs), so editing one can break
+            # `cargo test`/`cargo doc`. They are code, not docs.
+            docs/guide/*) code=true ;;
+            # Everything else under docs/, and any *.md anywhere, is non-compiled
+            # prose — safe to skip the compile/test/analysis jobs. docs-sync
+            # still runs unconditionally to validate the changed markdown.
+            *.md | docs/*) : ;;
+            # Anything else (crates/**, Cargo.*, scripts/**, .github/**, justfile,
+            # deny.toml, toolchain files, …) is treated as code.
+            *) code=true ;;
+          esac
+        done <<< "$files"
+
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        echo "Classification: code=$code"
