@@ -213,10 +213,13 @@ coupling to attribution. A follow-up sub-issue (filed at ADR merge) will ship:
   byte arrays (not guaranteed NUL-terminated — `trim_nul` semantics, never C
   strings).
 - Strictness: strict rejects a lump whose length matches neither modulus
-  (or is zero); lenient floor-divides like the engine and warns about trailing
-  bytes. Contract shape: `Result<(Vec<DialogueRecord>, Vec<DialogueWarning>),
-  DialogueError>` — warnings observable on success; exact signatures are
-  finalized in the sub-issue.
+  (an empty lump is zero retail records in BOTH modes — engine-faithful:
+  `P_getDialogFormat` checks the retail modulus first and `0 % 1516 == 0`;
+  adjudicated during #393); lenient floor-divides like the engine and warns
+  about trailing bytes. Contract shape (as finalized in #393):
+  `Result<(Vec<DialogueRecord>, DialogueFormat, Vec<DialogueWarning>),
+  DialogueError>` — the selected layout and the warnings are both observable
+  on success.
 - ADR-0016 checklist in full: bounded allocation (`lump_len / 1488` records
   worst case), no recursion, a fuzz target with seed corpus, both modes
   panic-free.
