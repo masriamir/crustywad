@@ -7,6 +7,16 @@
 
 use thiserror::Error;
 
+/// Flattens line breaks to spaces and strips raw ESC bytes from a string
+/// that is interpolated into a `Display` message.
+///
+/// This keeps the enum-level single-line/no-escape guarantee true even when
+/// the interpolated content comes from outside the crate (an OS error string,
+/// a caller-supplied path).
+fn flatten_control(s: &str) -> String {
+    s.replace(['\n', '\r'], " ").replace('\u{1b}', "")
+}
+
 /// Renders a [`binrw::Error`] as a concise single-line phrase for `Display`.
 ///
 /// `binrw`'s own `Display` for its `Backtrace` variant is a multi-line report
@@ -29,10 +39,10 @@ fn concise_binrw(err: &binrw::Error) -> String {
             format!("no matching variant at offset 0x{pos:x}")
         }
         // `binrw::Error` is `#[non_exhaustive]`; `Backtrace` also lands here
-        // in the (unreachable) case `root_cause()` ever returned one.
+        // in the (normally impossible) case `root_cause()` ever returned one.
         _ => "binary read error".to_owned(),
     };
-    msg.replace(['\n', '\r'], " ")
+    flatten_control(&msg)
 }
 
 /// Errors that can occur while reading a WAD.
@@ -44,7 +54,8 @@ fn concise_binrw(err: &binrw::Error) -> String {
 /// To handle errors programmatically, match on the variant you care about and
 /// fall back to the `Display` message for logging or user-facing output.
 /// Every `Display` message is a single line with no terminal escape
-/// sequences, so it is safe to surface directly in CLI output, logs, or UIs.
+/// sequences — input-derived content (such as the magic bytes) is escaped or
+/// flattened — so it is safe to surface directly in CLI output, logs, or UIs.
 #[derive(Debug, Error)]
 pub enum ParseError {
     /// The file could not be read from disk.
@@ -53,7 +64,7 @@ pub enum ParseError {
     /// are a missing file, insufficient permissions, or an I/O failure on the
     /// underlying storage device.  The `source` field contains the underlying
     /// [`std::io::Error`] from the OS.
-    #[error("failed to read `{path}`: {source}")]
+    #[error("failed to read `{}`: {}", flatten_control(.path), flatten_control(&.source.to_string()))]
     Io {
         /// The file path that could not be read, as a display string.
         path: String,
@@ -96,7 +107,11 @@ pub enum ParseError {
     /// terminator).  Any other value is rejected in strict mode.  Switch to
     /// lenient mode ([`ParseOptions::lenient()`][crate::ParseOptions::lenient])
     /// if you need to inspect files with non-standard magic bytes.
-    #[error("invalid WAD magic `{magic}`")]
+    ///
+    /// In the `Display` message the magic is rendered with control and other
+    /// non-printable characters escaped (e.g. `\u{1b}` for ESC); the `magic`
+    /// field itself keeps the unescaped lossy string.
+    #[error("invalid WAD magic `{}`", .magic.escape_debug())]
     InvalidMagic {
         /// The invalid 4-byte magic field rendered as a lossy UTF-8 string.
         magic: String,
@@ -174,6 +189,9 @@ pub enum ParseError {
 ///
 /// In strict mode the parser returns a [`ParseError`] for the equivalent
 /// condition rather than a warning.
+///
+/// As with [`ParseError`], every `Display` message is a single line with no
+/// terminal escape sequences and is safe to surface directly.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ParseWarning {
     /// The header magic was not `"IWAD"` or `"PWAD"`.
@@ -181,7 +199,11 @@ pub enum ParseWarning {
     /// The parser preserved the raw 4-byte magic in [`WadKind::Unknown`][crate::WadKind::Unknown]
     /// and continued parsing the rest of the header.  The resulting [`Wad`][crate::Wad]
     /// may or may not contain usable data.
-    #[error("unrecognized WAD magic `{0}`")]
+    ///
+    /// In the `Display` message the magic is rendered with control and other
+    /// non-printable characters escaped; the contained string keeps the
+    /// unescaped lossy value.
+    #[error("unrecognized WAD magic `{}`", .0.escape_debug())]
     InvalidMagic(String),
     /// A signed header or directory field was negative and was clamped to zero.
     ///
