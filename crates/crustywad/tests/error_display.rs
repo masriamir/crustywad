@@ -78,7 +78,10 @@ fn unrecognized_root_cause_falls_back_to_generic_phrase() {
     let mut outer = binrw::error::Backtrace::new(eof_error(), Vec::new());
     *outer.error = binrw::Error::Backtrace(binrw::error::Backtrace::new(eof_error(), Vec::new()));
     let err = ParseError::Header(binrw::Error::Backtrace(outer));
-    assert_eq!(err.to_string(), "failed to parse WAD header: binary read error");
+    assert_eq!(
+        err.to_string(),
+        "failed to parse WAD header: binary read error"
+    );
 }
 
 #[test]
@@ -206,7 +209,9 @@ fn io_path_display_is_flattened_to_one_line() {
 
 #[test]
 fn io_message_with_escape_sequence_is_stripped() {
-    let err = ParseError::Header(binrw::Error::Io(io::Error::other("\u{1b}[1mloud\u{1b}[22m")));
+    let err = ParseError::Header(binrw::Error::Io(io::Error::other(
+        "\u{1b}[1mloud\u{1b}[22m",
+    )));
     let msg = err.to_string();
     assert!(
         !msg.contains('\u{1b}'),
