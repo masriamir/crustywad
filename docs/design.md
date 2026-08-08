@@ -101,7 +101,7 @@ All errors in the library crate use `thiserror`-derived enums (`ParseError`, `Ma
 
 ## Development workflow
 
-Run `just ci` before pushing. It runs the same checks as GitHub Actions (build, test, clippy, fmt, doc, deny, docs-sync) and catches failures locally before they reach CI.
+Run `just ci` before pushing — the fail-fast pre-push gate (`docs-sync`, `fmt`, `clippy`, `test`, `doc`). `just ci-full` adds the workspace `build` and the `cargo deny` dependency audit; use it before releases and on branches that change `Cargo.toml`/`Cargo.lock`.
 
 ## Commit conventions
 

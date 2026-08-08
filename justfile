@@ -88,4 +88,13 @@ docs-sync:
     python3 scripts/check_doc_anchors.py
     python3 scripts/check_doc_versions.py
 
-ci: build test lint doc deny docs-sync
+# Pre-push gate (fail-fast): cheapest checks first so failures surface in
+# seconds, not after a long compile. Omits `build` (subsumed by `test`; CI has
+# no standalone build job either) and `deny` (a dependency-graph audit whose
+# outcome code edits never change). Run `ci-full` before releases and on
+# branches that touch Cargo.toml/Cargo.lock.
+ci: docs-sync lint test doc
+
+# The pre-push gate plus the workspace build and dependency audit — full
+# parity with every recipe this justfile can mirror from CI.
+ci-full: build test lint doc deny docs-sync
