@@ -89,23 +89,25 @@ docs-sync:
     python3 scripts/check_doc_versions.py
 
 # Pre-push gate (fail-fast): cheapest checks first so failures surface in
-# seconds, not after a long compile. Omits `build` (subsumed by `test`; CI has
-# no standalone build job either) and `deny` (a dependency-graph audit whose
-# outcome code edits never change). Run `ci-full` before releases and on
-# branches that touch Cargo.toml/Cargo.lock.
+# seconds, not after a long compile. Omits `build` (subsumed by `test`, which
+# compiles the same targets — CI's only explicit `cargo build` step is the
+# msrv job's, on the pinned 1.94.0 toolchain) and `deny` (a dependency-graph
+# audit whose outcome code edits never change). Run `ci-full` before releases
+# and on branches that touch Cargo.toml/Cargo.lock.
 ci: docs-sync lint test doc
 
-# Mid-iteration tier: the cheap gates plus unit/integration test binaries
-# only — `--tests` skips doctests (including every guide sample), the biggest
-# compile chunk that code-only loops don't need. Not a pre-push substitute:
-# doctests are the only check that catches API drift in doc samples, so run
-# `just ci` before pushing.
+# Mid-iteration tier: the cheap gates plus `test-fast`. Not a pre-push
+# substitute: doctests are the only check that catches API drift in doc
+# samples, so run `just ci` before pushing.
 ci-fast: docs-sync lint test-fast
 
-# Unit + integration test binaries only (skips doctests; see `ci-fast`).
+# Unit + integration tests without doctests. `--tests` builds the library and
+# binaries as unittests plus every integration test binary (`cargo help test`,
+# target selection) — only doctests, including every guide sample (the biggest
+# compile chunk), are excluded.
 test-fast:
     cargo test --workspace --all-features --tests
 
-# The pre-push gate plus the workspace build and dependency audit — full
-# parity with every recipe this justfile can mirror from CI.
+# The pre-push gate plus the workspace build and dependency audit — the full
+# pre-release composition.
 ci-full: build test lint doc deny docs-sync
