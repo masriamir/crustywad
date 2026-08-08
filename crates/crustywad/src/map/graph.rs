@@ -715,10 +715,10 @@ pub enum MapWarning {
         /// What made the lump unusable.
         detail: &'static str,
     },
-    /// A `BLOCKMAP` block's offset pointed outside the lump; that block's
-    /// list was emptied during lenient assembly.
+    /// A `BLOCKMAP` block's offset pointed outside the lump; the whole
+    /// blockmap was discarded during lenient assembly (#422).
     #[error(
-        "BLOCKMAP block {block} offset {offset} is outside the lump ({words} words); block list emptied during lenient assembly"
+        "BLOCKMAP block {block} offset {offset} is outside the lump ({words} words); blockmap discarded during lenient assembly"
     )]
     BlockmapBlockOffset {
         /// The 0-based block (offset-table) index.
@@ -728,21 +728,23 @@ pub enum MapWarning {
         /// The lump's total word count.
         words: usize,
     },
-    /// A `BLOCKMAP` block's linedef list had no `0xFFFF` terminator and was
-    /// truncated at the lump end during lenient assembly.
+    /// A `BLOCKMAP` block's linedef list had no `0xFFFF` terminator; the
+    /// whole blockmap was discarded during lenient assembly (#422).
     #[error(
-        "BLOCKMAP block {block} linedef list is unterminated; truncated during lenient assembly"
+        "BLOCKMAP block {block} linedef list is unterminated; blockmap discarded during lenient assembly"
     )]
     UnterminatedBlockmapList {
         /// The 0-based block index.
         block: usize,
     },
-    /// A `BLOCKMAP` block's list referenced a linedef past the end of the
-    /// linedef arena; the whole block list was emptied during lenient
-    /// assembly (entry-level dropping would require materializing patched
-    /// list copies — see the spec's hardening notes).
+    /// A `BLOCKMAP` block's linedef list referenced a linedef past the
+    /// arena; the whole blockmap was discarded during lenient assembly.
+    /// Node builders knowingly emit such degenerate blockmaps for maps too
+    /// large for the lump's 16-bit offsets, and a wrapped-offset lump can
+    /// also carry in-range-but-wrong entries — so the lump is
+    /// untrustworthy as a whole and is never partially kept (#422).
     #[error(
-        "BLOCKMAP block {block} references linedef {index} ({count} available); block list emptied during lenient assembly"
+        "BLOCKMAP block {block} references linedef {index} ({count} available); blockmap discarded during lenient assembly"
     )]
     BlockmapListDangling {
         /// The 0-based block index.
