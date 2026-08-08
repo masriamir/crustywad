@@ -89,11 +89,13 @@ docs-sync:
     python3 scripts/check_doc_versions.py
 
 # Pre-push gate (fail-fast): cheapest checks first so failures surface in
-# seconds, not after a long compile. Omits `build` (subsumed by `test`, which
-# compiles the same targets — CI's only explicit `cargo build` step is the
-# msrv job's, on the pinned 1.94.0 toolchain) and `deny` (a dependency-graph
-# audit whose outcome code edits never change). Run `ci-full` before releases
-# and on branches that touch Cargo.toml/Cargo.lock.
+# seconds, not after a long compile. Omits `build` — a speed tradeoff, not a
+# lost check: `lint`'s clippy pass type-checks every target in normal
+# (non-test) mode, `test` fully builds and links the lib and every test
+# binary, and CI's msrv job still runs a plain `cargo build` on the pinned
+# 1.94.0 toolchain. Also omits `deny` (a dependency-graph audit whose outcome
+# code edits never change). Run `ci-full` before releases and on branches
+# that touch Cargo.toml/Cargo.lock.
 ci: docs-sync lint test doc
 
 # Mid-iteration tier: the cheap gates plus `test-fast`. Not a pre-push
