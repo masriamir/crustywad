@@ -569,6 +569,43 @@ fn blockmap_healthy_lump_lenient_keeps_it_with_zero_warnings() {
 }
 
 #[test]
+fn without_lumps_drops_named_lump_for_strict_clean_assembly() {
+    // A malformed BLOCKMAP (3-word header) that strict-fails assembly —
+    // until the consumer opts out of the lump it never reads (#422).
+    let wad = classic_map_with(&[0b0000_0001], &words_to_bytes(&[0, 0, 1]));
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(Map::assemble(&wad, &group).is_err());
+
+    let filtered = group.without_lumps(&wad, &["BLOCKMAP"]);
+    let map = Map::assemble(&wad, &filtered).unwrap();
+    assert!(map.blockmap().is_none());
+    assert!(map.reject().is_some(), "unnamed lumps stay in the group");
+    assert!(map.warnings().is_empty(), "an absent BLOCKMAP never warns");
+}
+
+#[test]
+fn without_lumps_multiple_and_unknown_names() {
+    let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
+    let wad = classic_map_with(&[0b0000_0001], &blockmap);
+    let group = wad.map_group("MAP01").unwrap();
+    let filtered = group.without_lumps(&wad, &["BLOCKMAP", "REJECT", "NOSUCH"]);
+    assert_eq!(filtered.marker_index, group.marker_index);
+    assert_eq!(filtered.name, group.name);
+    assert_eq!(filtered.data_indices.len(), group.data_indices.len() - 2);
+    let map = Map::assemble(&wad, &filtered).unwrap();
+    assert!(map.blockmap().is_none());
+    assert!(map.reject().is_none());
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn without_lumps_empty_names_is_identity() {
+    let wad = classic_map_with(&[], &[]);
+    let group = wad.map_group("MAP01").unwrap();
+    assert_eq!(group.without_lumps(&wad, &[]), group);
+}
+
+#[test]
 fn doom64_nested_reject_and_blockmap_are_decoded() {
     let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
     let bytes = common::build_doom64_map_wad_full(
