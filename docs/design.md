@@ -101,7 +101,7 @@ All errors in the library crate use `thiserror`-derived enums (`ParseError`, `Ma
 
 ## Development workflow
 
-Run `just ci` before pushing — the fail-fast pre-push gate (`docs-sync`, `fmt`, `clippy`, `test`, `doc`). `just ci-fast` is the mid-iteration loop (skips doctests and the rustdoc pass; not a pre-push substitute), and `just ci-full` adds the workspace `build` and the `cargo deny` dependency audit; use it before releases and on branches that change `Cargo.toml`/`Cargo.lock`.
+Run `just ci` before pushing — the fail-fast pre-push gate (`docs-sync`, `lint` — fmt + clippy — `test`, `doc`). `just ci-fast` is the mid-iteration loop (skips doctests and the rustdoc pass; not a pre-push substitute), and `just ci-full` adds the workspace `build` and the `cargo deny` dependency audit; use it before releases and on branches that change `Cargo.toml`/`Cargo.lock`.
 
 ## Commit conventions
 

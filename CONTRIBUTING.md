@@ -24,7 +24,7 @@ just ci
 just ci-full
 ```
 
-**Always run `just ci` before pushing.** It is the fail-fast pre-push gate (`docs-sync`, `fmt`, `clippy`, `test`, `doc`) and catches failures locally before they reach CI. `just ci-fast` is the mid-iteration loop (skips doctests and the rustdoc pass; not a pre-push substitute), and `just ci-full` adds the workspace `build` and the `cargo deny` dependency audit — use it before releases and on branches that change `Cargo.toml`/`Cargo.lock`.
+**Always run `just ci` before pushing.** It is the fail-fast pre-push gate (`docs-sync`, `lint` — fmt + clippy — `test`, `doc`) and catches failures locally before they reach CI. `just ci-fast` is the mid-iteration loop (skips doctests and the rustdoc pass; not a pre-push substitute), and `just ci-full` adds the workspace `build` and the `cargo deny` dependency audit — use it before releases and on branches that change `Cargo.toml`/`Cargo.lock`.
 
 ## Conventional Commits
 
