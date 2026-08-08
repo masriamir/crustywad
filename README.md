@@ -18,16 +18,16 @@ A Doom WAD is a container format that stores a header plus a directory of named 
 
 ## Status
 
-`crustywad` provides safe, documented reading of WAD headers, lump directories, and typed map-record lumps; zero-copy memory-mapped WAD loading via the `mmap` feature; writing of WAD headers, lump directories, and raw lump data via `WadBuilder`; [UDMF ↔ Doom map format conversion](https://crustywad.dev/converting-maps.html); [classic graphics decode](https://crustywad.dev/graphics.html): pictures (patches/sprites), flats, PLAYPAL/COLORMAP, and TEXTUREx/PNAMES composition, with indexed + RGBA8 views; content-first audio detection with typed DMX and PC-speaker sound-effect decode, plus WAV/MIDI container parsing of the Doom 64 remaster's `DS`/`DM` sections, surfaced through audio-aware `cwad extract` (DMX lumps wrapped as WAV, MUS lumps optionally converted to MIDI) and `cwad info`/`list` audio annotations; and a `cwad` CLI for inspecting, validating, merging, diffing, extracting, converting, and building WAD files. Correctness and performance are validated via `cargo-fuzz` targets and Criterion benchmarks.
+`crustywad` covers the full classic WAD format surface:
 
-Integration tests for each layer live in `crates/crustywad/tests/`:
-- `wad_reader.rs` — WAD header and directory parsing
-- `map_records.rs` — typed map-record decoding (`Thing`, `Linedef`, `Sector`, etc.)
-- `write.rs` — WAD write support (`WadBuilder`)
-- `e2e.rs` — end-to-end read → modify → write → verify pipeline
-- `malformed_wads.rs` — synthetic corpus of malformed and large WAD inputs
-- `audio.rs` — classic audio detection and sound-effect decode (`AudioKind`, `DmxSound`, `PcSpeakerSound`)
-- `freedoom.rs` — optional tests against real Freedoom WAD fixtures
+- **Reading** — safe, documented parsing of WAD headers, lump directories, and marker-delimited sections; zero-copy memory-mapped loading via the `mmap` feature; strict/lenient parsing with typed warnings; and content-validated game fingerprinting (`Wad::detect_game` / `Map::game`, ADR-0028), so Strife WADs — byte-identical to Doom at the map layer — no longer read silently as Doom. (Hexen, Doom 64, and UDMF maps are distinguished per map by format detection during assembly.)
+- **Maps** — typed map-record lumps and full `Map` graph assembly for Doom/Doom II/Heretic, Hexen, Doom 64, and UDMF (`TEXTMAP`) maps; typed `REJECT`/`BLOCKMAP`/`LEAFS`/`MACROS` decode; classic, ZDoom extended (`XNOD`/`Z*`), classic GL, and DeePBSP node reading; Strife dialogue parsing; and [UDMF ↔ Doom map conversion](https://crustywad.dev/converting-maps.html) with a three-tier data-loss policy.
+- **Graphics and textures** — [classic graphics decode](https://crustywad.dev/graphics.html): pictures (patches/sprites), flats, PLAYPAL/COLORMAP, and TEXTUREx/PNAMES composition, with indexed + RGBA8 views; Doom 64 PNG decode behind `doom64-gfx`.
+- **Audio** — content-first detection with typed DMX and PC-speaker sound-effect decode, WAV/MIDI container parsing of the Doom 64 remaster's `DS`/`DM` sections, and audio-aware `cwad extract` (DMX lumps wrapped as WAV, MUS lumps optionally converted to MIDI).
+- **Writing** — WAD serialization via `WadBuilder`, Doom binary and UDMF map writing, and clean-room node building (`BLOCKMAP`/`REJECT`/classic BSP, plus the extended and GL node streams) behind the `write`/`nodebuild` features.
+- **CLI** — `cwad` with `info`/`list`/`validate`/`merge`/`diff`/`extract`/`convert`/`build` subcommands, including engine-playable `--nodes` output.
+
+Correctness and performance are validated via `cargo-fuzz` targets, Criterion benchmarks, and an integration test suite in `crates/crustywad/tests/` — one file per concern, spanning core reading (`wad_reader.rs`, `sections.rs`, `malformed_wads.rs`, `error_display.rs`), maps (`map_records.rs`, `map_assembly.rs`, `map_convert.rs`, `blockmap_reject.rs`, `udmf_parse.rs`, `udmf_assembly.rs`, `udmf_write.rs`, `extended_nodes.rs`, `gl_nodes.rs`, `deepbsp.rs`), per-game formats (`game_detect.rs`, `hexen.rs`, `strife_dialogue.rs`, the `doom64*.rs` family), graphics and audio (`gfx.rs`, `audio.rs`, `audio_scripts.rs`), writing and node building (`write.rs`, `build_lumps.rs`, `build_gl_lumps.rs`, `e2e.rs`), and optional real-WAD fixture suites (`freedoom.rs`, `sweep.rs`).
 
 ## Installation
 
@@ -35,14 +35,14 @@ Library:
 
 ```toml
 [dependencies]
-crustywad = "0.9.0"
+crustywad = "0.9.3"
 ```
 
 Enable optional features as needed (see [Feature flags](#feature-flags) below):
 
 ```toml
 [dependencies]
-crustywad = { version = "0.9.0", features = ["write", "mmap"] }
+crustywad = { version = "0.9.3", features = ["write", "mmap"] }
 ```
 
 CLI (`cwad`) — any of:
@@ -227,12 +227,11 @@ The minimum supported Rust version is **1.94.0**. The project follows a rolling 
 
 ## Roadmap
 
-1. ✅ Directory reading
-2. 🔜 Map lump parsing
-3. Graphics
-4. Textures
-5. Audio
-6. ✅ Write support
+The original format roadmap — directory reading, map lump parsing (full graph assembly), graphics, textures, audio, and write support — has shipped in full. Development now tracks the [Crustywad project board](https://github.com/users/masriamir/projects/5); the active long-horizon epics are:
+
+- **ACS support** ([#242](https://github.com/masriamir/crustywad/issues/242)) — reading (and eventually writing) the compiled `BEHAVIOR` bytecode carried by Hexen-format WADs.
+- **Editor foundations** ([#18](https://github.com/masriamir/crustywad/issues/18)) — the long-horizon epic toward WAD editing, visualization, and version-control tooling built on the library.
+- **idgames corpus tooling** ([#401](https://github.com/masriamir/crustywad/issues/401)) — an `xtask` harness for harvesting a large public WAD corpus to sweep-validate the library against real-world files.
 
 ## Contributing
 
