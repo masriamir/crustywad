@@ -518,6 +518,57 @@ fn assembly_strict_surfaces_reject_error_lenient_recovers() {
 }
 
 #[test]
+fn assembly_degenerate_blockmap_strict_errors_lenient_discards_whole_lump() {
+    use crustywad::ParseOptions;
+    // Oversized-map emulation (#422): node builders emit degenerate
+    // blockmaps once a map outgrows the lump's 16-bit offsets; the
+    // observable symptom is a list entry past the linedef arena. Strict
+    // assembly fails the map; lenient assembles it with the blockmap
+    // dropped and exactly one warning — never a partially-kept blockmap.
+    let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 9, 0xFFFF]);
+    let wad = classic_map_with(&[], &blockmap);
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::DanglingReference {
+            referent: "linedef",
+            index: 9,
+            from: "blockmap block",
+            count: 1
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.blockmap().is_none());
+    assert_eq!(map.warnings().len(), 1);
+    assert!(matches!(
+        map.warnings()[0],
+        MapWarning::BlockmapListDangling {
+            block: 0,
+            index: 9,
+            count: 1
+        }
+    ));
+}
+
+#[test]
+fn blockmap_healthy_lump_lenient_keeps_it_with_zero_warnings() {
+    // The other half of the discard contract (#422): a blockmap is kept
+    // only when every block decodes cleanly, and a kept blockmap never
+    // warns.
+    let mut warnings = Vec::new();
+    let bm = MapBlockmap::parse(
+        &shared_list_blockmap(),
+        1,
+        Strictness::Lenient,
+        &mut warnings,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(bm.block(0, 0), Some(&[LinedefIdx(0)][..]));
+}
+
+#[test]
 fn doom64_nested_reject_and_blockmap_are_decoded() {
     let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
     let bytes = common::build_doom64_map_wad_full(
