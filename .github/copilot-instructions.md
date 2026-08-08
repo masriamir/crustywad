@@ -252,13 +252,6 @@ CodeQL static analysis (`.github/workflows/codeql.yml`) runs on push, pull reque
 
 ## Roadmap context
 
-The current milestone (1) covers WAD directory reading and map-record scaffolding. Future milestones are:
+The original format roadmap (directory reading, map lump parsing with full graph assembly, graphics, textures, audio, write support) has shipped in full. Ongoing work is tracked on the Crustywad project board — active long-horizon epics: ACS support (#242), editor foundations (#18), and idgames corpus tooling (#401).
 
-1. ✅ Directory reading
-2. 🔜 Map lump parsing (full graph assembly)
-3. Graphics
-4. Textures
-5. Audio
-6. ✅ Write support
-
-When implementing future milestones, keep `unsafe` code confined to `mmap.rs` and ensure every public item remains documented.
+When extending the library, keep `unsafe` code confined to `mmap.rs` and ensure every public item remains documented.

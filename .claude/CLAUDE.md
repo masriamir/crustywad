@@ -378,9 +378,4 @@ CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `s
 
 ## Roadmap
 
-1. ✅ Directory reading and map-record scaffolding (this PR)
-2. 🔜 Map lump parsing (full graph assembly)
-3. Graphics
-4. Textures
-5. Audio
-6. ✅ Write support
+The original six-item format roadmap (directory reading, map lump parsing with full graph assembly, graphics, textures, audio, write support) has shipped in full. Current direction lives on the project board (see [Project tracking](#project-tracking) above) — active long-horizon epics: ACS support (#242), editor foundations (#18), and idgames corpus tooling (#401).
