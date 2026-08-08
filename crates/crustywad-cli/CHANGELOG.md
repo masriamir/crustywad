@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.6...crustywad-cli-v0.4.7) - 2026-08-08
+
+### Other
+
+- refresh README status/roadmap and sync roadmap across living docs ([#419](https://github.com/masriamir/crustywad/pull/419))
+
 ## [0.4.6](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.5...crustywad-cli-v0.4.6) - 2026-08-04
 
 ### Added
