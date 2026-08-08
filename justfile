@@ -95,6 +95,17 @@ docs-sync:
 # branches that touch Cargo.toml/Cargo.lock.
 ci: docs-sync lint test doc
 
+# Mid-iteration tier: the cheap gates plus unit/integration test binaries
+# only — `--tests` skips doctests (including every guide sample), the biggest
+# compile chunk that code-only loops don't need. Not a pre-push substitute:
+# doctests are the only check that catches API drift in doc samples, so run
+# `just ci` before pushing.
+ci-fast: docs-sync lint test-fast
+
+# Unit + integration test binaries only (skips doctests; see `ci-fast`).
+test-fast:
+    cargo test --workspace --all-features --tests
+
 # The pre-push gate plus the workspace build and dependency audit — full
 # parity with every recipe this justfile can mirror from CI.
 ci-full: build test lint doc deny docs-sync

@@ -82,10 +82,11 @@ Install [just](https://github.com/casey/just), then:
 | Doc drift check (anchors + version pins) | `just docs-sync` |
 | Benchmarks | `just bench` (criterion; HTML report in `target/criterion/`) |
 | Benchmarks + open report | `just bench-open` |
+| Mid-iteration check (skips doctests + rustdoc) | `just ci-fast` |
 | Pre-push CI gate (fail-fast) | `just ci` |
 | Full CI check (adds `build` + `deny`) | `just ci-full` |
 
-**Always run `just ci` before pushing.** It is the fail-fast pre-push gate — `docs-sync`, `fmt`, `clippy`, `test`, `doc`, cheapest first, so failures surface in seconds instead of after a long compile. It intentionally omits `build` (subsumed by `test`; CI has no standalone build job) and `deny` (a dependency-graph audit whose outcome code edits never change). Run **`just ci-full`** — the gate plus `build` and `deny` — before releases and on any branch that touches `Cargo.toml`/`Cargo.lock`.
+**Always run `just ci` before pushing.** It is the fail-fast pre-push gate — `docs-sync`, `fmt`, `clippy`, `test`, `doc`, cheapest first, so failures surface in seconds instead of after a long compile. It intentionally omits `build` (subsumed by `test`; CI has no standalone build job) and `deny` (a dependency-graph audit whose outcome code edits never change). Run **`just ci-full`** — the gate plus `build` and `deny` — before releases and on any branch that touches `Cargo.toml`/`Cargo.lock`. For code-only mid-iteration loops, **`just ci-fast`** drops the doctests and the rustdoc pass (`docs-sync`, `fmt`, `clippy`, `cargo test --tests`) — a meaningful compile saving, but never a pre-push substitute, since doctests are the only check that catches API drift in doc samples.
 
 **Match your local toolchain to CI, and treat CI as the source of truth.** CI's Rust jobs install the current `stable` toolchain via `dtolnay/rust-toolchain` (the `msrv` job pins Rust 1.94.0 instead), so `cargo fmt` and `cargo clippy` outcomes depend on the exact rustfmt/clippy version. A lagging local toolchain can make `just ci` pass locally while CI's `fmt`/`clippy` fail on the same code — run `rustup update stable` before trusting a local pass. A change is not green until `gh pr checks` shows every required check passing on the PR; local results are a fast pre-filter, not the verdict.
 
