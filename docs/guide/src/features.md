@@ -557,7 +557,9 @@ body follow the same contract as the uncompressed decoder.
 | Test with `doom64-gfx` | `cargo test -p crustywad --features doom64-gfx` |
 | Build with `extended-nodes-zlib` | `cargo build -p crustywad --features extended-nodes-zlib` |
 | Test with `extended-nodes-zlib` | `cargo test -p crustywad --features extended-nodes-zlib` |
-| Full CI check | `just ci` |
+| Mid-iteration check (skips doctests + rustdoc) | `just ci-fast` |
+| Pre-push CI gate (fail-fast) | `just ci` |
+| Full CI check (adds `build` + `deny`) | `just ci-full` |
 
 See the [`justfile`](https://github.com/masriamir/crustywad/blob/main/justfile) for
 available `just` recipes including feature-specific aliases.

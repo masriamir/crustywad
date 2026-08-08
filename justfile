@@ -88,4 +88,28 @@ docs-sync:
     python3 scripts/check_doc_anchors.py
     python3 scripts/check_doc_versions.py
 
-ci: build test lint doc deny docs-sync
+# Pre-push gate (fail-fast): cheapest checks first so failures surface in
+# seconds, not after a long compile. Omits `build` — a speed tradeoff, not a
+# lost check: `lint`'s clippy pass type-checks every target in normal
+# (non-test) mode, `test` fully builds and links the lib and every test
+# binary, and CI's msrv job still runs a plain `cargo build` on the pinned
+# 1.94.0 toolchain. Also omits `deny` (a dependency-graph audit whose outcome
+# code edits never change). Run `ci-full` before releases and on branches
+# that touch Cargo.toml/Cargo.lock.
+ci: docs-sync lint test doc
+
+# Mid-iteration tier: the cheap gates plus `test-fast`. Not a pre-push
+# substitute: doctests are the only check that catches API drift in doc
+# samples, so run `just ci` before pushing.
+ci-fast: docs-sync lint test-fast
+
+# Unit + integration tests without doctests. `--tests` builds the library and
+# binaries as unittests plus every integration test binary (`cargo help test`,
+# target selection) — only doctests, including every guide sample (the biggest
+# compile chunk), are excluded.
+test-fast:
+    cargo test --workspace --all-features --tests
+
+# The pre-push gate plus the workspace build and dependency audit — the full
+# pre-release composition.
+ci-full: build test lint doc deny docs-sync
