@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1a864c5e.js";
+            window.path_to_searchindex_js = "searchindex-31cf7504.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -618,7 +618,9 @@ body follow the same contract as the uncompressed decoder.</p>
 <tr><td>Test with <code>doom64-gfx</code></td><td><code>cargo test -p crustywad --features doom64-gfx</code></td></tr>
 <tr><td>Build with <code>extended-nodes-zlib</code></td><td><code>cargo build -p crustywad --features extended-nodes-zlib</code></td></tr>
 <tr><td>Test with <code>extended-nodes-zlib</code></td><td><code>cargo test -p crustywad --features extended-nodes-zlib</code></td></tr>
-<tr><td>Full CI check</td><td><code>just ci</code></td></tr>
+<tr><td>Mid-iteration check (skips doctests + rustdoc)</td><td><code>just ci-fast</code></td></tr>
+<tr><td>Pre-push CI gate (fail-fast)</td><td><code>just ci</code></td></tr>
+<tr><td>Full CI check (adds <code>build</code> + <code>deny</code>)</td><td><code>just ci-full</code></td></tr>
 </tbody>
 </table>
 </div>
