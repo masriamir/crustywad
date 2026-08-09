@@ -59,5 +59,6 @@ implementation begins.**
 | [0026](0026-gl-node-building.md) | GL node building and the XGLN/XGL2/XGL3 extended-node writer | Accepted |
 | [0027](0027-udmf-full-fidelity-roundtrip.md) | UDMF full-fidelity retention and semantic round-trip | Accepted |
 | [0028](0028-strife-game-identification.md) | Strife game identification and semantic attribution | Accepted |
+| [0029](0029-degenerate-blockmaps.md) | Degenerate blockmaps — discard, don't patch | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->
