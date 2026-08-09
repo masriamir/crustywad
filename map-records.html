@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-31cf7504.js";
+            window.path_to_searchindex_js = "searchindex-fb4fa84c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -718,6 +718,11 @@ map assembly rather than staying raw bytes: <code>map.reject()</code> returns <c
 <code>map.blockmap()</code> returns <code>Option&lt;&amp;MapBlockmap&gt;</code>, <code>None</code> when the map carries no (or an empty)
 lump of that kind — an editable PWAD with no built REJECT/BLOCKMAP table is as normal as one with
 no built nodes.</p>
+<p>A structurally defective <code>BLOCKMAP</code> — including the deliberately degenerate blockmaps that node
+builders emit for maps too large for the lump’s 16-bit offsets — is fatal in strict mode; lenient
+assembly discards the whole lump (<code>map.blockmap()</code> returns <code>None</code>) and records a single warning
+describing the first defect, mirroring the BSP degrade behavior above (ADR-0029). A
+partially-usable blockmap is never surfaced.</p>
 <p><code>MapReject</code> is a row-major sector-visibility bit matrix, <code>sector_count × sector_count</code> bits,
 LSB-first within each byte (layout verified against Chocolate Doom’s <code>P_LoadReject</code> /
 <code>P_CheckSight</code>):</p>
@@ -770,10 +775,28 @@ missing bits treated as “not rejected” (<code>MapWarning::UndersizedReject</
 header, an out-of-lump block offset, an unterminated block list, or a block list referencing a
 nonexistent linedef are each a strict error
 (<code>MapAssembleError::MalformedBlockmap</code> / <code>BlockmapBlockOffset</code> / <code>UnterminatedBlockmapList</code> /
-<code>DanglingReference</code>) or a lenient recovery with a matching <code>MapWarning</code> — discarding the whole
-table, truncating the list, or emptying the one affected block, respectively. An empty <code>REJECT</code>
+<code>DanglingReference</code>) or, in lenient mode, exactly one matching <code>MapWarning</code>
+(<code>MalformedBlockmap</code> / <code>BlockmapBlockOffset</code> / <code>UnterminatedBlockmapList</code> /
+<code>BlockmapListDangling</code>) and the whole blockmap discarded — no block list is ever patched, so
+<code>map.blockmap()</code> is <code>Some</code> only when every block decoded cleanly (ADR-0029). An empty <code>REJECT</code>
 or <code>BLOCKMAP</code> lump (as <code>crustywad</code>’s own writer emits, ADR-0019 §4) is read back as simply
 absent, in both modes, with no warning.</p>
+<p>A consumer that never reads a lump can skip it entirely instead of relying on lenient recovery:
+<code>MapGroup::without_lumps</code> returns a filtered copy of the group, and absent <code>REJECT</code>/<code>BLOCKMAP</code>
+lumps decode to <code>None</code> with no error and no warning in both strictness modes — so strict
+validation still covers everything the consumer actually reads:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::Wad;
+use crustywad::map::Map;
+
+<span class="boring">let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+</span>if let Some(group) = wad.map_group("MAP15") {
+    let map = Map::assemble(&amp;wad, &amp;group.without_lumps(&amp;wad, &amp;["BLOCKMAP", "REJECT"]))?;
+    assert!(map.blockmap().is_none());
+}
+<span class="boring">Ok::&lt;(), crustywad::map::MapAssembleError&gt;(())
+</span><span class="boring">}</span></code></pre>
 <h2 id="game-identification-strife"><a class="header" href="#game-identification-strife">Game identification (Strife)</a></h2>
 <p>Strife ships its maps in the <em>byte-identical</em> classic Doom binary layout — same
 record sizes, same lump names — yet its <code>flags</code>, <code>special</code>, and <code>type</code> values carry
