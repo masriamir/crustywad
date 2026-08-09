@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.4...crustywad-v0.9.5) - 2026-08-09
+
+### Fixed
+
+- *(map)* discard degenerate blockmaps in lenient assembly; add MapGroup::without_lumps ([#423](https://github.com/masriamir/crustywad/pull/423))
+
 ## [0.9.4](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.3...crustywad-v0.9.4) - 2026-08-08
 
 ### Fixed
