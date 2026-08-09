@@ -604,7 +604,7 @@ map assembly rather than staying raw bytes: `map.reject()` returns `Option<&MapR
 lump of that kind — an editable PWAD with no built REJECT/BLOCKMAP table is as normal as one with
 no built nodes.
 
-A structurally defective `BLOCKMAP` — including the deliberately degenerate blockmaps node
+A structurally defective `BLOCKMAP` — including the deliberately degenerate blockmaps that node
 builders emit for maps too large for the lump's 16-bit offsets — is fatal in strict mode; lenient
 assembly discards the whole lump (`map.blockmap()` returns `None`) and records a single warning
 describing the first defect, mirroring the BSP degrade behavior above (ADR-0029). A

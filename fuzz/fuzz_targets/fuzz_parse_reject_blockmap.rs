@@ -9,7 +9,7 @@ use crustywad::map::{MapBlockmap, MapReject};
 // ADR-0016: no panic, and output bounded by the input — the REJECT table
 // stores at most the payload's bytes (virtual padding) and warns at most
 // once; the BLOCKMAP block table is bounded by the offset table that
-// physically fit in the payload, and a kept blockmap has zero warnings;
+// physically fits in the payload, and a kept blockmap has zero warnings;
 // every discard/error path warns at most once (#422).
 fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
