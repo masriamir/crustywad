@@ -260,6 +260,25 @@ unmarked breaking change proposes a semver-violating patch release (caught live 
 prep). `semver_check = true` in `release-plz.toml` runs `cargo-semver-checks` against the
 published baseline as a safety net, but correct annotations are the first line of defense.
 
+**The PR title is the only Conventional Commit release-plz ever sees.** PRs land as a single
+squash commit whose subject is the PR title and whose body is empty — every branch commit
+subject is discarded. So the PR title alone selects the CHANGELOG section and drives the
+derived bump; a `feat(map):` commit on a branch merged under a `fix(map):` title files its new
+public API under `### Fixed` and never appears under `### Added` (observed on #423 → 0.9.5).
+
+**Title a mixed PR by its highest-impact change** — `!` > `feat` > `fix` > everything else —
+**or split it** into one PR per type when the halves are genuinely separable and each earns its
+own CHANGELOG line. Splitting is the better choice when both entries carry real information;
+titling by highest impact is the default when they do not, or when the halves are
+dependency-ordered.
+
+Pre-1.0 this is a **changelog** decision, not a version one: `feat:` and `fix:` both derive a
+patch and only `!` bumps the minor, so no title choice can change the computed version (see
+[Versioning and Release Policy](../docs/guide/src/versioning.md)). **At 1.0.0 the title becomes
+load-bearing** — `feat:` will bump the minor, and a `fix:`-titled PR that adds public API
+becomes a real SemVer violation — so the habit is built now, while it costs nothing. Never
+hand-force a version to compensate for a title.
+
 The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
 
 ## Project tracking
@@ -318,7 +337,7 @@ All work branches from `main` after a `git pull`. A branch is named `<type>/<slu
 
 `###` is the GitHub issue number. It is optional in the pre-push hook but strongly encouraged for `feature`/`bugfix`/`hotfix` branches, which are issue-driven; `docs`/`chore` branches commonly omit it. A descriptive slug is always required — a bare number such as `feature/42` is rejected.
 
-**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`vX.Y.Z`) from Conventional Commits on `main`. When publishing is enabled, merge the `release-plz` release PR to ship.
+**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`crustywad-v*` / `crustywad-cli-v*`) from Conventional Commits on `main`. Merge the `release-plz` release PR to ship.
 
 The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes from non-conforming branches.
 

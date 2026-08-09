@@ -199,27 +199,37 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - `fix:` — bug fixes
 - `docs:` — documentation changes only
 - `test:` — test-only changes
-- `refactor:` — no behaviour change
+- `refactor:` — no behavior change
 - `chore:` — build, tooling, CI
 - `ci:` — CI workflow changes
 
-Scope can be added when useful: `feat(map):`, `fix(cli):`, etc.
+Scope can be added when useful: `feat(map):`, `fix(cli):`, etc. Breaking changes must be marked
+`!` (`feat(map)!:`) or carry a `BREAKING CHANGE:` footer — pre-1.0, that marker is the only thing
+that bumps the minor; `feat:` and `fix:` alike derive a patch.
+
+**PRs squash-merge, and the PR title becomes the whole commit subject** (the body is empty), so
+that title is the only Conventional Commit `release-plz` reads — it selects the CHANGELOG section
+and drives the bump. Title a mixed PR by its **highest-impact** change (`!` > `feat` > `fix`), or
+split it into one PR per type when both halves deserve their own CHANGELOG line. Otherwise new
+public API silently lands under `### Fixed`.
 
 The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
 
 ## Git branching workflow
 
-All feature and bugfix work branches from `main` after a `git pull`. Branches are tied to GitHub issue numbers.
+All work branches from `main` after a `git pull`. A branch is named `<type>/<slug>`; the slug is descriptive (never a bare issue number) and is prefixed with the issue number when a tracking issue exists.
 
 | Branch type | Template | Example |
 |---|---|---|
-| Feature | `feature/###` or `feature/###-short-desc` | `feature/42-mmap-support` |
-| Bugfix | `bugfix/###` or `bugfix/###-short-desc` | `bugfix/17-header-parse` |
-| Hotfix | `hotfix/###` or `hotfix/###-short-desc` | `hotfix/55-oob-read` |
+| Feature | `feature/###-short-desc` (or `feature/short-desc`) | `feature/42-mmap-support` |
+| Bugfix | `bugfix/###-short-desc` (or `bugfix/short-desc`) | `bugfix/17-header-parse` |
+| Hotfix | `hotfix/###-short-desc` (or `hotfix/short-desc`) | `hotfix/55-oob-read` |
+| Docs | `docs/###-short-desc` (or `docs/short-desc`) | `docs/197-project-workflow` |
+| Chore | `chore/###-short-desc` (or `chore/short-desc`) | `chore/tidy-ci` |
 
-`###` is the GitHub issue number. A short slug after the number is optional but encouraged for readability.
+`###` is the GitHub issue number. It is optional in the pre-push hook but strongly encouraged for `feature`/`bugfix`/`hotfix` branches, which are issue-driven; `docs`/`chore` branches commonly omit it. A descriptive slug is always required — a bare number such as `feature/42` is rejected.
 
-**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`vX.Y.Z`) from Conventional Commits on `main`. When publishing is enabled, merge the `release-plz` release PR to ship.
+**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`crustywad-v*` / `crustywad-cli-v*`) from Conventional Commits on `main`. Merge the `release-plz` release PR to ship.
 
 The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes from non-conforming branches.
 
