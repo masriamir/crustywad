@@ -42,7 +42,9 @@ fuzz_target!(|data: &[u8]| {
         } else {
             // Discard/error paths: lenient pushes exactly one warning for
             // the first defect before returning Ok(None); strict returns
-            // Err before pushing any. So 1 is the exact upper bound.
+            // Err before pushing any; and the empty-lump "not built" path
+            // reaches this branch with zero warnings in both modes. So 1 is
+            // the exact upper bound.
             assert!(warnings.len() <= 1);
         }
     }

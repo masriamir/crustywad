@@ -34,7 +34,9 @@ impl MapGroup {
     /// Comparison is exact and case-sensitive — the same rule assembly uses
     /// to locate a group's lumps by name. Names with no matching lump are
     /// ignored, and the marker lump is untouched; only
-    /// [`data_indices`](MapGroup::data_indices) is filtered.
+    /// [`data_indices`](MapGroup::data_indices) is filtered. Data indices
+    /// that resolve to no lump (possible only in a hand-built group) are
+    /// kept unchanged.
     ///
     /// This is the supported way to assemble a map while skipping optional
     /// lumps a consumer never reads (#422, ADR-0029). Absent
