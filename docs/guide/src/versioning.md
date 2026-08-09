@@ -165,27 +165,36 @@ The workflow:
    against the previously published version (`semver_check` in `release-plz.toml`) so
    unmarked API breakage still produces the required minor bump rather than a patch.
 3. The maintainer reviews and merges the release PR.
-4. Once publishing is enabled, `release-plz` runs `cargo publish` automatically after the
-   release PR merges, in dependency order (`crustywad` before `crustywad-cli`).
+4. `release-plz` runs `cargo publish` automatically after the release PR merges, in dependency
+   order (`crustywad` before `crustywad-cli`), and pushes the `crustywad-v*` /
+   `crustywad-cli-v*` tags.
 
 There is no fixed release schedule. Releases happen when meaningful changes have
 accumulated. The `release-plz` release PR is the signal that a release is ready.
 
-**Publishing status:** Publishing to crates.io is currently disabled while credentials and
-release infrastructure are being finalized (see
+**Publishing status:** Both crates publish to crates.io automatically, authenticated by
+[Trusted Publishing](https://crates.io/docs/trusted-publishing) (OIDC — no stored registry
+token). `release-plz` does not create GitHub Releases; the cross-platform `cwad` binaries and
+installers are published separately by [dist](https://opensource.axo.dev/cargo-dist/) off the
+`crustywad-cli-v*` tag. See
 [ADR-0011](https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md)
-for the full publish workflow design).
+for the full publish workflow design.
 
 ---
 
 ## Version Compatibility Table
 
-| Scenario | Patch | Minor | Major |
-|---|---|---|---|
-| Bug fix, no API change | yes | | |
-| New public type or function | | yes | |
-| New optional feature flag | | yes | |
-| MSRV raised | | yes | |
-| Public type removed or renamed | | | yes |
-| Function signature changed | | | yes |
-| Exhaustive enum variant added | | | yes |
+Both regimes are shown side by side — while at `0.y.z` the
+[pre-1.0 mapping](#pre-10-version-mapping-current) collapses the canonical three channels into
+two, so the same change bumps a different level before and after `1.0.0`.
+
+| Scenario | Bump while at 0.x (current) | Bump at 1.0+ |
+|---|---|---|
+| Bug fix, no API change | patch | patch |
+| New public type or function | **patch** | minor |
+| New optional feature flag | **patch** | minor |
+| `#[non_exhaustive]` enum variant added | **patch** | minor |
+| MSRV raised | minor | minor |
+| Public type removed or renamed | **minor** | major |
+| Function signature changed | **minor** | major |
+| Exhaustive enum variant added | **minor** | major |

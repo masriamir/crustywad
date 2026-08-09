@@ -203,7 +203,15 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - `chore:` — build, tooling, CI
 - `ci:` — CI workflow changes
 
-Scope can be added when useful: `feat(map):`, `fix(cli):`, etc.
+Scope can be added when useful: `feat(map):`, `fix(cli):`, etc. Breaking changes must be marked
+`!` (`feat(map)!:`) or carry a `BREAKING CHANGE:` footer — pre-1.0, that marker is the only thing
+that bumps the minor; `feat:` and `fix:` alike derive a patch.
+
+**PRs squash-merge, and the PR title becomes the whole commit subject** (the body is empty), so
+that title is the only Conventional Commit `release-plz` reads — it selects the CHANGELOG section
+and drives the bump. Title a mixed PR by its **highest-impact** change (`!` > `feat` > `fix`), or
+split it into one PR per type when both halves deserve their own CHANGELOG line. Otherwise new
+public API silently lands under `### Fixed`.
 
 The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
 
