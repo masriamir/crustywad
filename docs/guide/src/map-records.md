@@ -604,6 +604,12 @@ map assembly rather than staying raw bytes: `map.reject()` returns `Option<&MapR
 lump of that kind — an editable PWAD with no built REJECT/BLOCKMAP table is as normal as one with
 no built nodes.
 
+A structurally defective `BLOCKMAP` — including the deliberately degenerate blockmaps that node
+builders emit for maps too large for the lump's 16-bit offsets — is fatal in strict mode; lenient
+assembly discards the whole lump (`map.blockmap()` returns `None`) and records a single warning
+describing the first defect, mirroring the BSP degrade behavior above (ADR-0029). A
+partially-usable blockmap is never surfaced.
+
 `MapReject` is a row-major sector-visibility bit matrix, `sector_count × sector_count` bits,
 LSB-first within each byte (layout verified against Chocolate Doom's `P_LoadReject` /
 `P_CheckSight`):
@@ -659,10 +665,29 @@ missing bits treated as "not rejected" (`MapWarning::UndersizedReject`); a malfo
 header, an out-of-lump block offset, an unterminated block list, or a block list referencing a
 nonexistent linedef are each a strict error
 (`MapAssembleError::MalformedBlockmap` / `BlockmapBlockOffset` / `UnterminatedBlockmapList` /
-`DanglingReference`) or a lenient recovery with a matching `MapWarning` — discarding the whole
-table, truncating the list, or emptying the one affected block, respectively. An empty `REJECT`
+`DanglingReference`) or, in lenient mode, exactly one matching `MapWarning`
+(`MalformedBlockmap` / `BlockmapBlockOffset` / `UnterminatedBlockmapList` /
+`BlockmapListDangling`) and the whole blockmap discarded — no block list is ever patched, so
+`map.blockmap()` is `Some` only when every block decoded cleanly (ADR-0029). An empty `REJECT`
 or `BLOCKMAP` lump (as `crustywad`'s own writer emits, ADR-0019 §4) is read back as simply
 absent, in both modes, with no warning.
+
+A consumer that never reads a lump can skip it entirely instead of relying on lenient recovery:
+`MapGroup::without_lumps` returns a filtered copy of the group, and absent `REJECT`/`BLOCKMAP`
+lumps decode to `None` with no error and no warning in both strictness modes — so strict
+validation still covers everything the consumer actually reads:
+
+```rust
+use crustywad::Wad;
+use crustywad::map::Map;
+
+# let wad = Wad::from_bytes(b"PWAD\x00\x00\x00\x00\x0c\x00\x00\x00".to_vec()).unwrap();
+if let Some(group) = wad.map_group("MAP15") {
+    let map = Map::assemble(&wad, &group.without_lumps(&wad, &["BLOCKMAP", "REJECT"]))?;
+    assert!(map.blockmap().is_none());
+}
+# Ok::<(), crustywad::map::MapAssembleError>(())
+```
 
 ## Game identification (Strife)
 

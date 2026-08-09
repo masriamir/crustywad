@@ -9,9 +9,8 @@ use crustywad::map::{MapBlockmap, MapReject};
 // ADR-0016: no panic, and output bounded by the input — the REJECT table
 // stores at most the payload's bytes (virtual padding) and warns at most
 // once; the BLOCKMAP block table is bounded by the offset table that
-// physically fit in the payload, with warnings bounded by two per block on
-// the Ok(Some) path and by one on the whole-lump discard path (the two
-// paths are mutually exclusive — see the per-assert comments below).
+// physically fits in the payload, and a kept blockmap has zero warnings;
+// every discard/error path warns at most once (#422).
 fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
         return;
@@ -35,21 +34,17 @@ fuzz_target!(|data: &[u8]| {
         {
             let blocks = blockmap.columns() * blockmap.rows();
             assert!(4 + blocks <= words);
-            // At most 2 per block: an unterminated list is truncated
-            // (warning 1) and the truncated span may still carry a
-            // dangling linedef that empties the block (warning 2); every
-            // other lenient recovery `continue`s after its single warning.
-            assert!(warnings.len() <= 2 * blocks);
+            // A blockmap is only kept when every block decoded cleanly —
+            // any defect (malformed header, bad offset, unterminated or
+            // dangling list) discards the whole lump (#422) — so the
+            // Ok(Some) path can never have warned.
+            assert!(warnings.is_empty());
         } else {
-            // Not `Ok(Some(_))` is reachable only via a pre-block-loop
-            // `malformed` check (empty/too-short/non-positive
-            // dimensions/offset-table-overflow) or a strict-mode `Err` from
-            // inside the loop. The block loop itself never returns
-            // `Ok(None)`, so per-block warnings can never combine with this
-            // branch: lenient `malformed` pushes exactly 1 warning before
-            // returning `Ok(None)`, and every strict `Err` (pre-loop or
-            // in-loop) returns before pushing any warning. So 1 is the true
-            // bound, not just a loose cap.
+            // Discard/error paths: lenient pushes exactly one warning for
+            // the first defect before returning Ok(None); strict returns
+            // Err before pushing any; and the empty-lump "not built" path
+            // reaches this branch with zero warnings in both modes. So 1 is
+            // the exact upper bound.
             assert!(warnings.len() <= 1);
         }
     }

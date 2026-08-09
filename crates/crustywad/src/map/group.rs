@@ -27,6 +27,42 @@ pub struct MapGroup {
     pub data_indices: Vec<usize>,
 }
 
+impl MapGroup {
+    /// Returns a copy of this group with every data lump whose name matches
+    /// one of `names` removed.
+    ///
+    /// Comparison is exact and case-sensitive — the same rule assembly uses
+    /// to locate a group's lumps by name. Names with no matching lump are
+    /// ignored, and the marker lump is untouched; only
+    /// [`data_indices`](MapGroup::data_indices) is filtered. Data indices
+    /// that resolve to no lump (possible only in a hand-built group) are
+    /// kept unchanged.
+    ///
+    /// This is the supported way to assemble a map while skipping optional
+    /// lumps a consumer never reads (#422, ADR-0029). Absent
+    /// `REJECT`/`BLOCKMAP` lumps decode to `None` with no error and no
+    /// warning in both strictness modes, so a consumer such as a 2D viewer
+    /// can strictly validate everything it actually consumes:
+    /// `Map::assemble(&wad, &group.without_lumps(&wad, &["BLOCKMAP", "REJECT"]))`.
+    #[must_use]
+    pub fn without_lumps(&self, wad: &Wad, names: &[&str]) -> MapGroup {
+        MapGroup {
+            marker_index: self.marker_index,
+            name: self.name.clone(),
+            data_indices: self
+                .data_indices
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    wad.lumps()
+                        .get(i)
+                        .is_none_or(|l| !names.contains(&l.name()))
+                })
+                .collect(),
+        }
+    }
+}
+
 /// If the lump at `i` is a map marker (its successor is a recognized data
 /// lump), returns the directory index just past its contiguous data-lump run;
 /// otherwise `None`. Allocates nothing.

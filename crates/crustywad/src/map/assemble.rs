@@ -136,7 +136,7 @@ pub enum MapAssembleError {
         detail: &'static str,
     },
     /// A `BLOCKMAP` block's offset pointed outside the lump (strict mode;
-    /// lenient empties that block's list and warns).
+    /// lenient discards the blockmap and warns).
     #[error("BLOCKMAP block {block} offset {offset} is outside the lump ({words} words)")]
     BlockmapBlockOffset {
         /// The 0-based block (offset-table) index.
@@ -147,8 +147,8 @@ pub enum MapAssembleError {
         words: usize,
     },
     /// A `BLOCKMAP` block's linedef list ran past the end of the lump
-    /// without its `0xFFFF` terminator (strict mode; lenient truncates the
-    /// list at the lump end and warns).
+    /// without its `0xFFFF` terminator (strict mode; lenient discards the
+    /// blockmap and warns).
     #[error("BLOCKMAP block {block} linedef list is unterminated")]
     UnterminatedBlockmapList {
         /// The 0-based block index.
@@ -583,9 +583,16 @@ impl MapBlockmap {
     /// [`MapAssembleError::BlockmapBlockOffset`] for a block offset outside
     /// the lump, [`MapAssembleError::UnterminatedBlockmapList`] for a list
     /// with no terminator, and [`MapAssembleError::DanglingReference`] for
-    /// a list entry past the linedef arena. Lenient mode recovers each with
-    /// the corresponding [`MapWarning`] (discard / empty block / truncate /
-    /// empty block, respectively).
+    /// a list entry past the linedef arena. Lenient mode never patches a
+    /// defective blockmap: every one of these defects discards the whole
+    /// lump (`Ok(None)`) with a single [`MapWarning`] describing the first
+    /// defect encountered — blocks are scanned in index order, and within a
+    /// block the offset, terminator, and dangling-reference checks run in
+    /// that order. Discarding matches how source ports treat unusable
+    /// blockmaps (rebuild wholesale, never trust partial content): a lump
+    /// whose 16-bit offsets wrapped (maps beyond 65,536 blockmap words,
+    /// #422) can carry in-range-but-wrong entries that per-block patching
+    /// would silently keep.
     ///
     /// # Panics
     ///
@@ -675,8 +682,7 @@ impl MapBlockmap {
                             offset,
                             words: words.len(),
                         });
-                        blocks.push(0..0);
-                        continue;
+                        return Ok(None);
                     }
                 }
             }
@@ -693,24 +699,20 @@ impl MapBlockmap {
             } else {
                 usize::MAX
             };
-            let end = if end == usize::MAX {
+            if end == usize::MAX {
                 match strictness {
                     Strictness::Strict => {
                         return Err(MapAssembleError::UnterminatedBlockmapList { block });
                     }
                     Strictness::Lenient => {
                         warnings.push(MapWarning::UnterminatedBlockmapList { block });
-                        words.len()
+                        return Ok(None);
                     }
                 }
-            } else {
-                end
-            };
-            let first_invalid = if start < words.len() {
-                next_invalid[start]
-            } else {
-                usize::MAX
-            };
+            }
+            // `end != usize::MAX` implies `start < words.len()`, so the
+            // reverse-pass tables are safely indexable here.
+            let first_invalid = next_invalid[start];
             if first_invalid < end {
                 let word = words[first_invalid];
                 match strictness {
@@ -728,8 +730,7 @@ impl MapBlockmap {
                             index: word,
                             count: linedef_count,
                         });
-                        blocks.push(0..0);
-                        continue;
+                        return Ok(None);
                     }
                 }
             }

@@ -238,7 +238,7 @@ fn blockmap_truncated_offset_table_strict_errors_lenient_discards() {
 }
 
 #[test]
-fn blockmap_block_offset_past_lump_strict_errors_lenient_empties_block() {
+fn blockmap_block_offset_past_lump_strict_errors_lenient_discards() {
     // One block whose offset (99) is outside the 6-word lump.
     let bytes = words_to_bytes(&[0, 0, 1, 1, 99, 0xFFFF]);
     let mut warnings = Vec::new();
@@ -251,19 +251,24 @@ fn blockmap_block_offset_past_lump_strict_errors_lenient_empties_block() {
         }
     ));
     let mut warnings = Vec::new();
-    let bm = MapBlockmap::parse(&bytes, 1, Strictness::Lenient, &mut warnings)
-        .unwrap()
-        .unwrap();
-    assert_eq!(bm.block(0, 0), Some(&[][..]));
+    let parsed = MapBlockmap::parse(&bytes, 1, Strictness::Lenient, &mut warnings).unwrap();
+    assert!(
+        parsed.is_none(),
+        "defective blockmap is discarded, not patched"
+    );
     assert_eq!(warnings.len(), 1);
     assert!(matches!(
         warnings[0],
-        MapWarning::BlockmapBlockOffset { block: 0, .. }
+        MapWarning::BlockmapBlockOffset {
+            block: 0,
+            offset: 99,
+            ..
+        }
     ));
 }
 
 #[test]
-fn blockmap_unterminated_list_strict_errors_lenient_truncates() {
+fn blockmap_unterminated_list_strict_errors_lenient_discards() {
     // Block 0's list starts at word 5 and the lump ends without 0xFFFF.
     let bytes = words_to_bytes(&[0, 0, 1, 1, 5, 0, 1]);
     let mut warnings = Vec::new();
@@ -272,11 +277,11 @@ fn blockmap_unterminated_list_strict_errors_lenient_truncates() {
         MapAssembleError::UnterminatedBlockmapList { block: 0 }
     ));
     let mut warnings = Vec::new();
-    let bm = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings)
-        .unwrap()
-        .unwrap();
-    // Leading 0 delimiter skipped; truncated list carries linedef 1.
-    assert_eq!(bm.block(0, 0), Some(&[LinedefIdx(1)][..]));
+    let parsed = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings).unwrap();
+    assert!(
+        parsed.is_none(),
+        "defective blockmap is discarded, not truncated"
+    );
     assert_eq!(warnings.len(), 1);
     assert!(matches!(
         warnings[0],
@@ -285,7 +290,7 @@ fn blockmap_unterminated_list_strict_errors_lenient_truncates() {
 }
 
 #[test]
-fn blockmap_dangling_linedef_strict_errors_lenient_empties_block() {
+fn blockmap_dangling_linedef_strict_errors_lenient_discards() {
     // List {7} but only 2 linedefs exist.
     let bytes = words_to_bytes(&[0, 0, 1, 1, 5, 7, 0xFFFF]);
     let mut warnings = Vec::new();
@@ -299,10 +304,11 @@ fn blockmap_dangling_linedef_strict_errors_lenient_empties_block() {
         }
     ));
     let mut warnings = Vec::new();
-    let bm = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings)
-        .unwrap()
-        .unwrap();
-    assert_eq!(bm.block(0, 0), Some(&[][..]));
+    let parsed = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings).unwrap();
+    assert!(
+        parsed.is_none(),
+        "defective blockmap is discarded, not patched"
+    );
     assert_eq!(warnings.len(), 1);
     assert!(matches!(
         warnings[0],
@@ -315,26 +321,57 @@ fn blockmap_dangling_linedef_strict_errors_lenient_empties_block() {
 }
 
 #[test]
-fn blockmap_aliased_invalid_lists_warn_per_block_and_empty_each() {
-    // Two blocks alias the same invalid list ({7} with only 2 linedefs):
-    // lenient mode must warn once per block, empty both, and stay O(input)
-    // while doing it (the diagnostic is precomputed, not re-scanned).
+fn blockmap_aliased_invalid_lists_discard_once_with_single_warning() {
+    // Two blocks alias the same invalid list ({7} with only 2 linedefs).
+    // Discard happens at the FIRST defective block: exactly one warning,
+    // no matter how many blocks alias the bad list — aliasing cannot
+    // multiply warnings, and detection stays O(input) (the diagnostic is
+    // precomputed, not re-scanned).
     let bytes = words_to_bytes(&[0, 0, 1, 2, 6, 6, 7, 0xFFFF]);
     let mut warnings = Vec::new();
-    let bm = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings)
-        .unwrap()
-        .unwrap();
-    assert_eq!(bm.block(0, 0), Some(&[][..]));
-    assert_eq!(bm.block(0, 1), Some(&[][..]));
-    assert_eq!(warnings.len(), 2);
-    assert!(warnings.iter().all(|w| matches!(
-        w,
-        crustywad::map::MapWarning::BlockmapListDangling {
+    let parsed = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings).unwrap();
+    assert!(parsed.is_none());
+    assert_eq!(warnings.len(), 1, "one warning for the first defect only");
+    assert!(matches!(
+        warnings[0],
+        MapWarning::BlockmapListDangling {
+            block: 0,
             index: 7,
-            count: 2,
-            ..
+            count: 2
         }
-    )));
+    ));
+}
+
+#[test]
+fn blockmap_first_defect_at_later_block_names_that_block() {
+    // 2×1 grid: block 0's list is healthy ({0} with a leading-0 delimiter),
+    // block 1's list ({7}) dangles past the 2-linedef arena. The scan runs
+    // in block index order, so the single warning (and the strict error)
+    // must name block 1's defect — a healthy earlier block never masks or
+    // misattributes a later defect.
+    let bytes = words_to_bytes(&[0, 0, 2, 1, 6, 9, 0, 0, 0xFFFF, 7, 0xFFFF]);
+    let mut warnings = Vec::new();
+    assert!(matches!(
+        MapBlockmap::parse(&bytes, 2, Strictness::Strict, &mut warnings).unwrap_err(),
+        MapAssembleError::DanglingReference {
+            referent: "linedef",
+            index: 7,
+            from: "blockmap block",
+            count: 2
+        }
+    ));
+    let mut warnings = Vec::new();
+    let parsed = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings).unwrap();
+    assert!(parsed.is_none());
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(
+        warnings[0],
+        MapWarning::BlockmapListDangling {
+            block: 1,
+            index: 7,
+            count: 2
+        }
+    ));
 }
 
 #[test]
@@ -513,6 +550,94 @@ fn assembly_strict_surfaces_reject_error_lenient_recovers() {
 }
 
 #[test]
+fn assembly_degenerate_blockmap_strict_errors_lenient_discards_whole_lump() {
+    use crustywad::ParseOptions;
+    // Oversized-map emulation (#422): node builders emit degenerate
+    // blockmaps once a map outgrows the lump's 16-bit offsets; the
+    // observable symptom is a list entry past the linedef arena. Strict
+    // assembly fails the map; lenient assembles it with the blockmap
+    // dropped and exactly one warning — never a partially-kept blockmap.
+    let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 9, 0xFFFF]);
+    let wad = classic_map_with(&[], &blockmap);
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(matches!(
+        Map::assemble(&wad, &group).unwrap_err(),
+        MapAssembleError::DanglingReference {
+            referent: "linedef",
+            index: 9,
+            from: "blockmap block",
+            count: 1
+        }
+    ));
+    let map = Map::assemble_with_options(&wad, &group, ParseOptions::lenient()).unwrap();
+    assert!(map.blockmap().is_none());
+    assert_eq!(map.warnings().len(), 1);
+    assert!(matches!(
+        map.warnings()[0],
+        MapWarning::BlockmapListDangling {
+            block: 0,
+            index: 9,
+            count: 1
+        }
+    ));
+}
+
+#[test]
+fn blockmap_healthy_lump_lenient_keeps_it_with_zero_warnings() {
+    // The other half of the discard contract (#422): a blockmap is kept
+    // only when every block decodes cleanly, and a kept blockmap never
+    // warns.
+    let mut warnings = Vec::new();
+    let bm = MapBlockmap::parse(
+        &shared_list_blockmap(),
+        1,
+        Strictness::Lenient,
+        &mut warnings,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(bm.block(0, 0), Some(&[LinedefIdx(0)][..]));
+}
+
+#[test]
+fn without_lumps_drops_named_lump_for_strict_clean_assembly() {
+    // A malformed BLOCKMAP (3-word header) that strict-fails assembly —
+    // until the consumer opts out of the lump it never reads (#422).
+    let wad = classic_map_with(&[0b0000_0001], &words_to_bytes(&[0, 0, 1]));
+    let group = wad.map_group("MAP01").unwrap();
+    assert!(Map::assemble(&wad, &group).is_err());
+
+    let filtered = group.without_lumps(&wad, &["BLOCKMAP"]);
+    let map = Map::assemble(&wad, &filtered).unwrap();
+    assert!(map.blockmap().is_none());
+    assert!(map.reject().is_some(), "unnamed lumps stay in the group");
+    assert!(map.warnings().is_empty(), "an absent BLOCKMAP never warns");
+}
+
+#[test]
+fn without_lumps_multiple_and_unknown_names() {
+    let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
+    let wad = classic_map_with(&[0b0000_0001], &blockmap);
+    let group = wad.map_group("MAP01").unwrap();
+    let filtered = group.without_lumps(&wad, &["BLOCKMAP", "REJECT", "NOSUCH"]);
+    assert_eq!(filtered.marker_index, group.marker_index);
+    assert_eq!(filtered.name, group.name);
+    assert_eq!(filtered.data_indices.len(), group.data_indices.len() - 2);
+    let map = Map::assemble(&wad, &filtered).unwrap();
+    assert!(map.blockmap().is_none());
+    assert!(map.reject().is_none());
+    assert!(map.warnings().is_empty());
+}
+
+#[test]
+fn without_lumps_empty_names_is_identity() {
+    let wad = classic_map_with(&[], &[]);
+    let group = wad.map_group("MAP01").unwrap();
+    assert_eq!(group.without_lumps(&wad, &[]), group);
+}
+
+#[test]
 fn doom64_nested_reject_and_blockmap_are_decoded() {
     let blockmap = words_to_bytes(&[0, 0, 1, 1, 5, 0, 0, 0xFFFF]);
     let bytes = common::build_doom64_map_wad_full(
@@ -638,7 +763,7 @@ fn blockmap_list_ends_exactly_at_lump_end_after_delimiter() {
     // Block 0's list is just the leading-0 delimiter, positioned as the
     // lump's very last word: after skipping it, `start == words.len()`,
     // so no terminator can possibly follow. Strict mode errors; lenient
-    // mode recovers to an empty block.
+    // mode discards the whole blockmap (#422).
     let bytes = words_to_bytes(&[0, 0, 1, 1, 5, 0]);
     let mut warnings = Vec::new();
     assert!(matches!(
@@ -646,10 +771,11 @@ fn blockmap_list_ends_exactly_at_lump_end_after_delimiter() {
         MapAssembleError::UnterminatedBlockmapList { block: 0 }
     ));
     let mut warnings = Vec::new();
-    let bm = MapBlockmap::parse(&bytes, 1, Strictness::Lenient, &mut warnings)
-        .unwrap()
-        .unwrap();
-    assert_eq!(bm.block(0, 0), Some(&[][..]));
+    let parsed = MapBlockmap::parse(&bytes, 1, Strictness::Lenient, &mut warnings).unwrap();
+    assert!(
+        parsed.is_none(),
+        "defective blockmap is discarded, not patched"
+    );
     assert_eq!(warnings.len(), 1);
     assert!(matches!(
         warnings[0],

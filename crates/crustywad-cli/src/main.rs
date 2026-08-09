@@ -633,8 +633,8 @@ fn patch_udmf_group_znodes(
     effective_format: crustywad::map::build::NodeFormat,
     lenient: bool,
 ) -> Result<(), i32> {
+    use crustywad::map::Map;
     use crustywad::map::build::{NodeFormat, build_gl_nodes, build_nodes};
-    use crustywad::map::{Map, MapGroup};
 
     // UDMF groups are patched in place: assemble only to
     // build the node stream, then re-emit the group's own
@@ -658,16 +658,7 @@ fn patch_udmf_group_znodes(
     // an element, the emitted ZNODES would desync from
     // the untouched TEXTMAP and this path would need to
     // re-serialize the map instead.
-    let assemble_group = MapGroup {
-        marker_index: group.marker_index,
-        name: group.name.clone(),
-        data_indices: group
-            .data_indices
-            .iter()
-            .copied()
-            .filter(|&idx| wad.lumps()[idx].name() != "ZNODES")
-            .collect(),
-    };
+    let assemble_group = group.without_lumps(wad, &["ZNODES"]);
     let map = match Map::assemble_with_options(wad, &assemble_group, parse_opts) {
         Ok(m) => m,
         Err(e) => {
@@ -778,10 +769,10 @@ fn patch_hexen_group_nodes(
     build_opts: &crustywad::map::build::NodeBuildOptions,
     lenient: bool,
 ) -> Result<(), i32> {
+    use crustywad::map::Map;
     use crustywad::map::build::{
         NodeFormat, build_blockmap, build_gl_nodes, build_nodes, build_reject,
     };
-    use crustywad::map::{Map, MapGroup};
 
     /// The five node lumps this splice always rebuilds. All are excluded from
     /// assembly (below) and re-emitted from the fresh build, so a corrupt one in
@@ -820,16 +811,7 @@ fn patch_hexen_group_nodes(
 
     // Assemble only the geometry: exclude the five rebuilt node lumps so a
     // corrupt/garbage one never blocks the rebuild that is about to replace it.
-    let assemble_group = MapGroup {
-        marker_index: group.marker_index,
-        name: group.name.clone(),
-        data_indices: group
-            .data_indices
-            .iter()
-            .copied()
-            .filter(|&idx| !REBUILT.contains(&wad.lumps()[idx].name()))
-            .collect(),
-    };
+    let assemble_group = group.without_lumps(wad, REBUILT);
     let map = match Map::assemble_with_options(wad, &assemble_group, parse_opts) {
         Ok(m) => m,
         Err(e) => {

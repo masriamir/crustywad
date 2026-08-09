@@ -140,6 +140,8 @@ lumps within the flat directory; `Map::assemble` (strict) and `Map::assemble_wit
 (honors `ParseOptions::strictness`) build the graph. See
 [Map Record Parsing](https://crustywad.dev/map-records.html) in the guide for the full API,
 including lenient-mode dangling-reference handling and the one-sided-line sentinel.
+`MapGroup::without_lumps` returns a filtered copy of a group for assembling while skipping lumps a
+consumer never reads (e.g. `BLOCKMAP`/`REJECT`).
 Marker-delimited directory sections (`F_START`/`S_START`/… incl. nested sub-namespaces and
 Boom aliases) enumerate via `Wad::sections()`.
 
