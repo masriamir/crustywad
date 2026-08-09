@@ -337,7 +337,7 @@ All work branches from `main` after a `git pull`. A branch is named `<type>/<slu
 
 `###` is the GitHub issue number. It is optional in the pre-push hook but strongly encouraged for `feature`/`bugfix`/`hotfix` branches, which are issue-driven; `docs`/`chore` branches commonly omit it. A descriptive slug is always required — a bare number such as `feature/42` is rejected.
 
-**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`vX.Y.Z`) from Conventional Commits on `main`. When publishing is enabled, merge the `release-plz` release PR to ship.
+**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`crustywad-v*` / `crustywad-cli-v*`) from Conventional Commits on `main`. Merge the `release-plz` release PR to ship.
 
 The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes from non-conforming branches.
 
