@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-fb4fa84c.js";
+            window.path_to_searchindex_js = "searchindex-0482942e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eed51aa7.js"></script>
@@ -3515,9 +3515,9 @@ each crate carries its own explicit <code>version</code> field in its <code>[pac
 inheriting from <code>[workspace.package]</code>. <code>release-plz</code> manages each package independently,
 proposing version bumps only for crates whose content has changed since the last release.</p>
 <p><strong>Dependency constraint:</strong> <code>crates/crustywad-cli/Cargo.toml</code> pins the library with an explicit
-caret requirement (currently <code>crustywad = { version = "0.9.0", ... }</code>), required by
+caret requirement (currently <code>crustywad = { version = "0.9.5", ... }</code>), required by
 <code>cargo-deny</code>’s <code>wildcards = "deny"</code> setting (which disallows <code>*</code> version requirements).
-<code>version = "0.9.0"</code> resolves as <code>^0.9.0</code> (<code>&gt;=0.9.0, &lt;0.10.0</code>), so patch bumps to <code>crustywad</code>
+<code>version = "0.9.5"</code> resolves as <code>^0.9.5</code> (<code>&gt;=0.9.5, &lt;0.10.0</code>), so patch bumps to <code>crustywad</code>
 within the same minor series are satisfied automatically. When <code>crustywad</code>’s version moves
 outside that range (e.g., to <code>0.10.0</code>), this field must be updated manually before merging —
 otherwise <code>cargo build</code> and crates.io publishing will fail.</p>
@@ -3538,30 +3538,38 @@ and an updated <code>CHANGELOG.md</code>. Breaking changes must be marked (<code
 against the previously published version (<code>semver_check</code> in <code>release-plz.toml</code>) so
 unmarked API breakage still produces the required minor bump rather than a patch.</li>
 <li>The maintainer reviews and merges the release PR.</li>
-<li>Once publishing is enabled, <code>release-plz</code> runs <code>cargo publish</code> automatically after the
-release PR merges, in dependency order (<code>crustywad</code> before <code>crustywad-cli</code>).</li>
+<li><code>release-plz</code> runs <code>cargo publish</code> automatically after the release PR merges, in dependency
+order (<code>crustywad</code> before <code>crustywad-cli</code>), and pushes the <code>crustywad-v*</code> /
+<code>crustywad-cli-v*</code> tags.</li>
 </ol>
 <p>There is no fixed release schedule. Releases happen when meaningful changes have
 accumulated. The <code>release-plz</code> release PR is the signal that a release is ready.</p>
-<p><strong>Publishing status:</strong> Publishing to crates.io is currently disabled while credentials and
-release infrastructure are being finalized (see
+<p><strong>Publishing status:</strong> Both crates publish to crates.io automatically, authenticated by
+<a href="https://crates.io/docs/trusted-publishing">Trusted Publishing</a> (OIDC — no stored registry
+token). <code>release-plz</code> does not create GitHub Releases; the cross-platform <code>cwad</code> binaries and
+installers are published separately by <a href="https://opensource.axo.dev/cargo-dist/">dist</a> off the
+<code>crustywad-cli-v*</code> tag. See
 <a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md">ADR-0011</a>
-for the full publish workflow design).</p>
+for the full publish workflow design.</p>
 <hr>
 <h2 id="version-compatibility-table"><a class="header" href="#version-compatibility-table">Version Compatibility Table</a></h2>
+<p>Both regimes are shown side by side — while at <code>0.y.z</code> the
+<a href="#pre-10-version-mapping-current">pre-1.0 mapping</a> collapses the canonical three channels into
+two, so the same change bumps a different level before and after <code>1.0.0</code>.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Scenario</th><th>Patch</th><th>Minor</th><th>Major</th></tr>
+<tr><th>Scenario</th><th>Bump while at 0.x (current)</th><th>Bump at 1.0+</th></tr>
 </thead>
 <tbody>
-<tr><td>Bug fix, no API change</td><td>yes</td><td></td><td></td></tr>
-<tr><td>New public type or function</td><td></td><td>yes</td><td></td></tr>
-<tr><td>New optional feature flag</td><td></td><td>yes</td><td></td></tr>
-<tr><td>MSRV raised</td><td></td><td>yes</td><td></td></tr>
-<tr><td>Public type removed or renamed</td><td></td><td></td><td>yes</td></tr>
-<tr><td>Function signature changed</td><td></td><td></td><td>yes</td></tr>
-<tr><td>Exhaustive enum variant added</td><td></td><td></td><td>yes</td></tr>
+<tr><td>Bug fix, no API change</td><td>patch</td><td>patch</td></tr>
+<tr><td>New public type or function</td><td><strong>patch</strong></td><td>minor</td></tr>
+<tr><td>New optional feature flag</td><td><strong>patch</strong></td><td>minor</td></tr>
+<tr><td><code>#[non_exhaustive]</code> enum variant added</td><td><strong>patch</strong></td><td>minor</td></tr>
+<tr><td>MSRV raised</td><td>minor</td><td>minor</td></tr>
+<tr><td>Public type removed or renamed</td><td><strong>minor</strong></td><td>major</td></tr>
+<tr><td>Function signature changed</td><td><strong>minor</strong></td><td>major</td></tr>
+<tr><td>Exhaustive enum variant added</td><td><strong>minor</strong></td><td>major</td></tr>
 </tbody>
 </table>
 </div>
