@@ -343,6 +343,38 @@ fn blockmap_aliased_invalid_lists_discard_once_with_single_warning() {
 }
 
 #[test]
+fn blockmap_first_defect_at_later_block_names_that_block() {
+    // 2×1 grid: block 0's list is healthy ({0} with a leading-0 delimiter),
+    // block 1's list ({7}) dangles past the 2-linedef arena. The scan runs
+    // in block index order, so the single warning (and the strict error)
+    // must name block 1's defect — a healthy earlier block never masks or
+    // misattributes a later defect.
+    let bytes = words_to_bytes(&[0, 0, 2, 1, 6, 9, 0, 0, 0xFFFF, 7, 0xFFFF]);
+    let mut warnings = Vec::new();
+    assert!(matches!(
+        MapBlockmap::parse(&bytes, 2, Strictness::Strict, &mut warnings).unwrap_err(),
+        MapAssembleError::DanglingReference {
+            referent: "linedef",
+            index: 7,
+            from: "blockmap block",
+            count: 2
+        }
+    ));
+    let mut warnings = Vec::new();
+    let parsed = MapBlockmap::parse(&bytes, 2, Strictness::Lenient, &mut warnings).unwrap();
+    assert!(parsed.is_none());
+    assert_eq!(warnings.len(), 1);
+    assert!(matches!(
+        warnings[0],
+        MapWarning::BlockmapListDangling {
+            block: 1,
+            index: 7,
+            count: 2
+        }
+    ));
+}
+
+#[test]
 fn blockmap_block_at_maps_coordinates_through_128_unit_grid() {
     let mut warnings = Vec::new();
     let bm = MapBlockmap::parse(
