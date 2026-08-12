@@ -119,7 +119,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-zip = "2"             # verify version and API surface per §2
+zip = "8"             # spike-pinned major (§2, §5.2); verify accessor names at #406
 ```
 
 **Rationale for isolation:** the harvester needs `reqwest`, `tokio`, and `zip`.
