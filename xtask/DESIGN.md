@@ -281,9 +281,10 @@ Fields expected in a listing record (the §2 spike records the actual set —
 
 ### 4.4 Deserialization gotchas
 
-**Single-element collections.** The API is PHP-backed and serializes a
-one-element list as a bare object rather than a one-element array. Both
-`content.file` and `content.dir` are affected:
+**Single-element collections.** The API is PHP-backed and — per the
+third-party client this spec was reconstructed from — **may** serialize a
+one-element list as a bare object rather than a one-element array,
+potentially affecting both `content.file` and `content.dir`:
 
 ```rust
 #[derive(Deserialize)]
