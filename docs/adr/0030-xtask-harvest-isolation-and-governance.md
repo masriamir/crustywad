@@ -117,9 +117,10 @@ untrusted bytes.
   email-shaped field is cheap and belongs in phase 1.
 - `ls-laR.gz`-first cuts phase 1 from a BFS crawl to ≤462 metadata calls
   (≈8 minutes at 1 req/s) and gives phase 2 a free per-file consistency
-  check (API `size` vs listing size). Phase-2 ranged reads over
-  `levels/doom*` are ~35k requests ≈10 polite hours — resumable by design,
-  spread over sessions.
+  check (API `size` vs listing size). Phase-2 ranged reads follow the DESIGN
+  doc's §5.4 concurrency policy (4–8 connections against a mirror — the 1
+  req/s invariant binds the API, not mirror payload reads): ~35k requests
+  for `levels/doom*`, well under an hour, resumable by design.
 - Mirror health is a monitored assumption, not a constant: the spike killed
   two of the draft's mirrors, so the tool records per-mirror failures and
   the DESIGN doc's §5.1 pool is expected to change over the years.
