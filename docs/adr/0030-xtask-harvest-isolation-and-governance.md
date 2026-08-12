@@ -65,9 +65,11 @@ untrusted bytes.
    shape.
 
 3. **Data governance is fetch-and-drop, not fetch-nothing.** `email` is
-   dropped at deserialization — the record struct has no field for it — so it
-   exists only in the transient HTTP response body and never reaches any
-   output. `description` (author-published content, not PII) is retained.
+   dropped at deserialization — the record struct has no field for it — and
+   the response cache scrubs `email` fields from bodies at write time (with
+   `body_hash` computed over the scrubbed body), so `email` exists only in
+   the transient HTTP response and reaches neither the outputs nor the
+   on-disk cache. `description` (author-published content, not PII) is retained.
    All harvest output lives under gitignored `xtask/data/`; nothing generated
    is ever committed. Publishing remains deferred; if outputs are ever
    published, only the PII-free trio ships (`sweep-corpus.jsonl`,

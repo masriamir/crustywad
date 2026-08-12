@@ -331,6 +331,13 @@ Cache entry envelope:
 }
 ```
 
+**Cached bodies are email-scrubbed at write time** (§4.7): the raw response
+is never persisted verbatim — `email` fields are removed from the body before
+the cache entry is written, and `body_hash` is computed over the *scrubbed*
+body. A change only in an email field therefore goes undetected, which is
+immaterial: the hash exists to invalidate Phase 2 when a directory's file
+list or sizes move, and email cannot affect either.
+
 `body_hash` is **change detection, not keying**. On a TTL-triggered refetch,
 compare the new hash against the stored one: unchanged means you can skip
 invalidating the dependent Phase 2 results for that directory; changed means the
@@ -365,8 +372,8 @@ This makes the common rerun cost one HTTP request.
   is enforced by the request rate, not the UA.
 - **Backoff:** exponential with jitter on `429` and `5xx`, capped at ~5 minutes,
   max 6 attempts. Then record the failure and continue — do not abort the run.
-- **Resumability:** every response is cached on arrival, so an interrupted run
-  resumes for free. The BFS frontier should also be checkpointed so a resume
+- **Resumability:** every response is cached on arrival (email-scrubbed at
+  write, §4.5/§4.7), so an interrupted run resumes for free. The BFS frontier should also be checkpointed so a resume
   doesn't re-derive it.
 - **Failure ledger:** write unresolvable failures to `data/harvest-errors.jsonl`
   with path, status, and attempt count. A silent partial harvest is worse than a
@@ -383,10 +390,11 @@ line. All `data/` paths in this spec live at `xtask/data/`, which is
 
 **PII policy — fetch-and-drop (corrected by the §2 spike):** `email` arrives
 in every `getcontents` listing record whether wanted or not, so elimination
-at the source is impossible. Instead, `email` is **dropped at
-deserialization** — the record struct simply has no field for it — so it
-never touches disk in any output. `textfile` and `reviews` genuinely never
-arrive in listings. If a future phase needs textfile-derived fields, it gets
+at the source is impossible. Instead, `email` is dropped on **both** disk-touching paths: the record
+struct has no field for it (so no output can carry it), and the §4.5
+response cache scrubs `email` fields from bodies at write time (so the
+cache cannot carry it either — raw responses are never persisted verbatim).
+`textfile` and `reviews` genuinely never arrive in listings. If a future phase needs textfile-derived fields, it gets
 its own opt-in fetch pass with its own PII handling.
 
 **Publishing is deferred.** This is an internal tool. If outputs are ever
@@ -569,7 +577,7 @@ Every one of these is a data point that feeds a §8 limit:
     }
   ],
   "other_members": ["EXAMPLE.TXT", "README.MD"],
-  "mirror": "quaddicted",
+  "mirror": "infania",
   "fetch_status": "ok"
 }
 ```
@@ -601,7 +609,8 @@ constants.
 ### 6.2 Segmentations
 
 - By top-level bucket: `levels/doom`, `levels/doom2`, `levels/heretic`,
-  `levels/hexen`, `themes/`, `ports/`
+  `levels/hexen`, `themes/`, and the per-game `levels/*/Ports/` subtrees
+  (there is no top-level `ports/` — §4.2)
 - By year, from `date` — UDMF and compressed nodes are post-2005 phenomena and
   the distribution shifts hard over time
 - **Vote-weighted** — the size profile of *popular* files, a far better predictor
@@ -807,8 +816,11 @@ a hand-verified uncompressed size.
   in the failure ledger with reasons.
 - A second run with a warm cache and no archive changes makes exactly one HTTP
   request (the `latestfiles` probe).
-- No `email`, `textfile`, or `reviews` data appears anywhere in the output or
-  cache (structurally guaranteed — never fetched; assert anyway).
+- No `email` data appears anywhere in the output or cache (`email` arrives
+  in listings but is dropped at deserialization and scrubbed from cached
+  bodies at write — §4.5/§4.7); `textfile`/`reviews` never arrive in
+  listings at all. A schema test asserts no email-shaped field in any
+  output; a cache test asserts a stored body carries none.
 - `harvest-manifest.json` is present and complete.
 
 **Phase 2 complete when:**
