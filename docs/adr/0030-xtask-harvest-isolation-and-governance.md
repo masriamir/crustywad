@@ -69,11 +69,15 @@ untrusted bytes.
    the response cache scrubs `email` fields from bodies at write time (with
    `body_hash` computed over the scrubbed body), so `email` exists only in
    the transient HTTP response and reaches neither the outputs nor the
-   on-disk cache. `description` (author-published content, not PII) is retained.
-   All harvest output lives under gitignored `xtask/data/`; nothing generated
-   is ever committed. Publishing remains deferred; if outputs are ever
-   published, only the PII-free trio ships (`sweep-corpus.jsonl`,
-   `stats.json`, `stats-report.md`), per `xtask/DESIGN.md` §4.7.
+   on-disk cache. `description` is retained in local outputs for its metadata
+   value — but as author-supplied free text it may itself embed personal
+   data (addresses, emails), so it is treated as untrusted text, never
+   asserted PII-free. All harvest output lives under gitignored
+   `xtask/data/`; nothing generated is ever committed. Publishing remains
+   deferred; if outputs are ever published, only the PII-free trio ships
+   (`sweep-corpus.jsonl`, `stats.json`, `stats-report.md`), and no
+   free-text field — `description` included — may appear in any of the
+   three, per `xtask/DESIGN.md` §4.7.
 
 4. **Politeness is a design invariant, not a tuning knob.** One request per
    second on a single connection against the API (a shared, volunteer-run PHP
