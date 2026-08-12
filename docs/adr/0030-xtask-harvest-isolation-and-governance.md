@@ -48,7 +48,7 @@ untrusted bytes.
    badges. The audit hole isolation opens is closed the same way `fuzz/`
    closes it: a committed `xtask/Cargo.lock`, a `/xtask` cargo stanza in
    `.github/dependabot.yml` mirroring `/fuzz`'s, and a path-gated CI job
-   (triggering on `xtask/**`) that builds, tests, and runs `cargo deny` for
+   (triggering on `xtask/**`) that builds, tests, and runs `cargo deny check` for
    the xtask workspace.
 
 2. **The harvest architecture is `ls-laR.gz`-first.** One request to a
