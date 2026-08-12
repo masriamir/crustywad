@@ -25,7 +25,31 @@ listing call, trailing-slash requirement, PII field arrival, empty-collection
 shape, mirror list) — so the body text now reflects observed behavior, not
 the second-hand reconstruction.
 
-### §2 Verification checklist
+---
+
+## 1. Goals and non-goals
+
+### Goals
+
+1. Produce a complete, machine-readable manifest of every map-bearing entry in the
+   /idgames archive, with **true uncompressed WAD sizes**, without downloading
+   archive payloads.
+2. Derive the size and format statistics needed to set defensible upload limits
+   for the crustywad web UI.
+3. Emit a corpus manifest usable as a fetch list for `sweep-tests`
+   (`CRUSTYWAD_SWEEP_DIR`) and as `cargo-fuzz` seed material.
+
+### Non-goals
+
+- Downloading or mirroring the archive. Phase 2 reads zip metadata only.
+- Any change to the `crustywad` or `crustywad-cli` public API.
+- Implementing the web UI. §8 specifies the limits the UI must enforce; building
+  it is separate work.
+- pk3/pk7 support. Tracked as an open item in §10.
+
+---
+
+## 2. Verification checklist
 
 **Spike run 2026-08-12 (issue #402 carries the full probe record). Every item
 below is resolved; corrections are folded into the body sections they affect.**
@@ -67,28 +91,6 @@ Verified before implementing Phase 2:
 - [x] `zip` crate — pin major **8** (8.6.0 stable as of the spike; 9.0 is
       pre-release); accessor-name verification against 8.x docs happens at
       #406 implementation time (§5.2).
-
----
-
-## 1. Goals and non-goals
-
-### Goals
-
-1. Produce a complete, machine-readable manifest of every map-bearing entry in the
-   /idgames archive, with **true uncompressed WAD sizes**, without downloading
-   archive payloads.
-2. Derive the size and format statistics needed to set defensible upload limits
-   for the crustywad web UI.
-3. Emit a corpus manifest usable as a fetch list for `sweep-tests`
-   (`CRUSTYWAD_SWEEP_DIR`) and as `cargo-fuzz` seed material.
-
-### Non-goals
-
-- Downloading or mirroring the archive. Phase 2 reads zip metadata only.
-- Any change to the `crustywad` or `crustywad-cli` public API.
-- Implementing the web UI. §8 specifies the limits the UI must enforce; building
-  it is separate work.
-- pk3/pk7 support. Tracked as an open item in §10.
 
 ---
 
