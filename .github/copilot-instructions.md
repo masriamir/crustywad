@@ -102,7 +102,7 @@ cargo doc --workspace --all-features --no-deps
 - Every public function that can fail returns `Result<_, ErrorType>` with full doc comments on the `# Errors` section.
 
 ### Language
-- American English spelling everywhere — not only documentation, but identifiers, code comments, doc comments, CLI output and commit messages. Take the American form of every `-ise`/`-ize`, `-our`/`-or`, `-re`/`-er` and `-ae`/`-e` pair: `initialize`, `honor`, `center`, `artifact`, `color`, `behavior`, `analyze`.
+- American English spelling everywhere — not only documentation, but identifiers, code comments, doc comments, CLI output, commit messages and PR text. Take the American form of every `-ise`/`-ize`, `-our`/`-or`, `-re`/`-er` and `-ae`/`-e` pair: `initialize`, `honor`, `center`, `artifact`, `color`, `behavior`, `analyze`.
 - Third-party vocabulary is exempt: GitHub Actions' job status literal is `cancelled`. Status values, API fields and dependency identifiers are quoted, never corrected.
 
 ### Documentation
