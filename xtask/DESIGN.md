@@ -211,7 +211,11 @@ containing `meta` (with a `version` integer) and `content`. Errors wrap as
 
 ### 4.2 Traversal roots
 
-BFS with `action=getcontents`. **Scope decision: everything map-bearing.**
+**Enumeration is `ls-laR.gz`-first (§5.0):** the mirror bootstrap yields the
+full tree in one request, and Phase 1's `getcontents` calls are **metadata
+enrichment** — one call per in-scope directory from that tree. BFS discovery
+via `getcontents` is the explicit fallback only if the bootstrap is
+unavailable on every §5.1 mirror. **Scope decision: everything map-bearing.**
 The real top level (spike-verified via `getdirs`, 2026-08-12): `levels/`,
 `utils/`, `prefabs/`, `combos/`, `themes/`, `skins/`, `idstuff/`, `music/`,
 `graphics/`, `deathmatch/`, `docs/`, `sounds/`, `source/`, `lmps/`, `misc/`,
@@ -235,8 +239,9 @@ top-level `ports/`** — the pre-spike draft listed one; it does not exist.
 unanticipated roots the spike surfaced; inspect their contents and record
 the include/skip call here.
 
-`action=search` is capped and will not enumerate exhaustively. `getcontents` is
-the only reliable traversal.
+`action=search` is capped and will not enumerate exhaustively. On the API
+side, `getcontents` is the only reliable traversal — but the primary
+exhaustive enumeration is the §5.0 `ls-laR.gz` bootstrap, not an API walk.
 
 ### 4.3 File record fields
 
