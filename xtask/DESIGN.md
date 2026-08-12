@@ -168,12 +168,12 @@ Do not add `xtask` to the default lint/test jobs. Instead:
 ```
 xtask/src/
   main.rs           # clap dispatch
-  cache.rs          # §4.4 disk cache with tiered TTL
+  cache.rs          # §4.5 disk cache with tiered TTL, email-scrubbed bodies
   api/
     mod.rs
     client.rs       # rate-limited API client, backoff
     model.rs        # FileRecord, OneOrMany, response envelopes
-    traverse.rs     # §4.3 BFS
+    traverse.rs     # §4.2 enrichment walk over the §5.0 tree (BFS fallback)
   zips/
     mod.rs
     range_reader.rs # §5.2 Read + Seek over HTTP ranges
@@ -182,7 +182,7 @@ xtask/src/
     mod.rs
     percentiles.rs
     report.rs
-  schema.rs         # output record types (§4.6, §5.5, §6.4)
+  schema.rs         # output record types (§4.7, §5.6, §6.5)
 ```
 
 ---
