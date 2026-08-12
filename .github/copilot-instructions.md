@@ -101,8 +101,11 @@ cargo doc --workspace --all-features --no-deps
 - `anyhow` is permitted only in the CLI binary (`crustywad-cli`).
 - Every public function that can fail returns `Result<_, ErrorType>` with full doc comments on the `# Errors` section.
 
+### Language
+- American English spelling everywhere — not only documentation, but identifiers, code comments, doc comments, CLI output and commit messages. Take the American form of every `-ise`/`-ize`, `-our`/`-or`, `-re`/`-er` and `-ae`/`-e` pair: `initialize`, `honor`, `center`, `artifact`, `color`, `behavior`, `analyze`.
+- Third-party vocabulary is exempt: GitHub Actions' job status literal is `cancelled`. Status values, API fields and dependency identifiers are quoted, never corrected.
+
 ### Documentation
-- All documentation uses American English spelling (e.g. "artifacts" not "artefacts", "customization" not "customisation").
 - `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
 - Use `///` for item-level docs and `//!` for module-level docs.
 - Include `# Errors` sections in doc comments for fallible functions.
@@ -125,7 +128,7 @@ cargo doc --workspace --all-features --no-deps
 - Parsing is controlled by `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient, limits: Limits }` (`limits` bounds UDMF text nesting depth; ignored by binary paths).
 - Strict mode returns the first `ParseError` it encounters.
 - Lenient mode attempts best-effort recovery and collects `ParseWarning` values.
-- New validation logic must honour both modes.
+- New validation logic must honor both modes.
 
 ## Testing practices
 

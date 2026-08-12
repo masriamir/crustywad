@@ -113,6 +113,13 @@ CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" cargo test --workspace --a
 
 ## Code conventions
 
+### Language
+
+- **American English spelling everywhere** — not only documentation: identifiers, code comments, doc comments, CLI output, commit messages and PR text. Take the American form of every `-ise`/`-ize`, `-our`/`-or`, `-re`/`-er` and `-ae`/`-e` pair: `initialize`, `honor`, `center`, `artifact`, `color`, `behavior`, `analyze`.
+- **Check spelling as you write, not only when reviewing.** Until 2026-08-12 this rule covered documentation alone, and the repo still accumulated a dozen violations — one in this very file, and one in a workflow comment using the exact form the old rule named as wrong.
+- **Third-party vocabulary keeps its own spelling.** GitHub Actions' job status literal is `cancelled`; a status value, API field or dependency identifier is quoted, never corrected. The rule governs our words, not other people's.
+- **Sweeping for this is not a plain find-and-replace**, and this section is the proof: a rule that lists counter-examples necessarily contains the spellings it forbids, so the first sweep of this repo corrupted it into `"honor" not "honor"`. Skip backticked code spans, and state the *pattern* rather than quoting the wrong word — which is why the first bullet reads as it does.
+
 ### Error handling
 
 - All errors in the library crate use `thiserror`-derived enums: `ParseError` and `MapParseError`.
@@ -122,7 +129,6 @@ CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" cargo test --workspace --a
 
 ### Documentation
 
-- All documentation uses American English spelling (e.g. "artifacts" not "artefacts", "customization" not "customisation").
 - `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
 - Use `//!` for module-level docs, `///` for item-level docs.
 - Include `# Errors` in doc comments for fallible functions, `# Panics` where relevant.
@@ -149,7 +155,7 @@ CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" cargo test --workspace --a
 - `ParseOptions { strictness: Strictness::Strict | Strictness::Lenient, limits: Limits }` (`limits` bounds UDMF text nesting depth; ignored by binary paths).
 - Strict mode returns the first `ParseError` encountered.
 - Lenient mode attempts best-effort recovery and collects `ParseWarning` values.
-- Every new validation must honour both modes.
+- Every new validation must honor both modes.
 
 
 ## Testing practices

@@ -117,15 +117,15 @@ fn sector() -> Vec<u8> {
 // --- Extended-node stream fixtures (consistent with the square map). ---
 
 /// An `XNOD` stream over the square: 4 original vertices, 1 node-builder-added
-/// vertex (the centre), 1 subsector of 2 explicit-`v2` segs, and 1 node whose
-/// two children are that subsector. Seg 1's `v2` is the added centre vertex, so
+/// vertex (the center), 1 subsector of 2 explicit-`v2` segs, and 1 node whose
+/// two children are that subsector. Seg 1's `v2` is the added center vertex, so
 /// decoding it exercises the combined (existing + new) vertex arena.
 fn xnod_stream() -> Vec<u8> {
     Buf::default()
         .tag(*b"XNOD")
         .u32(4) // origVerts
         .u32(1) // newVerts
-        // new vertex 4: centre (32, 32) in 16.16 fixed-point
+        // new vertex 4: center (32, 32) in 16.16 fixed-point
         .i32(32 * 65536)
         .i32(32 * 65536)
         .u32(1) // numSubsectors
@@ -136,7 +136,7 @@ fn xnod_stream() -> Vec<u8> {
         .u32(1)
         .u16(0)
         .u8(0)
-        // seg1: v1=1, v2=4 (the new centre vertex), line=1, side=0
+        // seg1: v1=1, v2=4 (the new center vertex), line=1, side=0
         .u32(1)
         .u32(4)
         .u16(1)
@@ -247,7 +247,7 @@ fn xnod_nodes_lump_decodes_on_the_binary_path() {
         assert_eq!(map.nodes().len(), 1);
         // Root is the last node (crate convention).
         assert_eq!(map.bsp_root(), Some(crustywad::map::NodeIdx(0)));
-        // seg1's explicit v2 is the appended centre vertex (index 4).
+        // seg1's explicit v2 is the appended center vertex (index 4).
         assert_eq!(map.segs()[1].end, crustywad::map::VertexIdx(4));
         // XNOD has no minisegs: every seg is linedef-backed.
         assert!(map.segs().iter().all(|s| s.linedef.is_some()));
@@ -556,7 +556,7 @@ fn corrupt_zgl3_znodes_lump_errors_through_the_udmf_dispatch() {
 // round-trips through the reader, the full `build_nodes` chain, ZNOD, and a
 // build->write->read proptest (#323 Task 5). ---
 
-/// The `BuiltNodes` equivalent of `xnod_stream()`: 1 split vertex (centre), 1
+/// The `BuiltNodes` equivalent of `xnod_stream()`: 1 split vertex (center), 1
 /// subsector of 2 segs, 1 node with both children subsector 0. Angle/offset are
 /// arbitrary — XNOD stores neither.
 #[cfg(feature = "nodebuild")]
