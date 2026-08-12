@@ -464,7 +464,9 @@ with a small cache, and hand it to `zip::ZipArchive::new`. The crate handles
 central directory parsing including ZIP64 correctly, and a caching reader
 collapses its access pattern into 2–3 HTTP requests per file:
 
-1. Cache the last 64 KiB of the file — covers the EOCD backward scan.
+1. Cache the last 66 KiB of the file — ≥ the worst-case 65,557-byte EOCD
+   backward-scan window (22-byte record + 65,535-byte max comment, §5.3);
+   a bare 64 KiB tail can miss the signature by up to 21 bytes.
 2. Cache the central directory extent once located.
 
 Then iterate entries and read declared sizes. **No entry data is ever read**, so
