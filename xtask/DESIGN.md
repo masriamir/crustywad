@@ -33,7 +33,8 @@ the second-hand reconstruction.
 
 1. Produce a complete, machine-readable manifest of every map-bearing entry in the
    /idgames archive, with **true uncompressed WAD sizes**, without downloading
-   archive payloads.
+   archive payloads (beyond §5.2's budgeted, circuit-broken full-download
+   fallback for the rare file whose ranges every mirror refuses).
 2. Derive the size and format statistics needed to set defensible upload limits
    for the crustywad web UI.
 3. Emit a corpus manifest usable as a fetch list for `sweep-tests`
@@ -310,7 +311,10 @@ Order the variants `Many` before `One`. ~~Empty directories omit the key
 entirely~~ **Spike correction (2026-08-12): an empty collection arrives as an
 explicit `null`** (`"file":null` / `"dir":null` observed on every leaf/branch
 probe), so wrap in `Option<OneOrMany<T>>` — it covers `null`, a bare object,
-and an array alike — and default to empty. The one-element bare-object quirk
+and an array alike — and default to empty **only after** the §4.1
+suspect-path check: both fields `None` means "suspect path" and must be
+detected on the raw `Option`s, before defaulting erases the distinction
+between "empty collection" and "nothing came back". The one-element bare-object quirk
 itself did **not** reproduce in the spike (probed cardinalities 2, 8, 9, and
 60 all serialize as arrays); keep the defensive `OneOrMany` shape anyway —
 it costs nothing and the PHP backend's behavior is not contractual.
@@ -423,7 +427,7 @@ reproducible. **The manifest is the only output carrying wall-clock timestamps**
 **Command:** `xtask harvest-zips`
 
 **Goal:** the uncompressed size of every `.wad` member of every archive entry,
-without transferring payload bytes.
+without transferring payload bytes (except through §5.2's budgeted fallback).
 
 ### 5.0 `ls-laR.gz` bootstrap (spike-verified, architecture-changing)
 
@@ -471,8 +475,9 @@ collapses its access pattern into 2–3 HTTP requests per file:
    a bare 64 KiB tail can miss the signature by up to 21 bytes.
 2. Cache the central directory extent once located.
 
-Then iterate entries and read declared sizes. **No entry data is ever read**, so
-no payload transfers. Verify these accessors against your pinned `zip` version:
+Then iterate entries and read declared sizes. **On this range path, no entry
+data is ever read**, so no payload transfers (the budgeted full-download
+fallback below is the sole exception). Verify these accessors against your pinned `zip` version:
 uncompressed size, compressed size, compression method, encryption flag, and the
 member name.
 
