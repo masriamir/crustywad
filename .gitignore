@@ -33,6 +33,12 @@ fuzz/corpus/*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*
 /fuzz/artifacts/
 /fuzz/coverage/
 
+# idgames harvest tool (ADR-0030): every output and the response cache live
+# under xtask/data/, and nothing generated is ever committed — the PII
+# posture depends on it. (xtask/Cargo.lock, unlike fuzz's, IS committed:
+# it is a binary tool, and the dependency audit wants the lockfile.)
+/xtask/data/
+
 # mdbook-mermaid generated assets (produced by `mdbook-mermaid install`; generated at build time, not committed)
 docs/guide/mermaid.min.js
 docs/guide/mermaid-init.js

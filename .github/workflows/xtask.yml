@@ -1,0 +1,66 @@
+name: Xtask
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly advisory sweep: xtask-touching PRs may be months apart, and the
+    # root security-deny job never sees this workspace's graph — without a
+    # schedule a new advisory in xtask's tree surfaces only on the next
+    # xtask PR. (Path filters don't apply to schedules; the whole workflow
+    # runs, which is cheap.)
+    - cron: '0 3 * * 0' # weekly, Sunday 03:00 UTC (fuzz runs at 02:00)
+  push:
+    branches: [main]
+    paths:
+      - 'xtask/**'
+      - '.github/workflows/xtask.yml'
+  pull_request:
+    paths:
+      - 'xtask/**'
+      # The workflow file itself: a PR editing only this pipeline must
+      # validate here in the PR, not first fail on the weekly schedule.
+      - '.github/workflows/xtask.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# xtask/ is its own cargo workspace (ADR-0030 §1), invisible to the main CI
+# pipeline's fmt/clippy/test gates and to the root security-deny job — these
+# jobs close both gaps. Only offline checks run here; the network-touching
+# harvest commands never run in CI (xtask/DESIGN.md §3).
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: xtask
+      - name: Check formatting
+        run: cargo fmt --all --check
+        working-directory: xtask
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: xtask
+      - name: Run tests
+        run: cargo test --locked
+        working-directory: xtask
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: xtask
+      - uses: taiki-e/install-action@bd62ac5c7f48306b3ae8d936b8868709cab7d6c3 # cargo-deny
+      - run: cargo deny check
+        working-directory: xtask

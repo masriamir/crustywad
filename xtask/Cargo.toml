@@ -1,0 +1,28 @@
+# The empty [workspace] table below makes xtask/ its own cargo workspace,
+# excluded from the root workspace on the fuzz/ pattern (ADR-0030 §1): the
+# harvester's dependency tree never enters the library's graph, MSRV
+# resolution, or badges. The audit hole isolation opens is closed by the
+# committed xtask/Cargo.lock, the /xtask stanza in .github/dependabot.yml,
+# and the path-gated xtask CI workflow (fmt/clippy/tests/cargo-deny).
+[workspace]
+
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# xtask/DESIGN.md §3 lists the tool's end-state dependency set (reqwest,
+# tokio, zip, ...); each dependency lands with the phase that first uses it
+# (#405–#407). The skeleton needs only the CLI surface.
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

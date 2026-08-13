@@ -70,6 +70,21 @@ test-sweep dir=(justfile_directory() / "RETAIL") extdir=(justfile_directory() / 
 fuzz target="fuzz_wad_strict":
     cd fuzz && cargo fuzz run {{target}}
 
+# idgames corpus harvest (xtask/ is its own sub-workspace; ADR-0030,
+# xtask/DESIGN.md). These commands touch the network — they run locally
+# only, never in CI.
+harvest-api:
+    cargo run --manifest-path xtask/Cargo.toml --release -- harvest-api
+
+harvest-zips:
+    cargo run --manifest-path xtask/Cargo.toml --release -- harvest-zips
+
+harvest-stats:
+    cargo run --manifest-path xtask/Cargo.toml --release -- stats
+
+# The full pipeline: enumerate, size, report.
+harvest: harvest-api harvest-zips harvest-stats
+
 # Run all benchmarks with all features enabled.
 bench:
     cargo bench --all-features --benches
