@@ -59,10 +59,10 @@ untrusted bytes.
    `Last-Modified` on `ls-laR.gz` when probed) and `www.gamers.org`
    (fallback), both answering ranged GETs with `206`. The spike's API call
    rules bind the implementation: root listing via `action=getdirs`,
-   trailing slash mandatory on every `getcontents` name, and a
-   `{"file":null,"dir":null}` response treated as a suspect path — never as
-   an empty directory — because bad paths fail silently with that exact
-   shape.
+   trailing slash mandatory on every `getcontents` name, and a response
+   whose `content.file` and `content.dir` are both `null` treated as a
+   suspect path — never as an empty directory — because bad paths fail
+   silently with those same nulls.
 
 3. **Data governance is fetch-and-drop, not fetch-nothing.** `email` is
    dropped at deserialization — the record struct has no field for it — and

@@ -204,10 +204,12 @@ containing `meta` (with a `version` integer) and `content`. Errors wrap as
 - The top level is listed with **`action=getdirs` and no `name`** — there is
   no root `getcontents` call.
 - `getcontents` takes a path via `name`, and the **trailing slash is
-  mandatory**: `name=levels/doom/` works; `name=levels/doom` returns
-  `{"content":{"file":null,"dir":null}}` — byte-identical to a nonexistent
-  path. Always append the slash, and treat a null/null response as a
-  suspect path, never as an empty directory.
+  mandatory**: `name=levels/doom/` works; `name=levels/doom` returns a
+  success envelope whose `content.file` and `content.dir` are both `null` —
+  indistinguishable from a nonexistent path, which answers with the same
+  nulls. Always append the slash, and treat a both-fields-`null` response
+  as a suspect path, never as an empty directory. (Check the two fields;
+  don't byte-compare bodies — the envelope also carries `meta`.)
 
 ### 4.2 Traversal roots
 
@@ -726,8 +728,8 @@ declared sizes *before* extracting a byte. Same discipline as the harvester — 
 bomb gets rejected on metadata alone.
 
 **Then enforce again during extraction.** The CD is attacker-controlled and can
-lie. Wrap the member reader in `Read::take(decoded_cap + 1)` and fail on hitting
-the ceiling. Declared size is a fast rejection, not a guarantee.
+lie. Wrap the member reader in `reader.take(decoded_cap + 1)` and fail on
+hitting the ceiling. Declared size is a fast rejection, not a guarantee.
 
 **Envelope limits** — derive constants from §6.3:
 
