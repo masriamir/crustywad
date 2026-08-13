@@ -74,13 +74,13 @@ fuzz target="fuzz_wad_strict":
 # xtask/DESIGN.md). These commands touch the network — they run locally
 # only, never in CI.
 harvest-api:
-    cargo run --manifest-path xtask/Cargo.toml --release -- harvest-api
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-api
 
 harvest-zips:
-    cargo run --manifest-path xtask/Cargo.toml --release -- harvest-zips
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-zips
 
 harvest-stats:
-    cargo run --manifest-path xtask/Cargo.toml --release -- stats
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- stats
 
 # The full pipeline: enumerate, size, report.
 harvest: harvest-api harvest-zips harvest-stats

@@ -138,13 +138,13 @@ system dependency.
 
 ```make
 harvest-api:
-    cargo run --manifest-path xtask/Cargo.toml --release -- harvest-api
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-api
 
 harvest-zips:
-    cargo run --manifest-path xtask/Cargo.toml --release -- harvest-zips
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-zips
 
 harvest-stats:
-    cargo run --manifest-path xtask/Cargo.toml --release -- stats
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- stats
 
 harvest: harvest-api harvest-zips harvest-stats
 ```
