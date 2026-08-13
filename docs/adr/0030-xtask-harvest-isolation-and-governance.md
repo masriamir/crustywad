@@ -42,7 +42,7 @@ untrusted bytes.
 ## Decision
 
 1. **`xtask/` is its own cargo workspace, on the `fuzz/` pattern.** An empty
-   `[workspace]` table in `xtask/Cargo.toml`; reqwest/tokio/`zip` (major
+   `[workspace]` table in `xtask/Cargo.toml`; `reqwest`/`tokio`/`zip` (major
    pinned to 8 — 8.6.0 is the latest stable as of the spike; 9.0 exists only
    as a pre-release) never enter the library's graph, MSRV resolution, or
    badges. The audit hole isolation opens is closed the same way `fuzz/`
