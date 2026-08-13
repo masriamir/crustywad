@@ -45,11 +45,14 @@ untrusted bytes.
    `[workspace]` table in `xtask/Cargo.toml`; `reqwest`/`tokio`/`zip` (major
    pinned to 8 — 8.6.0 is the latest stable as of the spike; 9.0 exists only
    as a pre-release) never enter the library's graph, MSRV resolution, or
-   badges. The audit hole isolation opens is closed the same way `fuzz/`
-   closes it: a committed `xtask/Cargo.lock`, a `/xtask` cargo stanza in
+   badges. The audit hole isolation opens is closed on the `fuzz/` pattern —
+   a committed `xtask/Cargo.lock`, a `/xtask` cargo stanza in
    `.github/dependabot.yml` mirroring `/fuzz`'s, and a path-gated CI job
-   (triggering on `xtask/**`) that builds, tests, and runs `cargo deny check` for
-   the xtask workspace.
+   (triggering on `xtask/**`) — and then one step further than fuzz
+   currently goes: xtask's job also builds, tests, and runs
+   `cargo deny check` for its workspace, because the root `security-deny`
+   job audits only the root workspace's graph and a separate workspace
+   escapes it (fuzz's path-gated job today runs fmt/clippy only).
 
 2. **The harvest architecture is `ls-laR.gz`-first.** One request to a
    verified mirror bootstraps the complete tree, filenames, and zip sizes;
