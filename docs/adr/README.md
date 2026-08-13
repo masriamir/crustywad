@@ -60,5 +60,6 @@ implementation begins.**
 | [0027](0027-udmf-full-fidelity-roundtrip.md) | UDMF full-fidelity retention and semantic round-trip | Accepted |
 | [0028](0028-strife-game-identification.md) | Strife game identification and semantic attribution | Accepted |
 | [0029](0029-degenerate-blockmaps.md) | Degenerate blockmaps — discard, don't patch | Accepted |
+| [0030](0030-xtask-harvest-isolation-and-governance.md) | xtask harvest — workspace isolation, data governance, and verified architecture | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->
