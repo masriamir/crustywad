@@ -474,10 +474,12 @@ no payload transfers. Verify these accessors against your pinned `zip` version:
 uncompressed size, compressed size, compression method, encryption flag, and the
 member name.
 
-**Preflight** each file with `HEAD` for `Content-Length` and
-`Accept-Ranges: bytes`. If a mirror answers a ranged GET with `200` rather than
-`206`, fall back to the second mirror; if both refuse, download in full and flag
-the record. **The full-download fallback is budgeted, not open-ended:** a global
+**No per-file `HEAD` preflight** — the zip's size is already known from
+`ls-laR.gz` (§5.0) and cross-checkable against the API `size`, so issue the
+first ranged GET directly; a `200` response (payload instead of a range) IS
+the no-range-support signal. On `200`, fall back to the second mirror; if
+both refuse ranges, download in full and flag the record. This saves one
+request per entry (~20k+ across the archive). **The full-download fallback is budgeted, not open-ended:** a global
 byte budget (default 2 GiB) plus an abort threshold — if more than ~2% of
 entries hit the fallback, stop the phase and report, because a CDN change has
 turned "read the metadata" into "mirror the archive," which this tool must never
@@ -824,8 +826,10 @@ a hand-verified uncompressed size.
 **Phase 1 complete when:**
 - Full traversal finishes with zero unresolved errors, or all errors are recorded
   in the failure ledger with reasons.
-- A second run with a warm cache and no archive changes makes exactly one HTTP
-  request (the `latestfiles` probe).
+- A second run with a warm cache and no archive changes makes exactly one
+  Doomworld API request (the `latestfiles` probe) and at most one mirror
+  request — a conditional `ls-laR.gz` re-fetch, skipped entirely when the
+  mirror answers 304 to `If-Modified-Since` (infania serves `Last-Modified`).
 - No `email` data appears anywhere in the output or cache (`email` arrives
   in listings but is dropped at deserialization and scrubbed from cached
   bodies at write — §4.5/§4.7); `textfile`/`reviews` never arrive in
