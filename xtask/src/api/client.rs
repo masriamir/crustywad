@@ -165,8 +165,10 @@ impl ApiClient {
         self.stats
     }
 
-    /// `meta.version` from the most recent parsed envelope, if any call
-    /// went live this run.
+    /// `meta.version` from the most recently parsed response envelope this
+    /// run — live or served from a cache-fresh entry (cached envelopes
+    /// carry the version observed when they were fetched). `None` when no
+    /// envelope has been parsed at all.
     pub fn observed_api_version(&self) -> Option<u64> {
         self.api_version
     }

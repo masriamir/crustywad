@@ -24,7 +24,9 @@ pub struct HarvestManifest {
     pub started_at: String,
     /// Wall-clock run duration.
     pub duration_secs: u64,
-    /// `meta.version` observed on live responses (3 as spike-verified).
+    /// `meta.version` observed on parsed response envelopes this run —
+    /// live or cache-fresh (3 as spike-verified). `0` means no envelope
+    /// was parsed at all (unknown).
     pub api_version: u64,
     /// `CARGO_PKG_VERSION` of xtask.
     pub tool_version: String,

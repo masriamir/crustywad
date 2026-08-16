@@ -146,9 +146,10 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
         id: manifest_id(&started_at),
         started_at: started_at.to_rfc3339(),
         duration_secs: u64::try_from(duration).unwrap_or(0),
-        // Scoped warm runs can complete without a single live call; full
-        // runs always probe, so this default never masks a live value there.
-        api_version: client.observed_api_version().unwrap_or(3),
+        // 0 = unknown: no response envelope (live or cached) was parsed
+        // this run. Defaulting to the spike-verified 3 would fake
+        // certainty on a run where the API was never actually observed.
+        api_version: client.observed_api_version().unwrap_or(0),
         tool_version: schema::tool_version(),
         git_rev: schema::git_rev(),
         bootstrap: source.label(),
