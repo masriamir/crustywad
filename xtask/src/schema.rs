@@ -161,10 +161,13 @@ pub fn manifest_id(started_at: &DateTime<Utc>) -> String {
     format!("harvest-{}", started_at.format("%Y%m%dT%H%M%SZ"))
 }
 
-/// Best-effort short git revision for provenance.
+/// Best-effort short git revision for provenance. Anchored to the xtask
+/// manifest dir, not the process CWD — the tool works from any cwd
+/// (compile-time paths everywhere else), and provenance must too.
 pub fn git_rev() -> Option<String> {
     let out = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()?;
     out.status
