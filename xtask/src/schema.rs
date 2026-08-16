@@ -105,7 +105,13 @@ pub fn write_files_jsonl(path: &Path, records: Vec<FileRecord>) -> anyhow::Resul
 /// # Errors
 /// Serialization or filesystem failure.
 pub fn write_ledger(path: &Path, mut entries: Vec<LedgerEntry>) -> anyhow::Result<u64> {
-    entries.sort_by(|a, b| (&a.path, &a.kind, &a.detail).cmp(&(&b.path, &b.kind, &b.detail)));
+    // The key is the full record: a partial key would leave ties to the
+    // (insertion-order-dependent) stable sort and break the §9.3
+    // byte-identical rerun contract for duplicate findings.
+    entries.sort_by(|a, b| {
+        (&a.path, &a.action, &a.kind, &a.detail, a.attempts)
+            .cmp(&(&b.path, &b.action, &b.kind, &b.detail, b.attempts))
+    });
     let mut out = String::new();
     for e in &entries {
         out.push_str(&serde_json::to_string(e).context("serializing ledger entry")?);
@@ -218,6 +224,32 @@ mod tests {
         write_files_jsonl(&a, vec![record(2), record(9), record(4)]).unwrap();
         write_files_jsonl(&b, vec![record(4), record(2), record(9)]).unwrap();
         assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+    }
+
+    #[test]
+    fn ledger_ties_on_partial_key_are_still_deterministic() {
+        // Entries agreeing on (path, kind, detail) but differing in
+        // attempts/action must not fall back to insertion order.
+        let tmp = tempfile::tempdir().unwrap();
+        let a_path = tmp.path().join("a.jsonl");
+        let b_path = tmp.path().join("b.jsonl");
+        let first = LedgerEntry {
+            path: "levels/x/".into(),
+            action: "getcontents".into(),
+            kind: LedgerKind::HttpError,
+            detail: "HTTP 500".into(),
+            attempts: 2,
+        };
+        let second = LedgerEntry {
+            attempts: 6,
+            ..first.clone()
+        };
+        write_ledger(&a_path, vec![first.clone(), second.clone()]).unwrap();
+        write_ledger(&b_path, vec![second, first]).unwrap();
+        assert_eq!(
+            std::fs::read(&a_path).unwrap(),
+            std::fs::read(&b_path).unwrap()
+        );
     }
 
     #[test]

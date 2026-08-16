@@ -46,30 +46,33 @@ pub(crate) fn output_dir(scoped: bool) -> PathBuf {
 
 /// Directories whose cache entries must be dropped so the traversal
 /// refetches them live: in-scope tree dirs whose `.zip` `(name, size)`
-/// set differs from the prior run's records. `latestfiles` records carry
-/// no `dir` (observed live — see DESIGN §4.5 correction), so mirror-side
-/// tree drift is the addition/deletion/replacement signal.
+/// set differs from the prior run's records. Names are compared ASCII
+/// case-insensitively on both sides, matching the `.zip` detection, so an
+/// API-vs-mirror case difference never spuriously invalidates.
+/// `latestfiles` records carry no `dir` (observed live — see DESIGN §4.5
+/// correction), so mirror-side tree drift is the
+/// addition/deletion/replacement signal.
 pub(crate) fn dirs_to_invalidate_from_tree(
     tree: &ArchiveTree,
     prior: &[FileRecord],
 ) -> BTreeSet<String> {
-    let mut baseline: std::collections::BTreeMap<&str, BTreeSet<(&str, u64)>> =
+    let mut baseline: std::collections::BTreeMap<&str, BTreeSet<(String, u64)>> =
         std::collections::BTreeMap::new();
     for rec in prior {
         baseline
             .entry(rec.dir.as_str())
             .or_default()
-            .insert((rec.filename.as_str(), rec.size));
+            .insert((rec.filename.to_ascii_lowercase(), rec.size));
     }
     let mut changed = BTreeSet::new();
     for (dir, files) in &tree.dirs {
         if scope::decide(dir) != scope::ScopeDecision::Include {
             continue;
         }
-        let tree_zips: BTreeSet<(&str, u64)> = files
+        let tree_zips: BTreeSet<(String, u64)> = files
             .iter()
             .filter(|f| f.name.to_ascii_lowercase().ends_with(".zip"))
-            .map(|f| (f.name.as_str(), f.size))
+            .map(|f| (f.name.to_ascii_lowercase(), f.size))
             .collect();
         let prior_zips = baseline.get(dir.as_str()).cloned().unwrap_or_default();
         if tree_zips != prior_zips {
@@ -385,6 +388,23 @@ mod tests {
         let prior = vec![rec_named(1, "levels/doom/0-9/", "A.ZIP", 10)];
         let dirs = dirs_to_invalidate_from_tree(&tree, &prior);
         assert!(dirs.is_empty(), "{dirs:?}");
+    }
+
+    #[test]
+    fn tree_diff_name_compare_is_case_insensitive() {
+        // A mirror/API case divergence on the same physical file must not
+        // spuriously invalidate the directory.
+        let tree = tree_with(&[("levels/doom/0-9/", &[("A.ZIP", 10)])]);
+        let prior = vec![rec_named(1, "levels/doom/0-9/", "a.zip", 10)];
+        assert!(dirs_to_invalidate_from_tree(&tree, &prior).is_empty());
+        // A size change still flags through the case normalization.
+        let prior = vec![rec_named(1, "levels/doom/0-9/", "a.zip", 11)];
+        assert_eq!(
+            dirs_to_invalidate_from_tree(&tree, &prior)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec!["levels/doom/0-9/"]
+        );
     }
 
     #[test]
