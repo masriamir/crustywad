@@ -152,10 +152,17 @@ pub async fn bfs(
     let (mut pending, mut visited) = load_checkpoint(checkpoint, &normalized_roots)
         .unwrap_or_else(|| (normalized_roots.clone(), BTreeSet::new()));
     // Replay visited dirs first — cache-fresh in production, so this costs
-    // no network and repopulates `records` after an interrupted run.
-    let replay: Vec<String> = visited.iter().cloned().collect();
-    let mut queue: VecDeque<String> = replay.into_iter().chain(pending.drain(..)).collect();
-    let mut enqueued: BTreeSet<String> = queue.iter().cloned().collect();
+    // no network and repopulates `records` after an interrupted run. The
+    // queue is deduped as it is built: a checkpoint written mid-replay can
+    // name a dir in both `visited` and `pending`, and processing it twice
+    // would double its records (and trip `--limit` early).
+    let mut queue: VecDeque<String> = VecDeque::new();
+    let mut enqueued: BTreeSet<String> = BTreeSet::new();
+    for dir in visited.iter().cloned().chain(pending.drain(..)) {
+        if enqueued.insert(dir.clone()) {
+            queue.push_back(dir);
+        }
+    }
 
     while !queue.is_empty() {
         if at_limit(&out, limit) {
@@ -179,7 +186,10 @@ pub async fn bfs(
                 queue.push_back(sub);
             }
         }
-        let still_pending: Vec<&String> = queue.iter().collect();
+        // `pending` records only genuinely-unvisited work: replay entries
+        // still in the queue are already carried by `visited`, and writing
+        // them to both sides would recreate the duplicate on resume.
+        let still_pending: Vec<&String> = queue.iter().filter(|d| !visited.contains(*d)).collect();
         save_checkpoint(checkpoint, &normalized_roots, &still_pending, &visited);
     }
     truncate_to_limit(&mut out, limit);
@@ -600,6 +610,44 @@ mod tests {
         assert!(fake.calls.contains(&"levels/".to_owned()));
         assert!(fake.calls.contains(&"levels/doom/".to_owned()));
         assert_eq!(out.records.len(), 1);
+        assert!(!ckpt.exists());
+    }
+
+    #[tokio::test]
+    async fn bfs_resume_dedups_dirs_present_in_both_pending_and_visited() {
+        // A checkpoint written mid-replay can carry a dir on both sides;
+        // resuming from it must process the dir exactly once, or its
+        // records double and `--limit` trips early.
+        let tmp = tempfile::tempdir().unwrap();
+        let ckpt = tmp.path().join("bfs-frontier.json");
+        std::fs::write(
+            &ckpt,
+            serde_json::json!({
+                "roots": ["levels/"],
+                "pending": ["levels/", "levels/doom/"],
+                "visited": ["levels/"]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut fake = Fake::new()
+            .dir("levels/", &[(7, "root.zip", 2)], &["levels/doom"])
+            .dir("levels/doom/", &[(1, "a.zip", 5)], &[]);
+        let out = bfs(
+            &mut fake,
+            &["levels/".to_owned()],
+            &ckpt,
+            None,
+            BfsScope::IncludeTable,
+        )
+        .await;
+        assert_eq!(
+            fake.calls.iter().filter(|c| *c == "levels/").count(),
+            1,
+            "duplicated across pending and visited must fetch once: {:?}",
+            fake.calls
+        );
+        assert_eq!(out.records.len(), 2);
         assert!(!ckpt.exists());
     }
 
