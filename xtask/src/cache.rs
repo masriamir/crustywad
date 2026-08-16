@@ -272,7 +272,8 @@ mod tests {
         atomic_write(&p, b"one").unwrap();
         atomic_write(&p, b"two").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"two");
-        // No stray .tmp left behind.
-        assert!(!tmp.path().join("out.json.tmp").exists());
+        // No stray .tmp left behind. `with_extension("tmp")` maps
+        // `out.json` -> `out.tmp` (replaces the extension, not appends).
+        assert!(!tmp.path().join("out.tmp").exists());
     }
 }
