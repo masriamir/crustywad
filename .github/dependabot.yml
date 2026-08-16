@@ -15,6 +15,13 @@ updates:
     directory: "/fuzz"
     schedule:
       interval: weekly
+  # xtask/ is its own cargo workspace (excluded from the root workspace), so
+  # neither "/" nor "/tools" reaches its Cargo.toml — without this stanza its
+  # deps (clap, ...) are never scanned.
+  - package-ecosystem: cargo
+    directory: "/xtask"
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
