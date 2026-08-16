@@ -151,10 +151,16 @@ pub async fn bfs(
     let mut queue: VecDeque<String> = replay.into_iter().chain(pending.drain(..)).collect();
     let mut enqueued: BTreeSet<String> = queue.iter().cloned().collect();
 
-    while let Some(dir) = queue.pop_front() {
+    while !queue.is_empty() {
         if at_limit(&out, limit) {
             break;
         }
+        // The limit check above ran while `queue` was still non-empty, so
+        // this never panics — and critically, an early `break` leaves the
+        // about-to-be-processed dir in `queue`, keeping `queue.is_empty()`
+        // an honest completion signal below (a limit stop must not delete
+        // the checkpoint out from under unfinished work).
+        let dir = queue.pop_front().expect("checked non-empty");
         let discovered = process_dir(source, &dir, None, &mut out).await;
         visited.insert(dir);
         for sub in discovered {
@@ -189,11 +195,12 @@ async fn process_dir(
             return Vec::new();
         }
     };
-    if outcome.changed == Some(true) {
-        out.changed_dirs += 1;
-    }
     if outcome.listing.is_suspect() {
         // §4.1: never an empty directory — bad paths answer identically.
+        // A suspect response produced no listing, so it must never count
+        // as a "changed" dir even if the cache layer's hash comparison
+        // says otherwise — check this before the `changed` count, not
+        // after.
         out.ledger.push(LedgerEntry {
             path: dir.to_owned(),
             action: "getcontents".into(),
@@ -202,6 +209,9 @@ async fn process_dir(
             attempts: 1,
         });
         return Vec::new();
+    }
+    if outcome.changed == Some(true) {
+        out.changed_dirs += 1;
     }
     let (files, dirs) = outcome.listing.into_parts();
     for file in files {
@@ -301,6 +311,7 @@ mod tests {
         responses: BTreeMap<String, serde_json::Value>,
         calls: Vec<String>,
         fail_with_http: Vec<String>,
+        changed_true: Vec<String>,
     }
 
     impl Fake {
@@ -309,6 +320,7 @@ mod tests {
                 responses: BTreeMap::new(),
                 calls: Vec::new(),
                 fail_with_http: Vec::new(),
+                changed_true: Vec::new(),
             }
         }
 
@@ -356,6 +368,14 @@ mod tests {
             self.fail_with_http.push(path.to_owned());
             self
         }
+
+        /// Report `changed: Some(true)` for this path's response — used to
+        /// prove a suspect path never counts as "changed" even when the
+        /// cache layer's hash comparison would otherwise say so.
+        fn changed(mut self, path: &str) -> Self {
+            self.changed_true.push(path.to_owned());
+            self
+        }
     }
 
     impl ListingSource for Fake {
@@ -373,10 +393,11 @@ mod tests {
                 .cloned()
                 .unwrap_or(serde_json::json!({"file": null, "dir": null}));
             let listing: ContentListing = serde_json::from_value(body).unwrap();
+            let changed = Some(self.changed_true.iter().any(|p| p == dir));
             Ok(FetchOutcome {
                 listing,
                 from_cache: false,
-                changed: Some(false),
+                changed,
             })
         }
     }
@@ -507,5 +528,43 @@ mod tests {
         assert!(fake.calls.contains(&"levels/doom/".to_owned()));
         assert_eq!(out.records.len(), 1);
         assert!(!ckpt.exists());
+    }
+
+    #[tokio::test]
+    async fn bfs_limit_stop_keeps_checkpoint_and_pending_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ckpt = tmp.path().join("bfs-frontier.json");
+        let mut fake = Fake::new()
+            .dir("a/", &[(1, "1.zip", 1), (2, "2.zip", 1)], &[])
+            .dir("b/", &[(3, "3.zip", 1)], &[]);
+        let out = bfs(
+            &mut fake,
+            &["a/".to_owned(), "b/".to_owned()],
+            &ckpt,
+            Some(2),
+        )
+        .await;
+        assert_eq!(out.records.len(), 2);
+        // The limit tripped before "b/" was dequeued: it must never be
+        // requested, and — unlike a completed run — the checkpoint must
+        // survive so a resume can pick it back up.
+        assert!(!fake.calls.contains(&"b/".to_owned()));
+        assert!(ckpt.exists());
+        let (pending, _visited) = load_checkpoint(&ckpt).expect("checkpoint present");
+        assert_eq!(pending, vec!["b/".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn suspect_dir_with_changed_flag_does_not_count_as_changed() {
+        // A suspect response carries no listing at all — even if the cache
+        // layer's body-hash comparison says the (null, null) body moved,
+        // that must not be surfaced as a "changed" directory.
+        let mut fake = Fake::new()
+            .suspect("levels/doom/a-c/")
+            .changed("levels/doom/a-c/");
+        let worklist = vec!["levels/doom/a-c/".to_owned()];
+        let out = enrich(&mut fake, &worklist, None, None).await;
+        assert_eq!(out.changed_dirs, 0);
+        assert_eq!(out.ledger.len(), 1);
     }
 }
