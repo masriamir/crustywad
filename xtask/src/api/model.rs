@@ -285,13 +285,16 @@ fn lenient_i64<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
 }
 
 fn lenient_opt_f64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    // `f64::from_str` accepts "NaN"/"inf"; a non-finite rating is garbage
+    // data, degraded to `None` like other absent values (record, don't die).
+    let finite_or_none = |f: f64| f.is_finite().then_some(f);
     match serde_json::Value::deserialize(d)? {
         serde_json::Value::Null => Ok(None),
-        serde_json::Value::Number(n) => Ok(n.as_f64()),
+        serde_json::Value::Number(n) => Ok(n.as_f64().and_then(finite_or_none)),
         serde_json::Value::String(s) => s
             .trim()
             .parse()
-            .map(Some)
+            .map(finite_or_none)
             .map_err(|e| serde::de::Error::custom(format!("not an f64: {s:?}: {e}"))),
         other => Err(serde::de::Error::custom(format!("not an f64: {other}"))),
     }
@@ -361,6 +364,18 @@ pub(crate) mod tests {
         assert_eq!(rec.votes, 12);
         assert_eq!(rec.rating, Some(4.5));
         assert_eq!(rec.id, 12815);
+    }
+
+    #[test]
+    fn non_finite_rating_strings_degrade_to_none() {
+        // `f64::from_str` accepts these; a non-finite rating is garbage
+        // and must degrade like absent data, not survive into the record.
+        for garbage in ["NaN", "inf", "-inf", "infinity"] {
+            let mut v = full_record();
+            v["rating"] = json!(garbage);
+            let rec: FileRecord = serde_json::from_value(v).unwrap();
+            assert_eq!(rec.rating, None, "rating {garbage:?}");
+        }
     }
 
     #[test]
