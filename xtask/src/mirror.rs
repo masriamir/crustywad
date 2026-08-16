@@ -39,7 +39,11 @@ pub const MIRRORS: [Mirror; 2] = [
 
 /// Response size guard: `ls-laR.gz` is ~418 KB; a mirror suddenly serving
 /// gigabytes must not OOM the tool (ADR-0016 posture toward untrusted
-/// bytes).
+/// bytes). Enforced twice: a declared `Content-Length` over the cap skips
+/// the mirror before any body is read, and the body itself is then read
+/// as a bounded stream (chunk-by-chunk) that aborts the instant the
+/// running total would exceed the cap — an unbounded or lying stream is
+/// never fully buffered.
 const MAX_BODY_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Where this run's tree came from (recorded in the manifest).
@@ -178,7 +182,7 @@ fn read_cached_tree(gz_path: &Path) -> Option<ArchiveTree> {
 /// Persist a 200 response and parse it. `None` means "try the next
 /// mirror" (bad status, oversized body, torn download, or parse failure).
 async fn persist_and_parse(
-    resp: reqwest::Response,
+    mut resp: reqwest::Response,
     mirror: &Mirror,
     gz_path: &Path,
     meta_path: &Path,
@@ -203,17 +207,30 @@ async fn persist_and_parse(
         .get(reqwest::header::LAST_MODIFIED)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let bytes = match resp.bytes().await {
-        Ok(b) if u64::try_from(b.len()).unwrap_or(u64::MAX) <= MAX_BODY_BYTES => b,
-        Ok(_) => {
-            tracing::warn!(mirror = mirror.key, "ls-laR.gz body exceeded cap");
-            return None;
+    // Read incrementally so a mirror streaming an unbounded body is
+    // aborted mid-transfer rather than fully buffered before the cap is
+    // checked — the declared Content-Length above is a hint, not a bound.
+    let max_len = usize::try_from(MAX_BODY_BYTES).unwrap_or(usize::MAX);
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len() + chunk.len() > max_len {
+                    tracing::warn!(
+                        mirror = mirror.key,
+                        "ls-laR.gz body exceeded cap mid-stream"
+                    );
+                    return None;
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(mirror = mirror.key, error = %e, "body read failed");
+                return None;
+            }
         }
-        Err(e) => {
-            tracing::warn!(mirror = mirror.key, error = %e, "body read failed");
-            return None;
-        }
-    };
+    }
     let tree = match parse_ls_lar_gz(&bytes) {
         Ok(t) => t,
         Err(e) => {
