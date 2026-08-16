@@ -169,6 +169,25 @@ pub async fn fetch_ls_lar(
 /// both "no cache" and "cache is corrupt" — both mean "cannot serve from
 /// disk, must fetch".
 fn read_cached_tree(gz_path: &Path) -> Option<ArchiveTree> {
+    read_cached_tree_with_cap(gz_path, MAX_BODY_BYTES)
+}
+
+/// Cap-parameterized body of [`read_cached_tree`] so tests can exercise
+/// the guard without a multi-mebibyte fixture. The cached gz was written
+/// under the network cap, but the same bound is enforced on the read path
+/// too (ADR-0016 posture: the invariant is local, not "by construction
+/// elsewhere") — an implausibly large cache file is treated as unreadable,
+/// which routes callers to a clean refetch.
+fn read_cached_tree_with_cap(gz_path: &Path, cap: u64) -> Option<ArchiveTree> {
+    let len = std::fs::metadata(gz_path).ok()?.len();
+    if len > cap {
+        tracing::warn!(
+            path = %gz_path.display(),
+            len,
+            "cached ls-laR.gz exceeds the size cap; ignoring it"
+        );
+        return None;
+    }
     let bytes = std::fs::read(gz_path).ok()?;
     parse_ls_lar_gz(&bytes).ok()
 }
@@ -313,6 +332,21 @@ mod tests {
             back.last_modified.as_deref(),
             Some("Wed, 12 Aug 2026 06:00:00 GMT")
         );
+    }
+
+    #[test]
+    fn oversized_cached_gz_is_ignored_not_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gz = tmp.path().join("ls-laR.gz");
+        // Valid small gz so the parse itself would succeed if reached.
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, b".:\ntotal 1\n").unwrap();
+        std::fs::write(&gz, enc.finish().unwrap()).unwrap();
+        let len = std::fs::metadata(&gz).unwrap().len();
+        // Above the cap: treated as unreadable (forces a clean refetch).
+        assert!(read_cached_tree_with_cap(&gz, len - 1).is_none());
+        // At/below the cap: parses normally.
+        assert!(read_cached_tree_with_cap(&gz, len).is_some());
     }
 
     #[test]

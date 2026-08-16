@@ -59,6 +59,12 @@ pub(crate) fn dirs_to_invalidate_from_tree(
     let mut baseline: std::collections::BTreeMap<&str, BTreeSet<(String, u64)>> =
         std::collections::BTreeMap::new();
     for rec in prior {
+        // Mirror the tree side's zip filter: a rare non-`.zip` archive
+        // entry (DESIGN §5.5) must not keep the sets permanently unequal
+        // and re-invalidate its directory on every run.
+        if !rec.filename.to_ascii_lowercase().ends_with(".zip") {
+            continue;
+        }
         baseline
             .entry(rec.dir.as_str())
             .or_default()
@@ -412,6 +418,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["levels/doom/0-9/"]
         );
+    }
+
+    #[test]
+    fn tree_diff_baseline_ignores_non_zip_records() {
+        // A rare non-.zip archive entry (DESIGN §5.5) in the baseline must
+        // not keep the sets permanently unequal — that would re-invalidate
+        // its directory on every run and break the §9.3 warm-rerun budget.
+        let tree = tree_with(&[("levels/doom/0-9/", &[("a.zip", 10), ("a.txt", 2)])]);
+        let prior = vec![
+            rec_named(1, "levels/doom/0-9/", "a.zip", 10),
+            rec_named(2, "levels/doom/0-9/", "oldstuff.exe", 77),
+        ];
+        assert!(dirs_to_invalidate_from_tree(&tree, &prior).is_empty());
     }
 
     #[test]

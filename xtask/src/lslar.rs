@@ -44,10 +44,13 @@ impl ArchiveTree {
 
     /// Listed size of `file` in `dir` (trailing-slash key), if present.
     pub fn size_of(&self, dir: &str, file: &str) -> Option<u64> {
+        // ASCII-case-insensitive, consistent with zip detection and the
+        // tree-diff invalidation: a mirror/API case divergence must not
+        // silently skip the §5.0 size cross-check.
         self.dirs
             .get(dir)?
             .iter()
-            .find(|f| f.name == file)
+            .find(|f| f.name.eq_ignore_ascii_case(file))
             .map(|f| f.size)
     }
 }
@@ -256,6 +259,9 @@ drwxr-xr-x 17 ftp ftp 4096 Aug 12 06:00 ..
         assert_eq!(t.size_of("levels/doom/0-9/", "with spaces.zip"), Some(1024));
         assert_eq!(t.size_of("levels/doom/0-9/", "missing.zip"), None);
         assert_eq!(t.size_of("nope/", "example.zip"), None);
+        // Case-insensitive, consistent with zip detection: an API/mirror
+        // case divergence must not silently skip the size cross-check.
+        assert_eq!(t.size_of("levels/doom/0-9/", "EXAMPLE.ZIP"), Some(552_251));
     }
 
     #[test]

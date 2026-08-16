@@ -107,12 +107,19 @@ impl ApiCache {
     }
 }
 
-/// Remove every object key containing `email` (ASCII case-insensitive),
-/// recursively (ADR-0030 §3). Applied to every body before it touches disk.
+/// Remove every object key containing `email`, plus any `textfile` or
+/// `reviews` key, ASCII case-insensitively and recursively (ADR-0030 §3;
+/// issue #405 acceptance: no email/textfile/reviews data anywhere).
+/// `textfile`/`reviews` never arrive in listings today (spike-verified),
+/// but the scrub makes that invariant structural for cached bodies rather
+/// than observational. Applied to every body before it touches disk.
 pub fn scrub_emails(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
-            map.retain(|k, _| !k.to_ascii_lowercase().contains("email"));
+            map.retain(|k, _| {
+                let k = k.to_ascii_lowercase();
+                !k.contains("email") && k != "textfile" && k != "reviews"
+            });
             map.values_mut().for_each(scrub_emails);
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(scrub_emails),
@@ -174,6 +181,33 @@ mod tests {
         // Non-email content survives.
         assert_eq!(v["content"]["file"][0]["author"], "A");
         assert_eq!(v["content"]["file"][1]["id"], 2);
+    }
+
+    #[test]
+    fn scrub_drops_textfile_and_reviews_keys_too() {
+        // Issue #405 acceptance: no email/textfile/reviews data anywhere.
+        // Neither arrives in listings today; the scrub makes the cache
+        // invariant structural rather than observational.
+        let mut v = json!({
+            "content": {
+                "file": [{
+                    "id": 1,
+                    "textfile": "free text that could embed emails",
+                    "TextFile": "case variant",
+                    "reviews": [{"text": "spam"}],
+                    "author": "A"
+                }]
+            }
+        });
+        scrub_emails(&mut v);
+        let rec = &v["content"]["file"][0];
+        let keys: Vec<&String> = rec.as_object().unwrap().keys().collect();
+        assert!(
+            keys.iter()
+                .all(|k| !matches!(k.to_ascii_lowercase().as_str(), "textfile" | "reviews")),
+            "textfile/reviews-shaped key survived: {keys:?}"
+        );
+        assert_eq!(rec["author"], "A");
     }
 
     #[test]
