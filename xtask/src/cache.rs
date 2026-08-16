@@ -62,10 +62,13 @@ impl ApiCache {
     }
 
     /// Whether `envelope` is within the TTL as of `now`. Unparseable
-    /// timestamps are stale.
+    /// timestamps are stale, and so are timestamps in the future (clock
+    /// skew or a tampered entry must not create an immortal cache entry).
     pub fn is_fresh(&self, envelope: &CacheEnvelope, now: DateTime<Utc>) -> bool {
-        DateTime::parse_from_rfc3339(&envelope.fetched_at)
-            .is_ok_and(|t| now - t.with_timezone(&Utc) < self.ttl)
+        DateTime::parse_from_rfc3339(&envelope.fetched_at).is_ok_and(|t| {
+            let age = now - t.with_timezone(&Utc);
+            age >= chrono::Duration::zero() && age < self.ttl
+        })
     }
 
     /// Scrub `body`, hash it, and persist the envelope atomically.
@@ -275,6 +278,11 @@ mod tests {
         let mut bad = env.clone();
         bad.fetched_at = "not-a-date".into();
         assert!(!cache.is_fresh(&bad, now));
+        // A FUTURE fetched_at (clock skew / tampering) is stale too — a
+        // negative age must not create an immortal cache entry.
+        let mut future = env.clone();
+        future.fetched_at = (now + Duration::days(30)).to_rfc3339();
+        assert!(!cache.is_fresh(&future, now));
     }
 
     #[test]

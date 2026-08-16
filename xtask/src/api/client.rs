@@ -43,8 +43,9 @@ impl RateGate {
         }
     }
 
-    /// Await until a full interval has passed since the previous call
-    /// completed, then stamp the new request start.
+    /// Await until a full interval has passed since the previous request
+    /// *started*, then stamp the new request start — start-to-start
+    /// spacing, which is what "one request per second" means.
     pub(crate) async fn wait(&mut self) {
         if let Some(last) = self.last {
             let due = last + self.interval;
