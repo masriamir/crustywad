@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use crate::api::model::{ContentListing, EnvelopeError, FileRecord, normalize_dir, parse_envelope};
+use crate::api::model::{
+    ContentListing, EnvelopeError, LatestFileRecord, normalize_dir, parse_envelope,
+    parse_latest_envelope,
+};
 use crate::cache::ApiCache;
 
 /// The one API endpoint (DESIGN.md §4.1).
@@ -222,12 +225,14 @@ impl ApiClient {
     }
 
     /// `action=latestfiles&limit=N`. Never cached (§4.5 — it *is* the
-    /// freshness check).
+    /// freshness check). Returns the abbreviated [`LatestFileRecord`] shape
+    /// the live API actually sends for this action — only `id` is
+    /// load-bearing there (§4.5's max-id probe).
     ///
     /// # Errors
     /// As for [`Self::getcontents`].
     #[allow(dead_code)]
-    pub async fn latestfiles(&mut self, limit: u32) -> Result<Vec<FileRecord>, ApiCallError> {
+    pub async fn latestfiles(&mut self, limit: u32) -> Result<Vec<LatestFileRecord>, ApiCallError> {
         let limit = limit.to_string();
         let body = self
             .request(&[
@@ -236,9 +241,9 @@ impl ApiClient {
                 ("out", "json"),
             ])
             .await?;
-        let (version, listing) = parse_envelope(&body).map_err(envelope_to_call_error)?;
+        let (version, records) = parse_latest_envelope(&body).map_err(envelope_to_call_error)?;
         self.note_version(version);
-        Ok(listing.into_parts().0)
+        Ok(records)
     }
 
     fn note_version(&mut self, version: u64) {

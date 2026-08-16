@@ -77,6 +77,32 @@ pub struct FileRecord {
     pub idgamesurl: String,
 }
 
+/// One `latestfiles` listing record. Observed live (2026-08-15): these are
+/// ABBREVIATED — only `id`, `title`, `author`, `description`, `rating`
+/// arrive; `dir`/`filename`/`size`/`age`/`date`/URL fields do not. Only
+/// `id` is load-bearing (the §4.5 freshness probe). No email field, as
+/// everywhere (ADR-0030 §3).
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct LatestFileRecord {
+    /// Archive file ID — the §4.5 max-id probe value.
+    #[serde(deserialize_with = "lenient_u64")]
+    pub id: u64,
+    /// Nullable title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Upload author name, empty when absent.
+    #[serde(default, deserialize_with = "null_string")]
+    pub author: String,
+    /// Author-supplied free text — treated as untrusted, never asserted
+    /// PII-free (ADR-0030 §3).
+    #[serde(default, deserialize_with = "null_string")]
+    pub description: String,
+    /// Mean user rating; `None` when unrated.
+    #[serde(default, deserialize_with = "lenient_opt_f64")]
+    pub rating: Option<f64>,
+}
+
 /// One subdirectory entry in a `getcontents` listing.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
@@ -176,6 +202,45 @@ pub fn parse_envelope(body: &serde_json::Value) -> Result<(u64, ContentListing),
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     Ok((version, listing))
+}
+
+/// Content wrapper for a `latestfiles` envelope — mirrors [`ContentListing`]
+/// but for the abbreviated [`LatestFileRecord`] shape observed live.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct LatestListing {
+    /// File entries; `None` when the key is `null` or absent.
+    #[serde(default)]
+    file: Option<OneOrMany<LatestFileRecord>>,
+}
+
+/// Interpret a `latestfiles` response body: the same envelope handling as
+/// [`parse_envelope`] (`{"error":…}` → [`EnvelopeError::Api`];
+/// `{"content":…, "meta":{"version":N}}` → `(N, records)`; anything else →
+/// [`EnvelopeError::Shape`]), but against the abbreviated
+/// [`LatestFileRecord`] shape the live API actually returns for this
+/// action (§4.5 — only `id` is load-bearing there).
+#[allow(dead_code)]
+pub fn parse_latest_envelope(
+    body: &serde_json::Value,
+) -> Result<(u64, Vec<LatestFileRecord>), EnvelopeError> {
+    if let Some(err) = body.get("error") {
+        let fault: ApiFault = serde_json::from_value(err.clone())
+            .map_err(|e| EnvelopeError::Shape(format!("error envelope: {e}")))?;
+        return Err(EnvelopeError::Api(fault));
+    }
+    let content = body
+        .get("content")
+        .ok_or_else(|| EnvelopeError::Shape("no `content` and no `error` key".into()))?;
+    let listing: LatestListing = serde_json::from_value(content.clone())
+        .map_err(|e| EnvelopeError::Shape(format!("content: {e}")))?;
+    let version = body
+        .get("meta")
+        .and_then(|m| m.get("version"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let records = listing.file.map(OneOrMany::into_vec).unwrap_or_default();
+    Ok((version, records))
 }
 
 /// Guarantee exactly one trailing `/` (mandatory on `getcontents` names,
@@ -375,6 +440,63 @@ pub(crate) mod tests {
         v["textfile"] = json!("tolerated");
         let rec: FileRecord = serde_json::from_value(v).unwrap();
         assert_eq!(rec.filename, "example.zip");
+    }
+
+    #[test]
+    fn latest_records_parse_the_observed_abbreviated_payload() {
+        // Observed live 2026-08-15: `latestfiles` records are abbreviated —
+        // only id/title/author/description/rating arrive. This also locks
+        // in the bare-object OneOrMany path (limit=1 returns a bare object,
+        // not a one-element array).
+        let body = json!({
+            "content": {"file": {
+                "id": 22083, "title": "Sacco", "author": "Willis Lambert",
+                "description": "Probably way too many monster closets.", "rating": null
+            }},
+            "meta": {"version": 3}
+        });
+        let (version, records) = parse_latest_envelope(&body).unwrap();
+        assert_eq!(version, 3);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, 22083);
+        assert_eq!(records[0].rating, None);
+    }
+
+    #[test]
+    fn latest_records_array_form_ignores_unknown_email_key() {
+        let body = json!({
+            "content": {"file": [
+                {
+                    "id": 22083, "title": "Sacco", "author": "Willis Lambert",
+                    "description": "Probably way too many monster closets.", "rating": null,
+                    "email": "willis@example.com"
+                },
+                {
+                    "id": 22082, "title": "Testing Facility", "author": "Dashy",
+                    "description": "This is my first map!", "rating": null
+                }
+            ]},
+            "meta": {"version": 3}
+        });
+        let (_version, records) = parse_latest_envelope(&body).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, 22083);
+        assert_eq!(records[1].id, 22082);
+        // No `email` field exists on `LatestFileRecord` for the key to land
+        // in (ADR-0030 §3) — serde's default unknown-field tolerance simply
+        // drops it, and the record still parses.
+    }
+
+    #[test]
+    fn parse_latest_envelope_error() {
+        let body = json!({
+            "error": {"type": "Required Argument Missing", "message": "The name argument is missing."},
+            "meta": {"version": 3}
+        });
+        match parse_latest_envelope(&body) {
+            Err(EnvelopeError::Api(f)) => assert!(f.message.contains("missing")),
+            other => panic!("expected Api fault, got {other:?}"),
+        }
     }
 
     #[test]
