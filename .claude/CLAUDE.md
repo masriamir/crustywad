@@ -55,7 +55,7 @@ tools/
   src/lib.rs           # Empty; makes the package a valid Cargo package for Dependabot resolution
 xtask/
   DESIGN.md          # idgames corpus harvest operational spec (ADR-0030; own cargo workspace)
-  src/               # harvest tool: phase 1 API enumeration (#405); phases 2-3 pending (#406/#407)
+  src/               # harvest tool: phase 1 API enumeration (#405), phase 2 zip range reads (#406); phase 3 pending (#407)
 .github/
   codeql/codeql-config.yml   # Advanced CodeQL query config (security-extended + quality)
   workflows/ci.yml            # Main CI pipeline

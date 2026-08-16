@@ -896,3 +896,63 @@ mod tests {
         assert!(!zip64_present(b"too short"));
     }
 }
+
+/// §9.2 opt-in network integration test (`XTASK_NETWORK_TESTS` gate — the
+/// `mirror.rs` pattern). Exercises [`inspect_zip`] against a real §5.1
+/// mirror instead of the in-memory [`FakeSource`] above: the fixtures in
+/// `mod tests` prove the driver's request-counting logic against bytes we
+/// control, but only a live fetch proves the whole stack — `MirrorRanges`,
+/// real HTTP status/`Content-Range` handling, and `zip::ZipArchive` against
+/// an archive we don't control — actually agrees with a hand-verified fact.
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    /// §9.2: one known archive entry with a hand-verified uncompressed
+    /// size. Verified 2026-08-16 by downloading the zip from
+    /// `https://ftpmirror1.infania.net/pub/idgames/<KNOWN_DIR><KNOWN_FILE>`
+    /// to a scratch directory and reading `unzip -l` output locally (plan
+    /// Task 7 Step 4); re-verify if the archive entry is ever replaced
+    /// (Phase 1 would show a size or hash change for its directory).
+    const KNOWN_DIR: &str = "levels/doom/0-9/";
+    const KNOWN_FILE: &str = "10years.zip";
+    const KNOWN_ZIP_SIZE: u64 = 250_476;
+    const KNOWN_WAD_NAME: &str = "10years.wad";
+    const KNOWN_WAD_UNCOMPRESSED: u64 = 801_425;
+
+    #[tokio::test]
+    async fn inspects_a_known_entry_over_live_ranges() {
+        if std::env::var_os("XTASK_NETWORK_TESTS").is_none() {
+            eprintln!("skipping: set XTASK_NETWORK_TESTS=1 to run network tests");
+            return;
+        }
+        let http = reqwest::Client::builder()
+            .user_agent(crate::api::client::BROWSER_UA)
+            .timeout(std::time::Duration::from_mins(2))
+            .build()
+            .unwrap();
+        let counters = std::sync::Arc::new(crate::zips::range_reader::TransferCounters::default());
+        let mut source = crate::zips::range_reader::MirrorRanges::new(
+            http,
+            KNOWN_DIR,
+            KNOWN_FILE,
+            KNOWN_ZIP_SIZE,
+            counters.clone(),
+        )
+        .unwrap();
+        let inspection = inspect_zip(&mut source, KNOWN_ZIP_SIZE).await.unwrap();
+        let wad = inspection
+            .wads
+            .iter()
+            .find(|w| w.name.eq_ignore_ascii_case(KNOWN_WAD_NAME))
+            .expect("known wad member present");
+        assert_eq!(wad.uncompressed, KNOWN_WAD_UNCOMPRESSED);
+        // §9.3: metadata-only — a whole-payload transfer means the range
+        // reader is broken. 3 requests × ~66 KiB is the honest ceiling.
+        let moved = counters.bytes.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            moved < KNOWN_ZIP_SIZE.min(256 * 1024),
+            "moved {moved} bytes"
+        );
+    }
+}

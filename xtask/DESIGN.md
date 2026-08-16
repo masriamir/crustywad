@@ -130,6 +130,8 @@ zip = "8"             # spike-pinned major (§2, §5.2); verify accessor names a
 
 > Correction (#405): the original dependency list omitted a gzip decoder (the §5.0 bootstrap fetches a .gz payload file, which HTTP transport decoding never touches) and a jitter RNG for §4.6 backoff. flate2 and fastrand added.
 
+> Correction (#406): the module sketch above undersold `range_reader.rs` and omitted `store.rs` entirely. `range_reader.rs` carries far more than the `Read + Seek` reader: it also owns the §5.1 mirror pool source (`MirrorRanges`, with per-mirror retry/failover and `Content-Range` validation), the run-wide `TransferCounters`, and the §5.2 full-download fallback budget (`FallbackBudget`). `store.rs` is a new module for the §5.4 per-id results log and its `body_hash` invalidation — an append-only JSONL log that makes the phase resumable.
+
 **Rationale for isolation:** the harvester needs `reqwest`, `tokio`, and `zip`.
 Pulling those into the root workspace would surface in the `deps.rs` badge, widen
 the CodeQL scan surface, slow `cargo test --workspace`, and impose an MSRV floor
@@ -187,8 +189,9 @@ xtask/src/
     traverse.rs     # §4.2 enrichment walk over the §5.0 tree (BFS fallback)
   zips/             # #406
     mod.rs
-    range_reader.rs # §5.2 Read + Seek over HTTP ranges
+    range_reader.rs # §5.2 Read + Seek over HTTP ranges + mirror range source, transfer counters, fallback budget
     inspect.rs      # CD extraction, member filtering
+    store.rs        # §5.4 per-id results log + body_hash invalidation
   stats/            # #407
     mod.rs
     percentiles.rs
@@ -506,6 +509,19 @@ fallback below is the sole exception). Verify these accessors against your pinne
 uncompressed size, compressed size, compression method, encryption flag, and the
 member name.
 
+> Correction (#406, zip 8.6.0): the "2–3 requests per file" estimate above
+> undercounts by construction. `by_index_raw` — the only call an actual
+> `.wad` match makes — never decompresses payload, but it does eagerly parse
+> that member's local file header (a fixed ~30-byte block,
+> `ZipLocalEntryBlock` in the vendored `src/types.rs`) to compute a data
+> offset the tool never uses. Real per-file request cost is: 1 tail fetch
+> (66 KiB) + at most 1 central-directory fetch (capped 64 MiB, §5.4) + one
+> ≤256-byte "nibble" fetch per `.wad` member whose local header lies outside
+> every already-cached extent — budgeted at 24 member fetches, after which
+> the entry fails closed as `zip_parse_error` rather than silently
+> under-reporting members. Still zero *payload* bytes move on the range
+> path — only header-sized metadata.
+
 **No per-file `HEAD` preflight** — the zip's size is already known from
 `ls-laR.gz` (§5.0) and cross-checkable against the API `size`, so issue the
 first ranged GET directly; a `200` response (payload instead of a range) IS
@@ -516,6 +532,27 @@ byte budget (default 2 GiB) plus an abort threshold — if more than ~2% of
 entries hit the fallback, stop the phase and report, because a CDN change has
 turned "read the metadata" into "mirror the archive," which this tool must never
 silently do.
+
+> Correction (#406): two more safety invariants sit alongside the 2 GiB
+> global fallback budget and the ~2% breaker above. A **per-entry
+> full-download cap** of 512 MiB refuses any single entry that big outright
+> — recorded as `no_range_support` with a ledger note, never charged against
+> the shared budget, so one giant file can't silently consume the whole
+> run's fallback allowance. A **range-path runaway ceiling** of 4 GiB total
+> transferred bytes aborts the phase exactly like the 2% breaker if
+> exceeded: a pathological EOCD/central-directory shape can push up to
+> roughly 3×64 MiB down the *range* path per entry — bytes the fallback
+> budget never sees at all, since they never go through the full-download
+> path.
+
+> Correction (#406): every `206` response's `Content-Range` header is
+> validated against the requested `[offset, end]` before its bytes are
+> trusted — an exact start/end match is required; a missing or mismatched
+> header is treated as an ordinary attempt failure (retried, then failed
+> over to the next mirror/attempt), never as a pass. RFC 7233 §4.2 requires
+> the header on every `206`, so its absence is itself suspicious. This
+> closes a path where a lying proxy/CDN could otherwise splice foreign bytes
+> into the sparse buffer at a requested offset.
 
 For files under ~64 KiB, fetch the whole thing — cheaper than three round trips.
 
@@ -581,6 +618,15 @@ are building this tool to measure.
   generous; a lying EOCD can declare anything), never panic on a malformed CD,
   and record-and-continue.
 
+> Correction (#406): the per-id cache stores only **conclusive** outcomes —
+> `ok`, `full_download`, `mirror_404_all`, `zip_parse_error` — facts about
+> the archive entry itself. `no_range_support` and `fetch_error` are
+> run-scoped (a budget/breaker state, or a transient mirror/transport blip —
+> not a fact about the entry) and are deliberately never cached; they retry
+> live on the next run against a fresh budget and fresh mirror state. Since
+> the cache invalidates only on a `body_hash` change, caching a transient
+> failure would otherwise make it permanent.
+
 ### 5.5 Edge cases — record, don't skip
 
 Every one of these is a data point that feeds a §8 limit:
@@ -631,6 +677,16 @@ named value, or "record, don't skip" is unenforceable: `ok`, `not_zip`,
 `mirror_404_all`, `no_range_support`, `full_download`, `zip_parse_error`,
 `fetch_error`. Member-level cases (odd compression method, encryption) are
 captured on the `wads[]` entries themselves.
+
+**Realized outputs (#406):** the ledger lands at `data/wads-errors.jsonl`
+(the same Phase-1 `LedgerEntry` shape, action `harvest-zips`); run
+provenance and the §9.3 witnesses land at `data/wads-manifest.json`
+(`bytes_transferred`, `zip64_entries`, `status_counts`, `unaccounted_entries`,
+fallback accounting, `aborted`); the per-id resumability log lives at
+`data/cache/zips-log.jsonl` (§5.4). `member_count` counts distinct
+central-directory entries — `zip::ZipArchive` keys its parsed entries in an
+`IndexMap<name, ..>`, so duplicate member names collapse and the last one
+wins; an archive with duplicate names under-counts here by design.
 
 ---
 
