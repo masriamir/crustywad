@@ -31,7 +31,6 @@ struct StoredZip {
 }
 
 /// Append-only per-id results store (§5.4 resumability).
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ZipsStore {
     path: PathBuf,
@@ -46,7 +45,6 @@ impl ZipsStore {
     /// skipped with a `tracing::warn!` rather than failing the open;
     /// earlier, well-formed lines still load (§5.4 resumability). When the
     /// same id appears more than once, the later line wins.
-    #[allow(dead_code)]
     #[must_use]
     pub fn open(path: PathBuf) -> Self {
         let mut entries = BTreeMap::new();
@@ -71,7 +69,6 @@ impl ZipsStore {
     /// matches the hash it was stored under (§5.4). `None` for either a
     /// hash mismatch, a directory with no current Phase-1 envelope
     /// (`current_dir_hash` is `None`), or an id never seen before.
-    #[allow(dead_code)]
     #[must_use]
     pub fn lookup(&self, id: u64, current_dir_hash: Option<&str>) -> Option<&WadRecord> {
         self.entries
@@ -87,7 +84,6 @@ impl ZipsStore {
     /// Serialization or filesystem failure. The parent directory of `path`
     /// is expected to already exist — the orchestrator creates it once up
     /// front, not this per-record call.
-    #[allow(dead_code)]
     pub fn record(&mut self, dir_body_hash: &str, record: WadRecord) -> anyhow::Result<()> {
         let stored = StoredZip {
             dir_body_hash: dir_body_hash.to_owned(),
@@ -113,7 +109,6 @@ impl ZipsStore {
 /// `getcontents` cache envelope's `body_hash`. A directory with no
 /// envelope in `cache` is omitted rather than mapped to a placeholder, so
 /// [`ZipsStore::lookup`] degrades to a refetch for it.
-#[allow(dead_code)]
 #[must_use]
 pub fn dir_hashes(records: &[FileRecord], cache: &ApiCache) -> BTreeMap<String, String> {
     let dirs: BTreeSet<&str> = records.iter().map(|r| r.dir.as_str()).collect();

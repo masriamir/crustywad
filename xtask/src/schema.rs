@@ -188,7 +188,6 @@ pub fn tool_version() -> String {
 /// §5.6 closed enum — every §5.5 edge case gets a named value, or "record,
 /// don't skip" is unenforceable. Do not add variants without a DESIGN §5.6
 /// correction in the same commit.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FetchStatus {
@@ -231,7 +230,6 @@ pub struct WadMember {
 
 /// One `idgames-wads.jsonl` line (§5.6 — field order here is the output
 /// schema). `date`/`rating`/`votes` are copied from the Phase-1 record.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WadRecord {
     /// Archive file ID (Phase-1 `FileRecord::id`).
@@ -274,7 +272,6 @@ pub struct WadRecord {
 ///
 /// # Errors
 /// Serialization or filesystem failure.
-#[allow(dead_code)]
 pub fn write_wads_jsonl(path: &Path, records: Vec<WadRecord>) -> anyhow::Result<u64> {
     let mut by_id = std::collections::BTreeMap::new();
     for rec in records {
@@ -293,7 +290,6 @@ pub fn write_wads_jsonl(path: &Path, records: Vec<WadRecord>) -> anyhow::Result<
 /// (small fraction of the archive or the range reader is broken), ZIP64
 /// count (≥1 resolved or absence stated), fallback/budget accounting, and
 /// the completeness counter. The only Phase-2 output with wall-clock data.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZipsManifest {
     /// `"harvest-zips-YYYYMMDDTHHMMSSZ"` from the run start.
@@ -345,7 +341,6 @@ pub struct ZipsManifest {
 ///
 /// # Errors
 /// Serialization or filesystem failure.
-#[allow(dead_code)]
 pub fn write_zips_manifest(path: &Path, manifest: &ZipsManifest) -> anyhow::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(manifest).context("serializing zips manifest")?;
     bytes.push(b'\n');

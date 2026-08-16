@@ -21,12 +21,10 @@ use crate::zips::inspect::{FetchFailure, RangeSource};
 /// (22 + 65,535 = 65,557 bytes, §5.3) plus the ZIP64 EOCD locator (20) and
 /// ZIP64 EOCD record (56) that precede it. A bare 64 KiB tail can miss the
 /// EOCD signature by up to 21 bytes (§5.2).
-#[allow(dead_code)]
 pub const TAIL_LEN: u64 = 66 * 1024;
 
 /// Byte ranges of a remote file fetched so far, keyed by start offset.
 /// Segments never overlap and are never adjacent — `insert` coalesces.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct SparseBuffer {
     file_size: u64,
@@ -35,7 +33,6 @@ pub struct SparseBuffer {
 
 impl SparseBuffer {
     /// Empty buffer for a file of `file_size` bytes.
-    #[allow(dead_code)]
     pub fn new(file_size: u64) -> Self {
         Self {
             file_size,
@@ -44,14 +41,12 @@ impl SparseBuffer {
     }
 
     /// Total size of the remote file.
-    #[allow(dead_code)]
     pub fn file_size(&self) -> u64 {
         self.file_size
     }
 
     /// Insert `bytes` at `offset`, merging any overlapping or adjacent
     /// segments so reads never see artificial seams.
-    #[allow(dead_code)]
     pub fn insert(&mut self, offset: u64, bytes: Vec<u8>) {
         if bytes.is_empty() {
             return;
@@ -107,7 +102,6 @@ impl SparseBuffer {
     /// Copy cached bytes at `offset` into `buf`. `None` when `offset` is
     /// not covered at all; `Some(n)` with `n < buf.len()` when the segment
     /// ends early (a legal short read).
-    #[allow(dead_code)]
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Option<usize> {
         let (&seg_start, seg_bytes) = self.segments.range(..=offset).next_back()?;
         let seg_len = u64::try_from(seg_bytes.len()).expect("len fits u64");
@@ -126,7 +120,6 @@ impl SparseBuffer {
     /// itself when covered); `file_size` when nothing follows. The driver
     /// uses this to widen a miss into "everything up to the cached tail" —
     /// the central-directory extent — in one request.
-    #[allow(dead_code)]
     pub fn next_covered_start(&self, offset: u64) -> u64 {
         if let Some((&seg_start, seg_bytes)) = self.segments.range(..=offset).next_back() {
             let seg_len = u64::try_from(seg_bytes.len()).expect("len fits u64");
@@ -145,7 +138,6 @@ impl SparseBuffer {
 /// writes the missing `(offset, len)` into the shared `missing` cell and
 /// returns `ErrorKind::Other` — the cell outlives the reader because
 /// `zip::ZipArchive::new` consumes its reader on failure.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct RangeReader<'a> {
     buf: &'a SparseBuffer,
@@ -156,7 +148,6 @@ pub struct RangeReader<'a> {
 impl<'a> RangeReader<'a> {
     /// Wrap `buf` for sequential `Read + Seek` access; misses are recorded
     /// into `missing`.
-    #[allow(dead_code)]
     pub fn new(buf: &'a SparseBuffer, missing: &'a Cell<Option<(u64, u64)>>) -> Self {
         Self {
             buf,
@@ -203,16 +194,13 @@ impl Seek for RangeReader<'_> {
 }
 
 /// §5.4: 4–8 concurrent connections against a mirror.
-#[allow(dead_code)]
 pub const MIRROR_CONCURRENCY: usize = 6;
 
 /// Transient-failure retries per mirror per fetch. Lighter than the API
 /// client's 6: mirror failover is the real second chance here.
-#[allow(dead_code)]
 pub const MAX_MIRROR_ATTEMPTS: u32 = 3;
 
 /// §5.2: global byte budget for the full-download fallback.
-#[allow(dead_code)]
 pub const FALLBACK_BYTE_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Run-wide transfer accounting (§9.3: total bytes transferred must stay a
@@ -222,7 +210,6 @@ pub const FALLBACK_BYTE_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
 /// here as it's read (never derived from a `Content-Length` header), along
 /// with every request issued: Task 6's run-wide runaway breaker depends on
 /// these being exact, not an under-count of failed attempts.
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct TransferCounters {
     /// GET requests issued (ranged and full).
@@ -233,7 +220,6 @@ pub struct TransferCounters {
 
 impl TransferCounters {
     /// Zeroed counters for a fresh run.
-    #[allow(dead_code)]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -241,7 +227,6 @@ impl TransferCounters {
 }
 
 /// Breaker outcome for one entry that needs the full-download fallback.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FallbackDecision {
     /// Within budget and breaker: download, then parse from memory.
@@ -256,7 +241,6 @@ pub enum FallbackDecision {
 
 /// §5.2 budgeted-fallback accounting. Lives behind a mutex in the
 /// orchestrator; the methods are sync and trivial.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct FallbackBudget {
     bytes_remaining: u64,
@@ -268,7 +252,6 @@ impl FallbackBudget {
     /// Budget for a run inspecting `total_entries` entries in total: a
     /// [`FALLBACK_BYTE_BUDGET`]-byte allowance and a [`fallback_limit`]
     /// breaker.
-    #[allow(dead_code)]
     #[must_use]
     pub fn new(total_entries: u64) -> Self {
         Self {
@@ -281,7 +264,6 @@ impl FallbackBudget {
     /// Admit one entry's fallback need of `size` bytes. `needed` counts
     /// first — a breaker trip counts even when this particular need goes
     /// unmet — then the byte budget gates whether it's actually granted.
-    #[allow(dead_code)]
     pub fn admit(&mut self, size: u64) -> FallbackDecision {
         self.needed += 1;
         if self.needed > self.limit {
@@ -301,7 +283,6 @@ impl FallbackBudget {
 /// `total_entries` is a corpus-wide count that in principle could approach
 /// `u64::MAX / 2`, and this must never panic on it (match inspect.rs's
 /// `saturating_add` posture toward values that cross a trust boundary).
-#[allow(dead_code)]
 fn fallback_limit(total_entries: u64) -> u64 {
     (total_entries.saturating_mul(2) / 100).max(2)
 }
@@ -339,7 +320,6 @@ fn fallback_limit(total_entries: u64) -> u64 {
 /// `filename` empty or containing `/`; `base` not a valid URL or not
 /// hierarchical (`path_segments_mut` fails on e.g. a `mailto:` URL); or the
 /// built URL fails the same-origin/same-path-prefix post-condition.
-#[allow(dead_code)]
 pub(crate) fn entry_url(base: &str, dir: &str, filename: &str) -> anyhow::Result<reqwest::Url> {
     if filename.is_empty() || filename.contains('/') {
         anyhow::bail!("filename must be a single non-empty path segment: {filename:?}");
@@ -370,7 +350,6 @@ pub(crate) fn entry_url(base: &str, dir: &str, filename: &str) -> anyhow::Result
 /// treats `None` as a mismatch, never a pass: RFC 7233 §4.2 requires this
 /// header on every `206`, so a missing or malformed one is itself
 /// suspicious, not a shape to tolerate.
-#[allow(dead_code)]
 fn parse_content_range(value: &str) -> Option<(u64, u64)> {
     let range = value.strip_prefix("bytes ")?;
     let (range, _total) = range.split_once('/')?;
@@ -387,7 +366,6 @@ fn parse_content_range(value: &str) -> Option<(u64, u64)> {
 /// body that grows past `cap` mid-stream fails with `over_detail`, and a
 /// body that ends up short of `cap` fails with a generic detail — neither
 /// over- nor under-delivery is a partial success.
-#[allow(dead_code)]
 async fn stream_capped(
     mut resp: reqwest::Response,
     cap: u64,
@@ -431,7 +409,6 @@ async fn stream_capped(
 /// with `attempt` already folded into the decision (both callers of
 /// [`accept_body`] would otherwise repeat the same `attempt <
 /// MAX_MIRROR_ATTEMPTS` check).
-#[allow(dead_code)]
 enum StreamOutcome {
     /// The body streamed cleanly within its cap.
     Success(Vec<u8>),
@@ -446,7 +423,6 @@ enum StreamOutcome {
 /// [`RangeSource::fetch`]'s success paths and [`MirrorRanges::download_full`]:
 /// success returns the bytes, failure is classified into `Retry` or
 /// `GiveUp` by whether `attempt` has hit [`MAX_MIRROR_ATTEMPTS`].
-#[allow(dead_code)]
 async fn accept_body(
     resp: reqwest::Response,
     cap: u64,
@@ -466,7 +442,6 @@ async fn accept_body(
 /// comparison is written, shared by every attempt-level call site so a
 /// branch can never forget it (and, as a side effect, can never forget to
 /// carry a detail string for [`MirrorRanges::fetch_exhausted`] either).
-#[allow(dead_code)]
 fn retry_or_give_up(detail: String, attempt: u32) -> StreamOutcome {
     if attempt < MAX_MIRROR_ATTEMPTS {
         StreamOutcome::Retry(detail)
@@ -482,7 +457,6 @@ fn retry_or_give_up(detail: String, attempt: u32) -> StreamOutcome {
 /// sparse buffer at `offset` — that would silently fabricate sizes in the
 /// durable output. A missing or unparseable header is treated the same as
 /// a mismatch (RFC 7233 §4.2 requires it on every `206`), never as a pass.
-#[allow(dead_code)]
 async fn accept_partial_content(
     resp: reqwest::Response,
     offset: u64,
@@ -515,7 +489,6 @@ async fn accept_partial_content(
 /// retries, 404/no-range failover, and capped body reads. Pins to the
 /// first mirror that serves bytes so multi-round fetches never mix
 /// mirrors (their copies could momentarily differ).
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MirrorRanges {
     /// Shared HTTP client (connection pooling, UA, timeouts — the
@@ -551,7 +524,6 @@ impl MirrorRanges {
     /// URL construction only (a malformed `dir`/`filename`); every network
     /// failure surfaces later, from [`RangeSource::fetch`] or
     /// [`Self::download_full`].
-    #[allow(dead_code)]
     pub fn new(
         http: reqwest::Client,
         dir: &str,
@@ -577,7 +549,6 @@ impl MirrorRanges {
 
     /// The pinned mirror's key, once a fetch has pinned one; `""` before
     /// that (no bytes served yet).
-    #[allow(dead_code)]
     #[must_use]
     pub fn mirror_key(&self) -> &'static str {
         self.pinned.map_or("", |i| MIRRORS[i].key)
@@ -587,7 +558,6 @@ impl MirrorRanges {
     /// mirror alone once one is set (multi-round fetches must never mix
     /// mirrors), else every mirror not yet disqualified by a `404` or a
     /// range refusal, in [`MIRRORS`] order.
-    #[allow(dead_code)]
     fn candidates(&self) -> Vec<usize> {
         if let Some(i) = self.pinned {
             return vec![i];
@@ -601,7 +571,6 @@ impl MirrorRanges {
     /// ranged fetch, a plain GET doesn't care whether a mirror has refused
     /// ranges, so only a `404` disqualifies one; the pinned mirror (if any)
     /// is tried first.
-    #[allow(dead_code)]
     fn full_candidates(&self) -> Vec<usize> {
         let mut order = Vec::with_capacity(self.urls.len());
         if let Some(p) = self.pinned
@@ -620,7 +589,6 @@ impl MirrorRanges {
     /// Classify a [`RangeSource::fetch`] that exhausted every candidate
     /// mirror without success (§5.2's failover order: all-404 beats a
     /// range refusal, which beats a generic transport/HTTP detail).
-    #[allow(dead_code)]
     fn fetch_exhausted(&self, last_detail: Option<String>) -> FetchFailure {
         if self.not_found.iter().all(|&nf| nf) {
             FetchFailure::NotFound
@@ -636,7 +604,6 @@ impl MirrorRanges {
     /// Only touches the disqualification flags (`not_found`) that are a
     /// permanent fact about mirror `i`; the caller owns `last_detail`,
     /// `pinned`, and the retry loop.
-    #[allow(dead_code)]
     async fn attempt_full_download(
         &mut self,
         i: usize,
@@ -679,7 +646,6 @@ impl MirrorRanges {
     /// that over- or under-delivers relative to `expected_size` — the
     /// ls-laR-declared size is authoritative, so a mismatch is never
     /// silently accepted.
-    #[allow(dead_code)]
     pub async fn download_full(&mut self, expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
         // The brief mandates this exact signature (Task 6 passes
         // `expected_size` explicitly even though it's also captured at
@@ -724,7 +690,6 @@ impl MirrorRanges {
     /// accepted. Only touches the disqualification flags (`range_refused`,
     /// `not_found`) that are a permanent fact about mirror `i`; the caller
     /// owns `last_detail`, `pinned`, and the retry loop.
-    #[allow(dead_code)]
     async fn attempt_range_fetch(
         &mut self,
         i: usize,

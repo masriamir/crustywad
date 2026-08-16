@@ -105,7 +105,6 @@ pub trait RangeSource {
 }
 
 /// Why a fetch (or a whole entry) failed at the transport level.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchFailure {
     /// Every usable mirror answered `200` to a ranged request (§5.2: THE
@@ -128,7 +127,6 @@ impl std::fmt::Display for FetchFailure {
 }
 
 /// What phase 2 learns about one archive entry.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inspection {
     /// ZIP64 EOCD locator present in the tail (§5.3).
@@ -147,7 +145,6 @@ pub struct Inspection {
 }
 
 /// Why an entry could not be inspected.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum InspectError {
     /// Transport failure — carries the classified [`FetchFailure`].
@@ -181,7 +178,6 @@ impl std::fmt::Display for InspectError {
 ///
 /// # Errors
 /// [`InspectError`] — every variant maps onto a §5.6 `fetch_status`.
-#[allow(dead_code)]
 pub async fn inspect_zip(
     source: &mut impl RangeSource,
     file_size: u64,
@@ -194,7 +190,6 @@ pub async fn inspect_zip(
 /// `max_rounds` bounds only stage 1 (CD-locate); stage 2 (member-walk) has
 /// its own fixed [`MAX_MEMBER_ROUNDS`] budget (see module docs for why the
 /// two are independent).
-#[allow(dead_code)]
 pub(crate) async fn inspect_zip_with_caps(
     source: &mut impl RangeSource,
     file_size: u64,
@@ -343,7 +338,6 @@ async fn inspect_members(
 /// makes this safe to call on a fully-covered, miss-proof reader (e.g. a
 /// full-download `Cursor`): pass any cell (it will simply never be set) and
 /// the walk always runs to completion.
-#[allow(dead_code)]
 pub fn inspection_from_archive<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     zip64: bool,
@@ -420,7 +414,6 @@ pub fn inspection_from_archive<R: Read + Seek>(
 /// deflate member, so this comparison labels it `"deflate"` correctly
 /// under both configurations (test unification turns the feature on;
 /// production leaves it off) — not a production/test discrepancy.
-#[allow(dead_code)]
 fn method_label(method: zip::CompressionMethod) -> String {
     if method == zip::CompressionMethod::STORE {
         "stored".into()
@@ -434,7 +427,6 @@ fn method_label(method: zip::CompressionMethod) -> String {
 /// Scan `tail` for the classic EOCD signature and check whether the 20
 /// bytes immediately before it are a ZIP64 EOCD locator (§5.3: the locator
 /// always immediately precedes the EOCD). Precise — not a size heuristic.
-#[allow(dead_code)]
 pub fn zip64_present(tail: &[u8]) -> bool {
     const EOCD_SIG: [u8; 4] = 0x0605_4b50_u32.to_le_bytes();
     const LOCATOR_SIG: [u8; 4] = 0x0706_4b50_u32.to_le_bytes();
