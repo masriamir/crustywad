@@ -106,10 +106,14 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     // only; additions/deletions/replacements are picked up via the
     // bootstrap tree diff below — there is no walk-back.
     let manifest_path = out_dir.join("harvest-manifest.json");
-    let prior_records: Vec<FileRecord> = if scoped {
-        Vec::new()
+    // `None` = no baseline file (first run) — skip invalidation entirely.
+    // `Some(records)` = a baseline exists; if damaged lines left it empty,
+    // the diff degrades to broad invalidation of every populated in-scope
+    // dir, exactly as `read_files_jsonl` documents.
+    let prior_records: Option<Vec<FileRecord>> = if scoped {
+        None
     } else {
-        schema::read_files_jsonl(&out_dir.join("idgames-files.jsonl")).unwrap_or_default()
+        schema::read_files_jsonl(&out_dir.join("idgames-files.jsonl"))
     };
     let probe_max = if scoped {
         None
@@ -126,10 +130,10 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     // stale-cache tree cannot carry changes; skip the diff there.
     if !scoped
         && matches!(source, BootstrapSource::Fresh { .. })
-        && !prior_records.is_empty()
+        && let Some(prior) = &prior_records
         && let Some(tree) = &tree
     {
-        invalidate_stale_dirs(client.cache(), tree, &prior_records);
+        invalidate_stale_dirs(client.cache(), tree, prior);
     }
 
     let (mut outcome, roots) =
