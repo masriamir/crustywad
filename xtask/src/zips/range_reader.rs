@@ -297,21 +297,85 @@ impl FallbackBudget {
 
 /// `max(2, ~2% of entries)` — the floor keeps a 5-entry dev run from
 /// aborting on its first legitimately range-less file while still tripping
-/// fast when the pattern is systemic.
+/// fast when the pattern is systemic. `saturating_mul` rather than `*`:
+/// `total_entries` is a corpus-wide count that in principle could approach
+/// `u64::MAX / 2`, and this must never panic on it (match inspect.rs's
+/// `saturating_add` posture toward values that cross a trust boundary).
 #[allow(dead_code)]
 fn fallback_limit(total_entries: u64) -> u64 {
-    (total_entries * 2 / 100).max(2)
+    (total_entries.saturating_mul(2) / 100).max(2)
 }
 
-/// Build a mirror URL for one archive entry. `base` and `dir` both carry a
-/// trailing slash (§5.1's [`MIRRORS`] and the Phase-1 invariant on `dir`,
-/// respectively), so the two `join`s compose into `<base><dir><filename>`
-/// with `filename` percent-encoded per segment — `Url::join` treats a base
-/// ending in `/` as a directory rather than a file, so neither join drops
-/// the path already accumulated.
+/// Build a mirror URL for one archive entry, keeping every constructed URL
+/// on the mirror's own scheme/host/port no matter what `dir`/`filename`
+/// contain — both come from the third-party idgames API (ADR-0030 §3/§5)
+/// and are therefore untrusted. Built by appending percent-encoded path
+/// *segments* (`Url::path_segments_mut`), never by parsing `dir`/`filename`
+/// as a relative URL: `Url::join` would let an absolute (`https://evil...`),
+/// protocol-relative (`//evil...`), or rooted (`/etc/passwd`) `filename`
+/// replace the host or escape the base path outright, and would silently
+/// truncate at an embedded `#`/`?` into a URL fragment/query instead of
+/// sending those bytes as part of the request path — manufacturing a false
+/// `not_found` fact for a real filename like `10nm####.zip`.
+///
+/// `filename` must be a single non-empty segment — a `/` in it is rejected
+/// outright, never silently folded into an extra segment or percent-coded
+/// away. `dir` splits on `/` into its own segments. Every segment (from
+/// `base`, `dir`, and `filename` alike) is percent-encoded independently by
+/// `Url`, so a literal `#`/`?`/space can never cross a segment boundary or
+/// turn into a fragment/query.
+///
+/// A same-origin, same-path-prefix check runs on the built URL as defense
+/// in depth: segment-by-segment construction should make it unreachable
+/// (unlike `Url::join`, segment pushes cannot rewrite the scheme or host,
+/// and per `url`'s own documented contract a segment that is exactly `.`
+/// or `..` is silently dropped rather than resolved or kept literal —
+/// verified against `url` 2.5.8's `path_segments.rs`, so a `dir` containing
+/// `../` traversal segments can't walk the path outside `base` either), but
+/// a future edit to this function — or a future `url` upgrade — must not be
+/// able to silently regress the invariant this exists to protect.
+///
+/// # Errors
+/// `filename` empty or containing `/`; `base` not a valid URL or not
+/// hierarchical (`path_segments_mut` fails on e.g. a `mailto:` URL); or the
+/// built URL fails the same-origin/same-path-prefix post-condition.
 #[allow(dead_code)]
 pub(crate) fn entry_url(base: &str, dir: &str, filename: &str) -> anyhow::Result<reqwest::Url> {
-    Ok(reqwest::Url::parse(base)?.join(dir)?.join(filename)?)
+    if filename.is_empty() || filename.contains('/') {
+        anyhow::bail!("filename must be a single non-empty path segment: {filename:?}");
+    }
+    let base_url = reqwest::Url::parse(base)?;
+    let mut url = base_url.clone();
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|()| anyhow::anyhow!("mirror base URL is not hierarchical: {base}"))?;
+        segments.pop_if_empty();
+        segments.extend(dir.split('/').filter(|s| !s.is_empty()));
+        segments.push(filename);
+    }
+    let same_origin = url.scheme() == base_url.scheme()
+        && url.host_str() == base_url.host_str()
+        && url.port_or_known_default() == base_url.port_or_known_default();
+    if !same_origin || !url.path().starts_with(base_url.path()) {
+        anyhow::bail!("entry URL escaped the mirror base ({base}): {url}");
+    }
+    Ok(url)
+}
+
+/// Parse a `Content-Range: bytes {start}-{end}/{total}` response header
+/// into inclusive `(start, end)` byte offsets. `None` for anything else,
+/// including the `bytes */{total}` "range not satisfiable" form (no
+/// start/end to compare against) and unparseable garbage — the caller
+/// treats `None` as a mismatch, never a pass: RFC 7233 §4.2 requires this
+/// header on every `206`, so a missing or malformed one is itself
+/// suspicious, not a shape to tolerate.
+#[allow(dead_code)]
+fn parse_content_range(value: &str) -> Option<(u64, u64)> {
+    let range = value.strip_prefix("bytes ")?;
+    let (range, _total) = range.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
 }
 
 /// Stream `resp`'s body, counting every byte actually read into
@@ -342,7 +406,10 @@ async fn stream_capped(
                     u64::try_from(chunk.len()).unwrap_or(u64::MAX),
                     Ordering::Relaxed,
                 );
-                if bytes.len() + chunk.len() > cap_usize {
+                // `saturating_add`: an abusive/misbehaving mirror is
+                // exactly the untrusted input this cap exists to police,
+                // so the overflow check itself must never panic on it.
+                if bytes.len().saturating_add(chunk.len()) > cap_usize {
                     return Err(over_detail.to_owned());
                 }
                 bytes.extend_from_slice(&chunk);
@@ -358,6 +425,90 @@ async fn stream_capped(
         ));
     }
     Ok(bytes)
+}
+
+/// What to do next after one body-read attempt: succeed, or retry/give up
+/// with `attempt` already folded into the decision (both callers of
+/// [`accept_body`] would otherwise repeat the same `attempt <
+/// MAX_MIRROR_ATTEMPTS` check).
+#[allow(dead_code)]
+enum StreamOutcome {
+    /// The body streamed cleanly within its cap.
+    Success(Vec<u8>),
+    /// A failed attempt with retries remaining.
+    Retry(String),
+    /// A failed attempt with no retries left — the candidate mirror is
+    /// exhausted for this call.
+    GiveUp(String),
+}
+
+/// [`stream_capped`] plus the shared attempt/retry bookkeeping used by both
+/// [`RangeSource::fetch`]'s success paths and [`MirrorRanges::download_full`]:
+/// success returns the bytes, failure is classified into `Retry` or
+/// `GiveUp` by whether `attempt` has hit [`MAX_MIRROR_ATTEMPTS`].
+#[allow(dead_code)]
+async fn accept_body(
+    resp: reqwest::Response,
+    cap: u64,
+    counters: &TransferCounters,
+    over_detail: &str,
+    attempt: u32,
+) -> StreamOutcome {
+    match stream_capped(resp, cap, counters, over_detail).await {
+        Ok(bytes) => StreamOutcome::Success(bytes),
+        Err(detail) => retry_or_give_up(detail, attempt),
+    }
+}
+
+/// Classify a non-body failure detail (transport error, unexpected/retryable
+/// status, mismatched `Content-Range`, ...) into `Retry` or `GiveUp` by
+/// whether `attempt` has hit [`MAX_MIRROR_ATTEMPTS`] — the one place that
+/// comparison is written, shared by every attempt-level call site so a
+/// branch can never forget it (and, as a side effect, can never forget to
+/// carry a detail string for [`MirrorRanges::fetch_exhausted`] either).
+#[allow(dead_code)]
+fn retry_or_give_up(detail: String, attempt: u32) -> StreamOutcome {
+    if attempt < MAX_MIRROR_ATTEMPTS {
+        StreamOutcome::Retry(detail)
+    } else {
+        StreamOutcome::GiveUp(detail)
+    }
+}
+
+/// Validate a `206`'s `Content-Range` against the requested
+/// `[offset, want_end]` before trusting its body at all (fix round 1,
+/// Finding 2): a proxy/CDN node that answers `206` for a *different* range
+/// than requested must never have its bytes accepted and spliced into the
+/// sparse buffer at `offset` — that would silently fabricate sizes in the
+/// durable output. A missing or unparseable header is treated the same as
+/// a mismatch (RFC 7233 §4.2 requires it on every `206`), never as a pass.
+#[allow(dead_code)]
+async fn accept_partial_content(
+    resp: reqwest::Response,
+    offset: u64,
+    want_end: u64,
+    len: u64,
+    counters: &TransferCounters,
+    attempt: u32,
+) -> StreamOutcome {
+    let content_range = resp
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_content_range);
+    match content_range {
+        Some((start, end)) if start == offset && end == want_end => {
+            accept_body(resp, len, counters, "range over-delivery", attempt).await
+        }
+        Some((start, end)) => retry_or_give_up(
+            format!("Content-Range mismatch: got {start}-{end}, wanted {offset}-{want_end}"),
+            attempt,
+        ),
+        None => retry_or_give_up(
+            "206 with a missing or unparseable Content-Range".to_owned(),
+            attempt,
+        ),
+    }
 }
 
 /// One archive entry's byte source: the §5.1 mirror pool with per-mirror
@@ -480,6 +631,44 @@ impl MirrorRanges {
         }
     }
 
+    /// One (mirror, attempt) round of [`Self::download_full`]: send the
+    /// plain GET, classify the response, and read the body if accepted.
+    /// Only touches the disqualification flags (`not_found`) that are a
+    /// permanent fact about mirror `i`; the caller owns `last_detail`,
+    /// `pinned`, and the retry loop.
+    #[allow(dead_code)]
+    async fn attempt_full_download(
+        &mut self,
+        i: usize,
+        expected_size: u64,
+        attempt: u32,
+    ) -> StreamOutcome {
+        self.counters.requests.fetch_add(1, Ordering::Relaxed);
+        let outcome = self.http.get(self.urls[i].clone()).send().await;
+        let resp = match outcome {
+            Ok(r) => r,
+            Err(e) => return retry_or_give_up(format!("transport: {e}"), attempt),
+        };
+        let status = resp.status();
+        if status == reqwest::StatusCode::OK {
+            accept_body(
+                resp,
+                expected_size,
+                &self.counters,
+                "body exceeded declared size",
+                attempt,
+            )
+            .await
+        } else if status == reqwest::StatusCode::NOT_FOUND {
+            self.not_found[i] = true;
+            StreamOutcome::GiveUp(format!("HTTP {status}"))
+        } else if is_retryable(Some(status)) {
+            retry_or_give_up(format!("HTTP {status}"), attempt)
+        } else {
+            StreamOutcome::GiveUp(format!("HTTP {status}"))
+        }
+    }
+
     /// Full-file download for the §5.2 no-range-support fallback: every
     /// usable mirror answered `200` to a ranged request, so read the whole
     /// entry from the first still-viable mirror (preferring the pinned
@@ -492,58 +681,32 @@ impl MirrorRanges {
     /// silently accepted.
     #[allow(dead_code)]
     pub async fn download_full(&mut self, expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
+        // The brief mandates this exact signature (Task 6 passes
+        // `expected_size` explicitly even though it's also captured at
+        // construction) — but the two must always agree; a caller passing
+        // something else is a bug to catch in debug builds, not a case to
+        // silently honor.
+        debug_assert_eq!(
+            expected_size, self.expected_file_size,
+            "caller passed a different size than MirrorRanges::new was built with"
+        );
         let mut last_detail: Option<String> = None;
         for i in self.full_candidates() {
             for attempt in 1..=MAX_MIRROR_ATTEMPTS {
-                self.counters.requests.fetch_add(1, Ordering::Relaxed);
-                let outcome = self.http.get(self.urls[i].clone()).send().await;
-                let resp = match outcome {
-                    Ok(r) => r,
-                    Err(e) => {
-                        last_detail = Some(format!("transport: {e}"));
-                        if attempt < MAX_MIRROR_ATTEMPTS {
-                            tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
-                            continue;
-                        }
+                match self.attempt_full_download(i, expected_size, attempt).await {
+                    StreamOutcome::Success(bytes) => {
+                        self.pinned = Some(i);
+                        return Ok(bytes);
+                    }
+                    StreamOutcome::Retry(detail) => {
+                        last_detail = Some(detail);
+                        tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
+                    }
+                    StreamOutcome::GiveUp(detail) => {
+                        last_detail = Some(detail);
                         break;
                     }
-                };
-                let status = resp.status();
-                if status == reqwest::StatusCode::OK {
-                    match stream_capped(
-                        resp,
-                        expected_size,
-                        &self.counters,
-                        "body exceeded declared size",
-                    )
-                    .await
-                    {
-                        Ok(bytes) => {
-                            self.pinned = Some(i);
-                            return Ok(bytes);
-                        }
-                        Err(detail) => {
-                            last_detail = Some(detail);
-                            if attempt < MAX_MIRROR_ATTEMPTS {
-                                tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
-                                continue;
-                            }
-                            break;
-                        }
-                    }
-                } else if status == reqwest::StatusCode::NOT_FOUND {
-                    self.not_found[i] = true;
-                    break;
-                } else if is_retryable(Some(status)) {
-                    last_detail = Some(format!("HTTP {status}"));
-                    if attempt < MAX_MIRROR_ATTEMPTS {
-                        tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
-                        continue;
-                    }
-                    break;
                 }
-                last_detail = Some(format!("HTTP {status}"));
-                break;
             }
         }
         if self.not_found.iter().all(|&nf| nf) {
@@ -554,6 +717,55 @@ impl MirrorRanges {
             ))
         }
     }
+
+    /// One (mirror, attempt) round of [`RangeSource::fetch`]: send the
+    /// ranged GET, classify the response — including validating a `206`'s
+    /// `Content-Range` (fix round 1, Finding 2) — and read the body if
+    /// accepted. Only touches the disqualification flags (`range_refused`,
+    /// `not_found`) that are a permanent fact about mirror `i`; the caller
+    /// owns `last_detail`, `pinned`, and the retry loop.
+    #[allow(dead_code)]
+    async fn attempt_range_fetch(
+        &mut self,
+        i: usize,
+        offset: u64,
+        len: u64,
+        want_end: u64,
+        whole_file: bool,
+        attempt: u32,
+    ) -> StreamOutcome {
+        self.counters.requests.fetch_add(1, Ordering::Relaxed);
+        let outcome = self
+            .http
+            .get(self.urls[i].clone())
+            .header(reqwest::header::RANGE, format!("bytes={offset}-{want_end}"))
+            .send()
+            .await;
+        let resp = match outcome {
+            Ok(r) => r,
+            Err(e) => return retry_or_give_up(format!("transport: {e}"), attempt),
+        };
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            accept_partial_content(resp, offset, want_end, len, &self.counters, attempt).await
+        } else if status == reqwest::StatusCode::OK && whole_file {
+            accept_body(resp, len, &self.counters, "range over-delivery", attempt).await
+        } else if status == reqwest::StatusCode::OK {
+            // The server ignored the range but this wasn't a whole-file
+            // request: a policy refusal, not a hiccup — no retry, just
+            // disqualify this mirror.
+            self.range_refused[i] = true;
+            StreamOutcome::GiveUp(format!("HTTP {status}"))
+        } else if status == reqwest::StatusCode::NOT_FOUND {
+            self.not_found[i] = true;
+            StreamOutcome::GiveUp(format!("HTTP {status}"))
+        } else if is_retryable(Some(status)) {
+            retry_or_give_up(format!("HTTP {status}"), attempt)
+        } else {
+            StreamOutcome::GiveUp(format!("HTTP {status}"))
+        }
+    }
 }
 
 impl RangeSource for MirrorRanges {
@@ -561,71 +773,41 @@ impl RangeSource for MirrorRanges {
     /// (transient statuses/transport errors, backed off per
     /// [`backoff_delay`]), then failover to the next candidate; a `200` to
     /// a non-whole-file range or a `404` disqualifies a mirror outright
-    /// (no retry — policy, not a hiccup). See [`Self::candidates`] and
-    /// [`Self::fetch_exhausted`] for selection and final classification.
+    /// (no retry — policy, not a hiccup). A `206` whose `Content-Range`
+    /// doesn't echo back the requested extent is treated as an ordinary
+    /// attempt failure (retried, then failed over) rather than trusted: a
+    /// proxy/CDN node that silently serves a *different* range must never
+    /// get its bytes spliced into the sparse buffer at the wrong offset.
+    /// See [`Self::candidates`], [`Self::attempt_range_fetch`], and
+    /// [`Self::fetch_exhausted`] for selection, per-attempt classification,
+    /// and final classification respectively.
     async fn fetch(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, FetchFailure> {
         let whole_file = offset == 0 && len == self.expected_file_size;
-        let range_header = format!("bytes={offset}-{}", offset + len.saturating_sub(1));
+        // `saturating_add`/`saturating_sub`: `offset`/`len` ultimately trace
+        // back to CD-derived, untrusted-input-adjacent values (inspect.rs's
+        // posture), so the inclusive end computed here must never panic.
+        let want_end = offset.saturating_add(len.saturating_sub(1));
         let mut last_detail: Option<String> = None;
 
         for i in self.candidates() {
             for attempt in 1..=MAX_MIRROR_ATTEMPTS {
-                self.counters.requests.fetch_add(1, Ordering::Relaxed);
-                let outcome = self
-                    .http
-                    .get(self.urls[i].clone())
-                    .header(reqwest::header::RANGE, range_header.clone())
-                    .send()
-                    .await;
-                let resp = match outcome {
-                    Ok(r) => r,
-                    Err(e) => {
-                        last_detail = Some(format!("transport: {e}"));
-                        if attempt < MAX_MIRROR_ATTEMPTS {
-                            tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
-                            continue;
-                        }
+                match self
+                    .attempt_range_fetch(i, offset, len, want_end, whole_file, attempt)
+                    .await
+                {
+                    StreamOutcome::Success(bytes) => {
+                        self.pinned = Some(i);
+                        return Ok(bytes);
+                    }
+                    StreamOutcome::Retry(detail) => {
+                        last_detail = Some(detail);
+                        tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
+                    }
+                    StreamOutcome::GiveUp(detail) => {
+                        last_detail = Some(detail);
                         break;
                     }
-                };
-
-                let status = resp.status();
-                if status == reqwest::StatusCode::PARTIAL_CONTENT
-                    || (status == reqwest::StatusCode::OK && whole_file)
-                {
-                    match stream_capped(resp, len, &self.counters, "range over-delivery").await {
-                        Ok(bytes) => {
-                            self.pinned = Some(i);
-                            return Ok(bytes);
-                        }
-                        Err(detail) => {
-                            last_detail = Some(detail);
-                            if attempt < MAX_MIRROR_ATTEMPTS {
-                                tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
-                                continue;
-                            }
-                            break;
-                        }
-                    }
-                } else if status == reqwest::StatusCode::OK {
-                    // The server ignored the range but this wasn't a
-                    // whole-file request: a policy refusal, not a hiccup —
-                    // no retry, just disqualify this mirror.
-                    self.range_refused[i] = true;
-                    break;
-                } else if status == reqwest::StatusCode::NOT_FOUND {
-                    self.not_found[i] = true;
-                    break;
-                } else if is_retryable(Some(status)) {
-                    last_detail = Some(format!("HTTP {status}"));
-                    if attempt < MAX_MIRROR_ATTEMPTS {
-                        tokio::time::sleep(backoff_delay(attempt, &mut self.rng)).await;
-                        continue;
-                    }
-                    break;
                 }
-                last_detail = Some(format!("HTTP {status}"));
-                break;
             }
         }
 
@@ -718,6 +900,95 @@ mod tests {
             url.as_str(),
             "https://ftpmirror1.infania.net/pub/idgames/levels/doom2/Ports/megawads/with%20space.zip"
         );
+    }
+
+    /// Fix round 1, Finding 1: `#` in a real filename (`10nm####.zip` is an
+    /// actual idgames archive name) must become a percent-encoded path
+    /// byte, never a URL fragment — a fragment would silently truncate the
+    /// request path and manufacture a false `not_found`.
+    #[test]
+    fn hash_characters_in_filename_are_percent_encoded_not_a_fragment() {
+        let url = entry_url(
+            "https://ftpmirror1.infania.net/pub/idgames/",
+            "lmps/some/dir/",
+            "10nm####.zip",
+        )
+        .unwrap();
+        assert!(url.as_str().ends_with("/10nm%23%23%23%23.zip"), "got {url}");
+        assert!(url.fragment().is_none());
+    }
+
+    /// Finding 1: a `filename` is a single path segment by contract. An
+    /// embedded `/` — whether from an absolute URL, a protocol-relative
+    /// URL, a rooted path, or a `../` traversal sequence handed to us as
+    /// "the filename" — is rejected outright rather than silently encoded
+    /// into a segment or (worse, under the old `Url::join` construction)
+    /// left to replace the host.
+    #[test]
+    fn filename_containing_a_slash_is_rejected() {
+        let base = "https://ftpmirror1.infania.net/pub/idgames/";
+        let dir = "levels/doom/0-9/";
+        assert!(entry_url(base, dir, "https://evil.example/pwn.zip").is_err());
+        assert!(entry_url(base, dir, "//evil.example/pwn.zip").is_err());
+        assert!(entry_url(base, dir, "/absolute.zip").is_err());
+        assert!(entry_url(base, dir, "../../evil.zip").is_err());
+        assert!(entry_url(base, dir, "").is_err(), "empty filename");
+    }
+
+    /// Finding 1: a scheme-shaped or colon-bearing filename (no `/`, so not
+    /// rejected by the single-segment rule) must stay a literal path
+    /// segment on the mirror's own host — it must never be reparsed as if
+    /// it introduced its own scheme/authority.
+    #[test]
+    fn scheme_shaped_filename_stays_on_the_mirror_host() {
+        let url = entry_url(
+            "https://ftpmirror1.infania.net/pub/idgames/",
+            "levels/doom/0-9/",
+            "weird:name.zip",
+        )
+        .unwrap();
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("ftpmirror1.infania.net"));
+        assert!(
+            url.path().starts_with("/pub/idgames/levels/doom/0-9/weird"),
+            "got path {}",
+            url.path()
+        );
+    }
+
+    /// Finding 1: a `dir` containing `../` dot-segments must not let the
+    /// built URL leave the mirror base — the same-origin/same-path-prefix
+    /// post-condition is what actually decides this (segment-by-segment
+    /// construction never touches scheme/host regardless), so whichever
+    /// way it comes out, the result must be safe: either an `Err`, or a URL
+    /// whose full string is still rooted under `base`.
+    #[test]
+    fn dir_traversal_segments_stay_rooted_or_are_rejected() {
+        let base = "https://ftpmirror1.infania.net/pub/idgames/";
+        // Either outcome is acceptable (the post-condition decides); if it
+        // produced a URL at all, that URL must still be rooted under `base`.
+        if let Ok(url) = entry_url(base, "levels/../../x/", "f.zip") {
+            assert!(
+                url.as_str().starts_with(base),
+                "post-condition must keep the URL rooted under the mirror base: {url}"
+            );
+        }
+    }
+
+    /// Finding 2: `Content-Range` parsing — happy path, the `*/total`
+    /// "range not satisfiable" form (no start/end to compare, so `None`),
+    /// garbage, and a well-formed but different range (still parses; it's
+    /// the caller's offset/len comparison that decides "mismatch").
+    #[test]
+    fn parse_content_range_cases() {
+        assert_eq!(parse_content_range("bytes 100-199/2000"), Some((100, 199)));
+        assert_eq!(parse_content_range("bytes */2000"), None);
+        assert_eq!(parse_content_range("not a content range"), None);
+        assert_eq!(parse_content_range(""), None);
+        // A different-but-well-formed range: parsing succeeds; a caller
+        // expecting e.g. (0, 9) is the one that must treat this as a
+        // mismatch, not this function.
+        assert_eq!(parse_content_range("bytes 500-599/2000"), Some((500, 599)));
     }
 
     #[test]
