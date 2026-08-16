@@ -80,8 +80,12 @@ pub(crate) fn dirs_to_invalidate_from_tree(
             .filter(|f| f.name.to_ascii_lowercase().ends_with(".zip"))
             .map(|f| (f.name.to_ascii_lowercase(), f.size))
             .collect();
-        let prior_zips = baseline.get(dir.as_str()).cloned().unwrap_or_default();
-        if tree_zips != prior_zips {
+        // Compare against the borrowed baseline set — no per-dir clone.
+        let drifted = match baseline.get(dir.as_str()) {
+            Some(prior_zips) => tree_zips != *prior_zips,
+            None => !tree_zips.is_empty(),
+        };
+        if drifted {
             changed.insert(dir.clone());
         }
     }
