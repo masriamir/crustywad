@@ -1,1 +1,511 @@
 //! Enrichment walk over the §5.0 tree; BFS fallback (DESIGN.md §4.2).
+//!
+//! Primary mode: the worklist comes from the ls-laR bootstrap tree and the
+//! API is metadata-only enrichment — one `getcontents` per in-scope
+//! directory. BFS discovery via `getcontents` is the explicit fallback
+//! when no bootstrap is obtainable; its frontier is checkpointed (§4.6)
+//! and visited dirs are replayed through the response cache on resume, so
+//! a resumed run re-derives nothing over the network.
+
+use std::collections::{BTreeSet, VecDeque};
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use crate::api::client::{ApiCallError, ApiClient, FetchOutcome};
+use crate::api::model::{FileRecord, normalize_dir};
+use crate::cache::atomic_write;
+use crate::lslar::ArchiveTree;
+use crate::schema::{LedgerEntry, LedgerKind};
+use crate::scope::{ScopeDecision, decide};
+
+/// Anything that can answer a `getcontents` — the real client, or a test
+/// fake. `async fn` in a public trait normally trips the `async_fn_in_trait`
+/// lint (the returned future carries no auto-trait bounds, e.g. `Send`);
+/// this trait is internal-only, always driven as `&mut impl ListingSource`
+/// on a single-threaded call chain, so the missing bound is never a
+/// problem.
+#[allow(async_fn_in_trait)]
+#[allow(dead_code)] // not yet wired into main.rs (#405 phase-1 wiring is Task 10)
+pub trait ListingSource {
+    /// Fetch one directory's listing.
+    ///
+    /// # Errors
+    /// See [`ApiClient::getcontents`].
+    async fn getcontents(&mut self, dir: &str) -> Result<FetchOutcome, ApiCallError>;
+}
+
+impl ListingSource for ApiClient {
+    #[allow(dead_code)] // not yet wired into main.rs
+    async fn getcontents(&mut self, dir: &str) -> Result<FetchOutcome, ApiCallError> {
+        ApiClient::getcontents(self, dir).await
+    }
+}
+
+/// Result of one traversal (either mode).
+#[derive(Debug, Default)]
+#[allow(dead_code)] // not yet wired into main.rs
+pub struct TraverseOutcome {
+    /// Every file record collected.
+    #[allow(dead_code)]
+    pub records: Vec<FileRecord>,
+    /// Directories that produced a listing or a ledger entry.
+    #[allow(dead_code)]
+    pub dirs_processed: u64,
+    /// Directories whose scrubbed body hash moved on a live refetch
+    /// (phase-2 invalidation signal, §4.5).
+    #[allow(dead_code)]
+    pub changed_dirs: u64,
+    /// Failures and findings (record, don't skip).
+    #[allow(dead_code)]
+    pub ledger: Vec<LedgerEntry>,
+    /// Top-level Triage segments seen in the tree (§4.2: surface loudly).
+    #[allow(dead_code)]
+    pub triage: Vec<String>,
+}
+
+/// Derive the enrichment worklist from the bootstrap tree.
+///
+/// Full mode (`root: None`): in-scope dirs per §4.2, plus the deduped
+/// top-level segments of every `Triage` dir. Dev mode (`root: Some`): the
+/// normalized root's subtree, scope tables ignored (dev inspects anything).
+#[allow(dead_code)] // not yet wired into main.rs
+pub fn worklist_from_tree(tree: &ArchiveTree, root: Option<&str>) -> (Vec<String>, Vec<String>) {
+    if let Some(r) = root {
+        let prefix = normalize_dir(r);
+        let work = tree
+            .dirs
+            .keys()
+            .filter(|d| d.starts_with(&prefix))
+            .cloned()
+            .collect();
+        return (work, Vec::new());
+    }
+    let mut work = Vec::new();
+    let mut triage = BTreeSet::new();
+    for dir in tree.dirs.keys() {
+        match decide(dir) {
+            ScopeDecision::Include => work.push(dir.clone()),
+            ScopeDecision::Triage => {
+                if let Some(top) = dir.split('/').next() {
+                    triage.insert(format!("{top}/"));
+                }
+            }
+            ScopeDecision::Skip => {}
+        }
+    }
+    (work, triage.into_iter().collect())
+}
+
+/// Enrich each worklist directory with one `getcontents` (§4.2 primary
+/// mode). `tree` enables the §5.0 API-size-vs-listing cross-check.
+/// Never returns `Err` and never panics — every failure path ends in a
+/// [`LedgerEntry`] (record, don't skip).
+#[allow(dead_code)] // not yet wired into main.rs
+pub async fn enrich(
+    source: &mut impl ListingSource,
+    worklist: &[String],
+    tree: Option<&ArchiveTree>,
+    limit: Option<u64>,
+) -> TraverseOutcome {
+    let mut out = TraverseOutcome::default();
+    let bar = progress_bar(worklist.len());
+    for dir in worklist {
+        if at_limit(&out, limit) {
+            break;
+        }
+        process_dir(source, dir, tree, &mut out).await;
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+    truncate_to_limit(&mut out, limit);
+    out
+}
+
+/// Checkpointed BFS discovery via `getcontents` (§4.2 fallback mode), used
+/// when no ls-laR bootstrap is obtainable. The frontier (`pending` +
+/// `visited`) is written atomically to `checkpoint` after every processed
+/// directory and deleted on a completed run. On resume, `visited` dirs are
+/// replayed through `source` — in production that means the disk cache
+/// answers them, so a resumed run re-derives nothing over the network; the
+/// fake source in tests just answers identically to the first pass. Never
+/// returns `Err` and never panics — every failure path ends in a
+/// [`LedgerEntry`] (record, don't skip).
+#[allow(dead_code)] // not yet wired into main.rs
+pub async fn bfs(
+    source: &mut impl ListingSource,
+    roots: &[String],
+    checkpoint: &Path,
+    limit: Option<u64>,
+) -> TraverseOutcome {
+    let mut out = TraverseOutcome::default();
+    let (mut pending, mut visited) = load_checkpoint(checkpoint).unwrap_or_else(|| {
+        (
+            roots.iter().map(|r| normalize_dir(r)).collect(),
+            BTreeSet::new(),
+        )
+    });
+    // Replay visited dirs first — cache-fresh in production, so this costs
+    // no network and repopulates `records` after an interrupted run.
+    let replay: Vec<String> = visited.iter().cloned().collect();
+    let mut queue: VecDeque<String> = replay.into_iter().chain(pending.drain(..)).collect();
+    let mut enqueued: BTreeSet<String> = queue.iter().cloned().collect();
+
+    while let Some(dir) = queue.pop_front() {
+        if at_limit(&out, limit) {
+            break;
+        }
+        let discovered = process_dir(source, &dir, None, &mut out).await;
+        visited.insert(dir);
+        for sub in discovered {
+            let sub = normalize_dir(&sub);
+            if decide(&sub) == ScopeDecision::Include && enqueued.insert(sub.clone()) {
+                queue.push_back(sub);
+            }
+        }
+        let still_pending: Vec<&String> = queue.iter().collect();
+        save_checkpoint(checkpoint, &still_pending, &visited);
+    }
+    truncate_to_limit(&mut out, limit);
+    if queue.is_empty() {
+        let _ = std::fs::remove_file(checkpoint);
+    }
+    out
+}
+
+/// One directory: fetch, ledger failures, collect records, return
+/// discovered subdirectory paths (used by BFS; ignored by `enrich`).
+async fn process_dir(
+    source: &mut impl ListingSource,
+    dir: &str,
+    tree: Option<&ArchiveTree>,
+    out: &mut TraverseOutcome,
+) -> Vec<String> {
+    out.dirs_processed += 1;
+    let outcome = match source.getcontents(dir).await {
+        Ok(o) => o,
+        Err(e) => {
+            out.ledger.push(ledger_for(dir, &e));
+            return Vec::new();
+        }
+    };
+    if outcome.changed == Some(true) {
+        out.changed_dirs += 1;
+    }
+    if outcome.listing.is_suspect() {
+        // §4.1: never an empty directory — bad paths answer identically.
+        out.ledger.push(LedgerEntry {
+            path: dir.to_owned(),
+            action: "getcontents".into(),
+            kind: LedgerKind::SuspectPath,
+            detail: "content.file and content.dir both null".into(),
+            attempts: 1,
+        });
+        return Vec::new();
+    }
+    let (files, dirs) = outcome.listing.into_parts();
+    for file in files {
+        if let Some(tree) = tree
+            && let Some(listed) = tree.size_of(dir, &file.filename)
+            && listed != file.size
+        {
+            out.ledger.push(LedgerEntry {
+                path: format!("{dir}{}", file.filename),
+                action: "getcontents".into(),
+                kind: LedgerKind::SizeMismatch,
+                detail: format!("api size {} vs ls-laR size {listed}", file.size),
+                attempts: 1,
+            });
+        }
+        out.records.push(file);
+    }
+    dirs.into_iter().map(|d| d.name).collect()
+}
+
+fn ledger_for(dir: &str, e: &ApiCallError) -> LedgerEntry {
+    let (kind, detail, attempts) = match e {
+        ApiCallError::Http { attempts, detail } => {
+            (LedgerKind::HttpError, detail.clone(), *attempts)
+        }
+        ApiCallError::Api {
+            fault_kind,
+            message,
+        } => (LedgerKind::HttpError, format!("{fault_kind}: {message}"), 1),
+        ApiCallError::Shape(msg) => (LedgerKind::ParseError, msg.clone(), 1),
+    };
+    LedgerEntry {
+        path: dir.to_owned(),
+        action: "getcontents".into(),
+        kind,
+        detail,
+        attempts,
+    }
+}
+
+fn at_limit(out: &TraverseOutcome, limit: Option<u64>) -> bool {
+    limit.is_some_and(|l| u64::try_from(out.records.len()).unwrap_or(u64::MAX) >= l)
+}
+
+fn truncate_to_limit(out: &mut TraverseOutcome, limit: Option<u64>) {
+    if let Some(l) = limit {
+        out.records
+            .truncate(usize::try_from(l).unwrap_or(usize::MAX));
+    }
+}
+
+fn progress_bar(len: usize) -> indicatif::ProgressBar {
+    if len < 2 {
+        return indicatif::ProgressBar::hidden();
+    }
+    let bar = indicatif::ProgressBar::new(u64::try_from(len).unwrap_or(u64::MAX));
+    bar.set_style(
+        indicatif::ProgressStyle::with_template("{bar:40} {pos}/{len} dirs ({eta} left) {msg}")
+            .expect("static template is valid"),
+    );
+    bar
+}
+
+/// On-disk BFS frontier (§4.6): the queue plus everything already
+/// processed, so a resumed run knows both what's left and what to replay.
+#[derive(Serialize, Deserialize)]
+struct Checkpoint {
+    pending: Vec<String>,
+    visited: Vec<String>,
+}
+
+fn load_checkpoint(path: &Path) -> Option<(Vec<String>, BTreeSet<String>)> {
+    let ckpt: Checkpoint = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    Some((ckpt.pending, ckpt.visited.into_iter().collect()))
+}
+
+fn save_checkpoint(path: &Path, pending: &[&String], visited: &BTreeSet<String>) {
+    let ckpt = Checkpoint {
+        pending: pending.iter().map(|s| (*s).clone()).collect(),
+        visited: visited.iter().cloned().collect(),
+    };
+    if let Ok(bytes) = serde_json::to_vec(&ckpt)
+        && let Err(e) = atomic_write(path, &bytes)
+    {
+        tracing::warn!(error = %e, "could not write BFS checkpoint");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::model::ContentListing;
+    use std::collections::BTreeMap;
+
+    /// Canned listing source; records every requested dir.
+    struct Fake {
+        responses: BTreeMap<String, serde_json::Value>,
+        calls: Vec<String>,
+        fail_with_http: Vec<String>,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            Self {
+                responses: BTreeMap::new(),
+                calls: Vec::new(),
+                fail_with_http: Vec::new(),
+            }
+        }
+
+        fn dir(mut self, path: &str, files: &[(u64, &str, u64)], subdirs: &[&str]) -> Self {
+            let files: Vec<serde_json::Value> = files
+                .iter()
+                .map(|(id, name, size)| {
+                    serde_json::json!({
+                        "id": id, "dir": path, "filename": name, "size": size,
+                        "age": 0, "email": "x@y.z"
+                    })
+                })
+                .collect();
+            let dirs: Vec<serde_json::Value> = subdirs
+                .iter()
+                .map(|d| serde_json::json!({"id": 1, "name": d.trim_end_matches('/')}))
+                .collect();
+            let files = if files.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::Array(files)
+            };
+            let dirs = if dirs.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::Array(dirs)
+            };
+            // At least one non-null key unless the caller wants a suspect dir.
+            self.responses.insert(
+                path.to_owned(),
+                serde_json::json!({"file": files, "dir": dirs}),
+            );
+            self
+        }
+
+        fn suspect(mut self, path: &str) -> Self {
+            self.responses.insert(
+                path.to_owned(),
+                serde_json::json!({"file": null, "dir": null}),
+            );
+            self
+        }
+
+        fn failing(mut self, path: &str) -> Self {
+            self.fail_with_http.push(path.to_owned());
+            self
+        }
+    }
+
+    impl ListingSource for Fake {
+        async fn getcontents(&mut self, dir: &str) -> Result<FetchOutcome, ApiCallError> {
+            self.calls.push(dir.to_owned());
+            if self.fail_with_http.iter().any(|p| p == dir) {
+                return Err(ApiCallError::Http {
+                    attempts: 6,
+                    detail: "HTTP 500".into(),
+                });
+            }
+            let body = self
+                .responses
+                .get(dir)
+                .cloned()
+                .unwrap_or(serde_json::json!({"file": null, "dir": null}));
+            let listing: ContentListing = serde_json::from_value(body).unwrap();
+            Ok(FetchOutcome {
+                listing,
+                from_cache: false,
+                changed: Some(false),
+            })
+        }
+    }
+
+    fn tree_with(entries: &[(&str, &[(&str, u64)])]) -> crate::lslar::ArchiveTree {
+        let mut tree = crate::lslar::ArchiveTree::default();
+        for (dir, files) in entries {
+            tree.dirs.insert(
+                (*dir).to_owned(),
+                files
+                    .iter()
+                    .map(|(n, s)| crate::lslar::TreeFile {
+                        name: (*n).to_owned(),
+                        size: *s,
+                    })
+                    .collect(),
+            );
+        }
+        tree
+    }
+
+    #[test]
+    fn worklist_filters_by_scope_and_collects_triage() {
+        let tree = tree_with(&[
+            ("", &[]),
+            ("levels/doom/0-9/", &[("a.zip", 10)]),
+            ("levels/reviews/", &[]),
+            ("music/", &[]),
+            ("misc/", &[("odd.zip", 5)]),
+            ("themes/x/", &[]),
+        ]);
+        let (work, triage) = worklist_from_tree(&tree, None);
+        assert_eq!(work, vec!["levels/doom/0-9/", "themes/x/"]);
+        assert_eq!(triage, vec!["misc/"]);
+    }
+
+    #[test]
+    fn worklist_root_override_ignores_scope() {
+        let tree = tree_with(&[("misc/", &[]), ("misc/old/", &[]), ("levels/doom/", &[])]);
+        let (work, triage) = worklist_from_tree(&tree, Some("misc"));
+        assert_eq!(work, vec!["misc/", "misc/old/"]);
+        assert!(triage.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enrich_collects_ledgers_and_cross_checks() {
+        let mut fake = Fake::new()
+            .dir(
+                "levels/doom/0-9/",
+                &[(1, "a.zip", 10), (2, "b.zip", 999)],
+                &[],
+            )
+            .suspect("levels/doom/a-c/")
+            .failing("levels/doom/d-f/");
+        let tree = tree_with(&[(
+            "levels/doom/0-9/",
+            &[("a.zip", 10), ("b.zip", 42)], // b.zip size disagrees with the API's 999
+        )]);
+        let worklist = vec![
+            "levels/doom/0-9/".to_owned(),
+            "levels/doom/a-c/".to_owned(),
+            "levels/doom/d-f/".to_owned(),
+        ];
+        let out = enrich(&mut fake, &worklist, Some(&tree), None).await;
+        assert_eq!(out.records.len(), 2); // mismatch is recorded, not skipped
+        assert_eq!(out.dirs_processed, 3);
+        let kinds: Vec<&LedgerKind> = out.ledger.iter().map(|e| &e.kind).collect();
+        assert!(kinds.contains(&&LedgerKind::SuspectPath));
+        assert!(kinds.contains(&&LedgerKind::HttpError));
+        assert!(kinds.contains(&&LedgerKind::SizeMismatch));
+        assert_eq!(out.ledger.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn enrich_respects_limit() {
+        let mut fake = Fake::new()
+            .dir("a/", &[(1, "1.zip", 1), (2, "2.zip", 1)], &[])
+            .dir("b/", &[(3, "3.zip", 1)], &[]);
+        let out = enrich(
+            &mut fake,
+            &["a/".to_owned(), "b/".to_owned()],
+            None,
+            Some(2),
+        )
+        .await;
+        assert_eq!(out.records.len(), 2);
+        assert_eq!(fake.calls, vec!["a/"]); // b/ never requested
+    }
+
+    #[tokio::test]
+    async fn bfs_discovers_scoped_subtree_and_checkpoints() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ckpt = tmp.path().join("bfs-frontier.json");
+        let mut fake = Fake::new()
+            .dir("levels/", &[], &["levels/doom", "levels/reviews"])
+            .dir("levels/doom/", &[(1, "a.zip", 5)], &[])
+            .dir("levels/reviews/", &[(9, "review.zip", 1)], &[]);
+        let out = bfs(&mut fake, &["levels/".to_owned()], &ckpt, None).await;
+        // levels/reviews/ is Skip-scoped: discovered but never enqueued.
+        assert!(!fake.calls.contains(&"levels/reviews/".to_owned()));
+        assert_eq!(out.records.len(), 1);
+        assert_eq!(out.records[0].id, 1);
+        // Completed run cleans its checkpoint.
+        assert!(!ckpt.exists());
+    }
+
+    #[tokio::test]
+    async fn bfs_resumes_from_checkpoint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ckpt = tmp.path().join("bfs-frontier.json");
+        std::fs::write(
+            &ckpt,
+            serde_json::json!({
+                "pending": ["levels/doom/"],
+                "visited": ["levels/"]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut fake = Fake::new().dir("levels/", &[], &["levels/doom"]).dir(
+            "levels/doom/",
+            &[(1, "a.zip", 5)],
+            &[],
+        );
+        let out = bfs(&mut fake, &["levels/".to_owned()], &ckpt, None).await;
+        // Visited dirs are replayed (cache-fresh in production), pending resumed.
+        assert!(fake.calls.contains(&"levels/".to_owned()));
+        assert!(fake.calls.contains(&"levels/doom/".to_owned()));
+        assert_eq!(out.records.len(), 1);
+        assert!(!ckpt.exists());
+    }
+}
