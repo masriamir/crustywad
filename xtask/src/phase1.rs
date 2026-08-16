@@ -224,8 +224,17 @@ async fn probe_rerun(
                 (Some(p), Some(k)) if p > k => {
                     tracing::info!(probe_max = p, known_max = k, "additions since last harvest");
                 }
-                (Some(p), _) => {
-                    tracing::info!(probe_max = p, "no additions since last harvest");
+                (Some(p), Some(k)) => {
+                    tracing::info!(
+                        probe_max = p,
+                        known_max = k,
+                        "no additions since last harvest"
+                    );
+                }
+                (Some(p), None) => {
+                    // An older/damaged manifest without a max id: there is
+                    // no baseline, so claiming "no additions" would mislead.
+                    tracing::info!(probe_max = p, "probe ran without a prior max-id baseline");
                 }
                 _ => {}
             }
