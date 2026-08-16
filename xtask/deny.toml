@@ -32,6 +32,14 @@ allow = [
   "Zlib",
 ]
 
+# webpki-roots ships Mozilla's CA trust-store as data under
+# CDLA-Permissive-2.0 (its code is MIT OR Apache-2.0). Permissive and
+# data-only; scoped to the one crate that carries it rather than added to
+# the global allowlist.
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"

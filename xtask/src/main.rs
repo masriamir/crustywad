@@ -4,6 +4,14 @@
 //! crate is its own cargo workspace, deliberately excluded from the root
 //! workspace — see the note in `xtask/Cargo.toml`.
 
+mod api;
+mod cache;
+mod lslar;
+mod mirror;
+mod phase1;
+mod schema;
+mod scope;
+
 use anyhow::bail;
 use clap::{Parser, Subcommand};
 

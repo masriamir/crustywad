@@ -115,7 +115,9 @@ anyhow = "1"
 blake3 = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
+fastrand = "2"        # §3 addendum (#405): backoff jitter RNG — the original list omitted one
+flate2 = "1"          # §3 addendum (#405): ls-laR.gz is a gzipped payload file; a decoder is required
+indicatif = "0.18"    # §3 correction (#405): 0.17's number_prefix is unmaintained (RUSTSEC-2025-0119)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -124,6 +126,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 zip = "8"             # spike-pinned major (§2, §5.2); verify accessor names at #406
 ```
+
+> Correction (#405): the original dependency list omitted a gzip decoder (the §5.0 bootstrap fetches a .gz payload file, which HTTP transport decoding never touches) and a jitter RNG for §4.6 backoff. flate2 and fastrand added.
 
 **Rationale for isolation:** the harvester needs `reqwest`, `tokio`, and `zip`.
 Pulling those into the root workspace would surface in the `deps.rs` badge, widen
