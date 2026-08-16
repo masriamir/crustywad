@@ -126,10 +126,11 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
 
     // Outputs (§4.7). Manifest is written LAST so a crash mid-write never
     // leaves a manifest describing outputs that don't exist.
+    let ledger_path = out_dir.join("harvest-errors.jsonl");
     let max_record_id = outcome.records.iter().map(|r| r.id).max();
     let file_count =
         schema::write_files_jsonl(&out_dir.join("idgames-files.jsonl"), outcome.records)?;
-    let error_count = schema::write_ledger(&out_dir.join("harvest-errors.jsonl"), outcome.ledger)?;
+    let error_count = schema::write_ledger(&ledger_path, outcome.ledger)?;
     let stats = client.stats();
     let duration = (Utc::now() - started_at).num_seconds().max(0);
     let manifest = HarvestManifest {
@@ -165,11 +166,35 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     );
     if error_count > 0 {
         tracing::warn!(
-            ledger = %out_dir.join("harvest-errors.jsonl").display(),
+            ledger = %ledger_path.display(),
             "run finished with ledgered failures"
         );
     }
+
+    // Environmental-failure escape hatch (§9.3): a run that has neither a
+    // bootstrap tree nor a single BFS-discovered record collected nothing
+    // at all — every root was unreachable. `justfile`'s `harvest` recipe
+    // chains phases purely on exit code, so this must not exit 0 (an empty
+    // manifest would otherwise look like a legitimate zero-file harvest to
+    // phase 2). A partial BFS harvest or an empty-but-bootstrapped tree are
+    // both real outcomes, not failures — see `is_total_failure`.
+    if is_total_failure(&source, file_count) {
+        anyhow::bail!(
+            "no bootstrap and no records — every root unreachable; see {}",
+            ledger_path.display()
+        );
+    }
     Ok(())
+}
+
+/// True only when the run collected literally nothing: no ls-laR bootstrap
+/// (`BootstrapSource::Unavailable`) AND zero file records. A partial BFS
+/// harvest (`Unavailable` bootstrap but `file_count > 0`) is a legitimate
+/// `Ok` — BFS did its job under a real degradation. An empty-but-bootstrapped
+/// tree (`Fresh`/`NotModified`/`StaleCache` with `file_count == 0`) is a data
+/// fact about the corpus, not an environmental failure.
+pub(crate) fn is_total_failure(source: &BootstrapSource, file_count: u64) -> bool {
+    matches!(source, BootstrapSource::Unavailable) && file_count == 0
 }
 
 /// One `latestfiles(1)` probe (§4.5, as corrected) — logs movement against
@@ -383,5 +408,20 @@ mod tests {
     fn scoped_runs_use_the_dev_output_dir() {
         assert!(output_dir(true).ends_with("data/dev"));
         assert!(output_dir(false).ends_with("data"));
+    }
+
+    #[test]
+    fn total_failure_is_only_unavailable_bootstrap_with_zero_records() {
+        assert!(is_total_failure(&BootstrapSource::Unavailable, 0));
+        // Partial BFS harvest — BFS did its job under a real degradation.
+        assert!(!is_total_failure(&BootstrapSource::Unavailable, 3));
+        // Empty-but-bootstrapped tree — a data fact, not a failure.
+        assert!(!is_total_failure(
+            &BootstrapSource::Fresh {
+                mirror: "infania".into()
+            },
+            0
+        ));
+        assert!(!is_total_failure(&BootstrapSource::StaleCache, 0));
     }
 }
