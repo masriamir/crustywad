@@ -56,6 +56,7 @@ pub struct FileRecord {
     /// `YYYY-MM-DD`.
     #[serde(default, deserialize_with = "null_string")]
     pub date: String,
+    /// Upload author name, empty when absent.
     #[serde(default, deserialize_with = "null_string")]
     pub author: String,
     /// Author-supplied free text — treated as untrusted, never asserted
@@ -65,10 +66,13 @@ pub struct FileRecord {
     /// Mean user rating; `None` when unrated.
     #[serde(default, deserialize_with = "lenient_opt_f64")]
     pub rating: Option<f64>,
+    /// Number of user votes behind `rating`.
     #[serde(default, deserialize_with = "lenient_u64")]
     pub votes: u64,
+    /// doomworld.com frontend URL.
     #[serde(default, deserialize_with = "null_string")]
     pub url: String,
+    /// `idgames://` protocol URL.
     #[serde(default, deserialize_with = "null_string")]
     pub idgamesurl: String,
 }
@@ -123,6 +127,7 @@ pub struct ApiFault {
     /// The API's error class, e.g. `"Required Argument Missing"`.
     #[serde(rename = "type", default)]
     pub kind: String,
+    /// The API's human-readable message.
     #[serde(default)]
     pub message: String,
 }
