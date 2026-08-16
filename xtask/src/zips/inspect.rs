@@ -1,32 +1,55 @@
 //! Central-directory extraction over a `RangeSource` (DESIGN.md §5.2/§5.3/§5.5).
 //!
-//! The driver is a bounded miss-and-retry loop: round 1 fetches the last
-//! [`TAIL_LEN`] bytes (§5.2 item 1 — covers the worst-case EOCD scan and
-//! any ZIP64 EOCD structures); if `zip`'s central-directory reads miss
-//! below the tail, the missing extent — by construction the central
-//! directory (§5.2 item 2) — is fetched in one request and the parse
-//! re-run. Well-formed archives converge in ≤2 fetches; [`MAX_FETCH_ROUNDS`]
-//! fails the pathological rest closed. On the range path no member payload
-//! is ever read (`by_index_raw`), so no payload bytes transfer (§5.2).
+//! The driver is two bounded miss-and-retry stages over the same
+//! [`SparseBuffer`] (not to be confused with harvester "phase 2" —
+//! `harvest-zips` as a whole — which this module is *part of*), because
+//! the two kinds of miss it copes with have very different correct widths.
 //!
-//! One subtlety pinned down empirically (Step 1 verification, zip 8.6.0):
-//! `by_index_raw` does not decompress a member, but it *does* eagerly parse
-//! that member's local file header to compute its data offset, even though
-//! the caller never reads the returned handle. For a member whose local
-//! header lies outside every fetched extent, that inner read is itself a
-//! cache miss. [`inspection_from_archive`] limits this cost to actual
-//! `.wad` matches (classification uses `name_for_index`, pure
-//! central-directory metadata — no I/O), so a member-walk miss is rare in
-//! practice: it needs a `.wad` file whose local header sits outside every
-//! fetched extent, which happens for a `.wad` positioned early in a file
-//! larger than [`TAIL_LEN`] whose central directory nonetheless resolves
-//! from the tail (see
-//! `large_zip_with_tail_resident_cd_needs_second_fetch_for_wad_header`
-//! below). The round loop below therefore checks the shared `missing`
-//! cell after a *successful* parse too, not just after a parse error — a
-//! miss during the member walk gets the same widen-and-retry treatment as a
-//! miss during the central-directory parse itself, so `Inspection`s built
-//! from an incomplete buffer are never returned.
+//! **Stage 1 — locate and parse the central directory.** Round 1 fetches
+//! the last [`TAIL_LEN`] bytes (§5.2 item 1 — covers the worst-case EOCD
+//! scan and any ZIP64 EOCD structures). If `zip::ZipArchive::new`'s reads
+//! miss below the tail, the missing extent — by construction the central
+//! directory (§5.2 item 2) — is fetched *in full*, in one request, and the
+//! parse re-run: that gap genuinely is what we need next. Well-formed
+//! archives converge in ≤2 fetches; [`MAX_FETCH_ROUNDS`] fails the
+//! pathological rest closed via [`CD_CAP`].
+//!
+//! **Stage 2 — walk the members.** [`inspection_from_archive`] classifies
+//! each entry via `name_for_index` (pure central-directory metadata, no
+//! I/O), so only an actual `.wad` match ever calls `by_index_raw`. That
+//! call never decompresses a member (the §5.2 no-payload invariant holds),
+//! but it *does* eagerly parse that member's local file header — a fixed
+//! ~30-byte block (zip 8.6.0 `ZipLocalEntryBlock`, `src/types.rs:235-265`;
+//! it reads only that fixed block, never the name/extra bytes that follow
+//! it) — to compute a data offset it never uses. For a `.wad` positioned
+//! early in a file larger than [`TAIL_LEN`] whose central directory
+//! nonetheless resolves from the tail, that header sits outside every
+//! fetched extent, and the eager read is a cache miss.
+//!
+//! Unlike a stage-1 miss, a stage-2 miss must **not** widen to the whole
+//! gap: the gap between a member's header and the cached tail is, at
+//! corpus scale, essentially the member's own payload (a ~1.8 MiB corpus
+//! average) — fetching it would mean ranged reads quietly mirror the
+//! archive, which ADR-0030 §4 forbids and which §9.3's "small fraction of
+//! bytes transferred" acceptance would fail. So a stage-2 miss fetches only
+//! [`LOCAL_HEADER_PAD`] bytes (capped by whatever is actually missing), one
+//! header at a time, under its own [`MAX_MEMBER_ROUNDS`] budget —
+//! independent of stage 1's [`MAX_FETCH_ROUNDS`], since a handful of
+//! `.wad`s scattered outside the tail is normal and each only costs a
+//! nibble. [`inspection_from_archive`] stops its member walk at the first
+//! such miss (checking the shared cell right after a `by_index_raw` error)
+//! rather than continuing through every remaining entry: with a
+//! single-slot miss cell, "keep walking" would let a *later*, coincidental
+//! miss overwrite an *earlier* one, so each retry would only widen around
+//! whichever miss happened to be recorded last — for many scattered
+//! members that can take far more than a handful of rounds to converge.
+//! Stopping at the first miss means each stage-2 round makes forward
+//! progress on exactly one header and the next round re-walks from
+//! entry 0 over now-cached bytes for free.
+//! `three_wad_headers_scattered_outside_tail_cost_one_fetch_each` below
+//! exercises this directly (three `.wad`s, three separate nibble fetches);
+//! `cd_outside_tail_takes_exactly_two_fetches` (0 `.wad` members) proves
+//! stage 2 never even starts when there is nothing for it to do.
 
 use std::cell::Cell;
 use std::io::{Read, Seek};
@@ -38,9 +61,30 @@ use crate::zips::range_reader::{RangeReader, SparseBuffer, TAIL_LEN};
 /// than this into memory.
 pub const CD_CAP: u64 = 64 * 1024 * 1024;
 
-/// Fetch rounds before declaring the access pattern too chatty (§5.2
-/// expects 2–3 requests; 4 leaves headroom for ZIP64 oddities).
+/// Stage-1 (CD-locate) fetch rounds before declaring the access pattern
+/// too chatty (§5.2 expects 2–3 requests; 4 leaves headroom for ZIP64
+/// oddities). Governs only central-directory location/parse; see
+/// [`MAX_MEMBER_ROUNDS`] for the separate stage-2 (member-walk) budget.
 pub(crate) const MAX_FETCH_ROUNDS: u32 = 4;
+
+/// Upper bound on a single stage-2 (member-walk) fetch: a local file
+/// header is a fixed ~30-byte block (zip 8.6.0 `ZipLocalEntryBlock`,
+/// vendored `src/types.rs:235-265` — `find_data_start` reads only that
+/// fixed block, never the name/extra bytes that follow it), so this is a
+/// generous pad, not a measured size. Bounding a stage-2 fetch by this
+/// (rather than widening to the next cached byte, as stage 1 does) is
+/// what keeps a `.wad` member's local header from pulling in everything
+/// up to the tail — at corpus scale, its own payload — in one "miss".
+const LOCAL_HEADER_PAD: u64 = 256;
+
+/// Stage-2 (member-walk) fetch rounds before declaring the access pattern
+/// too chatty (record-don't-skip: any `.wad` still unresolved past this
+/// point never blocks the archive). Independent of stage 1's
+/// [`MAX_FETCH_ROUNDS`] and set much higher: each round costs one small,
+/// bounded fetch (see [`LOCAL_HEADER_PAD`]), and a handful of `.wad`
+/// members with local headers scattered outside the tail is a normal
+/// shape for a real archive, not a pathological one.
+const MAX_MEMBER_ROUNDS: u32 = 24;
 
 /// One ranged fetch against some byte source. Async-in-trait is fine here
 /// for the same reason as `ListingSource`: internal-only, driven as
@@ -100,7 +144,9 @@ pub enum InspectError {
     Fetch(FetchFailure),
     /// The implied CD extent exceeds [`CD_CAP`] (ADR-0016 fail-closed).
     CdTooLarge { needed: u64 },
-    /// The parse still missed after [`MAX_FETCH_ROUNDS`] fetches.
+    /// Either stage still missed after its round budget: the CD-locate
+    /// stage's [`MAX_FETCH_ROUNDS`], or the member-walk stage's
+    /// [`MAX_MEMBER_ROUNDS`].
     TooChatty { rounds: u32 },
     /// Bytes arrived whole but the zip did not parse.
     Parse(String),
@@ -135,6 +181,9 @@ pub async fn inspect_zip(
 
 /// Cap-parameterized body of [`inspect_zip`] so tests exercise the guards
 /// without multi-mebibyte fixtures (mirror.rs cap-override precedent).
+/// `max_rounds` bounds only stage 1 (CD-locate); stage 2 (member-walk) has
+/// its own fixed [`MAX_MEMBER_ROUNDS`] budget (see module docs for why the
+/// two are independent).
 #[allow(dead_code)]
 pub(crate) async fn inspect_zip_with_caps(
     source: &mut impl RangeSource,
@@ -156,26 +205,25 @@ pub(crate) async fn inspect_zip_with_caps(
     let mut buf = SparseBuffer::new(file_size);
     buf.insert(tail_start, first);
 
+    // Stage 1: locate and parse the central directory. A miss here means
+    // the CD (or the EOCD scan) isn't fully cached yet — by construction
+    // the whole gap up to the tail IS what we need, so fetch it in full.
     for round in 1..=max_rounds {
         let missing = Cell::new(None);
-        let parsed = zip::ZipArchive::new(RangeReader::new(&buf, &missing)).map(|mut archive| {
-            // Building the Inspection walks every member via
-            // `by_index_raw`, which can itself miss (see module docs) —
-            // `missing` may end up set even though `archive` parsed.
-            inspection_from_archive(&mut archive, zip64)
-        });
-
-        match (parsed, missing.get()) {
-            (Ok(inspection), None) => return Ok(inspection),
-            (Err(e), None) => {
-                // A genuine parse failure, not our cache miss.
-                return Err(InspectError::Parse(e.to_string()));
+        match zip::ZipArchive::new(RangeReader::new(&buf, &missing)) {
+            // The CD parses; nothing further is needed from this archive
+            // (stage 2 below re-parses fresh once cache misses are
+            // resolved), so drop it immediately — its `RangeReader` holds
+            // an immutable borrow of `buf` that must end before stage 2
+            // can insert newly-fetched bytes into it.
+            Ok(_) => {
+                return inspect_members(source, &mut buf, zip64).await;
             }
-            (_, Some((miss_at, _len))) => {
-                // Widen the miss to everything up to the first cached byte
-                // in one request (§5.2 item 2) — for the CD itself, that's
-                // the central-directory extent; for a member walked by
-                // `inspection_from_archive`, its local header extent.
+            Err(e) => {
+                let Some((miss_at, _len)) = missing.get() else {
+                    // A genuine parse failure, not our cache miss.
+                    return Err(InspectError::Parse(e.to_string()));
+                };
                 let widen_to = buf.next_covered_start(miss_at);
                 let needed = widen_to - miss_at;
                 if needed > cd_cap {
@@ -195,6 +243,58 @@ pub(crate) async fn inspect_zip_with_caps(
     Err(InspectError::TooChatty { rounds: max_rounds })
 }
 
+/// Stage 2: walk the members over an already-fully-cached central
+/// directory. A miss here is a `.wad` member's local header (never the CD
+/// itself — stage 1 already fully resolved it), so unlike stage 1 it is
+/// fetched bounded by [`LOCAL_HEADER_PAD`], never widened to the whole gap
+/// up to the tail (module docs: at corpus scale that gap is essentially
+/// the member's own payload). Each round re-parses the CD (already cached,
+/// so this costs no further fetches) and re-walks from entry 0; a fresh
+/// [`SparseBuffer`] borrow is required each round because inserting the
+/// fetched header mutably borrows `buf`, which the previous round's
+/// `RangeReader` was still (immutably) borrowing.
+async fn inspect_members(
+    source: &mut impl RangeSource,
+    buf: &mut SparseBuffer,
+    zip64: bool,
+) -> Result<Inspection, InspectError> {
+    for round in 1..=MAX_MEMBER_ROUNDS {
+        let missing = Cell::new(None);
+        let parsed = zip::ZipArchive::new(RangeReader::new(buf, &missing))
+            .map(|mut archive| inspection_from_archive(&mut archive, zip64, &missing));
+
+        match (parsed, missing.get()) {
+            (Ok(inspection), None) => return Ok(inspection),
+            (Err(e), None) => {
+                // Central directory is already fully cached (stage 1
+                // succeeded); a fresh parse failure here is genuine, not a
+                // cache miss.
+                return Err(InspectError::Parse(e.to_string()));
+            }
+            (_, Some((miss_at, miss_len))) => {
+                if round == MAX_MEMBER_ROUNDS {
+                    return Err(InspectError::TooChatty { rounds: round });
+                }
+                // Fetch only the missing local header, never the gap up to
+                // the already-cached tail (that gap is the member's own
+                // payload at corpus scale — see module docs).
+                let capped_end = buf
+                    .next_covered_start(miss_at)
+                    .min(miss_at + miss_len.max(LOCAL_HEADER_PAD));
+                let needed = capped_end - miss_at;
+                let bytes = source
+                    .fetch(miss_at, needed)
+                    .await
+                    .map_err(InspectError::Fetch)?;
+                buf.insert(miss_at, bytes);
+            }
+        }
+    }
+    Err(InspectError::TooChatty {
+        rounds: MAX_MEMBER_ROUNDS,
+    })
+}
+
 /// Walk the parsed central directory and split members into `.wad` records
 /// and other names.
 ///
@@ -207,10 +307,23 @@ pub(crate) async fn inspect_zip_with_caps(
 /// offset it never uses; see the module docs for how the driver above
 /// copes with a member whose local header lands outside the fetched
 /// extent.
+///
+/// `missing` is the same cell the caller's [`RangeReader`] writes to on a
+/// cache miss (`archive`'s reader must be backed by that same cell for
+/// this to mean anything). When a `by_index_raw` call fails **and**
+/// `missing` is set, that failure is a cache miss, not a corrupt entry:
+/// the walk stops immediately rather than recording it and continuing (see
+/// module docs for why "keep walking" is the wrong call with a
+/// single-slot miss cell). The caller is expected to check `missing` after
+/// this returns and discard/retry on a partial result — that's also what
+/// makes this safe to call on a fully-covered, miss-proof reader (e.g. a
+/// full-download `Cursor`): pass any cell (it will simply never be set) and
+/// the walk always runs to completion.
 #[allow(dead_code)]
 pub fn inspection_from_archive<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     zip64: bool,
+    missing: &Cell<Option<(u64, u64)>>,
 ) -> Inspection {
     let mut wads = Vec::new();
     let mut other_members = Vec::new();
@@ -223,19 +336,29 @@ pub fn inspection_from_archive<R: Read + Seek>(
             other_members.push(name.to_owned());
             continue;
         }
-        // A CD entry that fails raw access is skipped-and-counted rather
-        // than failing the archive (record-and-continue, ADR-0030 §5).
-        let Ok(file) = archive.by_index_raw(i) else {
-            other_members.push(format!("<unreadable entry {i}>"));
-            continue;
-        };
-        wads.push(WadMember {
-            name: file.name().to_owned(),
-            compressed: file.compressed_size(),
-            uncompressed: file.size(),
-            method: method_label(file.compression()),
-            encrypted: file.encrypted(),
-        });
+        match archive.by_index_raw(i) {
+            Ok(file) => {
+                wads.push(WadMember {
+                    name: file.name().to_owned(),
+                    compressed: file.compressed_size(),
+                    uncompressed: file.size(),
+                    method: method_label(file.compression()),
+                    encrypted: file.encrypted(),
+                });
+            }
+            Err(_) if missing.get().is_some() => {
+                // A cache miss on this member's local header — abandon the
+                // walk now. The caller sees `missing` set and retries with
+                // exactly that extent fetched; this partial `Inspection` is
+                // discarded, never surfaced as a result.
+                break;
+            }
+            Err(_) => {
+                // A genuine unreadable entry (not a cache miss):
+                // record-and-continue (ADR-0030 §5).
+                other_members.push(format!("<unreadable entry {i}>"));
+            }
+        }
     }
     Inspection {
         zip64,
@@ -253,14 +376,17 @@ pub fn inspection_from_archive<R: Read + Seek>(
 /// production `[dependencies]` entry builds with `default-features =
 /// false` (§3 — phase 2 never decompresses a member), which compiles out
 /// the `Deflated` variant entirely (it requires the `_deflate-any`
-/// feature). The associated constants stay defined either way — as the
-/// real variant when a codec feature is on, or as `Unsupported(8)` when it
-/// is off — so this comparison is the one method-label spelling that
-/// compiles, and is correct, under both configurations. See the Step-1
-/// notes: without a deflate codec feature on the main dependency, a real
-/// deflate-compressed member currently labels as `unsupported(8)`, not
-/// `deflate` — a follow-up concern, not fixed here (out of this task's
-/// `inspect.rs`-only scope).
+/// feature) — matching the bare variant doesn't compile under that
+/// configuration. The associated constants sidestep this correctly, not
+/// just by compiling: `CompressionMethod::parse_from_u16(8)` (what a
+/// method-id-8 CD entry actually parses to) and `CompressionMethod::DEFLATE`
+/// are defined by the *same* `#[cfg(feature = "_deflate-any")]` gate
+/// (vendored `src/compression.rs:105-106,194-195`) — both resolve to
+/// `Unsupported(8)` when the feature is off, both resolve to the real
+/// `Deflated` variant when it's on. They're always equal for a real
+/// deflate member, so this comparison labels it `"deflate"` correctly
+/// under both configurations (test unification turns the feature on;
+/// production leaves it off) — not a production/test discrepancy.
 #[allow(dead_code)]
 fn method_label(method: zip::CompressionMethod) -> String {
     if method == zip::CompressionMethod::STORE {
@@ -292,15 +418,23 @@ mod tests {
     use std::io::Write as _;
 
     /// File-backed fake: serves ranges from an in-memory byte vec and counts
-    /// fetches — the §9.1 request-count regression instrument.
+    /// fetches — the §9.1 request-count regression instrument — plus bytes
+    /// served, which catches a widen-too-far bug that a fetch count alone
+    /// cannot (a single miss-handling fetch can still transfer the whole
+    /// gap up to the tail; see `bytes_served` assertions below).
     struct FakeSource {
         bytes: Vec<u8>,
         fetches: u32,
+        bytes_served: u64,
     }
 
     impl FakeSource {
         fn new(bytes: Vec<u8>) -> Self {
-            Self { bytes, fetches: 0 }
+            Self {
+                bytes,
+                fetches: 0,
+                bytes_served: 0,
+            }
         }
         fn len(&self) -> u64 {
             u64::try_from(self.bytes.len()).unwrap()
@@ -312,10 +446,13 @@ mod tests {
             self.fetches += 1;
             let start = usize::try_from(offset).unwrap();
             let end = start + usize::try_from(len).unwrap();
-            self.bytes
+            let served = self
+                .bytes
                 .get(start..end)
                 .map(<[u8]>::to_vec)
-                .ok_or_else(|| FetchFailure::Http("range beyond EOF".into()))
+                .ok_or_else(|| FetchFailure::Http("range beyond EOF".into()))?;
+            self.bytes_served += u64::try_from(served.len()).unwrap();
+            Ok(served)
         }
     }
 
@@ -489,15 +626,72 @@ mod tests {
         // size (verified: file_size=204916, tail_start=137332,
         // local_header_start=0). That single extra fetch is real, necessary
         // work: it's the only way to get a correct `uncompressed` size, not
-        // a caching miss to optimize away. 2 fetches total, not 1.
+        // a caching miss to optimize away. 2 fetches total, not 1 — but the
+        // second fetch must be a header-sized nibble, NOT the ~137 KiB gap
+        // back to offset 0 (that gap is essentially this member's own
+        // payload at corpus scale — the bug the coordinator flagged in fix
+        // round 1). `bytes_served` proves the nibble, not the gap.
         let big = vec![0_u8; 200 * 1024];
         let zip = stored_zip(&[("LEVEL.WAD", big.as_slice())], b"");
-        let (result, fetches) = inspect_fake(zip).await;
+        let mut src = FakeSource::new(zip);
+        let size = src.len();
+        let result = inspect_zip(&mut src, size).await;
         assert_eq!(
-            fetches, 2,
+            src.fetches, 2,
             "CD in tail avoids a CD refetch; the lone .wad's local header does not"
         );
+        assert!(
+            src.bytes_served <= TAIL_LEN + LOCAL_HEADER_PAD,
+            "second fetch must be a header-sized nibble, not the payload gap: bytes_served={}",
+            src.bytes_served
+        );
         assert_eq!(result.unwrap().wads[0].uncompressed, 200 * 1024);
+    }
+
+    #[tokio::test]
+    async fn three_wad_headers_scattered_outside_tail_cost_one_fetch_each() {
+        // Three `.wad` members, each with a ~100 KiB stored payload, so the
+        // file is far bigger than TAIL_LEN and each member's local header
+        // sits at a different offset outside the cached tail, while the CD
+        // (three small entries) still resolves from the tail in round 1.
+        // Each local-header miss must cost its own bounded nibble — this is
+        // the multi-`.wad` corner the original report flagged as untested,
+        // and the exact shape fix round 1's Finding 1 was about: a driver
+        // that widened to "the whole gap" would transfer ~300 KiB here;
+        // one that used "last miss wins" per full walk (the first attempted
+        // fix) could take many more than 4 rounds to converge with several
+        // scattered misses. Expect 4 fetches total (1 tail + 3 headers) and
+        // bytes_served bounded by three header-sized nibbles, not the gaps.
+        let payload = |n: usize| vec![0_u8; n];
+        let zip = stored_zip(
+            &[
+                ("AAAA.WAD", payload(100 * 1024).as_slice()),
+                ("BBBB.WAD", payload(100 * 1024).as_slice()),
+                ("CCCC.WAD", payload(100 * 1024).as_slice()),
+            ],
+            b"",
+        );
+        assert!(
+            u64::try_from(zip.len()).unwrap() > TAIL_LEN + 3 * LOCAL_HEADER_PAD,
+            "fixture too small to prove the nibble bound"
+        );
+        let mut src = FakeSource::new(zip);
+        let size = src.len();
+        let result = inspect_zip(&mut src, size).await;
+        let i = result.unwrap();
+        assert_eq!(i.wads.len(), 3);
+        for wad in &i.wads {
+            assert_eq!(wad.uncompressed, 100 * 1024, "{}", wad.name);
+        }
+        assert_eq!(
+            src.fetches, 4,
+            "1 tail fetch + one nibble per scattered .wad header"
+        );
+        assert!(
+            src.bytes_served <= TAIL_LEN + 3 * LOCAL_HEADER_PAD,
+            "each miss must cost a nibble, not a gap: bytes_served={}",
+            src.bytes_served
+        );
     }
 
     #[tokio::test]
