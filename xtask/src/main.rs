@@ -11,6 +11,7 @@ mod mirror;
 mod phase1;
 mod schema;
 mod scope;
+mod zips;
 
 use anyhow::bail;
 use clap::{Parser, Subcommand};

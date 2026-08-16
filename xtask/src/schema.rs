@@ -1,9 +1,9 @@
 //! Output record types and deterministic writers (DESIGN.md §4.7).
 //!
 //! Determinism contract (§9.3): `harvest-manifest.json` is the ONLY output
-//! carrying wall-clock timestamps. `idgames-files.jsonl` and
-//! `harvest-errors.jsonl` are sorted and timestamp-free so a rerun against
-//! unchanged inputs is byte-identical.
+//! carrying wall-clock timestamps. `idgames-files.jsonl`,
+//! `harvest-errors.jsonl`, and `idgames-wads.jsonl` are sorted and
+//! timestamp-free so a rerun against unchanged inputs is byte-identical.
 
 use std::path::Path;
 
@@ -185,6 +185,169 @@ pub fn tool_version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
+/// §5.6 closed enum — every §5.5 edge case gets a named value, or "record,
+/// don't skip" is unenforceable. Do not add variants without a DESIGN §5.6
+/// correction in the same commit.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchStatus {
+    /// Central directory read over ranges; sizes recorded.
+    Ok,
+    /// The entry's filename is not `.zip` — no mirror contact at all.
+    NotZip,
+    /// Both mirrors answered 404 for the entry.
+    ///
+    /// `rename_all = "snake_case"` alone renders this as `mirror404_all`
+    /// (serde splits on digit-to-uppercase but not letter-to-digit
+    /// transitions) — an explicit rename pins the §5.6 wire value.
+    #[serde(rename = "mirror_404_all")]
+    Mirror404All,
+    /// Both mirrors refused ranges and the budgeted fallback was not taken.
+    NoRangeSupport,
+    /// Both mirrors refused ranges; sizes come from a budgeted full download.
+    FullDownload,
+    /// Bytes arrived but the zip central directory did not parse (or hit a cap).
+    ZipParseError,
+    /// Transport-level failure after retries on every usable mirror.
+    FetchError,
+}
+
+/// One `.wad` member of an archive entry (§5.6 `wads[]`).
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WadMember {
+    /// Member name exactly as the central directory declares it.
+    pub name: String,
+    /// Declared compressed size in bytes.
+    pub compressed: u64,
+    /// Declared uncompressed size in bytes — the number this phase exists for.
+    pub uncompressed: u64,
+    /// Compression method label (`"stored"`, `"deflate"`, or another §5.5
+    /// method name).
+    pub method: String,
+    /// General-purpose-bit-0 encryption flag (§5.5).
+    pub encrypted: bool,
+}
+
+/// One `idgames-wads.jsonl` line (§5.6 — field order here is the output
+/// schema). `date`/`rating`/`votes` are copied from the Phase-1 record.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WadRecord {
+    /// Archive file ID (Phase-1 `FileRecord::id`).
+    pub id: u64,
+    /// Directory path with trailing slash.
+    pub dir: String,
+    /// Zip filename, no path.
+    pub filename: String,
+    /// Zip size in bytes (Phase-1 `size`).
+    pub zip_size: u64,
+    /// `YYYY-MM-DD` from Phase 1.
+    pub date: String,
+    /// Mean rating from Phase 1; `None` when unrated.
+    pub rating: Option<f64>,
+    /// Vote count from Phase 1.
+    pub votes: u64,
+    /// Whether the entry is a zip (filename `.zip`, ASCII case-insensitive).
+    pub is_zip: bool,
+    /// ZIP64 EOCD locator present (§5.3) — detected from the fetched tail.
+    pub zip64: bool,
+    /// Total central-directory entries (directories included).
+    pub member_count: u64,
+    /// `.wad` members, case-insensitively matched (§5.5).
+    pub wads: Vec<WadMember>,
+    /// Every non-`.wad` member name (nested archives §5.5 appear here).
+    pub other_members: Vec<String>,
+    /// Mirror key that served the bytes; `""` when no mirror was contacted.
+    pub mirror: String,
+    /// Closed §5.6 outcome enum.
+    pub fetch_status: FetchStatus,
+}
+
+/// Write `idgames-wads.jsonl`: sorted by `id`, deduped by `id` (last
+/// occurrence wins), one compact JSON object per line.
+///
+/// # Errors
+/// Serialization or filesystem failure.
+#[allow(dead_code)]
+pub fn write_wads_jsonl(path: &Path, records: Vec<WadRecord>) -> anyhow::Result<u64> {
+    let mut by_id = std::collections::BTreeMap::new();
+    for rec in records {
+        by_id.insert(rec.id, rec);
+    }
+    let mut out = String::new();
+    for rec in by_id.values() {
+        out.push_str(&serde_json::to_string(rec).context("serializing wad record")?);
+        out.push('\n');
+    }
+    atomic_write(path, out.as_bytes()).with_context(|| format!("writing {}", path.display()))?;
+    Ok(u64::try_from(by_id.len()).expect("record count fits u64"))
+}
+
+/// Phase-2 run provenance and the §9.3 acceptance witnesses: byte totals
+/// (small fraction of the archive or the range reader is broken), ZIP64
+/// count (≥1 resolved or absence stated), fallback/budget accounting, and
+/// the completeness counter. The only Phase-2 output with wall-clock data.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZipsManifest {
+    /// `"harvest-zips-YYYYMMDDTHHMMSSZ"` from the run start.
+    pub id: String,
+    /// RFC 3339 run start.
+    pub started_at: String,
+    /// Wall-clock run duration.
+    pub duration_secs: u64,
+    /// `CARGO_PKG_VERSION` of xtask.
+    pub tool_version: String,
+    /// `git rev-parse --short HEAD`, when available.
+    pub git_rev: Option<String>,
+    /// `--root` value for dev-scoped runs.
+    pub scoped_root: Option<String>,
+    /// `--limit` value for dev-scoped runs.
+    pub limit: Option<u64>,
+    /// Phase-1 entries in this run's worklist.
+    pub entries_total: u64,
+    /// `idgames-wads.jsonl` lines written.
+    pub records_written: u64,
+    /// `wads-errors.jsonl` lines written.
+    pub ledger_count: u64,
+    /// Entries served from the per-id results log.
+    pub cache_hits: u64,
+    /// Entries that touched a mirror this run.
+    pub live_entries: u64,
+    /// Ranged/full GET requests issued.
+    pub range_requests: u64,
+    /// Total response-body bytes read from mirrors (§9.3: must stay a small
+    /// fraction of the archive's ~38 GiB).
+    pub bytes_transferred: u64,
+    /// Entries resolved via the budgeted full-download fallback.
+    pub full_downloads: u64,
+    /// Bytes consumed by the fallback (bounded by the 2 GiB budget).
+    pub fallback_bytes: u64,
+    /// Records with `zip64: true` (0 explicitly states ZIP64 absence, §9.3).
+    pub zip64_entries: u64,
+    /// Record count per `fetch_status` value.
+    pub status_counts: std::collections::BTreeMap<String, u64>,
+    /// Worklist entries with neither a record nor a ledger line — §9.3
+    /// demands 0; anything else is a bug surfaced loudly.
+    pub unaccounted_entries: u64,
+    /// `Some(reason)` when the ~2% fallback circuit breaker stopped the
+    /// phase early (§5.2); outputs then cover only the completed prefix.
+    pub aborted: Option<String>,
+}
+
+/// Write the phase-2 manifest as pretty JSON with a trailing newline.
+///
+/// # Errors
+/// Serialization or filesystem failure.
+#[allow(dead_code)]
+pub fn write_zips_manifest(path: &Path, manifest: &ZipsManifest) -> anyhow::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(manifest).context("serializing zips manifest")?;
+    bytes.push(b'\n');
+    atomic_write(path, &bytes).with_context(|| format!("writing {}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,5 +516,124 @@ mod tests {
         assert_eq!(back.max_file_id, Some(22_083));
         assert!(std::fs::read_to_string(&p).unwrap().ends_with('\n'));
         assert!(read_manifest(&tmp.path().join("missing.json")).is_none());
+    }
+
+    fn wad_record(id: u64) -> WadRecord {
+        WadRecord {
+            id,
+            dir: "levels/doom2/Ports/megawads/".into(),
+            filename: format!("f{id}.zip"),
+            zip_size: 3_145_728,
+            date: "2019-04-02".into(),
+            rating: Some(4.61),
+            votes: 38,
+            is_zip: true,
+            zip64: false,
+            member_count: 3,
+            wads: vec![WadMember {
+                name: "EXAMPLE.WAD".into(),
+                compressed: 3_102_841,
+                uncompressed: 14_680_064,
+                method: "deflate".into(),
+                encrypted: false,
+            }],
+            other_members: vec!["EXAMPLE.TXT".into(), "README.MD".into()],
+            mirror: "infania".into(),
+            fetch_status: FetchStatus::Ok,
+        }
+    }
+
+    #[test]
+    fn wads_jsonl_is_sorted_deduped_and_matches_design_5_6() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("idgames-wads.jsonl");
+        let n = write_wads_jsonl(&p, vec![wad_record(9), wad_record(3), wad_record(9)]).unwrap();
+        assert_eq!(n, 2);
+        let text = std::fs::read_to_string(&p).unwrap();
+        let first: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(first["id"], 3);
+        // §5.6 field presence, exact names.
+        for key in [
+            "id",
+            "dir",
+            "filename",
+            "zip_size",
+            "date",
+            "rating",
+            "votes",
+            "is_zip",
+            "zip64",
+            "member_count",
+            "wads",
+            "other_members",
+            "mirror",
+            "fetch_status",
+        ] {
+            assert!(first.get(key).is_some(), "missing §5.6 key {key}");
+        }
+        assert_eq!(first["wads"][0]["uncompressed"], 14_680_064_u64);
+        assert_eq!(first["fetch_status"], "ok");
+    }
+
+    #[test]
+    fn wads_jsonl_reruns_are_byte_identical() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.jsonl");
+        let b = tmp.path().join("b.jsonl");
+        write_wads_jsonl(&a, vec![wad_record(2), wad_record(7)]).unwrap();
+        write_wads_jsonl(&b, vec![wad_record(7), wad_record(2)]).unwrap();
+        assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+    }
+
+    #[test]
+    fn fetch_status_serializes_the_closed_snake_case_enum() {
+        // §5.6: closed enum, every §5.5 edge case named.
+        let cases = [
+            (FetchStatus::Ok, "ok"),
+            (FetchStatus::NotZip, "not_zip"),
+            (FetchStatus::Mirror404All, "mirror_404_all"),
+            (FetchStatus::NoRangeSupport, "no_range_support"),
+            (FetchStatus::FullDownload, "full_download"),
+            (FetchStatus::ZipParseError, "zip_parse_error"),
+            (FetchStatus::FetchError, "fetch_error"),
+        ];
+        for (status, wire) in cases {
+            assert_eq!(serde_json::to_value(status).unwrap(), wire);
+        }
+    }
+
+    #[test]
+    fn zips_manifest_roundtrips_and_writes_trailing_newline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("wads-manifest.json");
+        let m = ZipsManifest {
+            id: "harvest-zips-20260816T120000Z".into(),
+            started_at: "2026-08-16T12:00:00+00:00".into(),
+            duration_secs: 1800,
+            tool_version: tool_version(),
+            git_rev: git_rev(),
+            scoped_root: None,
+            limit: None,
+            entries_total: 21_375,
+            records_written: 21_375,
+            ledger_count: 12,
+            cache_hits: 20_000,
+            live_entries: 1_375,
+            range_requests: 2_923,
+            bytes_transferred: 190_000_000,
+            full_downloads: 2,
+            fallback_bytes: 40_000_000,
+            zip64_entries: 1,
+            status_counts: std::collections::BTreeMap::from([("ok".to_owned(), 21_300)]),
+            unaccounted_entries: 0,
+            aborted: None,
+        };
+        write_zips_manifest(&p, &m).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.ends_with('\n'));
+        let back: ZipsManifest = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.entries_total, 21_375);
+        assert_eq!(back.zip64_entries, 1);
+        assert_eq!(back.aborted, None);
     }
 }
