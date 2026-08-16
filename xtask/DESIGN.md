@@ -79,7 +79,8 @@ Verified before implementing Phase 1:
       defensive `Option<OneOrMany<T>>` retained.
 - [x] Error envelope — `{"error":{"type":"…","message":"…"},"meta":…}`
       (from a missing-argument request; §4.1).
-- [x] `latestfiles&limit=1` — works; returned the current max id (22083).
+- [x] `latestfiles&limit=1` — works; returned the current max id (22083)
+      (record shape is abbreviated — see the §4.5 correction).
 
 Verified before implementing Phase 2:
 
@@ -115,7 +116,9 @@ anyhow = "1"
 blake3 = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
+fastrand = "2"        # §3 addendum (#405): backoff jitter RNG — the original list omitted one
+flate2 = "1"          # §3 addendum (#405): ls-laR.gz is a gzipped payload file; a decoder is required
+indicatif = "0.18"    # §3 correction (#405): 0.17's number_prefix is unmaintained (RUSTSEC-2025-0119)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -124,6 +127,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 zip = "8"             # spike-pinned major (§2, §5.2); verify accessor names at #406
 ```
+
+> Correction (#405): the original dependency list omitted a gzip decoder (the §5.0 bootstrap fetches a .gz payload file, which HTTP transport decoding never touches) and a jitter RNG for §4.6 backoff. flate2 and fastrand added.
 
 **Rationale for isolation:** the harvester needs `reqwest`, `tokio`, and `zip`.
 Pulling those into the root workspace would surface in the `deps.rs` badge, widen
@@ -169,21 +174,25 @@ Do not add `xtask` to the default lint/test jobs. Instead:
 ```
 xtask/src/
   main.rs           # clap dispatch
+  phase1.rs         # phase-1 orchestrator (#405)
+  scope.rs          # §4.2 include/skip/triage table (#405)
+  lslar.rs          # §5.0 ls-laR.gz tree parser (#405)
+  mirror.rs         # §5.1 mirror pool + conditional bootstrap fetch (#405)
   cache.rs          # §4.5 disk cache with tiered TTL, email-scrubbed bodies
+  schema.rs         # output record types (§4.7, §5.6, §6.5) + deterministic writers
   api/
     mod.rs
     client.rs       # rate-limited API client, backoff
     model.rs        # FileRecord, OneOrMany, response envelopes
     traverse.rs     # §4.2 enrichment walk over the §5.0 tree (BFS fallback)
-  zips/
+  zips/             # #406
     mod.rs
     range_reader.rs # §5.2 Read + Seek over HTTP ranges
     inspect.rs      # CD extraction, member filtering
-  stats/
+  stats/            # #407
     mod.rs
     percentiles.rs
     report.rs
-  schema.rs         # output record types (§4.7, §5.6, §6.5)
 ```
 
 ---
@@ -372,6 +381,20 @@ the TTL sweep to catch mutations — which for the purposes of size analysis is
 almost never material. If it has moved, walk `latestfiles` backwards from the new
 max to your known max to pick up additions without re-walking the tree.
 
+> **Correction (#405, observed live 2026-08-15):** `latestfiles` listing
+> records are **abbreviated** — `{id, title, author, description, rating}`
+> only; `dir`, `filename`, `size`, `age`, `date`, and the URL fields do not
+> arrive (and at `limit=1` the `file` collection arrives as a bare object, so
+> the §4.4 `OneOrMany` handling is load-bearing here). The probe therefore
+> yields the max `id` and nothing else, and "walk `latestfiles` backwards"
+> cannot name the directories to refresh. Replacement: additions/deletions/
+> replacements are detected **mirror-side** — on a fresh (non-304)
+> `ls-laR.gz`, the per-directory `.zip` `(name, size)` sets are diffed against
+> the previous run's `idgames-files.jsonl`, and exactly the drifted in-scope
+> directories have their `getcontents` cache entries invalidated. This costs
+> zero extra API requests (the warm-rerun budget of §9.3 is unchanged) and
+> converges via the 7-day TTL when a mirror lags the API.
+
 This makes the common rerun cost one HTTP request.
 
 ### 4.6 Politeness and error handling
@@ -394,7 +417,9 @@ This makes the common rerun cost one HTTP request.
   loud one.
 - **Dev mode:** `--root <path>` and `--limit <n>` flags scope a run to a single
   small directory so development and the §9.2 integration tests never hammer
-  the API.
+  the API. Scoped runs write their outputs under `xtask/data/dev/` (same
+  filenames) so a dev run never clobbers a full harvest; the response cache is
+  shared — it is request-keyed, so mixing modes is always safe.
 
 ### 4.7 Output, PII, and data governance
 

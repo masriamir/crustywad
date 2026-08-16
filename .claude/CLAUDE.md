@@ -53,6 +53,9 @@ tests/
 tools/
   Cargo.toml           # Pinned versions of mdbook and mdbook-mermaid; Dependabot watches this
   src/lib.rs           # Empty; makes the package a valid Cargo package for Dependabot resolution
+xtask/
+  DESIGN.md          # idgames corpus harvest operational spec (ADR-0030; own cargo workspace)
+  src/               # harvest tool: phase 1 API enumeration (#405); phases 2-3 pending (#406/#407)
 .github/
   codeql/codeql-config.yml   # Advanced CodeQL query config (security-extended + quality)
   workflows/ci.yml            # Main CI pipeline
@@ -62,6 +65,7 @@ tools/
   workflows/fuzz.yml          # cargo-fuzz targets
   workflows/pages.yml         # mdBook guide deployment to GitHub Pages
   workflows/release.yml # dist: cross-platform cwad binaries + installers (CLI releases)
+  workflows/xtask.yml         # path-gated xtask workspace CI (fmt/clippy/test/deny + weekly deny sweep)
 ```
 
 ## Development workflow

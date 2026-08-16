@@ -14,11 +14,27 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-# xtask/DESIGN.md §3 lists the tool's end-state dependency set (reqwest,
-# tokio, zip, ...); each dependency lands with the phase that first uses it
-# (#405–#407). The skeleton needs only the CLI surface.
+# xtask/DESIGN.md §3 dependency set, phase-1 slice (#405). `zip` lands with
+# phase 2 (#406). `flate2` and `fastrand` are §3 addenda recorded in
+# DESIGN.md: the ls-laR.gz bootstrap is a gzipped payload file (transport
+# Content-Encoding never applies), and backoff jitter needs an RNG.
 anyhow = "1"
+blake3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+fastrand = "2"
+flate2 = "1"
+indicatif = "0.18"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
 
 [lints.rust]
 unsafe_code = "deny"

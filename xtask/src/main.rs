@@ -4,6 +4,14 @@
 //! crate is its own cargo workspace, deliberately excluded from the root
 //! workspace — see the note in `xtask/Cargo.toml`.
 
+mod api;
+mod cache;
+mod lslar;
+mod mirror;
+mod phase1;
+mod schema;
+mod scope;
+
 use anyhow::bail;
 use clap::{Parser, Subcommand};
 
@@ -35,16 +43,18 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     let cli = Cli::parse();
     match cli.command {
-        Command::HarvestApi => harvest_api(cli.root.as_deref(), cli.limit),
+        Command::HarvestApi => phase1::run(cli.root.as_deref(), cli.limit),
         Command::HarvestZips => harvest_zips(cli.root.as_deref(), cli.limit),
         Command::Stats => stats(cli.root.as_deref(), cli.limit),
     }
-}
-
-fn harvest_api(_root: Option<&str>, _limit: Option<usize>) -> anyhow::Result<()> {
-    bail!("`harvest-api` is not implemented yet — phase 1 lands with #405")
 }
 
 fn harvest_zips(_root: Option<&str>, _limit: Option<usize>) -> anyhow::Result<()> {
@@ -108,7 +118,6 @@ mod tests {
     #[test]
     fn stubs_report_their_tracking_issue() {
         let cases = [
-            (super::harvest_api(None, None), "#405"),
             (super::harvest_zips(None, None), "#406"),
             (super::stats(None, None), "#407"),
         ];
