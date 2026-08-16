@@ -314,16 +314,24 @@ pub struct ZipsManifest {
     pub ledger_count: u64,
     /// Entries served from the per-id results log.
     pub cache_hits: u64,
-    /// Entries that touched a mirror this run.
+    /// Entries drained from the live mirror pool this run. On an aborted
+    /// run this counts only entries that finished before the breaker
+    /// tripped — in-flight entries cancelled by the abort are not counted
+    /// (they also never get a record; see `aborted`).
     pub live_entries: u64,
-    /// Ranged/full GET requests issued.
+    /// Ranged/full GET requests issued this run.
     pub range_requests: u64,
-    /// Total response-body bytes read from mirrors (§9.3: must stay a small
-    /// fraction of the archive's ~38 GiB).
+    /// Total response-body bytes read from mirrors this run (§9.3: must
+    /// stay a small fraction of the archive's ~38 GiB).
     pub bytes_transferred: u64,
-    /// Entries resolved via the budgeted full-download fallback.
+    /// Entries resolved via the budgeted full-download fallback this run
+    /// (a cache-hit entry that was a full download on a *prior* run is not
+    /// recounted here — this mirrors `range_requests`/`bytes_transferred`'s
+    /// run-scoped semantics, not a whole-corpus total).
     pub full_downloads: u64,
-    /// Bytes consumed by the fallback (bounded by the 2 GiB budget).
+    /// Bytes consumed by the fallback this run (bounded by the 2 GiB
+    /// budget — see `full_downloads` on why this is run-scoped, not
+    /// cumulative across warm reruns).
     pub fallback_bytes: u64,
     /// Records with `zip64: true` (0 explicitly states ZIP64 absence, §9.3).
     pub zip64_entries: u64,
