@@ -252,7 +252,12 @@ pub struct WadRecord {
     pub is_zip: bool,
     /// ZIP64 EOCD locator present (§5.3) — detected from the fetched tail.
     pub zip64: bool,
-    /// Total central-directory entries (directories included).
+    /// Count of *distinct* central-directory entries by name (directories
+    /// included): zip 8's `ZipArchive` keys parsed entries in an
+    /// `IndexMap<name, ..>` (last-one-wins on a duplicate name), so an
+    /// archive with duplicate member names under-counts here by design —
+    /// this is what `zip` itself exposes, not the raw CD record count on
+    /// disk.
     pub member_count: u64,
     /// `.wad` members, case-insensitively matched (§5.5).
     pub wads: Vec<WadMember>,

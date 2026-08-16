@@ -78,12 +78,17 @@ pub(crate) const MAX_FETCH_ROUNDS: u32 = 4;
 const LOCAL_HEADER_PAD: u64 = 256;
 
 /// Stage-2 (member-walk) fetch rounds before declaring the access pattern
-/// too chatty (record-don't-skip: any `.wad` still unresolved past this
-/// point never blocks the archive). Independent of stage 1's
+/// too chatty. Exceeding this budget fails the *whole* entry closed —
+/// [`InspectError::TooChatty`], which the caller records as a ledger error
+/// (§5.6 `fetch_status`) — rather than silently returning an `Inspection`
+/// with that `.wad` missing or under-sized: an honest failure beats
+/// quietly under-reporting wads. Independent of stage 1's
 /// [`MAX_FETCH_ROUNDS`] and set much higher: each round costs one small,
 /// bounded fetch (see [`LOCAL_HEADER_PAD`]), and a handful of `.wad`
 /// members with local headers scattered outside the tail is a normal
-/// shape for a real archive, not a pathological one.
+/// shape for a real archive, not a pathological one — 24 rounds is
+/// headroom for that normal case, not an expectation that a real archive
+/// will ever need it.
 const MAX_MEMBER_ROUNDS: u32 = 24;
 
 /// One ranged fetch against some byte source. Async-in-trait is fine here
@@ -128,7 +133,12 @@ impl std::fmt::Display for FetchFailure {
 pub struct Inspection {
     /// ZIP64 EOCD locator present in the tail (§5.3).
     pub zip64: bool,
-    /// Total central-directory entries.
+    /// Count of *distinct* central-directory entries by name: zip 8's
+    /// `ZipArchive` keys its parsed entries in an `IndexMap<name, ..>`
+    /// (last-one-wins on a duplicate name), so an archive with duplicate
+    /// member names under-counts here by design — this is the number of
+    /// entries `zip` itself exposes, not the raw count of CD records the
+    /// bytes on disk declare.
     pub member_count: u64,
     /// `.wad` members (ASCII case-insensitive, §5.5).
     pub wads: Vec<WadMember>,
@@ -260,6 +270,15 @@ async fn inspect_members(
 ) -> Result<Inspection, InspectError> {
     for round in 1..=MAX_MEMBER_ROUNDS {
         let missing = Cell::new(None);
+        // Re-running `ZipArchive::new` here costs zero fetches (the CD is
+        // already fully cached from stage 1) but does re-parse the whole
+        // central directory from scratch every round: O(rounds × entries)
+        // CPU work, not O(entries). Accepted for corpus-typical shapes —
+        // a handful of `.wad`s, a few rounds — where the parse is cheap
+        // and the alternative (keeping a `ZipArchive` alive across an
+        // insert into `buf`) doesn't borrow-check (see the struct docs
+        // above). Would need revisiting if a real archive combines many
+        // scattered `.wad` headers with a very large member count.
         let parsed = zip::ZipArchive::new(RangeReader::new(buf, &missing))
             .map(|mut archive| inspection_from_archive(&mut archive, zip64, &missing));
 
@@ -277,10 +296,15 @@ async fn inspect_members(
                 }
                 // Fetch only the missing local header, never the gap up to
                 // the already-cached tail (that gap is the member's own
-                // payload at corpus scale — see module docs).
+                // payload at corpus scale — see module docs). `miss_at`
+                // and `miss_len` are CD-derived and will, once real
+                // mirrors feed this, cross a trust boundary — a corrupt or
+                // hostile archive could declare an offset near `u64::MAX`,
+                // so `saturating_add` rather than `+` (never panics, never
+                // wraps past the type's range).
                 let capped_end = buf
                     .next_covered_start(miss_at)
-                    .min(miss_at + miss_len.max(LOCAL_HEADER_PAD));
+                    .min(miss_at.saturating_add(miss_len.max(LOCAL_HEADER_PAD)));
                 let needed = capped_end - miss_at;
                 let bytes = source
                     .fetch(miss_at, needed)
@@ -336,10 +360,16 @@ pub fn inspection_from_archive<R: Read + Seek>(
             other_members.push(name.to_owned());
             continue;
         }
+        // Own the name before the `&mut` borrow below (`by_index_raw`
+        // needs `&mut archive`; `name` borrows `archive` immutably) — and
+        // so that a genuinely unreadable local header (the `Err(_)` arm
+        // below) can still record the real, already-known name instead of
+        // a placeholder that throws it away.
+        let name = name.to_owned();
         match archive.by_index_raw(i) {
             Ok(file) => {
                 wads.push(WadMember {
-                    name: file.name().to_owned(),
+                    name,
                     compressed: file.compressed_size(),
                     uncompressed: file.size(),
                     method: method_label(file.compression()),
@@ -354,9 +384,12 @@ pub fn inspection_from_archive<R: Read + Seek>(
                 break;
             }
             Err(_) => {
-                // A genuine unreadable entry (not a cache miss):
-                // record-and-continue (ADR-0030 §5).
-                other_members.push(format!("<unreadable entry {i}>"));
+                // A genuinely unreadable local header (not a cache miss):
+                // record-and-continue (ADR-0030 §5). We already have the
+                // real name from the central directory — record that, not
+                // a placeholder; we just can't fabricate sizes for it, so
+                // it goes to `other_members`, not `wads`.
+                other_members.push(name);
             }
         }
     }
@@ -746,6 +779,28 @@ mod tests {
             i.wads[0].encrypted,
             "§5.5: encryption recorded, not skipped"
         );
+    }
+
+    #[tokio::test]
+    async fn wad_with_unreadable_local_header_keeps_its_real_name() {
+        // Whole-file-cached fixture (small, fits under TAIL_LEN) — every
+        // byte is present, so corrupting the local header's own signature
+        // is a genuine parse failure, never a cache miss (fix round 2,
+        // finding 2). `name_for_index` already knows the real name from
+        // the central directory before `by_index_raw` ever touches the
+        // (corrupt) local header; that name must survive into
+        // `other_members`, not get replaced by a `<unreadable entry N>`
+        // placeholder — we can't fabricate sizes, but we must not lose the
+        // name we already had for free.
+        let mut zip = stored_zip(&[("BROKEN.WAD", b"payload")], b"");
+        patch_u16_after_sig(&mut zip, &0x0403_4b50_u32.to_le_bytes(), 0, |_| 0xFFFF);
+        let (result, _fetches) = inspect_fake(zip).await;
+        let i = result.unwrap();
+        assert!(
+            i.wads.is_empty(),
+            "no size data available — can't be a wad record"
+        );
+        assert_eq!(i.other_members, vec!["BROKEN.WAD"]);
     }
 
     #[tokio::test]
