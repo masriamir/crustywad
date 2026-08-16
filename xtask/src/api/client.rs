@@ -207,19 +207,31 @@ impl ApiClient {
         // is stored, and the STORED (scrubbed) bytes are what get parsed
         // again for the return value below, so the live and warm paths
         // always deserialize identical bytes.
-        let (version, _) = parse_envelope(&body).map_err(envelope_to_call_error)?;
-        let stored = self
-            .cache
-            .store("getcontents", &dir, version, body)
-            .map_err(|e| ApiCallError::Shape(format!("cache store: {e}")))?;
-        let changed = prior.map(|p| p.body_hash != stored.body_hash);
-        let (version, listing) = parse_envelope(&stored.body).map_err(envelope_to_call_error)?;
+        let (version, live_listing) = parse_envelope(&body).map_err(envelope_to_call_error)?;
         self.note_version(version);
-        Ok(FetchOutcome {
-            listing,
-            from_cache: false,
-            changed,
-        })
+        match self.cache.store("getcontents", &dir, version, body) {
+            Ok(stored) => {
+                let changed = prior.map(|p| p.body_hash != stored.body_hash);
+                let (_, listing) = parse_envelope(&stored.body).map_err(envelope_to_call_error)?;
+                Ok(FetchOutcome {
+                    listing,
+                    from_cache: false,
+                    changed,
+                })
+            }
+            Err(e) => {
+                // The cache is an optimization: a failed write (disk full,
+                // permissions) must not cost the directory's results. The
+                // already-parsed live listing is identical in content —
+                // the scrub only strips fields the record types drop.
+                tracing::warn!(dir, error = %e, "cache store failed; continuing uncached");
+                Ok(FetchOutcome {
+                    listing: live_listing,
+                    from_cache: false,
+                    changed: None,
+                })
+            }
+        }
     }
 
     /// `action=latestfiles&limit=N`. Never cached (§4.5 — it *is* the

@@ -58,11 +58,14 @@ pub struct HarvestManifest {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum LedgerKind {
-    /// Retry policy exhausted or non-retryable HTTP status.
+    /// Exchange-level failure: retry policy exhausted, a non-retryable
+    /// HTTP status, a body-stage failure (over-cap or mid-body transport
+    /// error), or the API's own error envelope.
     HttpError,
     /// `content.file` and `content.dir` both null (§4.1).
     SuspectPath,
-    /// A record failed deserialization.
+    /// Bytes arrived whole but did not deserialize: an unrecognized
+    /// envelope shape or a record that failed deserialization.
     ParseError,
     /// API `size` disagrees with the ls-laR listing size (§5.0 guard).
     SizeMismatch,
