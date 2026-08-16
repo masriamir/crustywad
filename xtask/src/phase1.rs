@@ -269,7 +269,14 @@ async fn traverse_or_fallback(
         tracing::warn!("no ls-laR bootstrap available — falling back to BFS discovery");
         let roots = scoped_or_bfs_roots(root);
         let ckpt = cache_dir.join("bfs-frontier.json");
-        let outcome = traverse::bfs(client, &roots, &ckpt, limit).await;
+        // Dev `--root` runs follow the whole subtree, matching tree-mode
+        // `--root` semantics (dev inspects anything, §4.6).
+        let scope_mode = if root.is_some() {
+            traverse::BfsScope::Subtree
+        } else {
+            traverse::BfsScope::IncludeTable
+        };
+        let outcome = traverse::bfs(client, &roots, &ckpt, limit, scope_mode).await;
         return (outcome, roots);
     };
     let (worklist, triage) = traverse::worklist_from_tree(tree, root);

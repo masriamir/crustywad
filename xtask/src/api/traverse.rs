@@ -112,8 +112,23 @@ pub async fn enrich(
     out
 }
 
+/// How [`bfs`] decides whether a discovered subdirectory joins the
+/// frontier. Tree mode's `--root` handling deliberately ignores the §4.2
+/// scope tables ("dev inspects anything"); [`BfsScope::Subtree`] keeps the
+/// BFS fallback consistent with that, instead of silently stopping one
+/// level into a Skip/Triage dev root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BfsScope {
+    /// Full harvest: only §4.2 `Include` directories are followed.
+    IncludeTable,
+    /// Dev-scoped (`--root`) run: anything under the call's roots is
+    /// followed, matching tree-mode `--root` subtree semantics.
+    Subtree,
+}
+
 /// Checkpointed BFS discovery via `getcontents` (§4.2 fallback mode), used
-/// when no ls-laR bootstrap is obtainable. The frontier (`pending` +
+/// when no ls-laR bootstrap is obtainable. `scope_mode` governs which
+/// discovered subdirectories are followed. The frontier (`pending` +
 /// `visited`) is written atomically to `checkpoint` after every processed
 /// directory and deleted on a completed run. On resume, `visited` dirs are
 /// replayed through `source` — in production that means the disk cache
@@ -130,6 +145,7 @@ pub async fn bfs(
     roots: &[String],
     checkpoint: &Path,
     limit: Option<u64>,
+    scope_mode: BfsScope,
 ) -> TraverseOutcome {
     let mut out = TraverseOutcome::default();
     let normalized_roots: Vec<String> = roots.iter().map(|r| normalize_dir(r)).collect();
@@ -155,7 +171,11 @@ pub async fn bfs(
         visited.insert(dir);
         for sub in discovered {
             let sub = normalize_dir(&sub);
-            if decide(&sub) == ScopeDecision::Include && enqueued.insert(sub.clone()) {
+            let follow = match scope_mode {
+                BfsScope::IncludeTable => decide(&sub) == ScopeDecision::Include,
+                BfsScope::Subtree => normalized_roots.iter().any(|r| sub.starts_with(r.as_str())),
+            };
+            if follow && enqueued.insert(sub.clone()) {
                 queue.push_back(sub);
             }
         }
@@ -509,12 +529,43 @@ mod tests {
             .dir("levels/", &[], &["levels/doom", "levels/reviews"])
             .dir("levels/doom/", &[(1, "a.zip", 5)], &[])
             .dir("levels/reviews/", &[(9, "review.zip", 1)], &[]);
-        let out = bfs(&mut fake, &["levels/".to_owned()], &ckpt, None).await;
+        let out = bfs(
+            &mut fake,
+            &["levels/".to_owned()],
+            &ckpt,
+            None,
+            BfsScope::IncludeTable,
+        )
+        .await;
         // levels/reviews/ is Skip-scoped: discovered but never enqueued.
         assert!(!fake.calls.contains(&"levels/reviews/".to_owned()));
         assert_eq!(out.records.len(), 1);
         assert_eq!(out.records[0].id, 1);
         // Completed run cleans its checkpoint.
+        assert!(!ckpt.exists());
+    }
+
+    #[tokio::test]
+    async fn bfs_subtree_mode_follows_non_include_dirs_under_root() {
+        // A dev `--root` at a Triage root must traverse its whole subtree
+        // (tree-mode `--root` parity), while dirs outside the root stay out.
+        let tmp = tempfile::tempdir().unwrap();
+        let ckpt = tmp.path().join("bfs-frontier.json");
+        let mut fake = Fake::new()
+            .dir("misc/", &[(1, "odd.zip", 5)], &["misc/old", "levels/doom"])
+            .dir("misc/old/", &[(2, "older.zip", 3)], &[])
+            .dir("levels/doom/", &[(9, "a.zip", 1)], &[]);
+        let out = bfs(
+            &mut fake,
+            &["misc/".to_owned()],
+            &ckpt,
+            None,
+            BfsScope::Subtree,
+        )
+        .await;
+        assert!(fake.calls.contains(&"misc/old/".to_owned()));
+        assert!(!fake.calls.contains(&"levels/doom/".to_owned()));
+        assert_eq!(out.records.len(), 2);
         assert!(!ckpt.exists());
     }
 
@@ -537,7 +588,14 @@ mod tests {
             &[(1, "a.zip", 5)],
             &[],
         );
-        let out = bfs(&mut fake, &["levels/".to_owned()], &ckpt, None).await;
+        let out = bfs(
+            &mut fake,
+            &["levels/".to_owned()],
+            &ckpt,
+            None,
+            BfsScope::IncludeTable,
+        )
+        .await;
         // Visited dirs are replayed (cache-fresh in production), pending resumed.
         assert!(fake.calls.contains(&"levels/".to_owned()));
         assert!(fake.calls.contains(&"levels/doom/".to_owned()));
@@ -558,7 +616,14 @@ mod tests {
         };
         std::fs::write(&ckpt, serde_json::to_vec(&stale).unwrap()).unwrap();
         let mut fake = Fake::new().dir("levels/", &[(1, "a.zip", 5)], &[]);
-        let out = bfs(&mut fake, &["levels/".to_owned()], &ckpt, None).await;
+        let out = bfs(
+            &mut fake,
+            &["levels/".to_owned()],
+            &ckpt,
+            None,
+            BfsScope::IncludeTable,
+        )
+        .await;
         // The stale "misc/" frontier must never be visited or replayed.
         assert!(!fake.calls.contains(&"misc/".to_owned()));
         assert!(!fake.calls.contains(&"misc/old/".to_owned()));
@@ -579,6 +644,7 @@ mod tests {
             &["a/".to_owned(), "b/".to_owned()],
             &ckpt,
             Some(2),
+            BfsScope::IncludeTable,
         )
         .await;
         assert_eq!(out.records.len(), 2);
