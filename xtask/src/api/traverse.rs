@@ -128,9 +128,13 @@ pub async fn enrich(
 /// directory and deleted on a completed run. On resume, `visited` dirs are
 /// replayed through `source` — in production that means the disk cache
 /// answers them, so a resumed run re-derives nothing over the network; the
-/// fake source in tests just answers identically to the first pass. Never
-/// returns `Err` and never panics — every failure path ends in a
-/// [`LedgerEntry`] (record, don't skip).
+/// fake source in tests just answers identically to the first pass. The
+/// checkpoint file is shared across run modes (dev-scoped vs. full), so a
+/// checkpoint written for a different set of roots is ignored rather than
+/// adopted — otherwise an interrupted dev run's frontier could silently
+/// truncate a full harvest to the dev subtree, or vice versa. Never returns
+/// `Err` and never panics — every failure path ends in a [`LedgerEntry`]
+/// (record, don't skip).
 #[allow(dead_code)] // not yet wired into main.rs
 pub async fn bfs(
     source: &mut impl ListingSource,
@@ -139,12 +143,9 @@ pub async fn bfs(
     limit: Option<u64>,
 ) -> TraverseOutcome {
     let mut out = TraverseOutcome::default();
-    let (mut pending, mut visited) = load_checkpoint(checkpoint).unwrap_or_else(|| {
-        (
-            roots.iter().map(|r| normalize_dir(r)).collect(),
-            BTreeSet::new(),
-        )
-    });
+    let normalized_roots: Vec<String> = roots.iter().map(|r| normalize_dir(r)).collect();
+    let (mut pending, mut visited) = load_checkpoint(checkpoint, &normalized_roots)
+        .unwrap_or_else(|| (normalized_roots.clone(), BTreeSet::new()));
     // Replay visited dirs first — cache-fresh in production, so this costs
     // no network and repopulates `records` after an interrupted run.
     let replay: Vec<String> = visited.iter().cloned().collect();
@@ -170,7 +171,7 @@ pub async fn bfs(
             }
         }
         let still_pending: Vec<&String> = queue.iter().collect();
-        save_checkpoint(checkpoint, &still_pending, &visited);
+        save_checkpoint(checkpoint, &normalized_roots, &still_pending, &visited);
     }
     truncate_to_limit(&mut out, limit);
     if queue.is_empty() {
@@ -277,19 +278,43 @@ fn progress_bar(len: usize) -> indicatif::ProgressBar {
 
 /// On-disk BFS frontier (§4.6): the queue plus everything already
 /// processed, so a resumed run knows both what's left and what to replay.
+/// `roots` records which call produced this frontier — the file is shared
+/// across dev-scoped and full runs, so a mismatch there means this
+/// checkpoint belongs to a different run and must not be adopted.
+/// `#[serde(default)]` keeps pre-fix checkpoints (written before this field
+/// existed) deserializable; they read as `roots: []`, which never matches a
+/// real (non-empty) root set and so are correctly treated as mismatched.
 #[derive(Serialize, Deserialize)]
 struct Checkpoint {
+    #[serde(default)]
+    roots: Vec<String>,
     pending: Vec<String>,
     visited: Vec<String>,
 }
 
-fn load_checkpoint(path: &Path) -> Option<(Vec<String>, BTreeSet<String>)> {
+/// Load `path`'s checkpoint, but only if it was written for the same
+/// `roots` as this call. A mismatched checkpoint is discarded (logged, not
+/// silently ignored) so the walk starts fresh from `roots` — the file
+/// itself is left in place to be overwritten by the first new save.
+fn load_checkpoint(path: &Path, roots: &[String]) -> Option<(Vec<String>, BTreeSet<String>)> {
     let ckpt: Checkpoint = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let stored: BTreeSet<&str> = ckpt.roots.iter().map(String::as_str).collect();
+    let current: BTreeSet<&str> = roots.iter().map(String::as_str).collect();
+    if stored != current {
+        tracing::warn!(
+            checkpoint = %path.display(),
+            stored_roots = ?ckpt.roots,
+            current_roots = ?roots,
+            "ignoring BFS checkpoint written for different roots"
+        );
+        return None;
+    }
     Some((ckpt.pending, ckpt.visited.into_iter().collect()))
 }
 
-fn save_checkpoint(path: &Path, pending: &[&String], visited: &BTreeSet<String>) {
+fn save_checkpoint(path: &Path, roots: &[String], pending: &[&String], visited: &BTreeSet<String>) {
     let ckpt = Checkpoint {
+        roots: roots.to_vec(),
         pending: pending.iter().map(|s| (*s).clone()).collect(),
         visited: visited.iter().cloned().collect(),
     };
@@ -511,6 +536,7 @@ mod tests {
         std::fs::write(
             &ckpt,
             serde_json::json!({
+                "roots": ["levels/"],
                 "pending": ["levels/doom/"],
                 "visited": ["levels/"]
             })
@@ -528,6 +554,28 @@ mod tests {
         assert!(fake.calls.contains(&"levels/doom/".to_owned()));
         assert_eq!(out.records.len(), 1);
         assert!(!ckpt.exists());
+    }
+
+    #[tokio::test]
+    async fn bfs_ignores_checkpoint_written_for_different_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ckpt = tmp.path().join("bfs-frontier.json");
+        // A frontier left behind by a prior run scoped to a different root
+        // (e.g. a dev `--root misc` run interrupted mid-walk).
+        let stale = Checkpoint {
+            roots: vec!["misc/".to_owned()],
+            pending: vec!["misc/old/".to_owned()],
+            visited: vec!["misc/".to_owned()],
+        };
+        std::fs::write(&ckpt, serde_json::to_vec(&stale).unwrap()).unwrap();
+        let mut fake = Fake::new().dir("levels/", &[(1, "a.zip", 5)], &[]);
+        let out = bfs(&mut fake, &["levels/".to_owned()], &ckpt, None).await;
+        // The stale "misc/" frontier must never be visited or replayed.
+        assert!(!fake.calls.contains(&"misc/".to_owned()));
+        assert!(!fake.calls.contains(&"misc/old/".to_owned()));
+        // The walk starts fresh from the roots given to this call.
+        assert!(fake.calls.contains(&"levels/".to_owned()));
+        assert_eq!(out.records.len(), 1);
     }
 
     #[tokio::test]
@@ -550,7 +598,8 @@ mod tests {
         // survive so a resume can pick it back up.
         assert!(!fake.calls.contains(&"b/".to_owned()));
         assert!(ckpt.exists());
-        let (pending, _visited) = load_checkpoint(&ckpt).expect("checkpoint present");
+        let roots = ["a/".to_owned(), "b/".to_owned()];
+        let (pending, _visited) = load_checkpoint(&ckpt, &roots).expect("checkpoint present");
         assert_eq!(pending, vec!["b/".to_owned()]);
     }
 
