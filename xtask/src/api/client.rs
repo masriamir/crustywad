@@ -28,6 +28,11 @@ pub const BROWSER_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
 const MAX_ATTEMPTS: u32 = 6;
 const RATE_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Cap on an API response body (ADR-0016 posture: network bytes are
+/// untrusted everywhere, not just on mirrors). The largest spike-observed
+/// listing is ~60 KB; 8 MiB is orders-of-magnitude headroom.
+const API_BODY_CAP: usize = 8 * 1024 * 1024;
+
 /// Interval gate: at most one `wait()` completion per interval.
 #[derive(Debug)]
 pub(crate) struct RateGate {
@@ -255,12 +260,30 @@ impl ApiClient {
             self.stats.live_calls += 1;
             let outcome = self.http.get(API_URL).query(query).send().await;
             let (status, detail) = match outcome {
-                Ok(resp) => {
+                Ok(mut resp) => {
                     let status = resp.status();
                     if status.is_success() {
-                        return resp
-                            .json::<serde_json::Value>()
-                            .await
+                        // Bounded chunked read instead of `resp.json()`:
+                        // an abusive body must fail cleanly, not buffer
+                        // without limit (same posture as the mirror path).
+                        let mut bytes: Vec<u8> = Vec::new();
+                        loop {
+                            match resp.chunk().await {
+                                Ok(Some(chunk)) => {
+                                    if bytes.len() + chunk.len() > API_BODY_CAP {
+                                        return Err(ApiCallError::Shape(format!(
+                                            "response body exceeded {API_BODY_CAP} bytes"
+                                        )));
+                                    }
+                                    bytes.extend_from_slice(&chunk);
+                                }
+                                Ok(None) => break,
+                                Err(e) => {
+                                    return Err(ApiCallError::Shape(format!("body: {e}")));
+                                }
+                            }
+                        }
+                        return serde_json::from_slice(&bytes)
                             .map_err(|e| ApiCallError::Shape(format!("body: {e}")));
                     }
                     (Some(status), format!("HTTP {status}"))
