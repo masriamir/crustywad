@@ -268,20 +268,31 @@ impl ApiClient {
                         // Bounded chunked read instead of `resp.json()`:
                         // an abusive body must fail cleanly, not buffer
                         // without limit (same posture as the mirror path).
+                        // Body-stage failures are exchange-level, not
+                        // shape-level: classify as Http (ledger kind
+                        // `http_error`, attempt count preserved) so
+                        // `parse_error` stays reserved for bytes that
+                        // arrived whole but didn't deserialize.
                         let mut bytes: Vec<u8> = Vec::new();
                         loop {
                             match resp.chunk().await {
                                 Ok(Some(chunk)) => {
                                     if bytes.len() + chunk.len() > API_BODY_CAP {
-                                        return Err(ApiCallError::Shape(format!(
-                                            "response body exceeded {API_BODY_CAP} bytes"
-                                        )));
+                                        return Err(ApiCallError::Http {
+                                            attempts: attempt,
+                                            detail: format!(
+                                                "response body exceeded {API_BODY_CAP} bytes"
+                                            ),
+                                        });
                                     }
                                     bytes.extend_from_slice(&chunk);
                                 }
                                 Ok(None) => break,
                                 Err(e) => {
-                                    return Err(ApiCallError::Shape(format!("body: {e}")));
+                                    return Err(ApiCallError::Http {
+                                        attempts: attempt,
+                                        detail: format!("body transport: {e}"),
+                                    });
                                 }
                             }
                         }
