@@ -26,7 +26,6 @@ use crate::scope::{ScopeDecision, decide};
 /// on a single-threaded call chain, so the missing bound is never a
 /// problem.
 #[allow(async_fn_in_trait)]
-#[allow(dead_code)] // not yet wired into main.rs (#405 phase-1 wiring is Task 10)
 pub trait ListingSource {
     /// Fetch one directory's listing.
     ///
@@ -36,7 +35,6 @@ pub trait ListingSource {
 }
 
 impl ListingSource for ApiClient {
-    #[allow(dead_code)] // not yet wired into main.rs
     async fn getcontents(&mut self, dir: &str) -> Result<FetchOutcome, ApiCallError> {
         ApiClient::getcontents(self, dir).await
     }
@@ -44,23 +42,17 @@ impl ListingSource for ApiClient {
 
 /// Result of one traversal (either mode).
 #[derive(Debug, Default)]
-#[allow(dead_code)] // not yet wired into main.rs
 pub struct TraverseOutcome {
     /// Every file record collected.
-    #[allow(dead_code)]
     pub records: Vec<FileRecord>,
     /// Directories that produced a listing or a ledger entry.
-    #[allow(dead_code)]
     pub dirs_processed: u64,
     /// Directories whose scrubbed body hash moved on a live refetch
     /// (phase-2 invalidation signal, §4.5).
-    #[allow(dead_code)]
     pub changed_dirs: u64,
     /// Failures and findings (record, don't skip).
-    #[allow(dead_code)]
     pub ledger: Vec<LedgerEntry>,
     /// Top-level Triage segments seen in the tree (§4.2: surface loudly).
-    #[allow(dead_code)]
     pub triage: Vec<String>,
 }
 
@@ -69,7 +61,6 @@ pub struct TraverseOutcome {
 /// Full mode (`root: None`): in-scope dirs per §4.2, plus the deduped
 /// top-level segments of every `Triage` dir. Dev mode (`root: Some`): the
 /// normalized root's subtree, scope tables ignored (dev inspects anything).
-#[allow(dead_code)] // not yet wired into main.rs
 pub fn worklist_from_tree(tree: &ArchiveTree, root: Option<&str>) -> (Vec<String>, Vec<String>) {
     if let Some(r) = root {
         let prefix = normalize_dir(r);
@@ -101,7 +92,6 @@ pub fn worklist_from_tree(tree: &ArchiveTree, root: Option<&str>) -> (Vec<String
 /// mode). `tree` enables the §5.0 API-size-vs-listing cross-check.
 /// Never returns `Err` and never panics — every failure path ends in a
 /// [`LedgerEntry`] (record, don't skip).
-#[allow(dead_code)] // not yet wired into main.rs
 pub async fn enrich(
     source: &mut impl ListingSource,
     worklist: &[String],
@@ -135,7 +125,6 @@ pub async fn enrich(
 /// truncate a full harvest to the dev subtree, or vice versa. Never returns
 /// `Err` and never panics — every failure path ends in a [`LedgerEntry`]
 /// (record, don't skip).
-#[allow(dead_code)] // not yet wired into main.rs
 pub async fn bfs(
     source: &mut impl ListingSource,
     roots: &[String],

@@ -16,7 +16,6 @@ use crate::cache::atomic_write;
 
 /// Run provenance (§4.7): "statistics without provenance are not
 /// reproducible". Downstream phases reference [`Self::id`].
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarvestManifest {
     /// Stable run identifier derived from the start time.
@@ -54,7 +53,6 @@ pub struct HarvestManifest {
 }
 
 /// Failure-ledger category (§4.6/§5.5 discipline: record, don't skip).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum LedgerKind {
@@ -69,7 +67,6 @@ pub enum LedgerKind {
 }
 
 /// One `harvest-errors.jsonl` line. Deliberately timestamp-free (§4.7).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerEntry {
     /// Archive path the failure concerns.
@@ -89,7 +86,6 @@ pub struct LedgerEntry {
 ///
 /// # Errors
 /// Serialization or filesystem failure.
-#[allow(dead_code)]
 pub fn write_files_jsonl(path: &Path, records: Vec<FileRecord>) -> anyhow::Result<u64> {
     let mut by_id = std::collections::BTreeMap::new();
     for rec in records {
@@ -108,7 +104,6 @@ pub fn write_files_jsonl(path: &Path, records: Vec<FileRecord>) -> anyhow::Resul
 ///
 /// # Errors
 /// Serialization or filesystem failure.
-#[allow(dead_code)]
 pub fn write_ledger(path: &Path, mut entries: Vec<LedgerEntry>) -> anyhow::Result<u64> {
     entries.sort_by(|a, b| (&a.path, &a.kind, &a.detail).cmp(&(&b.path, &b.kind, &b.detail)));
     let mut out = String::new();
@@ -124,7 +119,6 @@ pub fn write_ledger(path: &Path, mut entries: Vec<LedgerEntry>) -> anyhow::Resul
 ///
 /// # Errors
 /// Serialization or filesystem failure.
-#[allow(dead_code)]
 pub fn write_manifest(path: &Path, manifest: &HarvestManifest) -> anyhow::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(manifest).context("serializing manifest")?;
     bytes.push(b'\n');
@@ -132,7 +126,6 @@ pub fn write_manifest(path: &Path, manifest: &HarvestManifest) -> anyhow::Result
 }
 
 /// Read a previous run's manifest, if present and parseable.
-#[allow(dead_code)]
 pub fn read_manifest(path: &Path) -> Option<HarvestManifest> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
@@ -141,7 +134,6 @@ pub fn read_manifest(path: &Path) -> Option<HarvestManifest> {
 /// `None` when the file is missing/unreadable; unparseable lines are
 /// skipped with a warning rather than failing the read (a damaged
 /// baseline degrades to broader invalidation, never to a crash).
-#[allow(dead_code)]
 pub fn read_files_jsonl(path: &Path) -> Option<Vec<FileRecord>> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut records = Vec::new();
@@ -159,13 +151,11 @@ pub fn read_files_jsonl(path: &Path) -> Option<Vec<FileRecord>> {
 }
 
 /// `"harvest-YYYYMMDDTHHMMSSZ"` from the run start.
-#[allow(dead_code)]
 pub fn manifest_id(started_at: &DateTime<Utc>) -> String {
     format!("harvest-{}", started_at.format("%Y%m%dT%H%M%SZ"))
 }
 
 /// Best-effort short git revision for provenance.
-#[allow(dead_code)]
 pub fn git_rev() -> Option<String> {
     let out = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
@@ -177,7 +167,6 @@ pub fn git_rev() -> Option<String> {
 }
 
 /// xtask package version for provenance.
-#[allow(dead_code)]
 pub fn tool_version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }

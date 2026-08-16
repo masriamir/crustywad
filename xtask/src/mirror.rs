@@ -14,7 +14,6 @@ use crate::lslar::{ArchiveTree, parse_ls_lar_gz};
 
 /// One archive mirror.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Mirror {
     /// Short name for manifests and logs.
     pub key: &'static str,
@@ -25,7 +24,6 @@ pub struct Mirror {
 /// §5.1 verified pool: infania primary (same-day Last-Modified when
 /// spiked), gamers.org fallback. Expected to change over the years —
 /// update DESIGN §5.1 in the same commit as this constant.
-#[allow(dead_code)]
 pub const MIRRORS: [Mirror; 2] = [
     Mirror {
         key: "infania",
@@ -48,7 +46,6 @@ const MAX_BODY_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Where this run's tree came from (recorded in the manifest).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum BootstrapSource {
     /// A mirror served a fresh listing.
     Fresh {
@@ -68,7 +65,6 @@ pub enum BootstrapSource {
 
 impl BootstrapSource {
     /// Manifest label.
-    #[allow(dead_code)]
     pub fn label(&self) -> String {
         match self {
             BootstrapSource::Fresh { mirror } => format!("ls-lar-fresh:{mirror}"),
@@ -81,7 +77,6 @@ impl BootstrapSource {
 
 /// Sidecar metadata for the cached `ls-laR.gz`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct LsLarMeta {
     /// Which mirror served the cached bytes.
     pub mirror: String,
@@ -101,7 +96,6 @@ pub(crate) fn if_modified_since(meta: Option<&LsLarMeta>, mirror_key: &str) -> O
 /// Fetch (or revalidate) the §5.0 bootstrap listing. Infallible by
 /// contract: failures degrade through the pool, then the stale cache,
 /// then `Unavailable`.
-#[allow(dead_code)]
 pub async fn fetch_ls_lar(
     http: &reqwest::Client,
     cache_dir: &Path,

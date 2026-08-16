@@ -41,7 +41,6 @@ impl ApiCache {
     ///
     /// # Errors
     /// Fails if the directory cannot be created.
-    #[allow(dead_code)]
     pub fn new(root: PathBuf, ttl: Duration) -> anyhow::Result<Self> {
         std::fs::create_dir_all(&root)
             .with_context(|| format!("creating cache dir {}", root.display()))?;
@@ -55,7 +54,6 @@ impl ApiCache {
 
     /// Fetch the stored envelope for a request, at any age. Corrupt or
     /// mismatched entries read as misses.
-    #[allow(dead_code)]
     pub fn lookup(&self, action: &str, path: &str) -> Option<CacheEnvelope> {
         let bytes = std::fs::read(self.entry_path(&cache_key(action, path))).ok()?;
         let env: CacheEnvelope = serde_json::from_slice(&bytes).ok()?;
@@ -65,7 +63,6 @@ impl ApiCache {
 
     /// Whether `envelope` is within the TTL as of `now`. Unparseable
     /// timestamps are stale.
-    #[allow(dead_code)]
     pub fn is_fresh(&self, envelope: &CacheEnvelope, now: DateTime<Utc>) -> bool {
         DateTime::parse_from_rfc3339(&envelope.fetched_at)
             .is_ok_and(|t| now - t.with_timezone(&Utc) < self.ttl)
@@ -75,7 +72,6 @@ impl ApiCache {
     ///
     /// # Errors
     /// Fails on serialization or filesystem errors.
-    #[allow(dead_code)]
     pub fn store(
         &self,
         action: &str,
@@ -103,7 +99,6 @@ impl ApiCache {
     ///
     /// # Errors
     /// Fails on filesystem errors other than the entry not existing.
-    #[allow(dead_code)]
     pub fn invalidate(&self, action: &str, path: &str) -> io::Result<()> {
         match std::fs::remove_file(self.entry_path(&cache_key(action, path))) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
@@ -114,7 +109,6 @@ impl ApiCache {
 
 /// Remove every object key containing `email` (ASCII case-insensitive),
 /// recursively (ADR-0030 §3). Applied to every body before it touches disk.
-#[allow(dead_code)]
 pub fn scrub_emails(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
@@ -127,7 +121,6 @@ pub fn scrub_emails(value: &mut serde_json::Value) {
 }
 
 /// Hash a request identity to a filesystem-safe filename stem.
-#[allow(dead_code)]
 pub fn cache_key(action: &str, path: &str) -> String {
     blake3::hash(format!("{action}\n{path}").as_bytes())
         .to_hex()
@@ -136,7 +129,6 @@ pub fn cache_key(action: &str, path: &str) -> String {
 
 /// `"blake3:<hex>"` over the compact JSON serialization of `body`.
 /// Change-detection only — never a cache key (§4.5).
-#[allow(dead_code)]
 pub fn body_hash(body: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(body).unwrap_or_default();
     format!("blake3:{}", blake3::hash(&bytes).to_hex())
@@ -147,7 +139,6 @@ pub fn body_hash(body: &serde_json::Value) -> String {
 ///
 /// # Errors
 /// Propagates filesystem errors.
-#[allow(dead_code)]
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes)?;

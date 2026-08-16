@@ -10,13 +10,10 @@ use std::io::{BufRead, BufReader};
 
 /// One regular file in the mirror listing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct TreeFile {
     /// Filename (no path). May contain spaces.
-    #[allow(dead_code)]
     pub name: String,
     /// Byte size as listed by the mirror.
-    #[allow(dead_code)]
     pub size: u64,
 }
 
@@ -24,20 +21,16 @@ pub struct TreeFile {
 /// trailing slash and are archive-root-relative (`"levels/doom/"`); the
 /// archive root itself is the empty key.
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 pub struct ArchiveTree {
     /// Directory path → regular files listed in it (sorted map for
     /// deterministic iteration).
-    #[allow(dead_code)]
     pub dirs: BTreeMap<String, Vec<TreeFile>>,
     /// Count of unparseable entry lines (diagnostics only).
-    #[allow(dead_code)]
     pub skipped_lines: u64,
 }
 
 impl ArchiveTree {
     /// Number of `.zip` files (ASCII case-insensitive) under `prefix`.
-    #[allow(dead_code)]
     pub fn zip_count(&self, prefix: &str) -> u64 {
         self.dirs
             .iter()
@@ -50,7 +43,6 @@ impl ArchiveTree {
     }
 
     /// Listed size of `file` in `dir` (trailing-slash key), if present.
-    #[allow(dead_code)]
     pub fn size_of(&self, dir: &str, file: &str) -> Option<u64> {
         self.dirs
             .get(dir)?
@@ -65,7 +57,6 @@ impl ArchiveTree {
 /// # Errors
 /// Fails only on I/O errors from `reader`; malformed content is skipped
 /// and counted in [`ArchiveTree::skipped_lines`].
-#[allow(dead_code)]
 pub fn parse_ls_lar(reader: impl BufRead) -> anyhow::Result<ArchiveTree> {
     let mut tree = ArchiveTree::default();
     let mut current: Option<String> = None;
@@ -124,7 +115,6 @@ const DECOMPRESSED_CAP: u64 = 256 * 1024 * 1024;
 /// Fails on gzip or I/O errors, or if the decompressed stream exceeds
 /// [`DECOMPRESSED_CAP`] (a truncated parse would otherwise masquerade as a
 /// small, legitimate tree).
-#[allow(dead_code)]
 pub fn parse_ls_lar_gz(bytes: &[u8]) -> anyhow::Result<ArchiveTree> {
     parse_ls_lar_gz_with_cap(bytes, DECOMPRESSED_CAP)
 }
@@ -149,7 +139,6 @@ fn parse_ls_lar_gz_with_cap(bytes: &[u8], cap: u64) -> anyhow::Result<ArchiveTre
     Ok(tree)
 }
 
-#[allow(dead_code)]
 enum EntryLine {
     File(TreeFile),
     /// Directories, symlinks, `.`/`..`, device nodes — listed but not files.
@@ -159,7 +148,6 @@ enum EntryLine {
 
 /// `mode links owner group size month day year-or-time name...` — the name
 /// is everything after the 8th column and may contain spaces.
-#[allow(dead_code)]
 fn parse_entry(line: &str) -> EntryLine {
     let mode = match line.chars().next() {
         Some('-') => line,

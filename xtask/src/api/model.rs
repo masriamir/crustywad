@@ -12,7 +12,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// object never matches `Vec<T>`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-#[allow(dead_code)]
 pub enum OneOrMany<T> {
     /// The normal case: a JSON array.
     Many(Vec<T>),
@@ -22,7 +21,6 @@ pub enum OneOrMany<T> {
 
 impl<T> OneOrMany<T> {
     /// Flatten to a `Vec` regardless of the wire shape.
-    #[allow(dead_code)]
     pub fn into_vec(self) -> Vec<T> {
         match self {
             OneOrMany::Many(v) => v,
@@ -35,7 +33,6 @@ impl<T> OneOrMany<T> {
 /// `latestfiles` listing (DESIGN.md §4.3). Serialized verbatim into
 /// `idgames-files.jsonl` — field order here is the output schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct FileRecord {
     /// Archive file ID.
     #[serde(deserialize_with = "lenient_u64")]
@@ -83,32 +80,44 @@ pub struct FileRecord {
 /// `id` is load-bearing (the §4.5 freshness probe). No email field, as
 /// everywhere (ADR-0030 §3).
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct LatestFileRecord {
     /// Archive file ID — the §4.5 max-id probe value.
     #[serde(deserialize_with = "lenient_u64")]
     pub id: u64,
-    /// Nullable title.
+    /// Nullable title. Captured only to match the observed response shape —
+    /// per this struct's doc comment, only `id` is load-bearing for the
+    /// freshness probe; flagged as a vestigial-candidate in the #405
+    /// final-fix report.
     #[serde(default)]
+    #[allow(dead_code)]
     pub title: Option<String>,
-    /// Upload author name, empty when absent.
+    /// Upload author name, empty when absent. See `title`: shape-only, not
+    /// load-bearing.
     #[serde(default, deserialize_with = "null_string")]
+    #[allow(dead_code)]
     pub author: String,
     /// Author-supplied free text — treated as untrusted, never asserted
-    /// PII-free (ADR-0030 §3).
+    /// PII-free (ADR-0030 §3). See `title`: shape-only, not load-bearing.
     #[serde(default, deserialize_with = "null_string")]
+    #[allow(dead_code)]
     pub description: String,
-    /// Mean user rating; `None` when unrated.
+    /// Mean user rating; `None` when unrated. See `title`: shape-only, not
+    /// load-bearing (exercised directly by model.rs tests, unread by
+    /// production code).
     #[serde(default, deserialize_with = "lenient_opt_f64")]
+    #[allow(dead_code)]
     pub rating: Option<f64>,
 }
 
 /// One subdirectory entry in a `getcontents` listing.
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct DirRecord {
-    /// Archive directory ID.
+    /// Archive directory ID. Captured for deserialization completeness;
+    /// traversal keys subdirectories by path/name (`name`, below), not this
+    /// ID, and phase 2 (#406, HTTP range reads) is also path-keyed —
+    /// flagged as a vestigial-candidate in the #405 final-fix report.
     #[serde(default, deserialize_with = "lenient_u64")]
+    #[allow(dead_code)]
     pub id: u64,
     /// Full path from the archive root.
     pub name: String,
@@ -117,7 +126,6 @@ pub struct DirRecord {
 /// The `content` object of a listing response. Both collections are
 /// tri-state: absent/`null` (`None`), bare object, or array (§4.4).
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct ContentListing {
     /// File entries; `None` when the key is `null` or absent.
     #[serde(default)]
@@ -131,13 +139,11 @@ impl ContentListing {
     /// §4.1: both collections `null`/absent is indistinguishable from a
     /// nonexistent path — a suspect path, never an empty directory.
     /// Must be checked before [`Self::into_parts`] defaults erase it.
-    #[allow(dead_code)]
     pub fn is_suspect(&self) -> bool {
         self.file.is_none() && self.dir.is_none()
     }
 
     /// Flatten to `(files, dirs)`, defaulting absent collections to empty.
-    #[allow(dead_code)]
     pub fn into_parts(self) -> (Vec<FileRecord>, Vec<DirRecord>) {
         (
             self.file.map(OneOrMany::into_vec).unwrap_or_default(),
@@ -148,7 +154,6 @@ impl ContentListing {
 
 /// The API's error envelope payload (spike-verified shape).
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct ApiFault {
     /// The API's error class, e.g. `"Required Argument Missing"`.
     #[serde(rename = "type", default)]
@@ -160,7 +165,6 @@ pub struct ApiFault {
 
 /// Failure to interpret a response body as a listing envelope.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum EnvelopeError {
     /// The API answered with its error envelope.
     Api(ApiFault),
@@ -184,7 +188,6 @@ impl std::error::Error for EnvelopeError {}
 /// Interpret a response body: `{"error":…}` → [`EnvelopeError::Api`];
 /// `{"content":…, "meta":{"version":N}}` → `(N, listing)`; anything else
 /// → [`EnvelopeError::Shape`].
-#[allow(dead_code)]
 pub fn parse_envelope(body: &serde_json::Value) -> Result<(u64, ContentListing), EnvelopeError> {
     if let Some(err) = body.get("error") {
         let fault: ApiFault = serde_json::from_value(err.clone())
@@ -207,7 +210,6 @@ pub fn parse_envelope(body: &serde_json::Value) -> Result<(u64, ContentListing),
 /// Content wrapper for a `latestfiles` envelope — mirrors [`ContentListing`]
 /// but for the abbreviated [`LatestFileRecord`] shape observed live.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct LatestListing {
     /// File entries; `None` when the key is `null` or absent.
     #[serde(default)]
@@ -220,7 +222,6 @@ struct LatestListing {
 /// [`EnvelopeError::Shape`]), but against the abbreviated
 /// [`LatestFileRecord`] shape the live API actually returns for this
 /// action (§4.5 — only `id` is load-bearing there).
-#[allow(dead_code)]
 pub fn parse_latest_envelope(
     body: &serde_json::Value,
 ) -> Result<(u64, Vec<LatestFileRecord>), EnvelopeError> {
@@ -245,7 +246,6 @@ pub fn parse_latest_envelope(
 
 /// Guarantee exactly one trailing `/` (mandatory on `getcontents` names,
 /// §4.1). Empty input stays empty (the archive root is not addressable).
-#[allow(dead_code)]
 pub fn normalize_dir(path: &str) -> String {
     if path.is_empty() {
         return String::new();
@@ -256,7 +256,6 @@ pub fn normalize_dir(path: &str) -> String {
 /// §4.4: PHP's JSON encoder is inconsistent — numbers may arrive as
 /// strings. Accept both; also treat `null` as the type's zero (missing
 /// data must not fail the record).
-#[allow(dead_code)]
 fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
     match serde_json::Value::deserialize(d)? {
         serde_json::Value::Number(n) => n
@@ -271,7 +270,6 @@ fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
     }
 }
 
-#[allow(dead_code)]
 fn lenient_i64<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
     match serde_json::Value::deserialize(d)? {
         serde_json::Value::Number(n) => n
@@ -286,7 +284,6 @@ fn lenient_i64<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
     }
 }
 
-#[allow(dead_code)]
 fn lenient_opt_f64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
     match serde_json::Value::deserialize(d)? {
         serde_json::Value::Null => Ok(None),
@@ -301,7 +298,6 @@ fn lenient_opt_f64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Er
 }
 
 /// `null` → `""` (§4.4: missing/null strings default to empty).
-#[allow(dead_code)]
 fn null_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
 }

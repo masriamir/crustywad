@@ -17,13 +17,11 @@ use crate::api::model::{
 use crate::cache::ApiCache;
 
 /// The one API endpoint (DESIGN.md §4.1).
-#[allow(dead_code)]
 pub const API_URL: &str = "https://www.doomworld.com/idgames/api/api.php";
 
 /// Mainstream browser UA (§4.6): politeness is enforced by the request
 /// rate, not the UA; an identifying tool UA risks incidental anti-bot
 /// layers (the docs page already blocks them).
-#[allow(dead_code)]
 pub const BROWSER_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
     AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
@@ -32,14 +30,12 @@ const RATE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Interval gate: at most one `wait()` completion per interval.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) struct RateGate {
     interval: Duration,
     last: Option<Instant>,
 }
 
 impl RateGate {
-    #[allow(dead_code)]
     pub(crate) fn new(interval: Duration) -> Self {
         Self {
             interval,
@@ -49,7 +45,6 @@ impl RateGate {
 
     /// Await until a full interval has passed since the previous call
     /// completed, then stamp the new request start.
-    #[allow(dead_code)]
     pub(crate) async fn wait(&mut self) {
         if let Some(last) = self.last {
             let due = last + self.interval;
@@ -64,7 +59,6 @@ impl RateGate {
 
 /// Live/cached call counters for the run manifest.
 #[derive(Debug, Default, Clone, Copy)]
-#[allow(dead_code)]
 pub struct ClientStats {
     /// HTTP requests actually sent to the API.
     pub live_calls: u64,
@@ -74,11 +68,14 @@ pub struct ClientStats {
 
 /// A `getcontents` result plus its cache provenance.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct FetchOutcome {
     /// The parsed listing.
     pub listing: ContentListing,
-    /// Whether the disk cache answered without a network request.
+    /// Whether the disk cache answered without a network request. Per-call
+    /// provenance; no caller reads this today (the run manifest sources its
+    /// cache/live breakdown from `ClientStats` instead) — flagged as a
+    /// vestigial-candidate in the #405 final-fix report.
+    #[allow(dead_code)]
     pub from_cache: bool,
     /// On a live refetch of a previously-cached path: whether the scrubbed
     /// body hash moved (§4.5 change detection for phase 2). `None` on
@@ -88,7 +85,6 @@ pub struct FetchOutcome {
 
 /// Terminal failure of one API call, after retries.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum ApiCallError {
     /// The API's own error envelope (e.g. missing argument).
     Api {
@@ -128,7 +124,6 @@ impl std::fmt::Display for ApiCallError {
 impl std::error::Error for ApiCallError {}
 
 /// Rate-limited, cache-aware Doomworld API client.
-#[allow(dead_code)]
 pub struct ApiClient {
     http: reqwest::Client,
     cache: ApiCache,
@@ -143,7 +138,6 @@ impl ApiClient {
     ///
     /// # Errors
     /// Fails if the TLS backend cannot initialize.
-    #[allow(dead_code)]
     pub fn new(cache: ApiCache) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(BROWSER_UA)
@@ -161,20 +155,17 @@ impl ApiClient {
     }
 
     /// Run counters so far.
-    #[allow(dead_code)]
     pub fn stats(&self) -> ClientStats {
         self.stats
     }
 
     /// `meta.version` from the most recent parsed envelope, if any call
     /// went live this run.
-    #[allow(dead_code)]
     pub fn observed_api_version(&self) -> Option<u64> {
         self.api_version
     }
 
     /// The underlying cache (Task 10 invalidates through this).
-    #[allow(dead_code)]
     pub fn cache(&self) -> &ApiCache {
         &self.cache
     }
@@ -185,7 +176,6 @@ impl ApiClient {
     /// # Errors
     /// [`ApiCallError`] after the retry policy is exhausted, on an API
     /// fault, or on an unrecognized body. Faults are never cached.
-    #[allow(dead_code)]
     pub async fn getcontents(&mut self, dir: &str) -> Result<FetchOutcome, ApiCallError> {
         let dir = normalize_dir(dir);
         let prior = self.cache.lookup("getcontents", &dir);
@@ -231,7 +221,6 @@ impl ApiClient {
     ///
     /// # Errors
     /// As for [`Self::getcontents`].
-    #[allow(dead_code)]
     pub async fn latestfiles(&mut self, limit: u32) -> Result<Vec<LatestFileRecord>, ApiCallError> {
         let limit = limit.to_string();
         let body = self
@@ -301,7 +290,6 @@ fn envelope_to_call_error(e: EnvelopeError) -> ApiCallError {
 }
 
 /// §4.6: retry 429 and 5xx (and transport errors, `None`); nothing else.
-#[allow(dead_code)]
 pub(crate) fn is_retryable(status: Option<reqwest::StatusCode>) -> bool {
     match status {
         None => true,
@@ -311,7 +299,6 @@ pub(crate) fn is_retryable(status: Option<reqwest::StatusCode>) -> bool {
 
 /// Delay before retry `attempt` (1-based): nominal `min(5·3^(attempt−1),
 /// 300)` seconds, jittered uniformly into `[nominal/2, nominal]`.
-#[allow(dead_code)]
 pub(crate) fn backoff_delay(attempt: u32, rng: &mut fastrand::Rng) -> Duration {
     let exponent = i32::try_from(attempt.saturating_sub(1).min(8)).unwrap_or(8);
     let nominal = (5.0_f64 * 3.0_f64.powi(exponent)).min(300.0);

@@ -7,7 +7,6 @@
 
 /// What the harvest does with a directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ScopeDecision {
     /// Enumerate and enrich.
     Include,
@@ -19,7 +18,6 @@ pub enum ScopeDecision {
 }
 
 /// Map-bearing roots (§4.2), also the BFS-fallback seeds.
-#[allow(dead_code)]
 pub const BFS_ROOTS: [&str; 5] = ["levels/", "deathmatch/", "combos/", "prefabs/", "themes/"];
 
 const SKIP_ROOTS: [&str; 9] = [
@@ -47,7 +45,6 @@ const SKIP_ROOTS: [&str; 9] = [
 /// **Triage** (skip + surface loudly): `misc/`, `historic/`, `roguestuff/` — the spike surfaced these
 /// unanticipated roots; DESIGN §4.2 requires inspecting and recording the call before the first full run.
 /// Also Triage: any top-level directory not in any list (future-proofing — a new root must be noticed, not silently skipped).
-#[allow(dead_code)]
 pub fn decide(dir: &str) -> ScopeDecision {
     if dir.is_empty() {
         return ScopeDecision::Skip;
