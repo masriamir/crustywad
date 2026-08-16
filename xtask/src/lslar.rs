@@ -111,14 +111,42 @@ pub fn parse_ls_lar(reader: impl BufRead) -> anyhow::Result<ArchiveTree> {
     Ok(tree)
 }
 
+/// Upper bound on the *decompressed* ls-laR stream. The real listing is
+/// ~4 MiB decompressed; 256 MiB is generous headroom while still bounding
+/// the gzip-bomb class of attack (gzip can amplify ~1000:1, so the 64 MiB
+/// compressed mirror cap alone bounds nothing about memory use once
+/// decompressed — ADR-0016/ADR-0030 §5 adversarial-mirror posture).
+const DECOMPRESSED_CAP: u64 = 256 * 1024 * 1024;
+
 /// Gunzip `bytes` and parse the contained listing.
 ///
 /// # Errors
-/// Fails on gzip or I/O errors.
+/// Fails on gzip or I/O errors, or if the decompressed stream exceeds
+/// [`DECOMPRESSED_CAP`] (a truncated parse would otherwise masquerade as a
+/// small, legitimate tree).
 #[allow(dead_code)]
 pub fn parse_ls_lar_gz(bytes: &[u8]) -> anyhow::Result<ArchiveTree> {
+    parse_ls_lar_gz_with_cap(bytes, DECOMPRESSED_CAP)
+}
+
+/// [`parse_ls_lar_gz`] with an injectable cap, so tests can exercise the
+/// truncation path without materializing hundreds of MiB.
+///
+/// # Errors
+/// See [`parse_ls_lar_gz`].
+fn parse_ls_lar_gz_with_cap(bytes: &[u8], cap: u64) -> anyhow::Result<ArchiveTree> {
     let decoder = flate2::read::GzDecoder::new(bytes);
-    parse_ls_lar(BufReader::new(decoder))
+    // Read one byte past the cap: if that sentinel byte is ever consumed,
+    // `bounded.limit()` reaches exactly 0 and we know the true stream was
+    // larger than `cap`, not merely equal to it.
+    let mut bounded = std::io::Read::take(decoder, cap + 1);
+    let tree = parse_ls_lar(BufReader::new(&mut bounded))?;
+    if bounded.limit() == 0 {
+        anyhow::bail!(
+            "ls-laR.gz decompresses to more than {cap} bytes — refusing (possible gzip bomb)"
+        );
+    }
+    Ok(tree)
 }
 
 #[allow(dead_code)]
@@ -263,6 +291,45 @@ drwxr-xr-x 17 ftp ftp 4096 Aug 12 06:00 ..
         let gz = enc.finish().unwrap();
         let t = parse_ls_lar_gz(&gz).unwrap();
         assert_eq!(t.zip_count(""), 3);
+    }
+
+    /// A gzip-bomb-shaped payload: a small compressed size that expands to
+    /// well over a (small, test-only) cap. Written to the encoder in
+    /// repeated small chunks rather than materialized in memory up front —
+    /// with highly repetitive content the compressed stream stays tiny
+    /// regardless of the decompressed size.
+    #[test]
+    fn oversized_decompressed_stream_is_rejected() {
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, b".:\ntotal 1\n").unwrap();
+        let line = b"-rw-r--r--  1 ftp  ftp   10 Aug 12 06:00 a.zip\n";
+        // ~9.6 KiB decompressed from a handful of bytes compressed.
+        for _ in 0..200 {
+            std::io::Write::write_all(&mut enc, line).unwrap();
+        }
+        let gz = enc.finish().unwrap();
+        let err = parse_ls_lar_gz_with_cap(&gz, 1024)
+            .expect_err("decompressed stream exceeds the 1 KiB test cap");
+        assert!(err.to_string().contains("gzip bomb"), "{err}");
+    }
+
+    #[test]
+    fn decompressed_stream_exactly_at_cap_still_parses() {
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, SAMPLE.as_bytes()).unwrap();
+        let gz = enc.finish().unwrap();
+        let cap = u64::try_from(SAMPLE.len()).unwrap();
+        let t = parse_ls_lar_gz_with_cap(&gz, cap).unwrap();
+        assert_eq!(t.zip_count(""), 3);
+    }
+
+    #[test]
+    fn decompressed_stream_one_byte_over_cap_errors() {
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, SAMPLE.as_bytes()).unwrap();
+        let gz = enc.finish().unwrap();
+        let cap = u64::try_from(SAMPLE.len()).unwrap() - 1;
+        assert!(parse_ls_lar_gz_with_cap(&gz, cap).is_err());
     }
 
     #[test]
