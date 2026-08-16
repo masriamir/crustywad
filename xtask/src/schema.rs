@@ -214,8 +214,7 @@ pub enum FetchStatus {
 }
 
 /// One `.wad` member of an archive entry (§5.6 `wads[]`).
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WadMember {
     /// Member name exactly as the central directory declares it.
     pub name: String,
