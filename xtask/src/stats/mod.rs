@@ -4,9 +4,11 @@
 //! `xtask stats` loads Phase 1/2's outputs (`idgames-wads.jsonl`,
 //! `harvest-manifest.json`, `wads-manifest.json`, `harvest-errors.jsonl`),
 //! the cached ls-laR.gz mirror listing, and the optional §6.4 outliers
-//! supplement, builds the §6 populations, computes every statistic, and
-//! emits `data/stats.json` plus `data/sweep-corpus.jsonl` (§6.5). The
-//! human-readable `stats-report.md` is a later task (#407 task 7).
+//! supplement, builds the §6 populations, computes every statistic
+//! including the §8 constant recommendations ([`report::recommendations`]),
+//! and emits the full PII-free trio: `data/stats.json`,
+//! `data/stats-report.md` ([`report::render_report`]), and
+//! `data/sweep-corpus.jsonl` (§6.5).
 //!
 //! `build_stats` and its classifiers ([`top_bucket`], [`year_of`]) are pure
 //! and unit-tested without touching a filesystem; [`run`]/[`run_with_paths`]

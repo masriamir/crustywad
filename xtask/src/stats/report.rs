@@ -260,6 +260,13 @@ fn method_allowlist_recommendation(idgames: &IdgamesStats) -> Recommendation {
     if methods.keys().any(|m| m != "stored" && m != "deflate") {
         source.push_str(" — OBSERVED UNEXPECTED METHOD");
     }
+    // Review fix I2: these counts come from `wads[]` only — non-`.wad`
+    // archive members reach Phase 2 as bare names with no method recorded
+    // (§5.6 `other_members`) — so this is a `.wad`-members-only census, not
+    // a whole-archive one, even though §8.3's allowlist governs every
+    // member. Same treatment the envelope-totals caveat already gets on
+    // `max_entry_uncompressed_bytes`.
+    source.push_str(" (.wad members only — non-wad archive members carry no recorded method)");
     Recommendation {
         key: "compression_method_allowlist".to_owned(),
         recommended: "stored, deflate".to_owned(),
@@ -364,7 +371,14 @@ fn render_method_notes(out: &mut String, idgames: &IdgamesStats) {
     out.push_str(
         "Envelope byte totals (`entry_wad_total_uncompressed` below, and the \
          `max_entry_uncompressed_bytes` recommendation) cover **`.wad` members only** — Phase 2 \
-         retains no size data for non-wad archive members.\n",
+         retains no size data for non-wad archive members.\n\n",
+    );
+    out.push_str(
+        "Compression-method counts (`### Compression methods observed` below, and the \
+         `compression_method_allowlist` recommendation) are likewise a **`.wad`-members-only** \
+         census, not a whole-archive one — non-`.wad` archive members reach Phase 2 as bare \
+         names with no recorded method (§5.6 `other_members`). §8.3's allowlist governs every \
+         member of an uploaded zip, so this count under-represents the true method population.\n",
     );
 }
 
@@ -520,13 +534,21 @@ fn render_outliers(out: &mut String, outliers: Option<&OutliersStats>) {
         out.push_str(" — data/outliers-wads.jsonl absent; run `just harvest-outliers`.\n");
         return;
     };
-    if outliers.analyzed.is_empty() && outliers.skipped.is_empty() {
-        out.push_str(NO_OUTLIERS_ANALYZED);
-        out.push_str(" — data/outliers-wads.jsonl is present but empty.\n");
-        return;
-    }
 
-    if !outliers.analyzed.is_empty() {
+    // The statement must appear whenever `analyzed` is empty, independent
+    // of `skipped` — review fix I1: a plausible live outcome is "every
+    // curated host failed" (every entry lands in `skipped`, none in
+    // `analyzed`), and the section that owns this fact must state it
+    // itself rather than leaving only the recommendations table's
+    // "outliers: none analyzed" phrase to imply it.
+    if outliers.analyzed.is_empty() {
+        out.push_str(NO_OUTLIERS_ANALYZED);
+        if outliers.skipped.is_empty() {
+            out.push_str(" — data/outliers-wads.jsonl is present but empty.\n");
+            return;
+        }
+        out.push_str(" — every curated entry was skipped; see the table below.\n\n");
+    } else {
         out.push_str("### Analyzed\n\n");
         out.push_str(
             "| slug | zip_size | member_count | wad_count | max_wad_uncompressed | \
@@ -1026,6 +1048,22 @@ mod tests {
     }
 
     #[test]
+    fn compression_method_allowlist_source_states_wad_only_caveat() {
+        // Review fix I2: method counts come from `wads[]` only — non-`.wad`
+        // archive members reach Phase 2 as bare names with no method
+        // recorded, so this is a `.wad`-members-only census, not a
+        // whole-archive one, even though §8.3's allowlist governs every
+        // member. The row's source must say so (same treatment as
+        // `max_entry_uncompressed_bytes`'s wad-only caveat).
+        let recs = recommendations(&idgames_fixture(), None);
+        let row = recs
+            .iter()
+            .find(|r| r.key == "compression_method_allowlist")
+            .unwrap();
+        assert!(row.source.contains(".wad members only"), "{}", row.source);
+    }
+
+    #[test]
     fn zip64_statement_states_absence_explicitly() {
         let recs = recommendations(&idgames_fixture(), None); // zip64_entries = 0
         let row = recs.iter().find(|r| r.key == "zip64_statement").unwrap();
@@ -1095,6 +1133,17 @@ mod tests {
     }
 
     #[test]
+    fn render_report_method_notes_state_wad_only_method_census_caveat() {
+        // Review fix I2: the method notes must carry the same caveat as the
+        // `compression_method_allowlist` recommendation row.
+        let report = render_report(&stats_fixture(None));
+        assert!(
+            report.contains("Compression-method counts") && report.contains(".wad`-members-only"),
+            "{report}"
+        );
+    }
+
+    #[test]
     fn render_report_never_recomputes_it_only_formats() {
         // Mutate `zip64_entries` *after* `recommendations` was already
         // computed from the original value (see `stats_fixture`) — the
@@ -1134,5 +1183,39 @@ mod tests {
         let report = render_report(&stats);
         assert!(report.contains(NO_OUTLIERS_ANALYZED));
         assert!(report.contains("present but empty"));
+    }
+
+    #[test]
+    fn render_report_all_skipped_outliers_states_none_analyzed_and_shows_skip_table() {
+        // Review fix I1: every curated host failed (a plausible live
+        // outcome) — `analyzed` is empty but `skipped` is not. The section
+        // must state "No outliers analyzed" itself (not just imply it via
+        // the recommendations table) *and* still render the skip table.
+        let all_skipped = OutliersStats {
+            analyzed: vec![],
+            skipped: vec![
+                crate::schema::OutlierSkip {
+                    slug: "refused-one".into(),
+                    fetch_status: "no_range_support".into(),
+                },
+                crate::schema::OutlierSkip {
+                    slug: "refused-two".into(),
+                    fetch_status: "fetch_error".into(),
+                },
+            ],
+            wad_uncompressed: distribution(0, 0, 0, 0),
+            max_zip_size: 0,
+            max_member_count: 0,
+            max_entry_total_uncompressed: 0,
+        };
+        let stats = stats_fixture(Some(all_skipped));
+        let report = render_report(&stats);
+        assert!(report.contains(NO_OUTLIERS_ANALYZED), "{report}");
+        assert!(report.contains("refused-one"), "{report}");
+        assert!(report.contains("refused-two"), "{report}");
+        assert!(report.contains("no_range_support"), "{report}");
+        assert!(report.contains("fetch_error"), "{report}");
+        assert!(report.contains("### Skipped"), "{report}");
+        assert!(!report.contains("### Analyzed"), "{report}");
     }
 }
