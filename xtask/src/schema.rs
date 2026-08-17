@@ -455,7 +455,12 @@ pub struct SweepEntry {
 
 /// Build the §6.5 sweep corpus from `idgames-wads.jsonl` records: keeps
 /// entries with a usable fetch (`Ok`/`FullDownload`) and at least one
-/// `.wad` member, sorted and deduped by `id`.
+/// `.wad` member, sorted and deduped by `id`. On a duplicate `id` the
+/// *first* record in sort order wins (`Vec::dedup_by_key` keeps the first
+/// of a run) — the opposite of the writers' `BTreeMap` "last wins"
+/// convention, but harmless here since the sole input,
+/// `idgames-wads.jsonl`, is itself already deduped by `id` before this
+/// function ever sees it.
 ///
 /// # Errors
 /// [`crate::zips::range_reader::entry_url`] fails to build a URL for a
@@ -967,6 +972,23 @@ pub(crate) mod tests {
             "https://ftpmirror1.infania.net/pub/idgames/levels/doom/example9.zip"
         );
         assert_eq!(entries[1].wads[0].uncompressed, 100);
+    }
+
+    #[test]
+    fn sweep_entries_dedup_keeps_first_of_duplicate_id() {
+        // Two Ok-with-wads records sharing an id: `dedup_by_key` keeps the
+        // FIRST of a run (opposite of the writers' BTreeMap "last wins"
+        // convention) — fine here because the sole input,
+        // idgames-wads.jsonl, is already deduped by id before this
+        // function ever sees it.
+        let recs = vec![
+            wad_record(5, FetchStatus::Ok, vec![wad_member("FIRST.WAD", 1, 111)]),
+            wad_record(5, FetchStatus::Ok, vec![wad_member("SECOND.WAD", 2, 222)]),
+        ];
+        let entries = sweep_entries(&recs).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].wads[0].name, "FIRST.WAD");
+        assert_eq!(entries[0].wads[0].uncompressed, 111);
     }
 
     #[test]
