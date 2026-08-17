@@ -250,9 +250,16 @@ The real top level (spike-verified via `getdirs`, 2026-08-12): `levels/`,
 **Skip:** `music/`, `sounds/`, `utils/`, `lmps/`, `docs/`, `graphics/`,
 `source/`, `idstuff/`, `skins/` (player skins, not maps). There is **no
 top-level `ports/`** — the pre-spike draft listed one; it does not exist.
-**Triage before first full run:** `misc/`, `historic/`, `roguestuff/` —
-unanticipated roots the spike surfaced; inspect their contents and record
-the include/skip call here.
+**Triage resolution (2026-08-16, #407):** `misc/`, `historic/`, `roguestuff/`
+are **Skip**. Inspection via the cached `ls-laR` listing: `historic/` = 42
+zips of DOOM engine alphas/betas/shareware distributions, id utilities
+(`dmutils`, `bsp11x`, `deth23`), and press coverage — pre-release IWADs, not
+community maps, and a direct skew on the §8 size statistics; `misc/` = 26
+zips of fonts, themes, posters, and walkthroughs whose only WAD-bearing
+items are official id content (`betraysewers.zip`, `sigil_bfg.zip` — RETAIL
+measurement material, not community corpus); `roguestuff/` = 2 Strife demo
+distributions. Any *new* top-level root still lands in `Triage` (skipped
+loudly) until a decision is recorded here.
 
 `action=search` is capped and will not enumerate exhaustively. On the API
 side, `getcontents` is the only reliable traversal — but the primary

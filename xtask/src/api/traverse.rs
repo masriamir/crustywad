@@ -471,11 +471,12 @@ mod tests {
             ("levels/reviews/", &[]),
             ("music/", &[]),
             ("misc/", &[("odd.zip", 5)]),
+            ("brandnew/", &[("new.zip", 7)]),
             ("themes/x/", &[]),
         ]);
         let (work, triage) = worklist_from_tree(&tree, None);
         assert_eq!(work, vec!["levels/doom/0-9/", "themes/x/"]);
-        assert_eq!(triage, vec!["misc/"]);
+        assert_eq!(triage, vec!["brandnew/"]);
     }
 
     #[test]
