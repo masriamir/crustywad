@@ -84,6 +84,16 @@ pub struct LedgerEntry {
     /// Human-readable detail.
     pub detail: String,
     /// Attempts made before giving up (1 for non-retried findings).
+    ///
+    /// Caveat for `outliers::run`'s `harvest-outliers` ledger entries
+    /// specifically (review fix I2): this field always reads `1` there —
+    /// it records *ledger-entry* granularity (one finding per failed
+    /// curated entry), not the underlying HTTP retry count.
+    /// [`crate::zips::url_source::UrlRanges`] can retry a single entry's
+    /// HEAD/range fetches up to 6 times internally (a live manifest's
+    /// `range_requests` count for a retried entry proves it), but that
+    /// per-request attempt count isn't threaded through to this field yet
+    /// — a follow-up, not this field's current contract.
     pub attempts: u32,
 }
 
@@ -521,8 +531,12 @@ pub struct OutlierRecord {
     pub slug: String,
     /// Source URL, as given in `xtask/outliers.toml`.
     pub url: String,
-    /// `Content-Length` observed from the HEAD probe (§6.4); `0` when
-    /// discovery itself failed — no size is known for that entry.
+    /// Size discovered via [`crate::zips::url_source::UrlRanges::discover_size`]
+    /// (§6.4): the HEAD probe's `Content-Length` when the host answers one
+    /// usefully, or — for a host whose HEAD carries no usable
+    /// `Content-Length` — the ranged-GET `Content-Range: bytes 0-0/TOTAL`
+    /// fallback probe's `TOTAL`. `0` when discovery itself failed — no size
+    /// is known for that entry.
     pub zip_size: u64,
     /// ZIP64 EOCD locator present (§5.3).
     pub zip64: bool,
@@ -648,8 +662,10 @@ pub struct StatsJson {
     /// `data/outliers-wads.jsonl` nor `data/outliers-manifest.json` exists
     /// (`xtask harvest-outliers` was never run against this snapshot).
     pub outliers: Option<OutliersStats>,
-    /// §8 constant recommendations; empty until the report generator (#407
-    /// task 7) fills it in.
+    /// §8 constant recommendations, filled in by
+    /// [`crate::stats::report::recommendations`] before `stats.json` is
+    /// written — never the placeholder empty `vec![]` that `build_stats`
+    /// itself starts from (see [`crate::stats::run_with_paths`]).
     pub recommendations: Vec<Recommendation>,
 }
 
@@ -722,7 +738,7 @@ pub struct WeightedDistribution {
     /// Count of `.wad` members excluded because their parent record's
     /// `votes` was `0` (a zero weight would be meaningless in a
     /// vote-weighted percentile).
-    pub zero_vote_entries_excluded: u64,
+    pub zero_vote_members_excluded: u64,
 }
 
 /// One log2 histogram bucket (§6.1), the struct form of
@@ -813,7 +829,12 @@ pub struct RatioStats {
     /// Ratio distribution over individual `deflate`-method `.wad` members.
     pub member_deflate: RatioDistribution,
     /// Ratio distribution over per-entry `Σ uncompressed / Σ compressed`,
-    /// across every member of the entry regardless of method.
+    /// summed across every `.wad` member of the entry regardless of method
+    /// — not literally "every member of the entry": non-`.wad` archive
+    /// members carry no size data to sum (§5.6 `other_members`), and a
+    /// member counted in `zero_compressed_anomalies` (compressed `0`,
+    /// uncompressed `> 0`) is excluded from this sum too, the same as it is
+    /// from `member_deflate`.
     pub per_entry: RatioDistribution,
     /// Count of `.wad` members with `compressed == 0 && uncompressed > 0` —
     /// a ratio can't be computed, so these are excluded from both
@@ -941,12 +962,13 @@ pub struct OutliersStats {
     pub max_entry_total_uncompressed: u64,
 }
 
-/// One §8 constant recommendation. Empty (`recommendations: vec![]`) until
-/// the report generator (#407 task 7) fills it in — the field exists from
-/// day one so `stats.json`'s schema doesn't shift under Task 7.
+/// One §8 constant recommendation, built by
+/// [`crate::stats::report::recommendations`] and rendered verbatim by
+/// [`crate::stats::report::render_report`] — see
+/// [`StatsJson::recommendations`] for how it reaches `stats.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recommendation {
-    /// Which §8 constant this recommends a value for, e.g. `"wire_cap_zip_size"`.
+    /// Which §8 constant this recommends a value for, e.g. `"wire_cap_zip"`.
     pub key: String,
     /// Human-readable recommended value (may carry units).
     pub recommended: String,

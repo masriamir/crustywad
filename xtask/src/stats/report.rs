@@ -21,10 +21,16 @@ const TIB: u64 = GIB * 1024;
 
 /// Smallest power of two ≥ `x` (§8 formula primitive): `0` and `1` both map
 /// to `1`. Saturates to [`u64::MAX`] for `x > 2^62` instead of calling
-/// [`u64::next_power_of_two`] directly (which panics on overflow for inputs
-/// whose next power of two would exceed `u64::MAX`) — unreachable for any
-/// real corpus statistic (nothing here is within light-years of 2^62 bytes),
-/// but a documented saturation beats a latent panic.
+/// [`u64::next_power_of_two`] directly. The guard is deliberately more
+/// conservative than that method's *actual* panic boundary: it only panics
+/// for `x > 2^63` (its correct answer would be `2^64`, which doesn't fit
+/// `u64`) — an `x` in `(2^62, 2^63]` would round-trip through
+/// `next_power_of_two` just fine. `2^62` is used anyway as a round,
+/// easy-to-state cutoff, trading away that legal-but-unneeded sliver of
+/// domain rather than hugging the true boundary exactly — unreachable for
+/// any real corpus statistic either way (nothing here is within
+/// light-years of 2^62 bytes), but a documented saturation beats a latent
+/// panic regardless of exactly where the line is drawn.
 #[must_use]
 pub(crate) fn pow2_ceil(x: u64) -> u64 {
     if x <= 1 {
@@ -119,11 +125,16 @@ fn combined_row(
 /// The §8.1/§8.3 constant recommendations, one row per constant, in the
 /// fixed order the report renders them (spec §6 table). Every row's
 /// `formula`/`source` is non-empty by construction; `render_report` renders
-/// this list verbatim — it never recomputes.
+/// this list verbatim — it never recomputes. `manifest_zip64_entries` is
+/// [`crate::schema::ZipsManifest::zip64_entries`] (§B2): the
+/// `zip64_statement` row cross-checks the record-derived count it would
+/// otherwise report alone against this independently-tallied one, so a
+/// divergence between the two can't go unnoticed.
 #[must_use]
 pub(crate) fn recommendations(
     idgames: &IdgamesStats,
     outliers: Option<&OutliersStats>,
+    manifest_zip64_entries: u64,
 ) -> Vec<Recommendation> {
     let wire_cap_zip = combined_row(
         "wire_cap_zip",
@@ -188,7 +199,7 @@ pub(crate) fn recommendations(
 
     let max_member_compression_ratio = ratio_recommendation(idgames);
     let compression_method_allowlist = method_allowlist_recommendation(idgames);
-    let zip64_statement = zip64_recommendation(idgames);
+    let zip64_statement = zip64_recommendation(idgames, manifest_zip64_entries);
 
     vec![
         wire_cap_zip,
@@ -206,9 +217,13 @@ pub(crate) fn recommendations(
 /// deflate ratio / 10)` — the next multiple of 10 above 2× the observed
 /// maximum. When no `deflate` member was ever observed (`n == 0`, so there
 /// is no maximum to double), the ratio recommendation falls back to a fixed
-/// `40` — 2× the classic ~20:1 worst-case deflate ratio — stated as a
-/// default in the source, not silently computed from an empty population
-/// (which would otherwise yield a nonsensical `0`).
+/// `40` — an arbitrary documented default, stated honestly as such in the
+/// source rather than dressed up as a derived bound (there is no "classic
+/// ~20:1 worst-case deflate ratio": DEFLATE's actual worst-case expansion
+/// is ~1032:1, so `40` isn't 2× any real engineering constant — it's just a
+/// round number with nothing to derive it from), and not silently computed
+/// from an empty population either (which would otherwise yield a
+/// nonsensical `0`).
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -220,14 +235,16 @@ fn ratio_recommendation(idgames: &IdgamesStats) -> Recommendation {
     let (value, source) = if pop.n == 0 {
         (
             40,
-            "no deflate members observed — default 2× the classic ~20:1 worst case".to_owned(),
+            "no deflate members observed — arbitrary documented default; no observation to \
+             derive from (idgames population only)"
+                .to_owned(),
         )
     } else {
         let multiple = ((2.0 * pop.max) / 10.0).ceil() as u64;
         (
             multiple * 10,
             format!(
-                "idgames max member_deflate ratio = {:.2} (n = {})",
+                "idgames max member_deflate ratio = {:.2} (n = {}) (idgames population only)",
                 pop.max, pop.n
             ),
         )
@@ -267,6 +284,13 @@ fn method_allowlist_recommendation(idgames: &IdgamesStats) -> Recommendation {
     // member. Same treatment the envelope-totals caveat already gets on
     // `max_entry_uncompressed_bytes`.
     source.push_str(" (.wad members only — non-wad archive members carry no recorded method)");
+    // I3(c): translate the raw method-id census into what adopting the
+    // allowlist would actually cost — which members get rejected, and how
+    // many.
+    if let Some(cost) = allowlist_cost(methods) {
+        let _ = write!(source, "; {cost}");
+    }
+    source.push_str(" (idgames population only)");
     Recommendation {
         key: "compression_method_allowlist".to_owned(),
         recommended: "stored, deflate".to_owned(),
@@ -278,23 +302,107 @@ fn method_allowlist_recommendation(idgames: &IdgamesStats) -> Recommendation {
     }
 }
 
+/// §8.3 allowlist-adoption cost: how many `.wad` members observed in
+/// `methods` (already computed by `stats::build_stats` — this only sums and
+/// maps what's already there, per the module doc's "never recomputes"
+/// caveat) would be rejected by adopting `stored + deflate` alone, broken
+/// down by translated method name. `None` when every observed method is
+/// already `stored`/`deflate` — there is nothing to cost out.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "reporting a rejected-member share as f64 for the report; corpus member counts are \
+              well within f64's exact integer range in practice, matching the module's existing \
+              coverage-share precedent"
+)]
+fn allowlist_cost(methods: &BTreeMap<String, u64>) -> Option<String> {
+    let rejected: Vec<(String, u64)> = methods
+        .iter()
+        .filter(|(m, _)| m.as_str() != "stored" && m.as_str() != "deflate")
+        .map(|(m, &count)| (translate_method_label(m), count))
+        .collect();
+    if rejected.is_empty() {
+        return None;
+    }
+    let total: u64 = methods.values().sum();
+    let rejected_total: u64 = rejected.iter().map(|(_, count)| count).sum();
+    let share = if total == 0 {
+        0.0
+    } else {
+        (rejected_total as f64 / total as f64) * 100.0
+    };
+    let detail = rejected
+        .iter()
+        .map(|(name, count)| format!("{name}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "adopting stored+deflate would reject {rejected_total} members ({share:.1}%): {detail}"
+    ))
+}
+
+/// Translate one `methods` census label into a human APPNOTE method name
+/// for the §8.3 cost line. `zips::inspect`'s method-labeling helper renders
+/// an unsupported compression method id `N` as `"unsupported(N)"`
+/// (lowercased `Debug` of `zip::CompressionMethod::Unsupported(N)`) — this
+/// maps the three ids the real corpus has actually produced (`1` Shrink,
+/// `6` Implode, `9` Deflate64) to `"Name(N)"`, any other id to the generic
+/// `"method N"`, and passes through any other label (a future method-label
+/// shape) unchanged.
+fn translate_method_label(label: &str) -> String {
+    let Some(id) = label
+        .strip_prefix("unsupported(")
+        .and_then(|s| s.strip_suffix(')'))
+        .and_then(|s| s.parse::<u16>().ok())
+    else {
+        return label.to_owned();
+    };
+    match id {
+        1 => format!("Shrink({id})"),
+        6 => format!("Implode({id})"),
+        9 => format!("Deflate64({id})"),
+        _ => format!("method {id}"),
+    }
+}
+
 /// `zip64_statement` (§5.3/§6.3/§9.3): a count, never a bare "handled" claim
 /// — `0` states the absence explicitly rather than staying silent, per
-/// §9.3's "≥1 resolved or absence stated" acceptance rule.
-fn zip64_recommendation(idgames: &IdgamesStats) -> Recommendation {
+/// §9.3's "≥1 resolved or absence stated" acceptance rule. `manifest_zip64`
+/// is [`crate::schema::ZipsManifest::zip64_entries`] (§B2): an
+/// independently-tallied count from the same phase-2 run, cross-checked
+/// against the record-derived `n` here so the two can't silently diverge —
+/// the source states agreement explicitly, or flags a disagreement loudly
+/// rather than trusting the record-derived count alone.
+fn zip64_recommendation(idgames: &IdgamesStats, manifest_zip64: u64) -> Recommendation {
     let n = idgames.entries.zip64_entries;
+    let agreement = if n == manifest_zip64 {
+        "manifest agrees".to_owned()
+    } else {
+        format!("MANIFEST DISAGREES: {manifest_zip64}")
+    };
     Recommendation {
         key: "zip64_statement".to_owned(),
         recommended: "zip64 handled".to_owned(),
         value: None,
         formula: "count of records with zip64: true".to_owned(),
-        source: format!("{n} zip64 entries observed"),
+        source: format!(
+            "{n} zip64 entries observed (records); {agreement} (idgames population only)"
+        ),
     }
 }
 
 // ---------------------------------------------------------------------
 // Markdown rendering. Every function below only *formats* fields already
-// present on `StatsJson` — none of them compute a new statistic.
+// present on `StatsJson` — none of them compute a new *corpus* statistic
+// (nothing here re-reads a raw record or re-derives a population). A
+// couple of functions do compute a presentation-level value from fields
+// already on `StatsJson`: `render_coverage`'s phase-2-coverage percentage
+// (a ratio of two already-computed counts) and `allowlist_cost`'s
+// rejected-member-share/method-cost sum (a sum and a ratio over the
+// already-computed `methods` census). Both are arithmetic over numbers
+// `stats::build_stats` already produced, not a new measurement of the
+// corpus, so the "never recomputes" invariant still holds in the sense
+// that matters: no function here can disagree with `stats::build_stats`
+// about what the corpus contains.
 // ---------------------------------------------------------------------
 
 /// Full `data/stats-report.md` content (§6.5/§8/§9.3). Fixed section order:
@@ -315,7 +423,7 @@ pub(crate) fn render_report(stats: &StatsJson) -> String {
     out.push('\n');
     render_decision_counts(&mut out, &stats.idgames);
     out.push('\n');
-    render_outliers(&mut out, stats.outliers.as_ref());
+    render_outliers(&mut out, stats.outliers.as_ref(), &stats.idgames);
     out.push('\n');
     render_recommendations(&mut out, &stats.recommendations);
     out
@@ -402,9 +510,9 @@ fn render_segmentations(out: &mut String, idgames: &IdgamesStats) {
     let _ = write!(
         out,
         "\n`total_votes` = {} (summed once per vote-weighted `.wad` **member**, not an entry \
-         count). `zero_vote_entries_excluded` = {} (a count of `.wad` **members** whose parent \
+         count). `zero_vote_members_excluded` = {} (a count of `.wad` **members** whose parent \
          record had `votes == 0`, not a count of entries).\n\n",
-        weighted.total_votes, weighted.zero_vote_entries_excluded
+        weighted.total_votes, weighted.zero_vote_members_excluded
     );
     out.push_str("### By top-level bucket\n\n");
     push_segmented_table(out, &idgames.wad_uncompressed.by_bucket);
@@ -537,7 +645,7 @@ fn render_coverage(out: &mut String, coverage: &Coverage) {
 /// this substring.
 const NO_OUTLIERS_ANALYZED: &str = "No outliers analyzed";
 
-fn render_outliers(out: &mut String, outliers: Option<&OutliersStats>) {
+fn render_outliers(out: &mut String, outliers: Option<&OutliersStats>, idgames: &IdgamesStats) {
     out.push_str("## §6.4 Modern-outliers supplement\n\n");
     let Some(outliers) = outliers else {
         out.push_str(NO_OUTLIERS_ANALYZED);
@@ -590,12 +698,33 @@ fn render_outliers(out: &mut String, outliers: Option<&OutliersStats>) {
     }
 
     if !outliers.skipped.is_empty() {
-        out.push_str("### Skipped — analysis not possible where hosting permits\n\n");
+        out.push_str("### Skipped — hosts that did not permit analysis\n\n");
         out.push_str("| slug | fetch_status |\n| --- | --- |\n");
         for skip in &outliers.skipped {
             let _ = writeln!(out, "| {} | {} |", skip.slug, skip.fetch_status);
         }
         out.push('\n');
+    }
+
+    // I3(a): when the supplement has analyzed entries but none of them
+    // actually exceeded the idgames-only p99.5 wad size, *and* at least one
+    // curated outlier was refused outright (skipped), the size-tail anchors
+    // this supplement exists to capture never landed — the §8
+    // recommendations above rest on the idgames population alone despite
+    // the supplement's presence. That must be stated here, not left for a
+    // reader to infer by cross-referencing the recommendations table.
+    if !outliers.analyzed.is_empty()
+        && !outliers.skipped.is_empty()
+        && outliers
+            .analyzed
+            .iter()
+            .all(|a| a.max_wad_uncompressed <= idgames.wad_uncompressed.core.p99_5)
+    {
+        out.push_str(
+            "The §6.4 size-tail anchors were all refused by their hosts this run — the upper \
+             tail remains truncated by the idgames upload cap, and the recommendations above \
+             rest on the idgames population alone.\n\n",
+        );
     }
 }
 
@@ -764,7 +893,7 @@ mod tests {
                 weighted: WeightedDistribution {
                     core: distribution(92, 100, 30_000_000, wad_p99_5),
                     total_votes: 500,
-                    zero_vote_entries_excluded: 3,
+                    zero_vote_members_excluded: 3,
                 },
                 by_bucket: BTreeMap::from([(
                     "levels/doom".to_owned(),
@@ -879,7 +1008,7 @@ mod tests {
 
     #[test]
     fn recommendations_cover_every_s8_constant() {
-        let recs = recommendations(&idgames_fixture(), None);
+        let recs = recommendations(&idgames_fixture(), None, 0);
         let keys: Vec<&str> = recs.iter().map(|r| r.key.as_str()).collect();
         assert_eq!(
             keys,
@@ -901,7 +1030,7 @@ mod tests {
 
     #[test]
     fn outliers_absent_notes_none_analyzed_in_source() {
-        let recs = recommendations(&idgames_fixture(), None);
+        let recs = recommendations(&idgames_fixture(), None, 0);
         for key in [
             "wire_cap_zip",
             "wire_cap_wad",
@@ -925,7 +1054,7 @@ mod tests {
         // in the source text even though outliers won.
         let idgames = idgames_fixture();
         let outliers = outliers_fixture(1_610_612_736);
-        let recs = recommendations(&idgames, Some(&outliers));
+        let recs = recommendations(&idgames, Some(&outliers), 0);
         let row = recs.iter().find(|r| r.key == "wire_cap_zip").unwrap();
         assert_eq!(row.value, Some(2_147_483_648));
         assert_eq!(row.recommended, "2147483648 (2 GiB)");
@@ -942,7 +1071,7 @@ mod tests {
         // was nothing for outliers to move).
         let idgames = idgames_fixture();
         let outliers = outliers_fixture(1_000_000); // well under 40 MiB
-        let recs = recommendations(&idgames, Some(&outliers));
+        let recs = recommendations(&idgames, Some(&outliers), 0);
         let row = recs.iter().find(|r| r.key == "wire_cap_zip").unwrap();
         assert_eq!(row.value, Some(pow2_ceil(41_943_040)));
         assert!(row.source.contains("1000000"), "{}", row.source);
@@ -951,7 +1080,7 @@ mod tests {
 
     #[test]
     fn decoded_cap_mirrors_wire_cap_wad_value() {
-        let recs = recommendations(&idgames_fixture(), None);
+        let recs = recommendations(&idgames_fixture(), None, 0);
         let wire_cap_wad = recs.iter().find(|r| r.key == "wire_cap_wad").unwrap();
         let decoded_cap = recs.iter().find(|r| r.key == "decoded_cap").unwrap();
         assert_eq!(wire_cap_wad.value, decoded_cap.value);
@@ -961,7 +1090,7 @@ mod tests {
 
     #[test]
     fn max_member_count_is_not_byte_formatted() {
-        let recs = recommendations(&idgames_fixture(), None);
+        let recs = recommendations(&idgames_fixture(), None, 0);
         let row = recs.iter().find(|r| r.key == "max_member_count").unwrap();
         // max = 12, pow2_ceil(2 * 12) = pow2_ceil(24) = 32 — plain number,
         // never an IEC byte label.
@@ -971,7 +1100,7 @@ mod tests {
 
     #[test]
     fn max_entry_uncompressed_bytes_source_states_wad_only_caveat() {
-        let recs = recommendations(&idgames_fixture(), None);
+        let recs = recommendations(&idgames_fixture(), None, 0);
         let row = recs
             .iter()
             .find(|r| r.key == "max_entry_uncompressed_bytes")
@@ -994,7 +1123,7 @@ mod tests {
             p99: 0.0,
             max: 0.0,
         };
-        let recs = recommendations(&idgames, None);
+        let recs = recommendations(&idgames, None, 0);
         let row = recs
             .iter()
             .find(|r| r.key == "max_member_compression_ratio")
@@ -1019,7 +1148,7 @@ mod tests {
             p99: 17.0,
             max: 17.3,
         };
-        let recs = recommendations(&idgames, None);
+        let recs = recommendations(&idgames, None, 0);
         let row = recs
             .iter()
             .find(|r| r.key == "max_member_compression_ratio")
@@ -1032,7 +1161,7 @@ mod tests {
     fn compression_method_allowlist_flags_unexpected_method() {
         let mut idgames = idgames_fixture();
         idgames.entries.methods.insert("bzip2".to_owned(), 2);
-        let recs = recommendations(&idgames, None);
+        let recs = recommendations(&idgames, None, 0);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1049,7 +1178,7 @@ mod tests {
 
     #[test]
     fn compression_method_allowlist_clean_when_only_stored_and_deflate() {
-        let recs = recommendations(&idgames_fixture(), None);
+        let recs = recommendations(&idgames_fixture(), None, 0);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1065,7 +1194,7 @@ mod tests {
         // whole-archive one, even though §8.3's allowlist governs every
         // member. The row's source must say so (same treatment as
         // `max_entry_uncompressed_bytes`'s wad-only caveat).
-        let recs = recommendations(&idgames_fixture(), None);
+        let recs = recommendations(&idgames_fixture(), None, 0);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1074,10 +1203,86 @@ mod tests {
     }
 
     #[test]
+    fn compression_method_allowlist_translates_unsupported_method_ids_and_cost() {
+        // I3(c): "unsupported(1)"/"unsupported(6)"/"unsupported(9)" are the
+        // lowercased-Debug labels `zips::inspect::method_label` gives APPNOTE
+        // method ids Shrink/Implode/Deflate64 — the allowlist row must
+        // translate them into names and state what adopting stored+deflate
+        // would actually cost, not just list the raw ids.
+        let mut idgames = idgames_fixture(); // methods: deflate=80, stored=15 (95 total)
+        idgames
+            .entries
+            .methods
+            .insert("unsupported(1)".to_owned(), 4);
+        idgames
+            .entries
+            .methods
+            .insert("unsupported(6)".to_owned(), 215);
+        idgames
+            .entries
+            .methods
+            .insert("unsupported(9)".to_owned(), 1);
+        let recs = recommendations(&idgames, None, 0);
+        let row = recs
+            .iter()
+            .find(|r| r.key == "compression_method_allowlist")
+            .unwrap();
+        // 4 + 215 + 1 = 220 rejected members out of 95 + 220 = 315 total.
+        assert!(
+            row.source.contains("would reject 220 members"),
+            "{}",
+            row.source
+        );
+        assert!(row.source.contains("Shrink(1)=4"), "{}", row.source);
+        assert!(row.source.contains("Implode(6)=215"), "{}", row.source);
+        assert!(row.source.contains("Deflate64(9)=1"), "{}", row.source);
+    }
+
+    #[test]
+    fn compression_method_allowlist_unknown_method_id_falls_back_to_generic_name() {
+        let mut idgames = idgames_fixture();
+        idgames
+            .entries
+            .methods
+            .insert("unsupported(99)".to_owned(), 3);
+        let recs = recommendations(&idgames, None, 0);
+        let row = recs
+            .iter()
+            .find(|r| r.key == "compression_method_allowlist")
+            .unwrap();
+        assert!(row.source.contains("method 99=3"), "{}", row.source);
+    }
+
+    #[test]
+    fn ratio_and_allowlist_and_zip64_sources_state_idgames_population_only() {
+        // I3(b): rows 6-8 silently exclude the outliers population (unlike
+        // the four `combined_row`-based rows above them) — each source must
+        // say so explicitly.
+        let recs = recommendations(&idgames_fixture(), None, 0);
+        for key in [
+            "max_member_compression_ratio",
+            "compression_method_allowlist",
+            "zip64_statement",
+        ] {
+            let row = recs.iter().find(|r| r.key == key).unwrap();
+            assert!(
+                row.source.contains("(idgames population only)"),
+                "{key}: {}",
+                row.source
+            );
+        }
+    }
+
+    #[test]
     fn zip64_statement_states_absence_explicitly() {
-        let recs = recommendations(&idgames_fixture(), None); // zip64_entries = 0
+        // manifest_zip64_entries = 0 agrees with idgames_fixture()'s
+        // zip64_entries = 0.
+        let recs = recommendations(&idgames_fixture(), None, 0);
         let row = recs.iter().find(|r| r.key == "zip64_statement").unwrap();
-        assert_eq!(row.source, "0 zip64 entries observed");
+        assert_eq!(
+            row.source,
+            "0 zip64 entries observed (records); manifest agrees (idgames population only)"
+        );
         assert_eq!(row.recommended, "zip64 handled");
     }
 
@@ -1085,16 +1290,41 @@ mod tests {
     fn zip64_statement_counts_when_present() {
         let mut idgames = idgames_fixture();
         idgames.entries.zip64_entries = 4;
-        let recs = recommendations(&idgames, None);
+        let recs = recommendations(&idgames, None, 4); // manifest agrees
         let row = recs.iter().find(|r| r.key == "zip64_statement").unwrap();
-        assert_eq!(row.source, "4 zip64 entries observed");
+        assert_eq!(
+            row.source,
+            "4 zip64 entries observed (records); manifest agrees (idgames population only)"
+        );
+    }
+
+    #[test]
+    fn zip64_statement_flags_manifest_disagreement() {
+        // B2: the record-derived zip64 count must be cross-checked against
+        // wads-manifest.json's independently-tallied `zip64_entries` — a
+        // disagreement between the two must render visibly, not be
+        // silently trusted away in favor of the record-derived count.
+        let mut idgames = idgames_fixture();
+        idgames.entries.zip64_entries = 4;
+        let recs = recommendations(&idgames, None, 7); // manifest disagrees: 7 != 4
+        let row = recs.iter().find(|r| r.key == "zip64_statement").unwrap();
+        assert!(
+            row.source.contains("4 zip64 entries observed"),
+            "{}",
+            row.source
+        );
+        assert!(
+            row.source.contains("MANIFEST DISAGREES: 7"),
+            "{}",
+            row.source
+        );
     }
 
     // ---- render_report ----
 
     fn stats_fixture(outliers: Option<OutliersStats>) -> StatsJson {
         let idgames = idgames_fixture();
-        let recs = recommendations(&idgames, outliers.as_ref());
+        let recs = recommendations(&idgames, outliers.as_ref(), 0);
         StatsJson {
             schema_version: crate::schema::STATS_SCHEMA_VERSION,
             provenance: StatsProvenance {
@@ -1214,6 +1444,51 @@ mod tests {
         assert!(report.contains("refused-one"));
         assert!(report.contains("no_range_support"));
         assert!(!report.contains(NO_OUTLIERS_ANALYZED));
+        // outliers_fixture()'s analyzed max_wad_uncompressed (900_000_000)
+        // exceeds idgames_fixture()'s wad p99.5 (20 MiB) — the size-tail
+        // anchor DID land, so the I3(a) truncation sentence must not render.
+        assert!(
+            !report.contains("size-tail anchors were all refused"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn render_report_states_size_tail_truncated_when_analyzed_never_exceeds_idgames_p99_5() {
+        // I3(a): analyzed entries exist (so the supplement isn't silent),
+        // at least one curated entry was refused by its host (skipped is
+        // non-empty), and none of what *did* get analyzed exceeded the
+        // idgames-only p99.5 wad size (20 MiB in idgames_fixture()) — the
+        // size-tail this supplement exists to capture never actually
+        // landed, and the report must say so.
+        let outliers = OutliersStats {
+            analyzed: vec![OutlierSummary {
+                slug: "small-one".into(),
+                zip_size: 1_000_000,
+                member_count: 1,
+                wad_count: 1,
+                max_wad_uncompressed: 1_000_000, // well under 20 MiB
+                total_wad_uncompressed: 1_000_000,
+            }],
+            skipped: vec![crate::schema::OutlierSkip {
+                slug: "refused-one".into(),
+                fetch_status: "no_range_support".into(),
+            }],
+            wad_uncompressed: distribution(1, 1_000_000, 1_000_000, 1_000_000),
+            max_zip_size: 1_000_000,
+            max_member_count: 1,
+            max_entry_total_uncompressed: 1_000_000,
+        };
+        let stats = stats_fixture(Some(outliers));
+        let report = render_report(&stats);
+        assert!(
+            report.contains("The §6.4 size-tail anchors were all refused by their hosts this run"),
+            "{report}"
+        );
+        assert!(
+            report.contains("recommendations above rest on the idgames population alone"),
+            "{report}"
+        );
     }
 
     #[test]

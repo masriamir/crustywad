@@ -185,8 +185,16 @@ pub fn run_with_paths(
     );
     // §8: recommendations are set *before* `stats.json` is written, so the
     // written document always carries them (never the placeholder empty
-    // `vec![]` `build_stats` starts from).
-    stats.recommendations = report::recommendations(&stats.idgames, stats.outliers.as_ref());
+    // `vec![]` `build_stats` starts from). B2: the `zip64_statement` row
+    // cross-checks the record-derived count against `wads-manifest.json`'s
+    // independently-tallied `zip64_entries` — read here (not threaded
+    // through `build_stats`, which stays pure over already-loaded records)
+    // since `zips_manifest` is a `run_with_paths`-local I/O result.
+    stats.recommendations = report::recommendations(
+        &stats.idgames,
+        stats.outliers.as_ref(),
+        zips_manifest.zip64_entries,
+    );
 
     // Build the sweep corpus (and render the report) entirely in memory
     // before any output file is written. Writing `stats.json` first (the
@@ -330,18 +338,18 @@ fn wad_uncompressed_size_stats(population: &[&WadRecord]) -> SizeStats {
     let histogram = histogram_buckets(&sizes);
 
     let mut weighted_pairs: Vec<(u64, u64)> = Vec::new();
-    let mut zero_vote_entries_excluded = 0_u64;
+    let mut zero_vote_members_excluded = 0_u64;
     for record in population {
         for wad in &record.wads {
             if record.votes == 0 {
-                zero_vote_entries_excluded += 1;
+                zero_vote_members_excluded += 1;
             } else {
                 weighted_pairs.push((wad.uncompressed, record.votes));
             }
         }
     }
     weighted_pairs.sort_unstable_by_key(|&(value, _)| value);
-    let weighted = WeightedDistribution::from_pairs(&weighted_pairs, zero_vote_entries_excluded);
+    let weighted = WeightedDistribution::from_pairs(&weighted_pairs, zero_vote_members_excluded);
 
     let mut by_bucket: BTreeMap<String, Vec<u64>> = BTreeMap::new();
     let mut by_year: BTreeMap<String, Vec<u64>> = BTreeMap::new();
@@ -693,7 +701,7 @@ impl WeightedDistribution {
     /// Build a [`WeightedDistribution`] from `(value, weight)` pairs sorted
     /// ascending by value (§6.2). `min`/`max`/`n` describe the value domain
     /// (unweighted); percentiles/mean/stddev are vote-weighted.
-    fn from_pairs(sorted_pairs: &[(u64, u64)], zero_vote_entries_excluded: u64) -> Self {
+    fn from_pairs(sorted_pairs: &[(u64, u64)], zero_vote_members_excluded: u64) -> Self {
         let (mean, stddev) = percentiles::weighted_mean_stddev(sorted_pairs);
         let min = sorted_pairs.first().map_or(0, |&(v, _)| v);
         let max = sorted_pairs.last().map_or(0, |&(v, _)| v);
@@ -715,7 +723,7 @@ impl WeightedDistribution {
         WeightedDistribution {
             core,
             total_votes,
-            zero_vote_entries_excluded,
+            zero_vote_members_excluded,
         }
     }
 }
@@ -760,11 +768,18 @@ impl RatioDistribution {
 }
 
 /// §6.2 top-level segmentation bucket for a `dir` such as
-/// `"levels/doom2/Ports/megawads/"`: `"levels/<game>"` normally, or
-/// `"levels/<game>/Ports"` when the path runs through a `Ports/` subtree
-/// (§4.2: "there is no top-level `ports/` — the per-game `levels/*/Ports/`
-/// subtrees"). Non-`levels` roots (`combos/`, `themes/x/`) collapse to
-/// their own top-level segment.
+/// `"levels/doom2/Ports/megawads/"` or
+/// `"levels/doom2/deathmatch/Ports/single/"`: `"levels/<game>"` normally, or
+/// `"levels/<game>/Ports"` when the path runs through a `Ports/` subtree at
+/// *any* depth below `levels/<game>/` (§4.2: "there is no top-level
+/// `ports/` — the per-game `levels/*/Ports/` subtrees"). Review fix I1: the
+/// real corpus has `Ports/` one level deeper than the common case —
+/// `levels/doom2/deathmatch/Ports/` (500 entries) and
+/// `levels/doom/deathmatch/Ports/` (8) — so this checks every segment past
+/// `levels/<game>/`, not just the third one; a `Ports` match only at depth
+/// 3 silently left those 508 entries in the vanilla `levels/<game>` bucket,
+/// contaminating the §6.2 segmentation. Non-`levels` roots (`combos/`,
+/// `themes/x/`) collapse to their own top-level segment.
 pub(crate) fn top_bucket(dir: &str) -> String {
     let segments: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
     let Some(&first) = segments.first() else {
@@ -773,10 +788,13 @@ pub(crate) fn top_bucket(dir: &str) -> String {
     if first != "levels" {
         return first.to_owned();
     }
-    match segments.as_slice() {
-        [levels, game, "Ports", ..] => format!("{levels}/{game}/Ports"),
-        [levels, game, ..] => format!("{levels}/{game}"),
-        _ => first.to_owned(),
+    let Some(&game) = segments.get(1) else {
+        return first.to_owned();
+    };
+    if segments[2..].contains(&"Ports") {
+        format!("{first}/{game}/Ports")
+    } else {
+        format!("{first}/{game}")
     }
 }
 
@@ -877,6 +895,18 @@ mod tests {
         assert_eq!(year_of("2019-04-02"), "2019");
         assert_eq!(year_of(""), "unknown");
         assert_eq!(year_of("19-4-2"), "unknown");
+        // I1: the real corpus has `Ports/` one level deeper than the common
+        // case — `levels/doom2/deathmatch/Ports/` (500 entries) and
+        // `levels/doom/deathmatch/Ports/` (8) — top_bucket must still
+        // collapse these to the `Ports` bucket, not the vanilla one.
+        assert_eq!(
+            top_bucket("levels/doom2/deathmatch/Ports/megawads/"),
+            "levels/doom2/Ports"
+        );
+        assert_eq!(
+            top_bucket("levels/doom/deathmatch/Ports/"),
+            "levels/doom/Ports"
+        );
     }
 
     #[test]
@@ -1027,7 +1057,7 @@ mod tests {
 
         let stats = build_stats_fixture(&[low, mid, high, zero]);
         let weighted = &stats.idgames.wad_uncompressed.weighted;
-        assert_eq!(weighted.zero_vote_entries_excluded, 1);
+        assert_eq!(weighted.zero_vote_members_excluded, 1);
         assert_eq!(weighted.total_votes, 100);
         assert_eq!(weighted.core.p50, 30); // weighted p50 shifts to the high-vote value
         assert_eq!(stats.idgames.wad_uncompressed.core.p50, 20); // unweighted (999 excluded from neither — it's still in `core`)
@@ -1051,6 +1081,43 @@ mod tests {
         let by_year = &stats.idgames.wad_uncompressed.by_year;
         assert_eq!(by_year["2019"].max, 100);
         assert_eq!(by_year["2003"].max, 10);
+    }
+
+    #[test]
+    fn build_stats_segments_unknown_year_non_levels_bucket_and_deep_ports() {
+        // I1/T6-M4 (deferred from Task 6): exercise by_year "unknown"
+        // (missing/malformed date), a non-`levels` top-level bucket, and a
+        // `Ports` subtree below depth 3 — all through `build_stats` (not
+        // just `top_bucket`/`year_of` in isolation), asserting the
+        // resulting `by_bucket` keys directly.
+        let mut deep_ports = wad_record(1, FetchStatus::Ok, vec![wad_member("A.WAD", 1, 100)]);
+        deep_ports.dir = "levels/doom2/deathmatch/Ports/".into();
+        deep_ports.date = "not-a-date".into(); // malformed → "unknown"
+        let mut no_date = wad_record(2, FetchStatus::Ok, vec![wad_member("B.WAD", 1, 50)]);
+        no_date.dir = "levels/doom/0-9/".into();
+        no_date.date = String::new(); // missing → "unknown"
+        let mut combo = wad_record(3, FetchStatus::Ok, vec![wad_member("C.WAD", 1, 200)]);
+        combo.dir = "combos/".into();
+        combo.date = "2020-01-01".into();
+
+        let stats = build_stats_fixture(&[deep_ports, no_date, combo]);
+
+        let by_bucket = &stats.idgames.wad_uncompressed.by_bucket;
+        assert!(
+            by_bucket.contains_key("levels/doom2/Ports"),
+            "{by_bucket:?}"
+        );
+        assert!(by_bucket.contains_key("levels/doom"), "{by_bucket:?}");
+        assert!(by_bucket.contains_key("combos"), "{by_bucket:?}");
+        assert!(
+            !by_bucket.contains_key("levels/doom2"),
+            "deep-Ports entry must not also land in the vanilla levels/doom2 bucket: {by_bucket:?}"
+        );
+
+        let by_year = &stats.idgames.wad_uncompressed.by_year;
+        assert!(by_year.contains_key("unknown"), "{by_year:?}");
+        assert_eq!(by_year["unknown"].n, 2); // deep_ports + no_date
+        assert!(by_year.contains_key("2020"), "{by_year:?}");
     }
 
     // ---- ls-laR join ----
@@ -1321,6 +1388,13 @@ total 1
         std::fs::write(dir.join("idgames-wads.jsonl"), wads_jsonl).unwrap();
 
         let entries_total = u64::try_from(records.len()).unwrap();
+        // B2: agrees with the records' own zip64 tally by construction — a
+        // test that wants to exercise a manifest/record disagreement builds
+        // its own `ZipsManifest` directly (see
+        // `zip64_statement_flags_manifest_disagreement` in `report.rs`)
+        // rather than fighting this fixture's default.
+        let zip64_entries =
+            u64::try_from(records.iter().filter(|r| r.zip64).count()).unwrap_or(u64::MAX);
         std::fs::write(
             dir.join("wads-manifest.json"),
             serde_json::to_string(&crate::schema::ZipsManifest {
@@ -1340,7 +1414,7 @@ total 1
                 bytes_transferred: 100,
                 full_downloads: 0,
                 fallback_bytes: 0,
-                zip64_entries: 0,
+                zip64_entries,
                 status_counts: BTreeMap::new(),
                 unaccounted_entries: 0,
                 aborted: None,
