@@ -99,14 +99,33 @@ impl UrlRanges {
     }
 
     /// `HEAD` the URL (following the client's redirect policy, retrying a
-    /// transport error or a retryable status per [`should_retry`]) and
-    /// record its `Content-Length` as the known file size for later
-    /// [`RangeSource::fetch`] calls to recognize a whole-file request.
+    /// transport error or a retryable status per [`should_retry`]); if the
+    /// HEAD doesn't carry a usable `Content-Length`, fall back to a
+    /// single-byte ranged-GET size probe
+    /// ([`Self::discover_size_via_range_probe`]). Either way, the learned
+    /// size is recorded for later [`RangeSource::fetch`] calls to
+    /// recognize a whole-file request.
+    ///
+    /// **Why not [`reqwest::Response::content_length`]:** that method
+    /// returns the *decoded response body's* size hint, not the literal
+    /// `Content-Length` response header — for a `HEAD`, the body is empty
+    /// by definition, so it reliably returns `Some(0)` even against a host
+    /// that sent a perfectly good `Content-Length` header. A prior version
+    /// of this method used it directly and silently recorded `file_size =
+    /// 0` against two verified-cooperative hosts (a GitHub release asset,
+    /// a Squarespace static file) in the Task 8 live smoke — `inspect_zip`
+    /// then failed every one of those entries as a bogus
+    /// `zip_parse_error("zero-length file")`, with zero bytes ever
+    /// transferred and the real cause (a `discover_size` bug, not a bad
+    /// archive) completely hidden. This method reads the header text
+    /// directly instead — see [`classify_head_response`] — so this class
+    /// of bug can't recur silently.
     ///
     /// # Errors
-    /// - A `404` response → [`FetchFailure::NotFound`] (consistent with
+    /// - A `404` (on either the HEAD or the range-probe fallback) →
+    ///   [`FetchFailure::NotFound`] (consistent with
     ///   [`classify_range_response`]'s `fetch`-side mapping), never retried.
-    /// - Any other non-success status (after retries are exhausted, or
+    /// - Any other non-success HEAD status (after retries are exhausted, or
     ///   immediately for a non-retryable one) →
     ///   `FetchFailure::Http("HEAD status {status}")`. A HEAD landing on a
     ///   WAF block, a HEAD-disabled host, or a CDN edge case commonly
@@ -115,14 +134,31 @@ impl UrlRanges {
     ///   unconditionally would poison [`Self::file_size`] with a bogus
     ///   value and misclassify a perfectly healthy host's later `fetch` as
     ///   a parse failure, so the status is checked *before* the header is
-    ///   ever read.
-    /// - Transport failure after retries are exhausted →
+    ///   ever read (see [`classify_head_response`]).
+    /// - Transport failure on the HEAD, after retries are exhausted →
     ///   `FetchFailure::Http("HEAD transport: {e}")`.
-    /// - A `2xx` response with no `Content-Length` header →
-    ///   `FetchFailure::Http("no Content-Length on HEAD")`.
+    /// - A range-probe `200` (the host ignores ranges outright) →
+    ///   [`FetchFailure::RangeUnsupported`] — see
+    ///   [`Self::discover_size_via_range_probe`] for the fallback's own
+    ///   error shapes.
     // consumed from Task 5 (#407)
     #[allow(dead_code)]
     pub async fn discover_size(&mut self) -> Result<u64, FetchFailure> {
+        let size = match self.head_content_length().await? {
+            Some(size) => size,
+            None => self.discover_size_via_range_probe().await?,
+        };
+        self.file_size = Some(size);
+        Ok(size)
+    }
+
+    /// `HEAD` the URL, retried per [`should_retry`], classified by
+    /// [`classify_head_response`]. `Ok(Some(size))` — a usable declared
+    /// size; `Ok(None)` — a success status but no usable `Content-Length`
+    /// (the caller should fall back to
+    /// [`Self::discover_size_via_range_probe`]); `Err` — terminal
+    /// (`NotFound`/`Http`).
+    async fn head_content_length(&mut self) -> Result<Option<u64>, FetchFailure> {
         let mut attempt = 0_u32;
         loop {
             attempt += 1;
@@ -140,22 +176,104 @@ impl UrlRanges {
             };
 
             let status = resp.status();
+            let content_length = resp
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok());
+            match classify_head_response(status.as_u16(), content_length) {
+                HeadOutcome::UseSize(size) => return Ok(Some(size)),
+                HeadOutcome::Fallback => return Ok(None),
+                HeadOutcome::NotFound => return Err(FetchFailure::NotFound),
+                HeadOutcome::Fail => {
+                    if let Some(delay) = should_retry(attempt, Some(status), &mut self.rng) {
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Err(FetchFailure::Http(format!("HEAD status {status}")));
+                }
+            }
+        }
+    }
+
+    /// Fallback size discovery for a host whose `HEAD` doesn't carry a
+    /// usable `Content-Length` (the Task 8 smoke's GitHub-release-asset and
+    /// Squarespace-static-file hosts both need this path). Sends
+    /// `Range: bytes=0-0` on the same URL — a single-byte ranged GET,
+    /// counted like any other request/body byte via [`read_capped_body`] —
+    /// and reads the declared total size back out of a `206`'s
+    /// `Content-Range: bytes 0-0/TOTAL` header via
+    /// [`parse_content_range_total`].
+    ///
+    /// # Errors
+    /// - `200` → [`FetchFailure::RangeUnsupported`]: the host ignores
+    ///   ranges outright, which is hopeless for the central-directory-only
+    ///   reads this type exists to do — not a smaller ask to retry.
+    /// - `404` → [`FetchFailure::NotFound`].
+    /// - A `206` with a missing, unparseable, or RFC-7233-"unsatisfied"
+    ///   `Content-Range` → `FetchFailure::Http` naming the defect —
+    ///   RFC 7233 §4.2 requires this header on every `206`, so a malformed
+    ///   one is itself suspicious, never trusted.
+    /// - Any other status, or a transport failure, retried per
+    ///   [`should_retry`] then surfaced as `FetchFailure::Http`.
+    /// - A short single-byte body on an otherwise-valid `206` →
+    ///   whatever [`read_capped_body`] reports (never retried, matching its
+    ///   own documented posture).
+    async fn discover_size_via_range_probe(&mut self) -> Result<u64, FetchFailure> {
+        let mut attempt = 0_u32;
+        loop {
+            attempt += 1;
+            self.counters.requests.fetch_add(1, Ordering::Relaxed);
+            let outcome = self
+                .http
+                .get(self.url.clone())
+                .header(reqwest::header::RANGE, "bytes=0-0")
+                .send()
+                .await;
+            let resp = match outcome {
+                Ok(r) => r,
+                Err(e) => {
+                    if let Some(delay) = should_retry(attempt, None, &mut self.rng) {
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Err(FetchFailure::Http(format!("range-probe transport: {e}")));
+                }
+            };
+
+            let status = resp.status();
             if status == reqwest::StatusCode::NOT_FOUND {
                 return Err(FetchFailure::NotFound);
             }
-            if !status.is_success() {
+            if status == reqwest::StatusCode::OK {
+                return Err(FetchFailure::RangeUnsupported);
+            }
+            if status != reqwest::StatusCode::PARTIAL_CONTENT {
                 if let Some(delay) = should_retry(attempt, Some(status), &mut self.rng) {
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                return Err(FetchFailure::Http(format!("HEAD status {status}")));
+                return Err(FetchFailure::Http(format!("range-probe status {status}")));
             }
 
-            let size = resp
-                .content_length()
-                .ok_or_else(|| FetchFailure::Http("no Content-Length on HEAD".to_owned()))?;
-            self.file_size = Some(size);
-            return Ok(size);
+            let total = resp
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_content_range_total);
+            let Some(total) = total else {
+                return Err(FetchFailure::Http(
+                    "range-probe 206 with a missing, unparseable, or unsatisfied Content-Range"
+                        .to_owned(),
+                ));
+            };
+
+            // Drain and count the single requested byte (matches this
+            // module's "every wire byte read is counted" posture); its
+            // content is irrelevant — only `total` matters here. Never
+            // retried on a short/failed read, matching `read_capped_body`'s
+            // own documented posture.
+            read_capped_body(resp, 1, &self.counters).await?;
+            return Ok(total);
         }
     }
 }
@@ -347,6 +465,80 @@ pub(crate) fn classify_range_response(status: u16, whole_file: bool) -> RangeOut
     }
 }
 
+/// What [`UrlRanges::head_content_length`] should do with one `HEAD`
+/// response, from its status and the raw `Content-Length` header text (if
+/// any). Pure and side-effect-free, mirroring [`RangeOutcome`]'s role for
+/// `fetch` — so the status/header decision is unit-tested without a live
+/// `reqwest::Response`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeadOutcome {
+    /// A success status with a usable declared size (non-zero, parseable).
+    UseSize(u64),
+    /// A success status but no usable `Content-Length` — the caller should
+    /// fall back to [`UrlRanges::discover_size_via_range_probe`].
+    Fallback,
+    /// `404` — terminal, [`FetchFailure::NotFound`].
+    NotFound,
+    /// Any other non-success status — terminal `Http` detail, unless
+    /// [`should_retry`] accepts it first.
+    Fail,
+}
+
+/// Pure classifier: `(status, content_length_header)` → what
+/// [`UrlRanges::head_content_length`] should do next. `content_length` is
+/// the raw header *text*, not [`reqwest::Response::content_length`] (see
+/// [`UrlRanges::discover_size`]'s doc comment for why that method is wrong
+/// here): missing, unparseable, or literally `"0"` are all "unusable" —
+/// [`HeadOutcome::Fallback`] — since a zero-length remote zip is bogus
+/// input regardless of how (or whether) the header spelled it, so `0` is
+/// never passed onward as a real size.
+// consumed from Task 5 (#407)
+#[allow(dead_code)]
+pub(crate) fn classify_head_response(status: u16, content_length: Option<&str>) -> HeadOutcome {
+    if status == 404 {
+        return HeadOutcome::NotFound;
+    }
+    if !(200..300).contains(&status) {
+        return HeadOutcome::Fail;
+    }
+    match content_length
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|&n| n != 0)
+    {
+        Some(n) => HeadOutcome::UseSize(n),
+        None => HeadOutcome::Fallback,
+    }
+}
+
+/// Extract `TOTAL` from a `Content-Range: bytes START-END/TOTAL` header
+/// value, as sent on a `206` to [`UrlRanges::discover_size_via_range_probe`]'s
+/// `bytes=0-0` probe. `None` for:
+/// - the RFC 7233 §4.2 "unsatisfied range" form (`bytes */TOTAL` — no
+///   start/end to anchor the probe's request to);
+/// - the "length unknown" form (`bytes START-END/*` — nothing to report);
+/// - anything that doesn't parse as `bytes <range>/<total>` at all, or
+///   whose `TOTAL` digits don't fit a `u64`.
+///
+/// This function doesn't need to distinguish *why* a total wasn't
+/// recoverable, only whether one was — every unusable shape is treated
+/// identically by the caller (surfaced as a `FetchFailure::Http` detail).
+// consumed from Task 5 (#407)
+#[allow(dead_code)]
+pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
+    let (unit, range) = value.split_once(' ')?;
+    if !unit.eq_ignore_ascii_case("bytes") {
+        return None;
+    }
+    let (range, total) = range.split_once('/')?;
+    if range.trim() == "*" {
+        return None;
+    }
+    match total.trim() {
+        "*" => None,
+        n => n.parse().ok(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,6 +582,64 @@ mod tests {
             .is_none()
         );
         assert!(should_retry(MAX_ATTEMPTS + 1, None, &mut rng).is_none());
+    }
+
+    #[test]
+    fn head_response_classification() {
+        use HeadOutcome::*;
+        // Usable, non-zero Content-Length on a success status.
+        assert!(matches!(
+            classify_head_response(200, Some("2012026")),
+            UseSize(2_012_026)
+        ));
+        // Whitespace around the digits is tolerated.
+        assert!(matches!(
+            classify_head_response(200, Some(" 42 ")),
+            UseSize(42)
+        ));
+        // Missing header, unparseable header, and literal "0" are all
+        // "unusable" — this is the exact bug the Task 8 smoke caught:
+        // `resp.content_length()` silently returned `Some(0)` for a HEAD's
+        // always-empty body, poisoning `file_size`.
+        assert!(matches!(classify_head_response(200, None), Fallback));
+        assert!(matches!(
+            classify_head_response(200, Some("nope")),
+            Fallback
+        ));
+        assert!(matches!(classify_head_response(200, Some("0")), Fallback));
+        // Every 2xx counts as success, not just 200.
+        assert!(matches!(
+            classify_head_response(204, Some("10")),
+            UseSize(10)
+        ));
+        // 404 is its own terminal case, distinct from other failures.
+        assert!(matches!(classify_head_response(404, None), NotFound));
+        assert!(matches!(classify_head_response(404, Some("123")), NotFound));
+        // Any other non-success status is a generic failure.
+        assert!(matches!(classify_head_response(403, None), Fail));
+        assert!(matches!(classify_head_response(500, Some("10")), Fail));
+        assert!(matches!(classify_head_response(301, None), Fail));
+    }
+
+    #[test]
+    fn content_range_total_extraction() {
+        assert_eq!(
+            parse_content_range_total("bytes 0-0/2012026"),
+            Some(2_012_026)
+        );
+        // RFC 7233 §4.2 unsatisfied-range form: no start/end to anchor to.
+        assert_eq!(parse_content_range_total("bytes */123"), None);
+        // "Length unknown" form: nothing to report.
+        assert_eq!(parse_content_range_total("bytes 0-0/*"), None);
+        // Garbage doesn't parse as `bytes <range>/<total>` at all.
+        assert_eq!(parse_content_range_total("garbage value"), None);
+        assert_eq!(parse_content_range_total(""), None);
+        // Digits that don't fit a u64 (28 nines) must not panic — just
+        // fail to parse.
+        assert_eq!(
+            parse_content_range_total("bytes 0-0/9999999999999999999999999999"),
+            None
+        );
     }
 
     #[test]
