@@ -48,10 +48,19 @@ impl ZipsStore {
     #[must_use]
     pub fn open(path: PathBuf) -> Self {
         let mut entries = BTreeMap::new();
-        if let Ok(text) = std::fs::read_to_string(&path) {
+        // Read bytes, not a String: a crash-torn final line can split a
+        // multi-byte UTF-8 sequence, and `read_to_string` would then fail
+        // the WHOLE load — silently degrading the store to empty instead
+        // of recovering every prior well-formed line. Parsing per line via
+        // `from_slice` confines any invalid UTF-8 to the line that carries
+        // it, which lands in `skipped` like any other torn write.
+        if let Ok(bytes) = std::fs::read(&path) {
             let mut skipped = 0_u64;
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                match serde_json::from_str::<StoredZip>(line) {
+            for line in bytes
+                .split(|b| *b == b'\n')
+                .filter(|l| !l.iter().all(u8::is_ascii_whitespace))
+            {
+                match serde_json::from_slice::<StoredZip>(line) {
                     Ok(stored) => {
                         entries.insert(stored.record.id, stored);
                     }
@@ -194,6 +203,34 @@ mod tests {
             store.lookup(7, Some("blake3:ccc")).unwrap().mirror,
             "gamers"
         );
+    }
+
+    #[test]
+    fn torn_non_utf8_final_line_does_not_discard_prior_entries() {
+        // A crash mid-append can tear a line inside a multi-byte UTF-8
+        // sequence, making the WHOLE file invalid UTF-8 — a String-based
+        // read would then fail the entire load and silently degrade the
+        // store to empty. The byte-based loader must confine the damage
+        // to the torn line.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("log.jsonl");
+        let mut store = ZipsStore::open(path.clone());
+        store.record("blake3:aaa", record(7)).unwrap();
+        store.record("blake3:aaa", record(9)).unwrap();
+        drop(store);
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            // "café" cut after the first byte of the two-byte 'é'.
+            f.write_all(b"{\"dir_body_hash\":\"blake3:bbb\",\"record\":{\"filename\":\"caf\xC3")
+                .unwrap();
+        }
+        let store = ZipsStore::open(path);
+        assert!(store.lookup(7, Some("blake3:aaa")).is_some());
+        assert!(store.lookup(9, Some("blake3:aaa")).is_some());
     }
 
     #[test]
