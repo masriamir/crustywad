@@ -79,11 +79,14 @@ harvest-api:
 harvest-zips:
     cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-zips
 
+harvest-outliers:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-outliers
+
 harvest-stats:
     cargo run --manifest-path xtask/Cargo.toml --release --locked -- stats
 
-# The full pipeline: enumerate, size, report.
-harvest: harvest-api harvest-zips harvest-stats
+# The full pipeline: enumerate, size, outliers, report.
+harvest: harvest-api harvest-zips harvest-outliers harvest-stats
 
 # Run all benchmarks with all features enabled.
 bench:

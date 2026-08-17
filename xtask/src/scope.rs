@@ -20,7 +20,7 @@ pub enum ScopeDecision {
 /// Map-bearing roots (§4.2), also the BFS-fallback seeds.
 pub const BFS_ROOTS: [&str; 5] = ["levels/", "deathmatch/", "combos/", "prefabs/", "themes/"];
 
-const SKIP_ROOTS: [&str; 9] = [
+const SKIP_ROOTS: [&str; 12] = [
     "music/",
     "sounds/",
     "utils/",
@@ -30,6 +30,9 @@ const SKIP_ROOTS: [&str; 9] = [
     "source/",
     "idstuff/",
     "skins/",
+    "misc/",
+    "historic/",
+    "roguestuff/",
 ];
 
 /// Decide scope for a normalized (trailing-slash) directory path.
@@ -40,11 +43,11 @@ const SKIP_ROOTS: [&str; 9] = [
 /// **Include** roots: `levels/`, `deathmatch/`, `combos/`, `prefabs/`, `themes/`.
 /// Exception: `levels/reviews/` is `Skip` (text-only), but subtrees like `levels/doom/reviews/` remain `Include`.
 ///
-/// **Skip** roots: `music/`, `sounds/`, `utils/`, `lmps/`, `docs/`, `graphics/`, `source/`, `idstuff/`, `skins/`.
+/// **Skip** roots: `music/`, `sounds/`, `utils/`, `lmps/`, `docs/`, `graphics/`, `source/`, `idstuff/`, `skins/`, `misc/`, `historic/`, `roguestuff/`.
 ///
-/// **Triage** (skip + surface loudly): `misc/`, `historic/`, `roguestuff/` — the spike surfaced these
-/// unanticipated roots; DESIGN §4.2 requires inspecting and recording the call before the first full run.
-/// Also Triage: any top-level directory not in any list (future-proofing — a new root must be noticed, not silently skipped).
+/// **Triage** (skip + surface loudly): any top-level directory not in any list (future-proofing — a new root
+/// must be noticed, not silently skipped). Resolved roots (`misc/`, `historic/`, `roguestuff/` via 2026-08-16
+/// #407 decision) are now in Skip.
 pub fn decide(dir: &str) -> ScopeDecision {
     if dir.is_empty() {
         return ScopeDecision::Skip;
@@ -113,16 +116,23 @@ mod tests {
     }
 
     #[test]
-    fn triage_roots_and_unknowns() {
+    fn resolved_triage_roots_are_skipped() {
         for dir in [
             "misc/",
             "historic/",
             "roguestuff/",
-            "misc/oldstuff/",
-            "brandnew/",
+            "misc/sub/",
+            "historic/x/",
         ] {
-            assert_eq!(decide(dir), ScopeDecision::Triage, "{dir}");
+            assert_eq!(decide(dir), ScopeDecision::Skip, "{dir}");
         }
+    }
+
+    #[test]
+    fn triage_roots_and_unknowns() {
+        // Any top-level directory not in any list remains Triage until a
+        // decision is recorded.
+        assert_eq!(decide("brandnew/"), ScopeDecision::Triage);
     }
 
     #[test]

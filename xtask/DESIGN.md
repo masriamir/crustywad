@@ -150,10 +150,13 @@ harvest-api:
 harvest-zips:
     cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-zips
 
+harvest-outliers:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-outliers
+
 harvest-stats:
     cargo run --manifest-path xtask/Cargo.toml --release --locked -- stats
 
-harvest: harvest-api harvest-zips harvest-stats
+harvest: harvest-api harvest-zips harvest-outliers harvest-stats
 ```
 
 ### CI and supply chain
@@ -192,10 +195,12 @@ xtask/src/
     range_reader.rs # §5.2 Read + Seek over HTTP ranges + mirror range source, transfer counters, fallback budget
     inspect.rs      # CD extraction, member filtering
     store.rs        # §5.4 per-id results log + body_hash invalidation
+    url_source.rs   # §6.4 single-URL RangeSource (#407)
+  outliers.rs       # §6.4 harvest-outliers orchestrator (#407)
   stats/            # #407
     mod.rs
-    percentiles.rs
-    report.rs
+    percentiles.rs  # (#407)
+    report.rs       # (#407)
 ```
 
 ---
@@ -250,9 +255,16 @@ The real top level (spike-verified via `getdirs`, 2026-08-12): `levels/`,
 **Skip:** `music/`, `sounds/`, `utils/`, `lmps/`, `docs/`, `graphics/`,
 `source/`, `idstuff/`, `skins/` (player skins, not maps). There is **no
 top-level `ports/`** — the pre-spike draft listed one; it does not exist.
-**Triage before first full run:** `misc/`, `historic/`, `roguestuff/` —
-unanticipated roots the spike surfaced; inspect their contents and record
-the include/skip call here.
+**Triage resolution (2026-08-16, #407):** `misc/`, `historic/`, `roguestuff/`
+are **Skip**. Inspection via the cached `ls-laR` listing: `historic/` = 42
+zips of DOOM engine alphas/betas/shareware distributions, id utilities
+(`dmutils`, `bsp11x`, `deth23`), and press coverage — pre-release IWADs, not
+community maps, and a direct skew on the §8 size statistics; `misc/` = 26
+zips of fonts, themes, posters, and walkthroughs whose only WAD-bearing
+items are official id content (`betraysewers.zip`, `sigil_bfg.zip` — RETAIL
+measurement material, not community corpus); `roguestuff/` = 2 Strife demo
+distributions. Any *new* top-level root still lands in `Triage` (skipped
+loudly) until a decision is recorded here.
 
 `action=search` is capped and will not enumerate exhaustively. On the API
 side, `getcontents` is the only reliable traversal — but the primary
@@ -756,6 +768,16 @@ Arguably the corpus manifest is worth more to the project than the statistics.
 
 Stats outputs embed the input harvest-manifest ID and **no wall-clock
 timestamps**, so re-running against unchanged inputs is byte-identical (§9.3).
+
+**Realized outputs (#407):** `stats`/`harvest-outliers` land per this section
+with: outliers analyzed via `xtask/outliers.toml` → `data/outliers-wads.jsonl`
++ `data/outliers-manifest.json` + `data/outliers-errors.jsonl` (no
+full-download fallback — range-refusing hosts are ledgered, §6.4); wire-cap
+statistics computed over ls-laR listing sizes with the API-size delta
+reported (§6.3's sanity check — the 2026-08-17 harvest ledgered ~7% of
+entries as `size_mismatch`); envelope byte totals cover `.wad` members only
+(phase 2 retains no non-wad member sizes); `stats` reads only local files
+and reruns byte-identical on unchanged inputs (§9.3).
 
 ---
 

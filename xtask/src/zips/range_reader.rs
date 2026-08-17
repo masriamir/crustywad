@@ -236,7 +236,7 @@ pub const FALLBACK_BYTE_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
 /// these being exact, not an under-count of failed attempts.
 #[derive(Debug, Default)]
 pub struct TransferCounters {
-    /// GET requests issued (ranged and full).
+    /// HTTP requests issued (ranged, full, and HEAD probes).
     pub requests: AtomicU64,
     /// Response-body bytes read.
     pub bytes: AtomicU64,
