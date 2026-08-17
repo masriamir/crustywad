@@ -515,8 +515,14 @@ pub(crate) fn classify_head_response(status: u16, content_length: Option<&str>) 
 /// - the RFC 7233 §4.2 "unsatisfied range" form (`bytes */TOTAL` — no
 ///   start/end to anchor the probe's request to);
 /// - the "length unknown" form (`bytes START-END/*` — nothing to report);
-/// - anything that doesn't parse as `bytes <range>/<total>` at all, or
-///   whose `TOTAL` digits don't fit a `u64`;
+/// - a `START-END` part that isn't literally two `u64`s separated by `-`
+///   (e.g. `bytes garbage/123`), or whose `START` exceeds its `END` (e.g.
+///   `bytes 5-2/123`) — this function validates the whole header shape,
+///   not just the `TOTAL` it returns, precisely so a misbehaving host
+///   can't feed a size through a malformed range part; a caller trusting
+///   `TOTAL` alone without checking `START`/`END` at all would have let it;
+/// - anything else that doesn't parse as `bytes <range>/<total>`, or whose
+///   `TOTAL` digits don't fit a `u64`;
 /// - a `TOTAL` of exactly `0` — same invariant [`classify_head_response`]
 ///   enforces on the HEAD path ("0 is never passed onward as a real
 ///   size"): a zero-length remote zip is bogus input regardless of which
@@ -537,6 +543,12 @@ pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
     }
     let (range, total) = range.split_once('/')?;
     if range.trim() == "*" {
+        return None;
+    }
+    let (start, end) = range.split_once('-')?;
+    let start: u64 = start.trim().parse().ok()?;
+    let end: u64 = end.trim().parse().ok()?;
+    if start > end {
         return None;
     }
     match total.trim() {
@@ -691,6 +703,13 @@ mod tests {
         // path (fix round 3: this exact shape reached `discover_size` and
         // set `file_size = Some(0)` before this filter existed).
         assert_eq!(parse_content_range_total("bytes 0-0/0"), None);
+        // A malformed START-END part must not let a misbehaving host feed
+        // a size through the total anyway (fix round 4: this used to
+        // return `Some(123)`, trusting the total while never validating
+        // the range part the doc comment claimed was checked).
+        assert_eq!(parse_content_range_total("bytes garbage/123"), None);
+        // Inverted START > END is not a real range either.
+        assert_eq!(parse_content_range_total("bytes 5-2/123"), None);
     }
 
     #[test]
