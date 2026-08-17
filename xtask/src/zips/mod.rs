@@ -42,6 +42,7 @@ use anyhow::Context as _;
 use chrono::Utc;
 
 use crate::api::model::{FileRecord, normalize_dir};
+use crate::lslar::{ArchiveTree, parse_ls_lar_gz};
 use crate::schema::{self, FetchStatus, LedgerEntry, LedgerKind, WadRecord, ZipsManifest};
 use crate::zips::inspect::{FetchFailure, InspectError, Inspection, RangeSource};
 use crate::zips::range_reader::{
@@ -119,9 +120,31 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     let limit_usize = limit.map(|l| usize::try_from(l).unwrap_or(usize::MAX));
     let entries = worklist(phase1_records, root, limit_usize);
 
+    // #441: the §5.0 ls-laR listing is the mirror's own account of what it
+    // serves, and the 2026-08-17 full harvest proved the Phase-1 API
+    // `size` stale for ~7% of entries — every one of them then failed the
+    // Content-Range integrity guard below (`MirrorRanges::new`'s
+    // `expected_size`) because the guard was right and its input was
+    // wrong. Phase 1 unconditionally maintains this cache (mirror.rs), so
+    // its absence here means a damaged data dir, not a legitimate
+    // first-run state — never silently fall back to API-size-only for the
+    // whole run.
+    let lslar_path = cache_dir.join("ls-laR.gz");
+    let Ok(lslar_bytes) = std::fs::read(&lslar_path) else {
+        anyhow::bail!(
+            "no cached ls-laR listing at {} — run `just harvest-api` first",
+            lslar_path.display()
+        );
+    };
+    let tree = parse_ls_lar_gz(&lslar_bytes)
+        .with_context(|| format!("parsing {}", lslar_path.display()))?;
+
     let client = crate::mirror::build_zips_http()?;
     let make_source = move |rec: &FileRecord, counters: Arc<TransferCounters>| -> LiveSource {
-        match MirrorRanges::new(client.clone(), &rec.dir, &rec.filename, rec.size, counters) {
+        // #441: pass the listing's size, not the Phase-1 API's — see
+        // `expected_size`'s doc comment.
+        let expected = expected_size(&tree, rec);
+        match MirrorRanges::new(client.clone(), &rec.dir, &rec.filename, expected, counters) {
             Ok(mirrors) => LiveSource::Mirror(Box::new(mirrors)),
             Err(e) => LiveSource::UrlError(e.to_string()),
         }
@@ -227,6 +250,22 @@ fn worklist(
         records.truncate(limit);
     }
     records
+}
+
+/// The size to hand [`MirrorRanges::new`] as the Content-Range integrity
+/// guard's expected total (§5.2): the §5.0 ls-laR listing's own size for
+/// `rec`'s `(dir, filename)` when the listing has an entry for it, falling
+/// back to the Phase-1 API's `size` only on a join miss (e.g. an entry
+/// added to the archive between the listing snapshot and the API walk —
+/// §5.5 "record, don't skip", not a reason to fail the entry outright).
+///
+/// #441: the listing is the mirror's own account of what it serves; the
+/// API `size` is a separately-maintained field that the 2026-08-17 full
+/// harvest proved stale for ~7% of entries — every one of which then
+/// failed the very guard this value feeds, because the guard was right and
+/// its input (the API size) was wrong.
+fn expected_size(tree: &ArchiveTree, rec: &FileRecord) -> u64 {
+    tree.size_of(&rec.dir, &rec.filename).unwrap_or(rec.size)
 }
 
 /// §5.6 record for a non-`.zip` entry — no mirror contact (§5.5).
@@ -994,6 +1033,34 @@ mod tests {
         assert_eq!(scoped.iter().map(|r| r.id).collect::<Vec<_>>(), vec![3, 5]);
         let limited = worklist(records, None, Some(2));
         assert_eq!(limited.iter().map(|r| r.id).collect::<Vec<_>>(), vec![3, 5]);
+    }
+
+    /// #441: a listing join hit is authoritative even when it disagrees
+    /// with the Phase-1 API's `size` — that disagreement is exactly the
+    /// case the fix exists for.
+    #[test]
+    fn expected_size_prefers_the_listing_over_a_disagreeing_api_size() {
+        let mut tree = crate::lslar::ArchiveTree::default();
+        tree.dirs.insert(
+            "levels/doom/0-9/".into(),
+            vec![crate::lslar::TreeFile {
+                name: "a.zip".into(),
+                size: 555,
+            }],
+        );
+        let entry = rec(3, "levels/doom/0-9/", "a.zip", 10);
+        assert_eq!(expected_size(&tree, &entry), 555);
+    }
+
+    /// #441: a join miss (no `(dir, filename)` entry in the listing — e.g.
+    /// added to the archive between the listing snapshot and the API walk,
+    /// §5.5) falls back to the Phase-1 API's `size` rather than failing
+    /// the entry outright.
+    #[test]
+    fn expected_size_falls_back_to_the_api_size_on_a_join_miss() {
+        let tree = crate::lslar::ArchiveTree::default();
+        let entry = rec(3, "levels/doom/0-9/", "a.zip", 10);
+        assert_eq!(expected_size(&tree, &entry), 10);
     }
 
     #[test]
