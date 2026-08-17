@@ -1,4 +1,1424 @@
 //! Phase-3 statistics (DESIGN.md §6). Pure functions over local harvest
 //! outputs — no network.
+//!
+//! `xtask stats` loads Phase 1/2's outputs (`idgames-wads.jsonl`,
+//! `harvest-manifest.json`, `wads-manifest.json`, `harvest-errors.jsonl`),
+//! the cached ls-laR.gz mirror listing, and the optional §6.4 outliers
+//! supplement, builds the §6 populations, computes every statistic, and
+//! emits `data/stats.json` plus `data/sweep-corpus.jsonl` (§6.5). The
+//! human-readable `stats-report.md` is a later task (#407 task 7).
+//!
+//! `build_stats` and its classifiers ([`top_bucket`], [`year_of`]) are pure
+//! and unit-tested without touching a filesystem; [`run`]/[`run_with_paths`]
+//! do the surrounding I/O. Per §9.3/§7, nothing in this module's output ever
+//! reads a wall clock — every provenance fact traces back to an input
+//! manifest's `id`, [`crate::mirror::LsLarMeta`], or this run's own
+//! `tool_version`/`git_rev`.
 
 pub mod percentiles;
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use anyhow::Context as _;
+
+use crate::lslar::{ArchiveTree, parse_ls_lar_gz};
+use crate::mirror::LsLarMeta;
+use crate::schema::{
+    ApiDelta, Coverage, Distribution, EntryStats, FetchStatus, HistogramBucket, IdgamesStats,
+    LedgerEntry, OutlierRecord, OutlierSkip, OutlierSummary, OutliersStats, RatioDistribution,
+    RatioStats, SizeStats, StatsJson, StatsProvenance, WadRecord, WeightedDistribution,
+    ZipSizeStats, git_rev, read_ledger, read_manifest, read_outliers_jsonl, read_outliers_manifest,
+    read_wads_jsonl, read_zips_manifest, sweep_entries, tool_version, write_stats_json,
+    write_sweep_jsonl,
+};
+
+/// Every filesystem path `xtask stats` reads or writes. Input paths (all but
+/// `out_dir`) are already scoped by [`crate::phase1::output_dir`], except
+/// `lslar_gz`/`lslar_meta`, which are mode-independent — the mirror cache
+/// under `data/cache` is shared by every run, scoped or not.
+pub struct StatsPaths {
+    /// Phase-2 `idgames-wads.jsonl`.
+    pub wads_jsonl: PathBuf,
+    /// Phase-2 `wads-manifest.json`.
+    pub zips_manifest: PathBuf,
+    /// Phase-1 `harvest-manifest.json`.
+    pub phase1_manifest: PathBuf,
+    /// Phase-1 `harvest-errors.jsonl`.
+    pub phase1_ledger: PathBuf,
+    /// Cached `ls-laR.gz` mirror listing (§5.0).
+    pub lslar_gz: PathBuf,
+    /// Sidecar metadata for `lslar_gz`.
+    pub lslar_meta: PathBuf,
+    /// §6.4 `outliers-wads.jsonl`, when `xtask harvest-outliers` has run.
+    pub outliers_jsonl: PathBuf,
+    /// §6.4 `outliers-manifest.json`.
+    pub outliers_manifest: PathBuf,
+    /// Where `stats.json`/`sweep-corpus.jsonl` are written.
+    pub out_dir: PathBuf,
+}
+
+/// Run `xtask stats`. `root`/`limit` are the §4.6 dev flags: when either is
+/// set, both input and output move to `data/dev/` — the same "scoped"
+/// convention Phase 1/2/outliers use — except the ls-laR cache, which is
+/// always read from `data/cache` regardless of scope.
+///
+/// # Errors
+/// See [`run_with_paths`].
+pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
+    let scoped = root.is_some() || limit.is_some();
+    let out_dir = crate::phase1::output_dir(scoped);
+    let cache_dir = crate::phase1::data_root().join("cache");
+    let paths = StatsPaths {
+        wads_jsonl: out_dir.join("idgames-wads.jsonl"),
+        zips_manifest: out_dir.join("wads-manifest.json"),
+        phase1_manifest: out_dir.join("harvest-manifest.json"),
+        phase1_ledger: out_dir.join("harvest-errors.jsonl"),
+        lslar_gz: cache_dir.join("ls-laR.gz"),
+        lslar_meta: cache_dir.join("ls-laR.meta.json"),
+        outliers_jsonl: out_dir.join("outliers-wads.jsonl"),
+        outliers_manifest: out_dir.join("outliers-manifest.json"),
+        out_dir,
+    };
+    run_with_paths(&paths, root, limit)
+}
+
+/// The testable core of [`run`]: everything after path assembly.
+///
+/// # Errors
+/// A required input is missing (`idgames-wads.jsonl`/`wads-manifest.json` →
+/// "run `just harvest-zips` first"; `harvest-manifest.json`/`ls-laR.gz`/
+/// `ls-laR.meta.json` → "run `just harvest-api` first"), the outliers pair
+/// is half-present (one of `outliers-wads.jsonl`/`outliers-manifest.json`
+/// exists without the other), a `WadRecord`'s `dir`/`filename` can't be
+/// turned into a sweep-corpus URL, or an environmental failure (directory
+/// creation, output writes).
+pub fn run_with_paths(
+    paths: &StatsPaths,
+    root: Option<&str>,
+    limit: Option<usize>,
+) -> anyhow::Result<()> {
+    let Some(records) = read_wads_jsonl(&paths.wads_jsonl) else {
+        anyhow::bail!(
+            "no idgames-wads.jsonl at {} — run `just harvest-zips` first",
+            paths.wads_jsonl.display()
+        );
+    };
+    let Some(zips_manifest) = read_zips_manifest(&paths.zips_manifest) else {
+        anyhow::bail!(
+            "no wads-manifest.json at {} — run `just harvest-zips` first",
+            paths.zips_manifest.display()
+        );
+    };
+    let Some(phase1_manifest) = read_manifest(&paths.phase1_manifest) else {
+        anyhow::bail!(
+            "no harvest-manifest.json at {} — run `just harvest-api` first",
+            paths.phase1_manifest.display()
+        );
+    };
+    let Ok(lslar_bytes) = std::fs::read(&paths.lslar_gz) else {
+        anyhow::bail!(
+            "no ls-laR.gz cache at {} — run `just harvest-api` first",
+            paths.lslar_gz.display()
+        );
+    };
+    let tree = parse_ls_lar_gz(&lslar_bytes)
+        .with_context(|| format!("parsing {}", paths.lslar_gz.display()))?;
+    let Ok(lslar_meta_bytes) = std::fs::read(&paths.lslar_meta) else {
+        anyhow::bail!(
+            "no ls-laR.meta.json at {} — run `just harvest-api` first",
+            paths.lslar_meta.display()
+        );
+    };
+    let lslar_meta: LsLarMeta = serde_json::from_slice(&lslar_meta_bytes)
+        .with_context(|| format!("parsing {}", paths.lslar_meta.display()))?;
+
+    let outliers = match (
+        read_outliers_jsonl(&paths.outliers_jsonl),
+        read_outliers_manifest(&paths.outliers_manifest),
+    ) {
+        (Some(records), Some(manifest)) => Some((records, manifest)),
+        (None, None) => None,
+        _ => anyhow::bail!(
+            "inconsistent outliers state: exactly one of {} / {} exists — \
+             run `just harvest-outliers` to regenerate both",
+            paths.outliers_jsonl.display(),
+            paths.outliers_manifest.display()
+        ),
+    };
+
+    let ledger = read_ledger(&paths.phase1_ledger).unwrap_or_default();
+    let filtered = filtered_records(records, root, limit);
+
+    let provenance = StatsProvenance {
+        phase1_manifest: phase1_manifest.id,
+        phase2_manifest: zips_manifest.id,
+        outliers_manifest: outliers.as_ref().map(|(_, m)| m.id.clone()),
+        bootstrap_mirror: lslar_meta.mirror,
+        bootstrap_last_modified: lslar_meta.last_modified,
+        tool_version: tool_version(),
+        git_rev: git_rev(),
+    };
+    let outlier_records = outliers.as_ref().map(|(records, _)| records.as_slice());
+    let stats = build_stats(&filtered, &ledger, &tree, outlier_records, provenance);
+
+    std::fs::create_dir_all(&paths.out_dir)
+        .with_context(|| format!("creating {}", paths.out_dir.display()))?;
+    write_stats_json(&paths.out_dir.join("stats.json"), &stats)?;
+
+    let sweep = sweep_entries(&filtered).context(
+        "building sweep-corpus entries: a phase-2 record's dir/filename could not be \
+         turned into a mirror URL",
+    )?;
+    write_sweep_jsonl(&paths.out_dir.join("sweep-corpus.jsonl"), &sweep)?;
+
+    tracing::info!(
+        population_entries = stats.idgames.coverage.population_entries,
+        population_wads = stats.idgames.coverage.population_wads,
+        sweep_entries = sweep.len(),
+        "stats complete"
+    );
+    tracing::info!("stats-report.md pending (#407 task 7)");
+    Ok(())
+}
+
+/// `--root`/`--limit` scoping over the loaded `idgames-wads.jsonl` records:
+/// filter by `dir` prefix, sort by `id`, then truncate to the first `N`.
+fn filtered_records(
+    records: Vec<WadRecord>,
+    root: Option<&str>,
+    limit: Option<usize>,
+) -> Vec<WadRecord> {
+    let mut records = match root {
+        Some(root) => {
+            let prefix = crate::api::model::normalize_dir(root);
+            records
+                .into_iter()
+                .filter(|r| r.dir.starts_with(&prefix))
+                .collect()
+        }
+        None => records,
+    };
+    records.sort_by_key(|r| r.id);
+    if let Some(limit) = limit {
+        records.truncate(limit);
+    }
+    records
+}
+
+/// Pure §6 aggregation: build every statistic from already-loaded records.
+/// `records` is the idgames population source (already `--root`/`--limit`
+/// scoped by the caller); `ledger` is the Phase-1 failure ledger; `tree` is
+/// the parsed ls-laR listing; `outliers` is `Some` only when both §6.4
+/// outlier files are present.
+pub(crate) fn build_stats(
+    records: &[WadRecord],
+    ledger: &[LedgerEntry],
+    tree: &ArchiveTree,
+    outliers: Option<&[OutlierRecord]>,
+    provenance: StatsProvenance,
+) -> StatsJson {
+    StatsJson {
+        schema_version: crate::schema::STATS_SCHEMA_VERSION,
+        provenance,
+        idgames: build_idgames_stats(records, ledger, tree),
+        outliers: outliers.map(build_outliers_stats),
+        recommendations: Vec::new(),
+    }
+}
+
+/// §6 "unit of analysis is one `.wad`" population: records whose
+/// `fetch_status` is a successful, sized outcome. `NotZip`/`FetchError`/
+/// `Mirror404All`/`NoRangeSupport`/`ZipParseError` all carry no reliable
+/// `.wad` size data and are excluded (but still counted in
+/// [`Coverage::status_counts`]).
+fn population(records: &[WadRecord]) -> Vec<&WadRecord> {
+    records
+        .iter()
+        .filter(|r| matches!(r.fetch_status, FetchStatus::Ok | FetchStatus::FullDownload))
+        .collect()
+}
+
+fn build_idgames_stats(
+    records: &[WadRecord],
+    ledger: &[LedgerEntry],
+    tree: &ArchiveTree,
+) -> IdgamesStats {
+    let population = population(records);
+    let (zip_size_listing, listing_misses) = zip_size_stats(&population, tree);
+    let wad_uncompressed = wad_uncompressed_size_stats(&population);
+    let entries = entry_stats(&population);
+
+    let population_entries = u64::try_from(population.len()).unwrap_or(u64::MAX);
+    let population_wads = population
+        .iter()
+        .map(|r| u64::try_from(r.wads.len()).unwrap_or(u64::MAX))
+        .sum();
+
+    let coverage = Coverage {
+        phase1_files: u64::try_from(records.len()).unwrap_or(u64::MAX),
+        status_counts: status_counts(records),
+        ledger_kinds: ledger_kind_counts(ledger),
+        listing_misses,
+        population_entries,
+        population_wads,
+    };
+
+    IdgamesStats {
+        coverage,
+        wad_uncompressed,
+        zip_size_listing,
+        entries,
+    }
+}
+
+/// §6.1/§6.2: `wads[].uncompressed` core distribution, histogram,
+/// vote-weighted variant, and bucket/year segmentations — over every `.wad`
+/// member of every population entry (flattened; "unit of analysis is one
+/// `.wad`").
+fn wad_uncompressed_size_stats(population: &[&WadRecord]) -> SizeStats {
+    let mut sizes: Vec<u64> = population
+        .iter()
+        .flat_map(|r| r.wads.iter().map(|w| w.uncompressed))
+        .collect();
+    sizes.sort_unstable();
+    let core = Distribution::from_sorted(&sizes);
+    let histogram = histogram_buckets(&sizes);
+
+    let mut weighted_pairs: Vec<(u64, u64)> = Vec::new();
+    let mut zero_vote_entries_excluded = 0_u64;
+    for record in population {
+        for wad in &record.wads {
+            if record.votes == 0 {
+                zero_vote_entries_excluded += 1;
+            } else {
+                weighted_pairs.push((wad.uncompressed, record.votes));
+            }
+        }
+    }
+    weighted_pairs.sort_unstable_by_key(|&(value, _)| value);
+    let weighted = WeightedDistribution::from_pairs(&weighted_pairs, zero_vote_entries_excluded);
+
+    let mut by_bucket: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    let mut by_year: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+    for record in population {
+        let bucket = top_bucket(&record.dir);
+        let year = year_of(&record.date);
+        for wad in &record.wads {
+            by_bucket
+                .entry(bucket.clone())
+                .or_default()
+                .push(wad.uncompressed);
+            by_year
+                .entry(year.clone())
+                .or_default()
+                .push(wad.uncompressed);
+        }
+    }
+    let by_bucket = segment_distributions(by_bucket);
+    let by_year = segment_distributions(by_year);
+
+    SizeStats {
+        core,
+        histogram,
+        weighted,
+        by_bucket,
+        by_year,
+    }
+}
+
+/// Sort each segment's values and reduce it to a [`Distribution`].
+fn segment_distributions(segments: BTreeMap<String, Vec<u64>>) -> BTreeMap<String, Distribution> {
+    segments
+        .into_iter()
+        .map(|(key, mut values)| {
+            values.sort_unstable();
+            (key, Distribution::from_sorted(&values))
+        })
+        .collect()
+}
+
+/// §6.3/§8.1 zip-size population and the §5.0 API-vs-listing delta (§6.3):
+/// over WAD-bearing population entries only. A ls-laR join hit uses the
+/// listing size (and feeds `ApiDelta`); a miss falls back to the API
+/// `zip_size` and increments the returned miss count
+/// ([`Coverage::listing_misses`]).
+fn zip_size_stats(population: &[&WadRecord], tree: &ArchiveTree) -> (ZipSizeStats, u64) {
+    let mut sizes: Vec<u64> = Vec::new();
+    let mut deltas: Vec<u64> = Vec::new();
+    let mut entries_compared = 0_u64;
+    let mut mismatched = 0_u64;
+    let mut max_relative = 0.0_f64;
+    let mut listing_misses = 0_u64;
+
+    for record in population.iter().filter(|r| !r.wads.is_empty()) {
+        if let Some(listing) = tree.size_of(&record.dir, &record.filename) {
+            sizes.push(listing);
+            entries_compared += 1;
+            if listing != record.zip_size {
+                mismatched += 1;
+                let delta = listing.abs_diff(record.zip_size);
+                deltas.push(delta);
+                if listing > 0 {
+                    max_relative = max_relative.max(ratio_f64(delta, listing));
+                }
+            }
+        } else {
+            sizes.push(record.zip_size);
+            listing_misses += 1;
+        }
+    }
+    sizes.sort_unstable();
+    deltas.sort_unstable();
+
+    let core = Distribution::from_sorted(&sizes);
+    let histogram = histogram_buckets(&sizes);
+    let api_delta = ApiDelta {
+        entries_compared,
+        mismatched,
+        max_abs_delta: deltas.last().copied().unwrap_or(0),
+        p50_abs_delta: percentiles::nearest_rank(&deltas, percentiles::P50),
+        p99_abs_delta: percentiles::nearest_rank(&deltas, percentiles::P99),
+        max_relative,
+    };
+
+    (
+        ZipSizeStats {
+            core,
+            histogram,
+            api_delta,
+        },
+        listing_misses,
+    )
+}
+
+/// §6.3 decision-driving entry-level counts and distributions.
+fn entry_stats(population: &[&WadRecord]) -> EntryStats {
+    let zip_entries = u64::try_from(population.len()).unwrap_or(u64::MAX);
+    let zero_wad =
+        u64::try_from(population.iter().filter(|r| r.wads.is_empty()).count()).unwrap_or(u64::MAX);
+    let multi_wad =
+        u64::try_from(population.iter().filter(|r| r.wads.len() > 1).count()).unwrap_or(u64::MAX);
+
+    let mut member_counts: Vec<u64> = population.iter().map(|r| r.member_count).collect();
+    member_counts.sort_unstable();
+    let member_count = Distribution::from_sorted(&member_counts);
+
+    let mut entry_totals: Vec<u64> = population
+        .iter()
+        .map(|r| r.wads.iter().map(|w| w.uncompressed).sum())
+        .collect();
+    entry_totals.sort_unstable();
+    let entry_wad_total_uncompressed = Distribution::from_sorted(&entry_totals);
+
+    let ratios = ratio_stats(population);
+
+    let mut methods: BTreeMap<String, u64> = BTreeMap::new();
+    let mut zip64_entries = 0_u64;
+    let mut encrypted_members = 0_u64;
+    let mut wad_named_other_members = 0_u64;
+    for record in population {
+        if record.zip64 {
+            zip64_entries += 1;
+        }
+        for wad in &record.wads {
+            *methods.entry(wad.method.clone()).or_insert(0) += 1;
+            if wad.encrypted {
+                encrypted_members += 1;
+            }
+        }
+        for name in &record.other_members {
+            if name.to_ascii_lowercase().ends_with(".wad") {
+                wad_named_other_members += 1;
+            }
+        }
+    }
+
+    EntryStats {
+        zip_entries,
+        zero_wad,
+        zero_wad_share: ratio_f64(zero_wad, zip_entries),
+        multi_wad,
+        multi_wad_share: ratio_f64(multi_wad, zip_entries),
+        member_count,
+        entry_wad_total_uncompressed,
+        ratios,
+        methods,
+        zip64_entries,
+        encrypted_members,
+        wad_named_other_members,
+    }
+}
+
+/// §6.3 compression-ratio populations. A member with `compressed == 0 &&
+/// uncompressed > 0` can't yield a ratio — it's counted in
+/// `zero_compressed_anomalies` and excluded from both the per-member
+/// (`deflate`-only) and per-entry (`Σ uncompressed / Σ compressed`, summed
+/// over the entry's *other* members) populations. An entry whose surviving
+/// members sum to `0` compressed bytes (no wads, or every member excluded)
+/// is likewise excluded from `per_entry` — there's nothing to divide by.
+fn ratio_stats(population: &[&WadRecord]) -> RatioStats {
+    let mut deflate_pairs: Vec<(u64, u64)> = Vec::new();
+    let mut per_entry_pairs: Vec<(u64, u64)> = Vec::new();
+    let mut zero_compressed_anomalies = 0_u64;
+
+    for record in population {
+        let mut entry_uncompressed = 0_u64;
+        let mut entry_compressed = 0_u64;
+        for wad in &record.wads {
+            if wad.compressed == 0 && wad.uncompressed > 0 {
+                zero_compressed_anomalies += 1;
+                continue;
+            }
+            if wad.method == "deflate" {
+                deflate_pairs.push((wad.uncompressed, wad.compressed));
+            }
+            entry_uncompressed += wad.uncompressed;
+            entry_compressed += wad.compressed;
+        }
+        if entry_compressed > 0 {
+            per_entry_pairs.push((entry_uncompressed, entry_compressed));
+        }
+    }
+
+    percentiles::sort_ratio_pairs(&mut deflate_pairs);
+    percentiles::sort_ratio_pairs(&mut per_entry_pairs);
+
+    RatioStats {
+        member_deflate: RatioDistribution::from_sorted_pairs(&deflate_pairs),
+        per_entry: RatioDistribution::from_sorted_pairs(&per_entry_pairs),
+        zero_compressed_anomalies,
+    }
+}
+
+/// §6.4 modern-outliers supplement: `Ok` records are analyzed, everything
+/// else is skipped (with its `fetch_status` recorded so the report can
+/// explain the gap). Both lists are sorted by `slug` for a deterministic
+/// `stats.json`.
+fn build_outliers_stats(records: &[OutlierRecord]) -> OutliersStats {
+    let mut analyzed_records: Vec<&OutlierRecord> = records
+        .iter()
+        .filter(|r| r.fetch_status == FetchStatus::Ok)
+        .collect();
+    analyzed_records.sort_by(|a, b| a.slug.cmp(&b.slug));
+    let mut skipped_records: Vec<&OutlierRecord> = records
+        .iter()
+        .filter(|r| r.fetch_status != FetchStatus::Ok)
+        .collect();
+    skipped_records.sort_by(|a, b| a.slug.cmp(&b.slug));
+
+    let analyzed: Vec<OutlierSummary> = analyzed_records
+        .iter()
+        .map(|record| OutlierSummary {
+            slug: record.slug.clone(),
+            zip_size: record.zip_size,
+            member_count: record.member_count,
+            wad_count: u64::try_from(record.wads.len()).unwrap_or(u64::MAX),
+            max_wad_uncompressed: record
+                .wads
+                .iter()
+                .map(|w| w.uncompressed)
+                .max()
+                .unwrap_or(0),
+            total_wad_uncompressed: record.wads.iter().map(|w| w.uncompressed).sum(),
+        })
+        .collect();
+    let skipped: Vec<OutlierSkip> = skipped_records
+        .iter()
+        .map(|record| OutlierSkip {
+            slug: record.slug.clone(),
+            fetch_status: wire_label(record.fetch_status),
+        })
+        .collect();
+
+    let mut wad_values: Vec<u64> = analyzed_records
+        .iter()
+        .flat_map(|r| r.wads.iter().map(|w| w.uncompressed))
+        .collect();
+    wad_values.sort_unstable();
+    let wad_uncompressed = Distribution::from_sorted(&wad_values);
+
+    let max_zip_size = analyzed.iter().map(|s| s.zip_size).max().unwrap_or(0);
+    let max_member_count = analyzed.iter().map(|s| s.member_count).max().unwrap_or(0);
+    let max_entry_total_uncompressed = analyzed
+        .iter()
+        .map(|s| s.total_wad_uncompressed)
+        .max()
+        .unwrap_or(0);
+
+    OutliersStats {
+        analyzed,
+        skipped,
+        wad_uncompressed,
+        max_zip_size,
+        max_member_count,
+        max_entry_total_uncompressed,
+    }
+}
+
+/// Record count per `fetch_status` wire value, over every loaded record
+/// (mirrors `zips::status_counts`'s convention — a separate copy, like
+/// `outliers::status_counts`, since both are private to their own module).
+fn status_counts(records: &[WadRecord]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for record in records {
+        *counts
+            .entry(wire_label(record.fetch_status))
+            .or_insert(0_u64) += 1;
+    }
+    counts
+}
+
+/// Phase-1 `harvest-errors.jsonl` entry count per [`crate::schema::LedgerKind`] wire value.
+fn ledger_kind_counts(ledger: &[LedgerEntry]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for entry in ledger {
+        let label = serde_json::to_value(entry.kind)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        *counts.entry(label).or_insert(0_u64) += 1;
+    }
+    counts
+}
+
+/// A `FetchStatus`'s `snake_case` wire value, as it serializes.
+fn wire_label(status: FetchStatus) -> String {
+    serde_json::to_value(status)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+fn histogram_buckets(sorted: &[u64]) -> Vec<HistogramBucket> {
+    percentiles::log2_histogram(sorted)
+        .into_iter()
+        .map(|(label, count)| HistogramBucket { label, count })
+        .collect()
+}
+
+/// `numerator / denominator` as `f64`, or `0.0` when `denominator` is `0`
+/// (an empty population has no share/ratio to report).
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "reporting a byte-count share/relative-delta as f64; corpus sizes are well within \
+              f64's exact integer range in practice, matching percentiles.rs's existing precedent"
+)]
+fn ratio_f64(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+impl Distribution {
+    /// Build a [`Distribution`] from an ascending-sorted `u64` slice
+    /// (§6.1). Empty input yields every field `0`/`0.0` — forwards
+    /// `percentiles::nearest_rank`/`mean_stddev`'s own empty-slice
+    /// conventions.
+    fn from_sorted(sorted: &[u64]) -> Distribution {
+        let (mean, stddev) = percentiles::mean_stddev(sorted);
+        Distribution {
+            n: u64::try_from(sorted.len()).unwrap_or(u64::MAX),
+            min: sorted.first().copied().unwrap_or(0),
+            p50: percentiles::nearest_rank(sorted, percentiles::P50),
+            p75: percentiles::nearest_rank(sorted, percentiles::P75),
+            p90: percentiles::nearest_rank(sorted, percentiles::P90),
+            p95: percentiles::nearest_rank(sorted, percentiles::P95),
+            p99: percentiles::nearest_rank(sorted, percentiles::P99),
+            p99_5: percentiles::nearest_rank(sorted, percentiles::P99_5),
+            p99_9: percentiles::nearest_rank(sorted, percentiles::P99_9),
+            max: sorted.last().copied().unwrap_or(0),
+            mean,
+            stddev,
+        }
+    }
+}
+
+impl WeightedDistribution {
+    /// Build a [`WeightedDistribution`] from `(value, weight)` pairs sorted
+    /// ascending by value (§6.2). `min`/`max`/`n` describe the value domain
+    /// (unweighted); percentiles/mean/stddev are vote-weighted.
+    fn from_pairs(sorted_pairs: &[(u64, u64)], zero_vote_entries_excluded: u64) -> Self {
+        let (mean, stddev) = percentiles::weighted_mean_stddev(sorted_pairs);
+        let min = sorted_pairs.first().map_or(0, |&(v, _)| v);
+        let max = sorted_pairs.last().map_or(0, |&(v, _)| v);
+        let total_votes: u64 = sorted_pairs.iter().map(|&(_, w)| w).sum();
+        let core = Distribution {
+            n: u64::try_from(sorted_pairs.len()).unwrap_or(u64::MAX),
+            min,
+            p50: percentiles::weighted_nearest_rank(sorted_pairs, percentiles::P50),
+            p75: percentiles::weighted_nearest_rank(sorted_pairs, percentiles::P75),
+            p90: percentiles::weighted_nearest_rank(sorted_pairs, percentiles::P90),
+            p95: percentiles::weighted_nearest_rank(sorted_pairs, percentiles::P95),
+            p99: percentiles::weighted_nearest_rank(sorted_pairs, percentiles::P99),
+            p99_5: percentiles::weighted_nearest_rank(sorted_pairs, percentiles::P99_5),
+            p99_9: percentiles::weighted_nearest_rank(sorted_pairs, percentiles::P99_9),
+            max,
+            mean,
+            stddev,
+        };
+        WeightedDistribution {
+            core,
+            total_votes,
+            zero_vote_entries_excluded,
+        }
+    }
+}
+
+impl RatioDistribution {
+    /// Build a [`RatioDistribution`] from `(uncompressed, compressed)` pairs
+    /// already ordered by [`percentiles::sort_ratio_pairs`]. Empty input
+    /// yields every field `0`/`0.0`.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "reporting a single (uncompressed, compressed) pair's ratio as f64, matching \
+                  percentiles::ratio_at's existing precedent"
+    )]
+    fn from_sorted_pairs(sorted: &[(u64, u64)]) -> Self {
+        let Some(&(min_u, min_c)) = sorted.first() else {
+            return RatioDistribution {
+                n: 0,
+                min: 0.0,
+                p50: 0.0,
+                p90: 0.0,
+                p99: 0.0,
+                max: 0.0,
+            };
+        };
+        let (max_u, max_c) = *sorted
+            .last()
+            .expect("first() succeeded, so last() does too");
+        RatioDistribution {
+            n: u64::try_from(sorted.len()).unwrap_or(u64::MAX),
+            min: min_u as f64 / min_c as f64,
+            p50: percentiles::ratio_at(sorted, percentiles::P50),
+            p90: percentiles::ratio_at(sorted, percentiles::P90),
+            p99: percentiles::ratio_at(sorted, percentiles::P99),
+            max: max_u as f64 / max_c as f64,
+        }
+    }
+}
+
+/// §6.2 top-level segmentation bucket for a `dir` such as
+/// `"levels/doom2/Ports/megawads/"`: `"levels/<game>"` normally, or
+/// `"levels/<game>/Ports"` when the path runs through a `Ports/` subtree
+/// (§4.2: "there is no top-level `ports/` — the per-game `levels/*/Ports/`
+/// subtrees"). Non-`levels` roots (`combos/`, `themes/x/`) collapse to
+/// their own top-level segment.
+pub(crate) fn top_bucket(dir: &str) -> String {
+    let segments: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+    let Some(&first) = segments.first() else {
+        return String::new();
+    };
+    if first != "levels" {
+        return first.to_owned();
+    }
+    match segments.as_slice() {
+        [levels, game, "Ports", ..] => format!("{levels}/{game}/Ports"),
+        [levels, game, ..] => format!("{levels}/{game}"),
+        _ => first.to_owned(),
+    }
+}
+
+/// §6.2 year segmentation: the `YYYY` prefix of a `date` field shaped
+/// `"YYYY-MM-DD"`. Anything that doesn't start with 4 ASCII digits followed
+/// by `-` (including an empty string) maps to `"unknown"` rather than
+/// panicking on a short slice.
+pub(crate) fn year_of(date: &str) -> String {
+    let bytes = date.as_bytes();
+    if bytes.len() >= 5 && bytes[..4].iter().all(u8::is_ascii_digit) && bytes[4] == b'-' {
+        date[..4].to_owned()
+    } else {
+        "unknown".to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{LedgerKind, OutliersManifest, WadMember};
+
+    fn wad_member(name: &str, compressed: u64, uncompressed: u64) -> WadMember {
+        WadMember {
+            name: name.into(),
+            compressed,
+            uncompressed,
+            method: "deflate".into(),
+            encrypted: false,
+        }
+    }
+
+    fn wad_record(id: u64, fetch_status: FetchStatus, wads: Vec<WadMember>) -> WadRecord {
+        WadRecord {
+            id,
+            dir: "levels/doom/0-9/".into(),
+            filename: format!("f{id}.zip"),
+            zip_size: 1_000,
+            date: "2019-04-02".into(),
+            rating: None,
+            votes: 0,
+            is_zip: true,
+            zip64: false,
+            member_count: u64::try_from(wads.len()).unwrap(),
+            wads,
+            other_members: Vec::new(),
+            mirror: "infania".into(),
+            fetch_status,
+        }
+    }
+
+    fn dummy_provenance() -> StatsProvenance {
+        StatsProvenance {
+            phase1_manifest: "harvest-1".into(),
+            phase2_manifest: "harvest-zips-1".into(),
+            outliers_manifest: None,
+            bootstrap_mirror: "infania".into(),
+            bootstrap_last_modified: None,
+            tool_version: "0.0.0".into(),
+            git_rev: None,
+        }
+    }
+
+    fn build_stats_fixture(records: &[WadRecord]) -> StatsJson {
+        build_stats(
+            records,
+            &[],
+            &ArchiveTree::default(),
+            None,
+            dummy_provenance(),
+        )
+    }
+
+    // ---- top_bucket / year_of ----
+
+    #[test]
+    fn bucket_and_year_rules() {
+        assert_eq!(
+            top_bucket("levels/doom2/Ports/megawads/"),
+            "levels/doom2/Ports"
+        );
+        assert_eq!(top_bucket("levels/doom2/a-c/"), "levels/doom2");
+        assert_eq!(top_bucket("combos/"), "combos");
+        assert_eq!(top_bucket("themes/x/"), "themes");
+        assert_eq!(year_of("2019-04-02"), "2019");
+        assert_eq!(year_of(""), "unknown");
+        assert_eq!(year_of("19-4-2"), "unknown");
+    }
+
+    #[test]
+    fn top_bucket_handles_bare_and_deep_levels_paths() {
+        // levels/<game> alone (no third segment) stays as-is.
+        assert_eq!(top_bucket("levels/hexen/"), "levels/hexen");
+        // levels/<game>/Ports with more depth still collapses to 3 segments.
+        assert_eq!(
+            top_bucket("levels/heretic/Ports/single/"),
+            "levels/heretic/Ports"
+        );
+    }
+
+    // ---- populations ----
+
+    #[test]
+    fn populations_respect_status_and_flags() {
+        let recs = vec![
+            wad_record(1, FetchStatus::Ok, vec![wad_member("A.WAD", 50, 100)]),
+            wad_record(
+                2,
+                FetchStatus::FullDownload,
+                vec![wad_member("B.WAD", 10, 200)],
+            ),
+            wad_record(3, FetchStatus::FetchError, vec![]),
+            {
+                let mut r = wad_record(4, FetchStatus::Ok, vec![]);
+                r.other_members = vec!["SNEAKY.WAD".into()];
+                r
+            },
+        ];
+        let stats = build_stats_fixture(&recs);
+        assert_eq!(stats.idgames.coverage.phase1_files, 4);
+        assert_eq!(stats.idgames.coverage.population_entries, 3); // ids 1, 2, 4
+        assert_eq!(stats.idgames.coverage.population_wads, 2);
+        assert_eq!(stats.idgames.entries.zip_entries, 3);
+        assert_eq!(stats.idgames.entries.zero_wad, 1);
+        assert_eq!(stats.idgames.entries.wad_named_other_members, 1);
+        assert_eq!(stats.idgames.wad_uncompressed.core.max, 200);
+        assert_eq!(
+            stats.idgames.coverage.status_counts.get("fetch_error"),
+            Some(&1)
+        );
+        assert_eq!(stats.idgames.coverage.status_counts.get("ok"), Some(&2));
+    }
+
+    #[test]
+    fn zero_and_multi_wad_shares() {
+        let recs = vec![
+            wad_record(1, FetchStatus::Ok, vec![]), // zero
+            wad_record(
+                2,
+                FetchStatus::Ok,
+                vec![wad_member("A.WAD", 1, 1), wad_member("B.WAD", 1, 1)],
+            ), // multi
+            wad_record(3, FetchStatus::Ok, vec![wad_member("C.WAD", 1, 1)]), // single
+            wad_record(4, FetchStatus::Ok, vec![]), // zero
+        ];
+        let stats = build_stats_fixture(&recs);
+        assert_eq!(stats.idgames.entries.zero_wad, 2);
+        assert!((stats.idgames.entries.zero_wad_share - 0.5).abs() < 1e-12);
+        assert_eq!(stats.idgames.entries.multi_wad, 1);
+        assert!((stats.idgames.entries.multi_wad_share - 0.25).abs() < 1e-12);
+    }
+
+    #[test]
+    fn entry_wad_total_uncompressed_sums_per_entry() {
+        let recs = vec![wad_record(
+            1,
+            FetchStatus::Ok,
+            vec![wad_member("A.WAD", 10, 100), wad_member("B.WAD", 10, 50)],
+        )];
+        let stats = build_stats_fixture(&recs);
+        assert_eq!(stats.idgames.entries.entry_wad_total_uncompressed.max, 150);
+        assert_eq!(stats.idgames.entries.entry_wad_total_uncompressed.n, 1);
+    }
+
+    #[test]
+    fn methods_zip64_and_encrypted_are_tallied() {
+        let mut r1 = wad_record(1, FetchStatus::Ok, vec![wad_member("A.WAD", 10, 100)]);
+        r1.zip64 = true;
+        let mut encrypted = wad_member("B.WAD", 10, 100);
+        encrypted.encrypted = true;
+        encrypted.method = "stored".into();
+        let r2 = wad_record(2, FetchStatus::Ok, vec![encrypted]);
+        let stats = build_stats_fixture(&[r1, r2]);
+        assert_eq!(stats.idgames.entries.zip64_entries, 1);
+        assert_eq!(stats.idgames.entries.encrypted_members, 1);
+        assert_eq!(stats.idgames.entries.methods.get("deflate"), Some(&1));
+        assert_eq!(stats.idgames.entries.methods.get("stored"), Some(&1));
+    }
+
+    // ---- ratios ----
+
+    #[test]
+    fn ratio_stats_deflate_only_and_per_entry_and_anomalies() {
+        // Entry 1: one deflate member (200/100 = 2.0) and one stored member
+        // (50/50 = 1.0) — member_deflate sees only the deflate member;
+        // per_entry sees the entry aggregate (250/150).
+        let mut stored = wad_member("B.WAD", 50, 50);
+        stored.method = "stored".into();
+        let r1 = wad_record(
+            1,
+            FetchStatus::Ok,
+            vec![wad_member("A.WAD", 100, 200), stored],
+        );
+        // Entry 2: one anomalous member (compressed 0, uncompressed > 0) —
+        // excluded from every ratio population and counted as an anomaly;
+        // the entry itself then has 0 total compressed bytes, so it's
+        // excluded from per_entry too.
+        let r2 = wad_record(2, FetchStatus::Ok, vec![wad_member("C.WAD", 0, 500)]);
+        let stats = build_stats_fixture(&[r1, r2]);
+
+        let ratios = &stats.idgames.entries.ratios;
+        assert_eq!(ratios.zero_compressed_anomalies, 1);
+        assert_eq!(ratios.member_deflate.n, 1);
+        assert!((ratios.member_deflate.max - 2.0).abs() < 1e-12);
+        assert_eq!(ratios.per_entry.n, 1);
+        assert!((ratios.per_entry.max - (250.0 / 150.0)).abs() < 1e-9);
+    }
+
+    // ---- weighted distribution ----
+
+    #[test]
+    fn weighted_distribution_shifts_toward_high_vote_and_excludes_zero_vote() {
+        let mut low = wad_record(1, FetchStatus::Ok, vec![wad_member("A.WAD", 1, 10)]);
+        low.votes = 1;
+        let mut mid = wad_record(2, FetchStatus::Ok, vec![wad_member("B.WAD", 1, 20)]);
+        mid.votes = 1;
+        let mut high = wad_record(3, FetchStatus::Ok, vec![wad_member("C.WAD", 1, 30)]);
+        high.votes = 98;
+        let mut zero = wad_record(4, FetchStatus::Ok, vec![wad_member("D.WAD", 1, 999)]);
+        zero.votes = 0;
+
+        let stats = build_stats_fixture(&[low, mid, high, zero]);
+        let weighted = &stats.idgames.wad_uncompressed.weighted;
+        assert_eq!(weighted.zero_vote_entries_excluded, 1);
+        assert_eq!(weighted.total_votes, 100);
+        assert_eq!(weighted.core.p50, 30); // weighted p50 shifts to the high-vote value
+        assert_eq!(stats.idgames.wad_uncompressed.core.p50, 20); // unweighted (999 excluded from neither — it's still in `core`)
+    }
+
+    // ---- segmentation ----
+
+    #[test]
+    fn size_stats_segments_by_bucket_and_year() {
+        let mut a = wad_record(1, FetchStatus::Ok, vec![wad_member("A.WAD", 1, 100)]);
+        a.dir = "levels/doom2/Ports/megawads/".into();
+        a.date = "2019-04-02".into();
+        let mut b = wad_record(2, FetchStatus::Ok, vec![wad_member("B.WAD", 1, 10)]);
+        b.dir = "levels/doom2/a-c/".into();
+        b.date = "2003-06-02".into();
+
+        let stats = build_stats_fixture(&[a, b]);
+        let by_bucket = &stats.idgames.wad_uncompressed.by_bucket;
+        assert_eq!(by_bucket["levels/doom2/Ports"].max, 100);
+        assert_eq!(by_bucket["levels/doom2"].max, 10);
+        let by_year = &stats.idgames.wad_uncompressed.by_year;
+        assert_eq!(by_year["2019"].max, 100);
+        assert_eq!(by_year["2003"].max, 10);
+    }
+
+    // ---- ls-laR join ----
+
+    #[test]
+    fn listing_join_prefers_lslar_and_counts_misses() {
+        let mut tree = ArchiveTree::default();
+        tree.dirs.insert(
+            "levels/doom/0-9/".into(),
+            vec![crate::lslar::TreeFile {
+                name: "f1.zip".into(),
+                size: 150,
+            }],
+        );
+        // f2.zip is deliberately absent from the tree's listing (join miss).
+
+        let mut hit = wad_record(1, FetchStatus::Ok, vec![wad_member("A.WAD", 1, 1)]);
+        hit.zip_size = 100; // API says 100; ls-laR says 150 → mismatch, delta 50
+        let mut miss = wad_record(2, FetchStatus::Ok, vec![wad_member("B.WAD", 1, 1)]);
+        miss.zip_size = 777; // no tree entry → falls back to this API size
+
+        let stats = build_stats(&[hit, miss], &[], &tree, None, dummy_provenance());
+
+        assert_eq!(stats.idgames.coverage.listing_misses, 1);
+        let delta = &stats.idgames.zip_size_listing.api_delta;
+        assert_eq!(delta.entries_compared, 1);
+        assert_eq!(delta.mismatched, 1);
+        assert_eq!(delta.max_abs_delta, 50);
+        assert_eq!(delta.p50_abs_delta, 50);
+        assert!((delta.max_relative - 50.0 / 150.0).abs() < 1e-12);
+        // Population uses 150 (the listing) for the hit, and 777 (the API
+        // fallback) for the miss.
+        assert_eq!(stats.idgames.zip_size_listing.core.max, 777);
+        assert_eq!(stats.idgames.zip_size_listing.core.min, 150);
+    }
+
+    #[test]
+    fn zip_size_population_excludes_zero_wad_entries() {
+        let mut tree = ArchiveTree::default();
+        tree.dirs.insert(
+            "levels/doom/0-9/".into(),
+            vec![crate::lslar::TreeFile {
+                name: "f1.zip".into(),
+                size: 999,
+            }],
+        );
+        let zero_wad = wad_record(1, FetchStatus::Ok, vec![]);
+        let stats = build_stats(&[zero_wad], &[], &tree, None, dummy_provenance());
+        assert_eq!(stats.idgames.zip_size_listing.core.n, 0);
+        assert_eq!(stats.idgames.coverage.listing_misses, 0);
+    }
+
+    // ---- ledger coverage ----
+
+    #[test]
+    fn ledger_kinds_are_tallied() {
+        let ledger = vec![
+            LedgerEntry {
+                path: "levels/a/".into(),
+                action: "getcontents".into(),
+                kind: LedgerKind::HttpError,
+                detail: "d".into(),
+                attempts: 1,
+            },
+            LedgerEntry {
+                path: "levels/b/".into(),
+                action: "getcontents".into(),
+                kind: LedgerKind::HttpError,
+                detail: "d".into(),
+                attempts: 1,
+            },
+            LedgerEntry {
+                path: "levels/c/".into(),
+                action: "getcontents".into(),
+                kind: LedgerKind::SuspectPath,
+                detail: "d".into(),
+                attempts: 1,
+            },
+        ];
+        let stats = build_stats(
+            &[],
+            &ledger,
+            &ArchiveTree::default(),
+            None,
+            dummy_provenance(),
+        );
+        assert_eq!(
+            stats.idgames.coverage.ledger_kinds.get("http_error"),
+            Some(&2)
+        );
+        assert_eq!(
+            stats.idgames.coverage.ledger_kinds.get("suspect_path"),
+            Some(&1)
+        );
+    }
+
+    // ---- outliers ----
+
+    fn outlier_record(slug: &str, status: FetchStatus, wads: Vec<WadMember>) -> OutlierRecord {
+        OutlierRecord {
+            slug: slug.into(),
+            url: format!("https://example.com/{slug}.zip"),
+            zip_size: 1_000_000,
+            zip64: false,
+            member_count: u64::try_from(wads.len()).unwrap(),
+            wads,
+            other_members: Vec::new(),
+            fetch_status: status,
+        }
+    }
+
+    #[test]
+    fn outliers_stats_analyzed_skipped_and_maxima() {
+        let recs = vec![
+            outlier_record(
+                "zeta",
+                FetchStatus::Ok,
+                vec![wad_member("A.WAD", 1, 500), wad_member("B.WAD", 1, 100)],
+            ),
+            outlier_record("alpha", FetchStatus::Ok, vec![wad_member("C.WAD", 1, 50)]),
+            outlier_record("skipped-one", FetchStatus::NoRangeSupport, vec![]),
+        ];
+        let stats = build_stats(
+            &[],
+            &[],
+            &ArchiveTree::default(),
+            Some(&recs),
+            dummy_provenance(),
+        );
+        let outliers = stats.outliers.expect("outliers present");
+        assert_eq!(
+            outliers
+                .analyzed
+                .iter()
+                .map(|s| s.slug.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "zeta"] // sorted by slug
+        );
+        assert_eq!(outliers.skipped.len(), 1);
+        assert_eq!(outliers.skipped[0].slug, "skipped-one");
+        assert_eq!(outliers.skipped[0].fetch_status, "no_range_support");
+        assert_eq!(outliers.max_zip_size, 1_000_000);
+        assert_eq!(outliers.max_member_count, 2);
+        assert_eq!(outliers.max_entry_total_uncompressed, 600); // zeta: 500+100
+        assert_eq!(outliers.wad_uncompressed.n, 3); // 2 from zeta + 1 from alpha
+        assert_eq!(outliers.wad_uncompressed.max, 500);
+    }
+
+    #[test]
+    fn outliers_none_when_absent_some_empty_when_present() {
+        // build_stats itself only sees the already-resolved Option: `None`
+        // for "no supplement", `Some(&[])` for "present but zero records".
+        // The absent-vs-empty file distinction lives in run_with_paths's
+        // I/O layer (see run_with_paths tests below).
+        let absent = build_stats(&[], &[], &ArchiveTree::default(), None, dummy_provenance());
+        assert!(absent.outliers.is_none());
+
+        let empty = build_stats(
+            &[],
+            &[],
+            &ArchiveTree::default(),
+            Some(&[]),
+            dummy_provenance(),
+        );
+        let outliers = empty
+            .outliers
+            .expect("Some(&[]) must still produce Some(OutliersStats)");
+        assert!(outliers.analyzed.is_empty());
+        assert!(outliers.skipped.is_empty());
+        assert_eq!(outliers.wad_uncompressed.n, 0);
+    }
+
+    // ---- run_with_paths I/O ----
+
+    /// A tiny gzipped ls-laR listing: one `.zip` in `levels/doom/0-9/`.
+    /// Matches the format `lslar.rs`'s own tests parse.
+    fn ls_lar_gz_fixture() -> Vec<u8> {
+        let text = "\
+.:
+total 1
+drwxr-xr-x 3 ftp ftp 4096 Jan  1  2020 levels
+
+./levels:
+total 1
+drwxr-xr-x 3 ftp ftp 4096 Jan  1  2020 doom
+
+./levels/doom:
+total 1
+drwxr-xr-x 2 ftp ftp 4096 Jan  1  2020 0-9
+
+./levels/doom/0-9:
+total 1
+-rw-r--r--  1 ftp ftp 500 Jan  1  2020 f1.zip
+";
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, text.as_bytes()).unwrap();
+        enc.finish().unwrap()
+    }
+
+    /// Write every required input under `dir`, returning the assembled
+    /// [`StatsPaths`]. `dir` doubles as both `out_dir` and the cache root's
+    /// parent, mirroring a real (unscoped) layout closely enough for a
+    /// self-contained fixture.
+    fn write_fixture_inputs(dir: &std::path::Path) -> StatsPaths {
+        std::fs::write(
+            dir.join("idgames-wads.jsonl"),
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&wad_record(
+                    1,
+                    FetchStatus::Ok,
+                    vec![wad_member("F1.WAD", 100, 500)]
+                ))
+                .unwrap(),
+                serde_json::to_string(&wad_record(
+                    2,
+                    FetchStatus::Ok,
+                    vec![wad_member("F2.WAD", 100, 500)]
+                ))
+                .unwrap()
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("wads-manifest.json"),
+            serde_json::to_string(&crate::schema::ZipsManifest {
+                id: "harvest-zips-1".into(),
+                started_at: "2026-08-16T00:00:00Z".into(),
+                duration_secs: 1,
+                tool_version: tool_version(),
+                git_rev: None,
+                scoped_root: None,
+                limit: None,
+                entries_total: 2,
+                records_written: 2,
+                ledger_count: 0,
+                cache_hits: 0,
+                live_entries: 2,
+                range_requests: 2,
+                bytes_transferred: 100,
+                full_downloads: 0,
+                fallback_bytes: 0,
+                zip64_entries: 0,
+                status_counts: BTreeMap::new(),
+                unaccounted_entries: 0,
+                aborted: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("harvest-manifest.json"),
+            serde_json::to_string(&crate::schema::HarvestManifest {
+                id: "harvest-1".into(),
+                started_at: "2026-08-16T00:00:00Z".into(),
+                duration_secs: 1,
+                api_version: 3,
+                tool_version: tool_version(),
+                git_rev: None,
+                bootstrap: "ls-lar-fresh:infania".into(),
+                roots: vec!["levels/".into()],
+                scoped_root: None,
+                limit: None,
+                dir_count: 1,
+                file_count: 2,
+                error_count: 0,
+                cache_hits: 0,
+                live_api_calls: 1,
+                max_file_id: Some(2),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.join("harvest-errors.jsonl"), "").unwrap();
+
+        let cache_dir = dir.join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::write(cache_dir.join("ls-laR.gz"), ls_lar_gz_fixture()).unwrap();
+        std::fs::write(
+            cache_dir.join("ls-laR.meta.json"),
+            serde_json::to_string(&LsLarMeta {
+                mirror: "infania".into(),
+                last_modified: Some("Wed, 12 Aug 2026 06:00:00 GMT".into()),
+                fetched_at: "2026-08-16T00:00:00Z".into(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        StatsPaths {
+            wads_jsonl: dir.join("idgames-wads.jsonl"),
+            zips_manifest: dir.join("wads-manifest.json"),
+            phase1_manifest: dir.join("harvest-manifest.json"),
+            phase1_ledger: dir.join("harvest-errors.jsonl"),
+            lslar_gz: cache_dir.join("ls-laR.gz"),
+            lslar_meta: cache_dir.join("ls-laR.meta.json"),
+            outliers_jsonl: dir.join("outliers-wads.jsonl"),
+            outliers_manifest: dir.join("outliers-manifest.json"),
+            out_dir: dir.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn run_with_paths_writes_stats_and_sweep_with_no_wall_clock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        run_with_paths(&paths, None, None).unwrap();
+
+        let stats_text = std::fs::read_to_string(tmp.path().join("stats.json")).unwrap();
+        assert!(stats_text.ends_with('\n'));
+        let stats: serde_json::Value = serde_json::from_str(&stats_text).unwrap();
+        assert_eq!(stats["schema_version"], 1);
+        assert_eq!(stats["provenance"]["phase1_manifest"], "harvest-1");
+        assert_eq!(stats["provenance"]["phase2_manifest"], "harvest-zips-1");
+        assert_eq!(stats["provenance"]["bootstrap_mirror"], "infania");
+        assert!(stats["outliers"].is_null());
+        // §9.3/§7: no wall-clock field anywhere in the document.
+        for key in ["started_at", "fetched_at", "duration_secs"] {
+            assert!(
+                !stats_text.contains(key),
+                "wall-clock-shaped key {key:?} found in stats.json"
+            );
+        }
+
+        let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
+        assert_eq!(sweep_text.lines().count(), 2);
+    }
+
+    #[test]
+    fn run_with_paths_root_and_limit_scope_both_stats_and_sweep() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        run_with_paths(&paths, None, Some(1)).unwrap();
+        let stats: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("stats.json")).unwrap())
+                .unwrap();
+        assert_eq!(stats["idgames"]["coverage"]["phase1_files"], 1);
+        let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
+        assert_eq!(sweep_text.lines().count(), 1);
+    }
+
+    #[test]
+    fn run_with_paths_missing_wads_jsonl_names_harvest_zips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        std::fs::remove_file(&paths.wads_jsonl).unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-zips"), "{err}");
+    }
+
+    #[test]
+    fn run_with_paths_missing_zips_manifest_names_harvest_zips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        std::fs::remove_file(&paths.zips_manifest).unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-zips"), "{err}");
+    }
+
+    #[test]
+    fn run_with_paths_missing_phase1_manifest_names_harvest_api() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        std::fs::remove_file(&paths.phase1_manifest).unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-api"), "{err}");
+    }
+
+    #[test]
+    fn run_with_paths_missing_lslar_gz_names_harvest_api() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        std::fs::remove_file(&paths.lslar_gz).unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-api"), "{err}");
+    }
+
+    #[test]
+    fn run_with_paths_missing_lslar_meta_names_harvest_api() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        std::fs::remove_file(&paths.lslar_meta).unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-api"), "{err}");
+    }
+
+    fn outliers_manifest_fixture() -> OutliersManifest {
+        OutliersManifest {
+            id: "harvest-outliers-1".into(),
+            started_at: "2026-08-16T00:00:00Z".into(),
+            duration_secs: 1,
+            tool_version: tool_version(),
+            git_rev: None,
+            limit: None,
+            entries_total: 0,
+            records_written: 0,
+            ledger_count: 0,
+            range_requests: 0,
+            bytes_transferred: 0,
+            status_counts: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn run_with_paths_absent_outliers_pair_yields_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        run_with_paths(&paths, None, None).unwrap();
+        let stats: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("stats.json")).unwrap())
+                .unwrap();
+        assert!(stats["outliers"].is_null());
+    }
+
+    #[test]
+    fn run_with_paths_empty_but_present_outliers_pair_yields_some() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        std::fs::write(&paths.outliers_jsonl, "").unwrap();
+        std::fs::write(
+            &paths.outliers_manifest,
+            serde_json::to_string(&outliers_manifest_fixture()).unwrap(),
+        )
+        .unwrap();
+        run_with_paths(&paths, None, None).unwrap();
+        let stats: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("stats.json")).unwrap())
+                .unwrap();
+        assert!(!stats["outliers"].is_null());
+        assert_eq!(stats["outliers"]["analyzed"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn run_with_paths_half_present_outliers_pair_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        // jsonl present, manifest absent.
+        std::fs::write(&paths.outliers_jsonl, "").unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-outliers"), "{err}");
+        assert!(err.contains("inconsistent outliers state"), "{err}");
+    }
+
+    #[test]
+    fn run_with_paths_half_present_outliers_pair_errors_other_direction() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        // manifest present, jsonl absent.
+        std::fs::write(
+            &paths.outliers_manifest,
+            serde_json::to_string(&outliers_manifest_fixture()).unwrap(),
+        )
+        .unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-outliers"), "{err}");
+    }
+}

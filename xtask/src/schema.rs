@@ -145,8 +145,6 @@ pub fn read_manifest(path: &Path) -> Option<HarvestManifest> {
 /// Read `harvest-errors.jsonl` — the phase-1 failure ledger (§4.7). `None`
 /// when the file is missing/unreadable; unparseable lines are skipped with
 /// a warning rather than failing the read, mirroring [`read_files_jsonl`].
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 pub fn read_ledger(path: &Path) -> Option<Vec<LedgerEntry>> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut entries = Vec::new();
@@ -317,8 +315,6 @@ pub fn write_wads_jsonl(path: &Path, records: Vec<WadRecord>) -> anyhow::Result<
 /// Read a previous run's `idgames-wads.jsonl` (§5.6). `None` when the file
 /// is missing/unreadable; unparseable lines are skipped with a warning
 /// rather than failing the read, mirroring [`read_files_jsonl`].
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 pub fn read_wads_jsonl(path: &Path) -> Option<Vec<WadRecord>> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut records = Vec::new();
@@ -415,8 +411,6 @@ pub fn write_zips_manifest(path: &Path, manifest: &ZipsManifest) -> anyhow::Resu
 }
 
 /// Read a previous run's phase-2 manifest, if present and parseable.
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 pub fn read_zips_manifest(path: &Path) -> Option<ZipsManifest> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
@@ -424,8 +418,6 @@ pub fn read_zips_manifest(path: &Path) -> Option<ZipsManifest> {
 /// One `.wad` member of a §6.5 sweep-corpus entry: name and declared
 /// uncompressed size only — no free text, per the ADR-0030 §3 allowlist
 /// (`sweep-corpus.jsonl` is one of the three files that rule binds).
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SweepWad {
     /// Member name, as recorded in [`WadRecord::wads`].
@@ -438,8 +430,6 @@ pub struct SweepWad {
 /// `CRUSTYWAD_SWEEP_DIR` and `cargo-fuzz` seeds. Only `id`, a mirror URL,
 /// and the expected `.wad` member names/sizes — the ADR-0030 §3
 /// free-text ban applies here too.
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SweepEntry {
     /// Archive file ID (Phase-1 `FileRecord::id`).
@@ -466,8 +456,6 @@ pub struct SweepEntry {
 /// [`crate::zips::range_reader::entry_url`] fails to build a URL for a
 /// record's `dir`/`filename` (a malformed name that escapes the mirror
 /// base).
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 pub fn sweep_entries(records: &[WadRecord]) -> anyhow::Result<Vec<SweepEntry>> {
     let mut out = Vec::new();
     for rec in records {
@@ -511,8 +499,6 @@ pub fn sweep_entries(records: &[WadRecord]) -> anyhow::Result<Vec<SweepEntry>> {
 ///
 /// # Errors
 /// Serialization or filesystem failure.
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 pub fn write_sweep_jsonl(path: &Path, entries: &[SweepEntry]) -> anyhow::Result<u64> {
     let mut out = String::new();
     for entry in entries {
@@ -576,8 +562,6 @@ pub fn write_outliers_jsonl(path: &Path, records: Vec<OutlierRecord>) -> anyhow:
 /// Read a previous run's `outliers-wads.jsonl` (§6.4). `None` when the file
 /// is missing/unreadable; unparseable lines are skipped with a warning
 /// rather than failing the read, mirroring [`read_wads_jsonl`].
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 pub fn read_outliers_jsonl(path: &Path) -> Option<Vec<OutlierRecord>> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut records = Vec::new();
@@ -639,10 +623,351 @@ pub fn write_outliers_manifest(path: &Path, manifest: &OutliersManifest) -> anyh
 }
 
 /// Read a previous run's outliers manifest, if present and parseable.
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 pub fn read_outliers_manifest(path: &Path) -> Option<OutliersManifest> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// Current `data/stats.json` shape. Bump on any breaking field change so a
+/// downstream consumer (report generator, regression diff) can detect it.
+pub const STATS_SCHEMA_VERSION: u32 = 1;
+
+/// `data/stats.json` (§6.5): the full Phase-3 statistics document. Owns no
+/// wall-clock field anywhere in its tree (§9.3/§7): every provenance fact
+/// is either an input manifest's `id`, [`crate::mirror::LsLarMeta`]'s
+/// `mirror`/`last_modified`, or this run's own `tool_version`/`git_rev` —
+/// so re-running against unchanged inputs is byte-identical.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatsJson {
+    /// [`STATS_SCHEMA_VERSION`] at write time.
+    pub schema_version: u32,
+    /// Traceability back to the harvest snapshot this document summarizes (§7).
+    pub provenance: StatsProvenance,
+    /// §6.1–§6.3 statistics over the idgames population.
+    pub idgames: IdgamesStats,
+    /// §6.4 curated modern-outliers supplement; `None` only when neither
+    /// `data/outliers-wads.jsonl` nor `data/outliers-manifest.json` exists
+    /// (`xtask harvest-outliers` was never run against this snapshot).
+    pub outliers: Option<OutliersStats>,
+    /// §8 constant recommendations; empty until the report generator (#407
+    /// task 7) fills it in.
+    pub recommendations: Vec<Recommendation>,
+}
+
+/// Run provenance for [`StatsJson`] (§7: "a statistics report that can't be
+/// traced to a specific archive snapshot is not defensible as the basis for
+/// a production constant").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatsProvenance {
+    /// [`HarvestManifest::id`] of the Phase-1 snapshot this run read.
+    pub phase1_manifest: String,
+    /// [`ZipsManifest::id`] of the Phase-2 snapshot this run read.
+    pub phase2_manifest: String,
+    /// [`OutliersManifest::id`], when the §6.4 supplement is present.
+    pub outliers_manifest: Option<String>,
+    /// [`crate::mirror::LsLarMeta::mirror`] — which mirror served the
+    /// cached ls-laR.gz bootstrap used for the §6.3 zip-size join.
+    pub bootstrap_mirror: String,
+    /// [`crate::mirror::LsLarMeta::last_modified`], verbatim.
+    pub bootstrap_last_modified: Option<String>,
+    /// `CARGO_PKG_VERSION` of xtask, for this stats run itself.
+    pub tool_version: String,
+    /// `git rev-parse --short HEAD`, when available, for this stats run itself.
+    pub git_rev: Option<String>,
+}
+
+/// One numeric population's core statistics (§6.1): nearest-rank
+/// percentiles over a sorted `u64` vector, plus mean/stddev. Empty input
+/// yields every field `0`/`0.0` (see `stats::Distribution::from_sorted`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Distribution {
+    /// Population size.
+    pub n: u64,
+    /// Minimum observed value.
+    pub min: u64,
+    /// 50th percentile (nearest-rank, §6.1).
+    pub p50: u64,
+    /// 75th percentile.
+    pub p75: u64,
+    /// 90th percentile.
+    pub p90: u64,
+    /// 95th percentile.
+    pub p95: u64,
+    /// 99th percentile.
+    pub p99: u64,
+    /// 99.5th percentile.
+    #[serde(rename = "p99.5")]
+    pub p99_5: u64,
+    /// 99.9th percentile.
+    #[serde(rename = "p99.9")]
+    pub p99_9: u64,
+    /// Maximum observed value.
+    pub max: u64,
+    /// Arithmetic mean.
+    pub mean: f64,
+    /// Population standard deviation.
+    pub stddev: f64,
+}
+
+/// A vote-weighted [`Distribution`] alongside the plain one it sits beside
+/// (§6.2: "report the unweighted version alongside so the skew is
+/// visible").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeightedDistribution {
+    /// Weighted percentiles/mean/stddev; `min`/`max`/`n` describe the
+    /// *value* domain of the weighted population (unweighted extremes and
+    /// count), not vote totals.
+    pub core: Distribution,
+    /// Sum of `votes` across every member the weighted population includes.
+    pub total_votes: u64,
+    /// Count of `.wad` members excluded because their parent record's
+    /// `votes` was `0` (a zero weight would be meaningless in a
+    /// vote-weighted percentile).
+    pub zero_vote_entries_excluded: u64,
+}
+
+/// One log2 histogram bucket (§6.1), the struct form of
+/// `stats::percentiles::log2_histogram`'s `(String, u64)` tuples.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistogramBucket {
+    /// `"0"` or `"2^k-2^(k+1)"` — see
+    /// [`crate::stats::percentiles::log2_histogram`].
+    pub label: String,
+    /// Count of values falling in this bucket.
+    pub count: u64,
+}
+
+/// A full §6.1/§6.2 size population: core distribution, its histogram, the
+/// vote-weighted variant, and the §6.2 bucket/year segmentations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SizeStats {
+    /// Unweighted [`Distribution`] over the population.
+    pub core: Distribution,
+    /// Log2 histogram over the same population.
+    pub histogram: Vec<HistogramBucket>,
+    /// Vote-weighted variant (§6.2).
+    pub weighted: WeightedDistribution,
+    /// Segmented by [`crate::stats::top_bucket`] (§6.2).
+    pub by_bucket: std::collections::BTreeMap<String, Distribution>,
+    /// Segmented by [`crate::stats::year_of`] (§6.2).
+    pub by_year: std::collections::BTreeMap<String, Distribution>,
+}
+
+/// How far the idgames API's `size` field (§5.0) disagrees with the ls-laR
+/// mirror listing, over WAD-bearing population entries where the join hit
+/// (§6.3: "a sanity check on how badly the API's `size` field would have
+/// misled this decision").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiDelta {
+    /// Entries where the ls-laR join found a listing to compare against.
+    pub entries_compared: u64,
+    /// Of those, entries where the listing size disagreed with the API size.
+    pub mismatched: u64,
+    /// Largest absolute byte delta among mismatches.
+    pub max_abs_delta: u64,
+    /// 50th percentile absolute byte delta among mismatches (nearest-rank).
+    pub p50_abs_delta: u64,
+    /// 99th percentile absolute byte delta among mismatches (nearest-rank).
+    pub p99_abs_delta: u64,
+    /// Largest `|delta| / listing` ratio among mismatches.
+    pub max_relative: f64,
+}
+
+/// Zip-size population (§6.3/§8.1: the wire cap bounds zip uploads, which
+/// are always WAD-bearing): listing size where the ls-laR join hits, API
+/// `size` on a miss, over WAD-bearing population entries only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZipSizeStats {
+    /// Core distribution over the resolved (listing-or-API) size.
+    pub core: Distribution,
+    /// Log2 histogram over the same population.
+    pub histogram: Vec<HistogramBucket>,
+    /// API-vs-listing agreement over the join hits (§5.0 guard, §6.3).
+    pub api_delta: ApiDelta,
+}
+
+/// A compression-ratio population's percentiles (§6.3): `uncompressed /
+/// compressed`, nearest-rank via `stats::percentiles::ratio_at`. Smaller
+/// field set than [`Distribution`] — no mean/stddev, no p75/p95/p99.5/p99.9
+/// (the ratio populations don't need that resolution).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RatioDistribution {
+    /// Population size.
+    pub n: u64,
+    /// Minimum ratio.
+    pub min: f64,
+    /// 50th percentile ratio.
+    pub p50: f64,
+    /// 90th percentile ratio.
+    pub p90: f64,
+    /// 99th percentile ratio.
+    pub p99: f64,
+    /// Maximum ratio.
+    pub max: f64,
+}
+
+/// §6.3 compression-ratio statistics: per-member (deflate-only — `stored`
+/// members carry no meaningful ratio) and per-entry (aggregate `Σ
+/// uncompressed / Σ compressed` across every member of the entry).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RatioStats {
+    /// Ratio distribution over individual `deflate`-method `.wad` members.
+    pub member_deflate: RatioDistribution,
+    /// Ratio distribution over per-entry `Σ uncompressed / Σ compressed`,
+    /// across every member of the entry regardless of method.
+    pub per_entry: RatioDistribution,
+    /// Count of `.wad` members with `compressed == 0 && uncompressed > 0` —
+    /// a ratio can't be computed, so these are excluded from both
+    /// populations above rather than reported as an infinite ratio.
+    pub zero_compressed_anomalies: u64,
+}
+
+/// §6.3 decision-driving entry-level counts and distributions, over the
+/// idgames population (`fetch_status` `Ok`/`FullDownload`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryStats {
+    /// Population size (equal to [`Coverage::population_entries`]).
+    pub zip_entries: u64,
+    /// Entries with no `.wad` member — the archive-support gap even a zip
+    /// path can't close (§6.3).
+    pub zero_wad: u64,
+    /// `zero_wad / zip_entries`, or `0.0` when the population is empty.
+    pub zero_wad_share: f64,
+    /// Entries with more than one `.wad` member — sizes the picker UX (§6.3/§8.3).
+    pub multi_wad: u64,
+    /// `multi_wad / zip_entries`, or `0.0` when the population is empty.
+    pub multi_wad_share: f64,
+    /// Distribution of [`WadRecord::member_count`] over the population.
+    pub member_count: Distribution,
+    /// Distribution of per-entry `Σ wads[].uncompressed` — the §8.3 "max
+    /// total declared uncompressed bytes per entry" source statistic.
+    pub entry_wad_total_uncompressed: Distribution,
+    /// §6.3 compression-ratio populations.
+    pub ratios: RatioStats,
+    /// `.wad` member count per [`WadMember::method`] label.
+    pub methods: std::collections::BTreeMap<String, u64>,
+    /// Population entries with `zip64: true` — confirms whether §5.3
+    /// handling was load-bearing (§6.3).
+    pub zip64_entries: u64,
+    /// `.wad` members with `encrypted: true`, across the population.
+    pub encrypted_members: u64,
+    /// `other_members` names (across the population) that end in `.wad`
+    /// case-insensitively — a diagnostic count of members that look
+    /// WAD-shaped but were never counted as one (see [`WadRecord::other_members`]).
+    pub wad_named_other_members: u64,
+}
+
+/// §6/coverage bookkeeping: how much of the Phase-1/Phase-2 output this run
+/// actually saw, and how the idgames population was carved out of it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Coverage {
+    /// `idgames-wads.jsonl` records loaded for this run (after `--root`/
+    /// `--limit` scoping), regardless of `fetch_status`.
+    pub phase1_files: u64,
+    /// Record count per `fetch_status` wire value, over every loaded record
+    /// (not just the population) — mirrors [`ZipsManifest::status_counts`]'s
+    /// convention.
+    pub status_counts: std::collections::BTreeMap<String, u64>,
+    /// Phase-1 `harvest-errors.jsonl` entry count per [`LedgerKind`] wire value.
+    pub ledger_kinds: std::collections::BTreeMap<String, u64>,
+    /// WAD-bearing population entries whose `(dir, filename)` was absent
+    /// from the ls-laR listing tree — the zip-size population fell back to
+    /// the API `size` for these.
+    pub listing_misses: u64,
+    /// Records with `fetch_status` `Ok`/`FullDownload` — the §6
+    /// "unit of analysis is one `.wad`" population's entry count.
+    pub population_entries: u64,
+    /// Total `.wad` members across `population_entries`.
+    pub population_wads: u64,
+}
+
+/// §6.1–§6.3 statistics over the idgames corpus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdgamesStats {
+    /// §6 population/coverage bookkeeping.
+    pub coverage: Coverage,
+    /// §6.1/§6.2: `wads[].uncompressed` core distribution, histogram,
+    /// vote-weighted variant, and bucket/year segmentations.
+    pub wad_uncompressed: SizeStats,
+    /// §6.3/§8.1: zip-size population (the wire-cap source statistic).
+    pub zip_size_listing: ZipSizeStats,
+    /// §6.3: decision-driving entry-level counts and distributions.
+    pub entries: EntryStats,
+}
+
+/// One analyzed §6.4 outlier: the same shape [`OutlierRecord`] carries,
+/// reduced to the numbers the report needs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutlierSummary {
+    /// [`OutlierRecord::slug`].
+    pub slug: String,
+    /// [`OutlierRecord::zip_size`].
+    pub zip_size: u64,
+    /// [`OutlierRecord::member_count`].
+    pub member_count: u64,
+    /// `wads.len()`.
+    pub wad_count: u64,
+    /// `max(wads[].uncompressed)`, `0` when `wad_count` is `0`.
+    pub max_wad_uncompressed: u64,
+    /// `Σ wads[].uncompressed`.
+    pub total_wad_uncompressed: u64,
+}
+
+/// One §6.4 outlier that could not be analyzed (`fetch_status` other than `Ok`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutlierSkip {
+    /// [`OutlierRecord::slug`].
+    pub slug: String,
+    /// [`FetchStatus`] wire value.
+    pub fetch_status: String,
+}
+
+/// §6.4 modern-outliers supplement, reported separately from the idgames
+/// population "so the bias stays visible".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutliersStats {
+    /// Successfully analyzed entries, sorted by slug.
+    pub analyzed: Vec<OutlierSummary>,
+    /// Entries that could not be analyzed, sorted by slug.
+    pub skipped: Vec<OutlierSkip>,
+    /// [`Distribution`] over every analyzed entry's `.wad` member
+    /// uncompressed sizes (flattened).
+    pub wad_uncompressed: Distribution,
+    /// `max(analyzed[].zip_size)`, `0` when `analyzed` is empty.
+    pub max_zip_size: u64,
+    /// `max(analyzed[].member_count)`, `0` when `analyzed` is empty.
+    pub max_member_count: u64,
+    /// `max(analyzed[].total_wad_uncompressed)`, `0` when `analyzed` is empty.
+    pub max_entry_total_uncompressed: u64,
+}
+
+/// One §8 constant recommendation. Empty (`recommendations: vec![]`) until
+/// the report generator (#407 task 7) fills it in — the field exists from
+/// day one so `stats.json`'s schema doesn't shift under Task 7.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Recommendation {
+    /// Which §8 constant this recommends a value for, e.g. `"wire_cap_zip_size"`.
+    pub key: String,
+    /// Human-readable recommended value (may carry units).
+    pub recommended: String,
+    /// The recommended value as a plain number, when it is one.
+    pub value: Option<u64>,
+    /// The statistic/formula the recommendation was derived from.
+    pub formula: String,
+    /// Which [`StatsJson`] field the `formula` reads.
+    pub source: String,
+}
+
+/// Write `data/stats.json` as pretty JSON with a trailing newline —
+/// mirrors [`write_manifest`]'s convention. Timestamp-free by construction
+/// (see [`StatsJson`]'s doc comment), so a rerun against unchanged inputs
+/// is byte-identical (§9.3).
+///
+/// # Errors
+/// Serialization or filesystem failure.
+pub fn write_stats_json(path: &Path, stats: &StatsJson) -> anyhow::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(stats).context("serializing stats.json")?;
+    bytes.push(b'\n');
+    atomic_write(path, &bytes).with_context(|| format!("writing {}", path.display()))
 }
 
 #[cfg(test)]

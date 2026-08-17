@@ -12,12 +12,9 @@ mod outliers;
 mod phase1;
 mod schema;
 mod scope;
-// consumed from Task 6 (#407)
-#[allow(dead_code)]
 mod stats;
 mod zips;
 
-use anyhow::bail;
 use clap::{Parser, Subcommand};
 
 /// idgames corpus harvest tool (`xtask/DESIGN.md`).
@@ -61,12 +58,8 @@ fn main() -> anyhow::Result<()> {
         Command::HarvestApi => phase1::run(cli.root.as_deref(), cli.limit),
         Command::HarvestZips => zips::run(cli.root.as_deref(), cli.limit),
         Command::HarvestOutliers => outliers::run(cli.root.as_deref(), cli.limit),
-        Command::Stats => stats(cli.root.as_deref(), cli.limit),
+        Command::Stats => stats::run(cli.root.as_deref(), cli.limit),
     }
-}
-
-fn stats(_root: Option<&str>, _limit: Option<usize>) -> anyhow::Result<()> {
-    bail!("`stats` is not implemented yet — phase 3 lands with #407")
 }
 
 #[cfg(test)]
@@ -119,12 +112,5 @@ mod tests {
         .unwrap();
         assert_eq!(cli.root.as_deref(), Some("levels/doom/a/"));
         assert_eq!(cli.limit, Some(5));
-    }
-
-    #[test]
-    fn stats_stub_reports_its_tracking_issue() {
-        let err = super::stats(None, None).unwrap_err().to_string();
-        assert!(err.contains("not implemented yet"), "{err}");
-        assert!(err.contains("#407"), "{err}");
     }
 }
