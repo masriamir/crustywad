@@ -101,7 +101,12 @@ impl ZipsStore {
     }
 
     /// Insert `record` under `dir_body_hash` and append it to the log,
-    /// flushed immediately so a subsequent crash cannot lose it.
+    /// written out immediately so a PROCESS crash cannot lose it (the
+    /// bytes are with the OS once `write_all` returns; `File` has no
+    /// user-space buffering). Power-loss durability (`sync_data`) is
+    /// deliberately NOT promised: this log is a regenerable cache, and a
+    /// per-record fsync across a ~21k-entry harvest would cost far more
+    /// than the rare post-outage rebuild it could save.
     ///
     /// # Errors
     /// Serialization or filesystem failure. The parent directory of `path`

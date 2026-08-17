@@ -166,7 +166,12 @@ impl Read for RangeReader<'_> {
             return Ok(0);
         }
         if let Some(n) = self.buf.read_at(self.pos, out) {
-            self.pos += u64::try_from(n).unwrap_or(u64::MAX);
+            // Saturate: the `unwrap_or(u64::MAX)` fallback is unreachable
+            // on 64-bit, but a wrapping `+=` there would corrupt the
+            // cursor; pinning EOF is the harmless failure mode.
+            self.pos = self
+                .pos
+                .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
             Ok(n)
         } else {
             let len = u64::try_from(out.len()).unwrap_or(u64::MAX);
