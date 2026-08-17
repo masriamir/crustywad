@@ -1,6 +1,7 @@
 //! Output record types and deterministic writers (DESIGN.md §4.7).
 //!
-//! Determinism contract (§9.3): `harvest-manifest.json` is the ONLY output
+//! Determinism contract (§9.3): the per-phase manifests
+//! (`harvest-manifest.json`, `wads-manifest.json`) are the only outputs
 //! carrying wall-clock timestamps. `idgames-files.jsonl`,
 //! `harvest-errors.jsonl`, and `idgames-wads.jsonl` are sorted and
 //! timestamp-free so a rerun against unchanged inputs is byte-identical.

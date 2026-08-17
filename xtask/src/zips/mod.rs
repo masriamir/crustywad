@@ -712,15 +712,26 @@ where
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
-            // Every live entry is spawned up front — the semaphore, not
-            // JoinSet occupancy, is what bounds real concurrency (§5.4:
-            // 4–8 connections). A task not yet holding a permit is cheap
-            // to cancel outright, so on an abort "stop spawning" is
-            // already satisfied by construction; only `abort_all` below
-            // is needed.
-            let mut join_set: tokio::task::JoinSet<(FileRecord, EntryOutcome, &'static str, bool)> =
-                tokio::task::JoinSet::new();
-            for entry in live {
+            // Bounded occupancy: at most MIRROR_CONCURRENCY tasks are ever
+            // in flight, each holding its own FileRecord + boxed
+            // MirrorRanges (two parsed Urls) + client clone + RNG, rather
+            // than every live entry (~21k on a full corpus) spawned up
+            // front. The semaphore still exists as the §5.4 connection
+            // bound; with spawning itself bounded to the same width the
+            // two are belt-and-braces, but keeping both keeps this diff
+            // small and the permit logic unchanged. `entries` is a cursor
+            // into `live` — `make_source` runs lazily at spawn time, not
+            // once for the whole worklist up front. On an abort the
+            // cursor simply stops advancing, so "stop spawning" is now
+            // literal rather than merely implied by permit starvation;
+            // `abort_all` below then only has ≤MIRROR_CONCURRENCY
+            // in-flight tasks to cancel.
+            type WorkerJoinSet =
+                tokio::task::JoinSet<(FileRecord, EntryOutcome, &'static str, bool)>;
+            let mut join_set: WorkerJoinSet = tokio::task::JoinSet::new();
+            let mut entries = live.into_iter();
+
+            let spawn_one = |join_set: &mut WorkerJoinSet, entry: FileRecord| {
                 let sem = Arc::clone(&semaphore);
                 let budget = Arc::clone(&budget);
                 let mut source = make_source(&entry, Arc::clone(&counters));
@@ -734,6 +745,10 @@ where
                     let mirror_key = source.mirror_key();
                     (entry, outcome, mirror_key, breaker_aborted)
                 });
+            };
+
+            for entry in entries.by_ref().take(MIRROR_CONCURRENCY) {
+                spawn_one(&mut join_set, entry);
             }
 
             while let Some(joined) = join_set.join_next().await {
@@ -776,14 +791,19 @@ where
                 if aborted.is_some() {
                     break;
                 }
+                if let Some(next_entry) = entries.next() {
+                    spawn_one(&mut join_set, next_entry);
+                }
             }
             bar.finish_and_clear();
             if aborted.is_some() {
-                // Stop spawning is already satisfied (everything was
-                // spawned up front); this cancels whatever hasn't
-                // finished. Those in-flight entries deliberately never
-                // get a record — the manifest's `aborted` reason is what
-                // tells that story.
+                // The cursor above has already stopped advancing (no
+                // entry is spawned once `aborted` is set), so "stop
+                // spawning" is now literal; this cancels whatever's still
+                // in flight — at most MIRROR_CONCURRENCY tasks, not the
+                // whole remaining worklist. Those in-flight entries
+                // deliberately never get a record — the manifest's
+                // `aborted` reason is what tells that story.
                 join_set.abort_all();
                 while join_set.join_next().await.is_some() {}
             }
