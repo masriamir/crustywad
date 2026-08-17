@@ -54,21 +54,35 @@ impl ZipsStore {
         // of recovering every prior well-formed line. Parsing per line via
         // `from_slice` confines any invalid UTF-8 to the line that carries
         // it, which lands in `skipped` like any other torn write.
-        if let Ok(bytes) = std::fs::read(&path) {
-            let mut skipped = 0_u64;
-            for line in bytes
-                .split(|b| *b == b'\n')
-                .filter(|l| !l.iter().all(u8::is_ascii_whitespace))
-            {
-                match serde_json::from_slice::<StoredZip>(line) {
-                    Ok(stored) => {
-                        entries.insert(stored.record.id, stored);
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let mut skipped = 0_u64;
+                for line in bytes
+                    .split(|b| *b == b'\n')
+                    .filter(|l| !l.iter().all(u8::is_ascii_whitespace))
+                {
+                    match serde_json::from_slice::<StoredZip>(line) {
+                        Ok(stored) => {
+                            entries.insert(stored.record.id, stored);
+                        }
+                        Err(_) => skipped += 1,
                     }
-                    Err(_) => skipped += 1,
+                }
+                if skipped > 0 {
+                    tracing::warn!(skipped, path = %path.display(), "skipped unparseable zips-log lines");
                 }
             }
-            if skipped > 0 {
-                tracing::warn!(skipped, path = %path.display(), "skipped unparseable zips-log lines");
+            // No log yet is the normal first-run state; any OTHER read
+            // failure (permissions, disk fault) silently emptying the
+            // resumable cache would masquerade as a legitimate full
+            // rescan — surface it loudly instead.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "zips log unreadable; starting with an empty store"
+                );
             }
         }
         Self { path, entries }
@@ -238,6 +252,25 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ZipsStore::open(tmp.path().join("absent.jsonl"));
         assert!(store.lookup(1, Some("blake3:aaa")).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_log_degrades_to_empty_without_panicking() {
+        // The warn itself isn't captured here; the pinned behavior is the
+        // degradation path: unreadable (not absent) → empty store, no
+        // panic, no partial state.
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("log.jsonl");
+        let mut store = ZipsStore::open(path.clone());
+        store.record("blake3:aaa", record(7)).unwrap();
+        drop(store);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let store = ZipsStore::open(path.clone());
+        assert!(store.lookup(7, Some("blake3:aaa")).is_none());
+        // Restore so the tempdir can clean up.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]
