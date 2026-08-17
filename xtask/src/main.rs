@@ -11,6 +11,9 @@ mod mirror;
 mod phase1;
 mod schema;
 mod scope;
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+mod stats;
 mod zips;
 
 use anyhow::bail;
