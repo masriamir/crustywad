@@ -142,6 +142,27 @@ pub fn read_manifest(path: &Path) -> Option<HarvestManifest> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
+/// Read `harvest-errors.jsonl` — the phase-1 failure ledger (§4.7). `None`
+/// when the file is missing/unreadable; unparseable lines are skipped with
+/// a warning rather than failing the read, mirroring [`read_files_jsonl`].
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+pub fn read_ledger(path: &Path) -> Option<Vec<LedgerEntry>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut entries = Vec::new();
+    let mut skipped = 0_u64;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str(line) {
+            Ok(entry) => entries.push(entry),
+            Err(_) => skipped += 1,
+        }
+    }
+    if skipped > 0 {
+        tracing::warn!(skipped, path = %path.display(), "skipped unparseable ledger lines");
+    }
+    Some(entries)
+}
+
 /// Read a previous run's `idgames-files.jsonl` as the tree-diff baseline.
 /// `None` when the file is missing/unreadable; unparseable lines are
 /// skipped with a warning rather than failing the read (a damaged
@@ -293,6 +314,27 @@ pub fn write_wads_jsonl(path: &Path, records: Vec<WadRecord>) -> anyhow::Result<
     Ok(u64::try_from(by_id.len()).expect("record count fits u64"))
 }
 
+/// Read a previous run's `idgames-wads.jsonl` (§5.6). `None` when the file
+/// is missing/unreadable; unparseable lines are skipped with a warning
+/// rather than failing the read, mirroring [`read_files_jsonl`].
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+pub fn read_wads_jsonl(path: &Path) -> Option<Vec<WadRecord>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut records = Vec::new();
+    let mut skipped = 0_u64;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str(line) {
+            Ok(rec) => records.push(rec),
+            Err(_) => skipped += 1,
+        }
+    }
+    if skipped > 0 {
+        tracing::warn!(skipped, path = %path.display(), "skipped unparseable wad lines");
+    }
+    Some(records)
+}
+
 /// Phase-2 run provenance and the §9.3 acceptance witnesses: byte totals
 /// (small fraction of the archive or the range reader is broken), ZIP64
 /// count (≥1 resolved or absence stated), fallback/budget accounting, and
@@ -372,8 +414,112 @@ pub fn write_zips_manifest(path: &Path, manifest: &ZipsManifest) -> anyhow::Resu
     atomic_write(path, &bytes).with_context(|| format!("writing {}", path.display()))
 }
 
+/// Read a previous run's phase-2 manifest, if present and parseable.
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+pub fn read_zips_manifest(path: &Path) -> Option<ZipsManifest> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// One `.wad` member of a §6.5 sweep-corpus entry: name and declared
+/// uncompressed size only — no free text, per the ADR-0030 §3 allowlist
+/// (`sweep-corpus.jsonl` is one of the three files that rule binds).
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SweepWad {
+    /// Member name, as recorded in [`WadRecord::wads`].
+    pub name: String,
+    /// Declared uncompressed size in bytes.
+    pub uncompressed: u64,
+}
+
+/// One `data/sweep-corpus.jsonl` line (§6.5): a ready-made fetch list for
+/// `CRUSTYWAD_SWEEP_DIR` and `cargo-fuzz` seeds. Only `id`, a mirror URL,
+/// and the expected `.wad` member names/sizes — the ADR-0030 §3
+/// free-text ban applies here too.
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SweepEntry {
+    /// Archive file ID (Phase-1 `FileRecord::id`).
+    pub id: u64,
+    /// Download URL, always built against [`crate::mirror::MIRRORS`]`[0]`
+    /// regardless of which mirror actually served the phase-2 harvest
+    /// (§6.5) — reproducible independent of that run's mirror-selection
+    /// history.
+    pub url: String,
+    /// `.wad` members expected inside the archive at `url`.
+    pub wads: Vec<SweepWad>,
+}
+
+/// Build the §6.5 sweep corpus from `idgames-wads.jsonl` records: keeps
+/// entries with a usable fetch (`Ok`/`FullDownload`) and at least one
+/// `.wad` member, sorted and deduped by `id`.
+///
+/// # Errors
+/// [`crate::zips::range_reader::entry_url`] fails to build a URL for a
+/// record's `dir`/`filename` (a malformed name that escapes the mirror
+/// base).
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+pub fn sweep_entries(records: &[WadRecord]) -> anyhow::Result<Vec<SweepEntry>> {
+    let mut out = Vec::new();
+    for rec in records {
+        if !matches!(
+            rec.fetch_status,
+            FetchStatus::Ok | FetchStatus::FullDownload
+        ) || rec.wads.is_empty()
+        {
+            continue;
+        }
+        // Deterministic URL: always MIRRORS[0], independent of which mirror
+        // served the harvest (§6.5) — entry_url percent-encodes and guards
+        // against host-escaping names.
+        let url = crate::zips::range_reader::entry_url(
+            crate::mirror::MIRRORS[0].base,
+            &rec.dir,
+            &rec.filename,
+        )?;
+        out.push(SweepEntry {
+            id: rec.id,
+            url: url.to_string(),
+            wads: rec
+                .wads
+                .iter()
+                .map(|w| SweepWad {
+                    name: w.name.clone(),
+                    uncompressed: w.uncompressed,
+                })
+                .collect(),
+        });
+    }
+    out.sort_by_key(|e| e.id);
+    out.dedup_by_key(|e| e.id);
+    Ok(out)
+}
+
+/// Write `data/sweep-corpus.jsonl`: one compact JSON object per line, in
+/// the order given. [`sweep_entries`] already sorts and dedupes by `id`,
+/// so writing its output is byte-identical across reruns against
+/// unchanged inputs (§6.5, §9.3).
+///
+/// # Errors
+/// Serialization or filesystem failure.
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+pub fn write_sweep_jsonl(path: &Path, entries: &[SweepEntry]) -> anyhow::Result<u64> {
+    let mut out = String::new();
+    for entry in entries {
+        out.push_str(&serde_json::to_string(entry).context("serializing sweep entry")?);
+        out.push('\n');
+    }
+    atomic_write(path, out.as_bytes()).with_context(|| format!("writing {}", path.display()))?;
+    Ok(u64::try_from(entries.len()).expect("entry count fits u64"))
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::api::model::FileRecord;
 
@@ -493,6 +639,27 @@ mod tests {
     }
 
     #[test]
+    fn ledger_roundtrips_through_reader() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("harvest-errors.jsonl");
+        let entry = LedgerEntry {
+            path: "levels/a/".into(),
+            action: "getcontents".into(),
+            kind: LedgerKind::HttpError,
+            detail: "HTTP 500".into(),
+            attempts: 2,
+        };
+        write_ledger(&p, vec![entry]).unwrap();
+        let back = read_ledger(&p).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].path, "levels/a/");
+        assert!(read_ledger(&tmp.path().join("missing.jsonl")).is_none());
+        // A corrupt line is skipped, not fatal.
+        std::fs::write(&p, "{ not json\n").unwrap();
+        assert_eq!(read_ledger(&p).map(|v| v.len()), Some(0));
+    }
+
+    #[test]
     fn files_jsonl_roundtrips_through_reader() {
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path().join("idgames-files.jsonl");
@@ -542,7 +709,9 @@ mod tests {
         assert!(read_manifest(&tmp.path().join("missing.json")).is_none());
     }
 
-    fn wad_record(id: u64) -> WadRecord {
+    /// Full-shape `WadRecord` (wads + `other_members` populated) used by
+    /// the writer-focused tests below.
+    fn sample_wad_record(id: u64) -> WadRecord {
         WadRecord {
             id,
             dir: "levels/doom2/Ports/megawads/".into(),
@@ -567,11 +736,75 @@ mod tests {
         }
     }
 
+    /// Minimal `WadMember` builder for the sweep-corpus tests.
+    fn wad_member(name: &str, compressed: u64, uncompressed: u64) -> WadMember {
+        WadMember {
+            name: name.into(),
+            compressed,
+            uncompressed,
+            method: "deflate".into(),
+            encrypted: false,
+        }
+    }
+
+    /// Minimal `WadRecord` builder for the sweep-corpus filter/sort/URL
+    /// tests: plausible defaults, caller-controlled `fetch_status`/`wads`.
+    fn wad_record(id: u64, fetch_status: FetchStatus, wads: Vec<WadMember>) -> WadRecord {
+        let member_count = wads.len() as u64;
+        WadRecord {
+            id,
+            dir: "levels/doom/".into(),
+            filename: format!("example{id}.zip"),
+            zip_size: 1_048_576,
+            date: "2019-04-02".into(),
+            rating: None,
+            votes: 0,
+            is_zip: true,
+            zip64: false,
+            member_count,
+            wads,
+            other_members: vec![],
+            mirror: "infania".into(),
+            fetch_status,
+        }
+    }
+
+    /// Shared assertion: every object key anywhere in `v` is in
+    /// `allowlist` (ADR-0030 §3 no-free-text rule). Task 7 reuses this for
+    /// `stats.json`.
+    pub(crate) fn assert_keys_within(v: &serde_json::Value, allowlist: &[&str]) {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, val) in map {
+                    assert!(
+                        allowlist.contains(&k.as_str()),
+                        "key {k:?} not in allowlist {allowlist:?}"
+                    );
+                    assert_keys_within(val, allowlist);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    assert_keys_within(item, allowlist);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[test]
     fn wads_jsonl_is_sorted_deduped_and_matches_design_5_6() {
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path().join("idgames-wads.jsonl");
-        let n = write_wads_jsonl(&p, vec![wad_record(9), wad_record(3), wad_record(9)]).unwrap();
+        let n = write_wads_jsonl(
+            &p,
+            vec![
+                sample_wad_record(9),
+                sample_wad_record(3),
+                sample_wad_record(9),
+            ],
+        )
+        .unwrap();
         assert_eq!(n, 2);
         let text = std::fs::read_to_string(&p).unwrap();
         let first: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
@@ -604,9 +837,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path().join("a.jsonl");
         let b = tmp.path().join("b.jsonl");
-        write_wads_jsonl(&a, vec![wad_record(2), wad_record(7)]).unwrap();
-        write_wads_jsonl(&b, vec![wad_record(7), wad_record(2)]).unwrap();
+        write_wads_jsonl(&a, vec![sample_wad_record(2), sample_wad_record(7)]).unwrap();
+        write_wads_jsonl(&b, vec![sample_wad_record(7), sample_wad_record(2)]).unwrap();
         assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
+    }
+
+    #[test]
+    fn wads_jsonl_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("idgames-wads.jsonl");
+        let rec = sample_wad_record(7);
+        write_wads_jsonl(&path, vec![rec.clone()]).unwrap();
+        let back = read_wads_jsonl(&path).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].id, 7);
+        assert!(read_wads_jsonl(&dir.path().join("missing.jsonl")).is_none());
+        // A corrupt line is skipped, not fatal.
+        std::fs::write(&path, "{ not json\n").unwrap();
+        assert_eq!(read_wads_jsonl(&path).map(|v| v.len()), Some(0));
     }
 
     #[test]
@@ -659,5 +907,104 @@ mod tests {
         assert_eq!(back.entries_total, 21_375);
         assert_eq!(back.zip64_entries, 1);
         assert_eq!(back.aborted, None);
+    }
+
+    #[test]
+    fn zips_manifest_roundtrips_through_reader() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("wads-manifest.json");
+        let m = ZipsManifest {
+            id: "harvest-zips-20260816T120000Z".into(),
+            started_at: "2026-08-16T12:00:00+00:00".into(),
+            duration_secs: 1800,
+            tool_version: tool_version(),
+            git_rev: git_rev(),
+            scoped_root: None,
+            limit: None,
+            entries_total: 10,
+            records_written: 10,
+            ledger_count: 0,
+            cache_hits: 0,
+            live_entries: 10,
+            range_requests: 10,
+            bytes_transferred: 1_000,
+            full_downloads: 0,
+            fallback_bytes: 0,
+            zip64_entries: 0,
+            status_counts: std::collections::BTreeMap::from([("ok".to_owned(), 10)]),
+            unaccounted_entries: 0,
+            aborted: None,
+        };
+        write_zips_manifest(&p, &m).unwrap();
+        let back = read_zips_manifest(&p).unwrap();
+        assert_eq!(back.id, m.id);
+        assert_eq!(back.entries_total, 10);
+        assert!(read_zips_manifest(&tmp.path().join("missing.json")).is_none());
+    }
+
+    #[test]
+    fn sweep_entries_filter_sort_and_url() {
+        // ok-with-wads: in. full_download-with-wads: in. ok-zero-wads: out.
+        // zip_parse_error: out. Sorted by id regardless of input order.
+        let recs = vec![
+            wad_record(9, FetchStatus::Ok, vec![wad_member("B.WAD", 10, 100)]),
+            wad_record(
+                3,
+                FetchStatus::FullDownload,
+                vec![wad_member("A.WAD", 5, 50)],
+            ),
+            wad_record(1, FetchStatus::Ok, vec![]),
+            wad_record(
+                2,
+                FetchStatus::ZipParseError,
+                vec![wad_member("X.WAD", 1, 1)],
+            ),
+        ];
+        let entries = sweep_entries(&recs).unwrap();
+        assert_eq!(entries.iter().map(|e| e.id).collect::<Vec<_>>(), [3, 9]);
+        assert_eq!(
+            entries[1].url,
+            "https://ftpmirror1.infania.net/pub/idgames/levels/doom/example9.zip"
+        );
+        assert_eq!(entries[1].wads[0].uncompressed, 100);
+    }
+
+    #[test]
+    fn sweep_jsonl_has_no_free_text_fields() {
+        // serialize and walk keys: allowlist only (ADR-0030 §3).
+        let entry = SweepEntry {
+            id: 1,
+            url: "https://x/e.zip".into(),
+            wads: vec![SweepWad {
+                name: "E.WAD".into(),
+                uncompressed: 4,
+            }],
+        };
+        let val: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        assert_keys_within(&val, &["id", "url", "wads", "name", "uncompressed"]);
+    }
+
+    #[test]
+    fn sweep_jsonl_writes_compact_lines_and_returns_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("sweep-corpus.jsonl");
+        let recs = vec![
+            wad_record(9, FetchStatus::Ok, vec![wad_member("B.WAD", 10, 100)]),
+            wad_record(
+                3,
+                FetchStatus::FullDownload,
+                vec![wad_member("A.WAD", 5, 50)],
+            ),
+        ];
+        let entries = sweep_entries(&recs).unwrap();
+        let n = write_sweep_jsonl(&p, &entries).unwrap();
+        assert_eq!(n, 2);
+        let text = std::fs::read_to_string(&p).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // No pretty-printing: each line is a single compact JSON object.
+        assert!(!lines[0].contains('\n'));
+        let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(first["id"], 3);
     }
 }
