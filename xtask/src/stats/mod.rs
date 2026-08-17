@@ -147,9 +147,20 @@ pub fn run_with_paths(
         ),
     };
 
-    let ledger = read_ledger(&paths.phase1_ledger).unwrap_or_default();
+    let Some(ledger) = read_ledger(&paths.phase1_ledger) else {
+        anyhow::bail!(
+            "no harvest-errors.jsonl at {} — run `just harvest-api` first",
+            paths.phase1_ledger.display()
+        );
+    };
     let filtered = filtered_records(records, root, limit);
 
+    // `phase1_manifest.file_count` is captured before `.id` is moved out
+    // below (C1 fix round 1: `Coverage.phase1_files` must reflect the
+    // phase-1 harvest-manifest.json total, unaffected by this run's own
+    // `--root`/`--limit` — not the count of records this stats run
+    // happened to load, which is already visible as Σ status_counts).
+    let phase1_file_count = phase1_manifest.file_count;
     let provenance = StatsProvenance {
         phase1_manifest: phase1_manifest.id,
         phase2_manifest: zips_manifest.id,
@@ -160,7 +171,14 @@ pub fn run_with_paths(
         git_rev: git_rev(),
     };
     let outlier_records = outliers.as_ref().map(|(records, _)| records.as_slice());
-    let stats = build_stats(&filtered, &ledger, &tree, outlier_records, provenance);
+    let stats = build_stats(
+        &filtered,
+        &ledger,
+        &tree,
+        outlier_records,
+        phase1_file_count,
+        provenance,
+    );
 
     std::fs::create_dir_all(&paths.out_dir)
         .with_context(|| format!("creating {}", paths.out_dir.display()))?;
@@ -210,18 +228,21 @@ fn filtered_records(
 /// `records` is the idgames population source (already `--root`/`--limit`
 /// scoped by the caller); `ledger` is the Phase-1 failure ledger; `tree` is
 /// the parsed ls-laR listing; `outliers` is `Some` only when both §6.4
-/// outlier files are present.
+/// outlier files are present; `phase1_file_count` is
+/// `HarvestManifest::file_count` from `harvest-manifest.json` (see
+/// [`Coverage::phase1_files`] — deliberately independent of `records`).
 pub(crate) fn build_stats(
     records: &[WadRecord],
     ledger: &[LedgerEntry],
     tree: &ArchiveTree,
     outliers: Option<&[OutlierRecord]>,
+    phase1_file_count: u64,
     provenance: StatsProvenance,
 ) -> StatsJson {
     StatsJson {
         schema_version: crate::schema::STATS_SCHEMA_VERSION,
         provenance,
-        idgames: build_idgames_stats(records, ledger, tree),
+        idgames: build_idgames_stats(records, ledger, tree, phase1_file_count),
         outliers: outliers.map(build_outliers_stats),
         recommendations: Vec::new(),
     }
@@ -243,6 +264,7 @@ fn build_idgames_stats(
     records: &[WadRecord],
     ledger: &[LedgerEntry],
     tree: &ArchiveTree,
+    phase1_file_count: u64,
 ) -> IdgamesStats {
     let population = population(records);
     let (zip_size_listing, listing_misses) = zip_size_stats(&population, tree);
@@ -256,7 +278,7 @@ fn build_idgames_stats(
         .sum();
 
     let coverage = Coverage {
-        phase1_files: u64::try_from(records.len()).unwrap_or(u64::MAX),
+        phase1_files: phase1_file_count,
         status_counts: status_counts(records),
         ledger_kinds: ledger_kind_counts(ledger),
         listing_misses,
@@ -466,11 +488,20 @@ fn ratio_stats(population: &[&WadRecord]) -> RatioStats {
         let mut entry_uncompressed = 0_u64;
         let mut entry_compressed = 0_u64;
         for wad in &record.wads {
+            // A genuine anomaly (compressed 0, uncompressed > 0) is counted
+            // and excluded from every ratio population below. A member with
+            // compressed == 0 and uncompressed == 0 (a `.wad` member) is NOT
+            // an anomaly, but still can't yield a ratio — I1 fix round 1: it
+            // must be excluded from `member_deflate` too (an unguarded 0/0
+            // pair would be a NaN ratio, which serializes as JSON `null` and
+            // makes an intransitive `sort_ratio_pairs` comparator). Spec
+            // population for `member_deflate` is "method == deflate AND
+            // compressed > 0".
             if wad.compressed == 0 && wad.uncompressed > 0 {
                 zero_compressed_anomalies += 1;
                 continue;
             }
-            if wad.method == "deflate" {
+            if wad.method == "deflate" && wad.compressed > 0 {
                 deflate_pairs.push((wad.uncompressed, wad.compressed));
             }
             entry_uncompressed += wad.uncompressed;
@@ -690,6 +721,11 @@ impl RatioDistribution {
         let (max_u, max_c) = *sorted
             .last()
             .expect("first() succeeded, so last() does too");
+        debug_assert!(
+            sorted.iter().all(|&(_, c)| c > 0),
+            "ratio population must never contain a zero-compressed pair (NaN ratio) — \
+             I1 fix round 1: callers must gate on compressed > 0 before this point"
+        );
         RatioDistribution {
             n: u64::try_from(sorted.len()).unwrap_or(u64::MAX),
             min: min_u as f64 / min_c as f64,
@@ -781,12 +817,26 @@ mod tests {
         }
     }
 
+    /// Most tests don't care about `Coverage.phase1_files` independently of
+    /// the fixture's own record count, so this convenience wrapper sets
+    /// `phase1_file_count` to `records.len()` — tests that specifically
+    /// exercise the C1 fix-round-1 independence (`phase1_files` sourced
+    /// from the phase-1 manifest, not from the loaded record count) use
+    /// [`build_stats_fixture_with_phase1_files`] instead.
     fn build_stats_fixture(records: &[WadRecord]) -> StatsJson {
+        build_stats_fixture_with_phase1_files(records, u64::try_from(records.len()).unwrap())
+    }
+
+    fn build_stats_fixture_with_phase1_files(
+        records: &[WadRecord],
+        phase1_file_count: u64,
+    ) -> StatsJson {
         build_stats(
             records,
             &[],
             &ArchiveTree::default(),
             None,
+            phase1_file_count,
             dummy_provenance(),
         )
     }
@@ -836,8 +886,12 @@ mod tests {
                 r
             },
         ];
-        let stats = build_stats_fixture(&recs);
-        assert_eq!(stats.idgames.coverage.phase1_files, 4);
+        // C1 fix round 1: `phase1_files` must come from the phase-1
+        // manifest's `file_count`, independent of how many records this
+        // stats run happened to load — pass a value (10) deliberately
+        // distinct from `recs.len()` (4) to prove the two are decoupled.
+        let stats = build_stats_fixture_with_phase1_files(&recs, 10);
+        assert_eq!(stats.idgames.coverage.phase1_files, 10);
         assert_eq!(stats.idgames.coverage.population_entries, 3); // ids 1, 2, 4
         assert_eq!(stats.idgames.coverage.population_wads, 2);
         assert_eq!(stats.idgames.entries.zip_entries, 3);
@@ -916,12 +970,22 @@ mod tests {
         // the entry itself then has 0 total compressed bytes, so it's
         // excluded from per_entry too.
         let r2 = wad_record(2, FetchStatus::Ok, vec![wad_member("C.WAD", 0, 500)]);
-        let stats = build_stats_fixture(&[r1, r2]);
+        // Entry 3 (I1 fix round 1 regression): a deflate member with
+        // compressed == 0 AND uncompressed == 0 — NOT an anomaly (the
+        // anomaly definition requires uncompressed > 0), but still must be
+        // excluded from `member_deflate` (a 0/0 ratio is NaN, which breaks
+        // JSON round-tripping and `sort_ratio_pairs`'s comparator). Must not
+        // bump `zero_compressed_anomalies`, and the entry itself (0 total
+        // compressed bytes) must not enter `per_entry` either.
+        let r3 = wad_record(3, FetchStatus::Ok, vec![wad_member("Z.WAD", 0, 0)]);
+        let stats = build_stats_fixture(&[r1, r2, r3]);
 
         let ratios = &stats.idgames.entries.ratios;
         assert_eq!(ratios.zero_compressed_anomalies, 1);
         assert_eq!(ratios.member_deflate.n, 1);
         assert!((ratios.member_deflate.max - 2.0).abs() < 1e-12);
+        assert!(ratios.member_deflate.min.is_finite());
+        assert!(ratios.member_deflate.max.is_finite());
         assert_eq!(ratios.per_entry.n, 1);
         assert!((ratios.per_entry.max - (250.0 / 150.0)).abs() < 1e-9);
     }
@@ -974,10 +1038,16 @@ mod tests {
         let mut tree = ArchiveTree::default();
         tree.dirs.insert(
             "levels/doom/0-9/".into(),
-            vec![crate::lslar::TreeFile {
-                name: "f1.zip".into(),
-                size: 150,
-            }],
+            vec![
+                crate::lslar::TreeFile {
+                    name: "f1.zip".into(),
+                    size: 150,
+                },
+                crate::lslar::TreeFile {
+                    name: "f3.zip".into(),
+                    size: 999,
+                },
+            ],
         );
         // f2.zip is deliberately absent from the tree's listing (join miss).
 
@@ -985,19 +1055,35 @@ mod tests {
         hit.zip_size = 100; // API says 100; ls-laR says 150 → mismatch, delta 50
         let mut miss = wad_record(2, FetchStatus::Ok, vec![wad_member("B.WAD", 1, 1)]);
         miss.zip_size = 777; // no tree entry → falls back to this API size
+        // I4 fix round 1: a join HIT that MATCHES (listing == API size) — the
+        // common case (~93% of the real corpus per the review). Without this
+        // fixture, a bug that pushed a 0 delta for every match would still
+        // pass every assertion below (a 0 blends invisibly into `deltas`) —
+        // this fixture instead keeps a matching entry entirely OUT of
+        // `deltas`/`mismatched`, so such a bug would show up as an
+        // unexpected `mismatched`/`p50_abs_delta` shift.
+        let mut matched = wad_record(3, FetchStatus::Ok, vec![wad_member("C.WAD", 1, 1)]);
+        matched.zip_size = 999; // API agrees exactly with the ls-laR listing
 
-        let stats = build_stats(&[hit, miss], &[], &tree, None, dummy_provenance());
+        let stats = build_stats(
+            &[hit, miss, matched],
+            &[],
+            &tree,
+            None,
+            3,
+            dummy_provenance(),
+        );
 
         assert_eq!(stats.idgames.coverage.listing_misses, 1);
         let delta = &stats.idgames.zip_size_listing.api_delta;
-        assert_eq!(delta.entries_compared, 1);
-        assert_eq!(delta.mismatched, 1);
+        assert_eq!(delta.entries_compared, 2); // hit + matched (both joined); miss did not
+        assert_eq!(delta.mismatched, 1); // only hit disagreed
         assert_eq!(delta.max_abs_delta, 50);
         assert_eq!(delta.p50_abs_delta, 50);
         assert!((delta.max_relative - 50.0 / 150.0).abs() < 1e-12);
-        // Population uses 150 (the listing) for the hit, and 777 (the API
-        // fallback) for the miss.
-        assert_eq!(stats.idgames.zip_size_listing.core.max, 777);
+        // Population uses 150 (the listing) for the hit, 777 (the API
+        // fallback) for the miss, and 999 (listing == API) for the match.
+        assert_eq!(stats.idgames.zip_size_listing.core.max, 999);
         assert_eq!(stats.idgames.zip_size_listing.core.min, 150);
     }
 
@@ -1012,7 +1098,7 @@ mod tests {
             }],
         );
         let zero_wad = wad_record(1, FetchStatus::Ok, vec![]);
-        let stats = build_stats(&[zero_wad], &[], &tree, None, dummy_provenance());
+        let stats = build_stats(&[zero_wad], &[], &tree, None, 1, dummy_provenance());
         assert_eq!(stats.idgames.zip_size_listing.core.n, 0);
         assert_eq!(stats.idgames.coverage.listing_misses, 0);
     }
@@ -1049,6 +1135,7 @@ mod tests {
             &ledger,
             &ArchiveTree::default(),
             None,
+            0,
             dummy_provenance(),
         );
         assert_eq!(
@@ -1092,6 +1179,7 @@ mod tests {
             &[],
             &ArchiveTree::default(),
             Some(&recs),
+            0,
             dummy_provenance(),
         );
         let outliers = stats.outliers.expect("outliers present");
@@ -1119,7 +1207,14 @@ mod tests {
         // for "no supplement", `Some(&[])` for "present but zero records".
         // The absent-vs-empty file distinction lives in run_with_paths's
         // I/O layer (see run_with_paths tests below).
-        let absent = build_stats(&[], &[], &ArchiveTree::default(), None, dummy_provenance());
+        let absent = build_stats(
+            &[],
+            &[],
+            &ArchiveTree::default(),
+            None,
+            0,
+            dummy_provenance(),
+        );
         assert!(absent.outliers.is_none());
 
         let empty = build_stats(
@@ -1127,6 +1222,7 @@ mod tests {
             &[],
             &ArchiveTree::default(),
             Some(&[]),
+            0,
             dummy_provenance(),
         );
         let outliers = empty
@@ -1168,26 +1264,41 @@ total 1
     /// [`StatsPaths`]. `dir` doubles as both `out_dir` and the cache root's
     /// parent, mirroring a real (unscoped) layout closely enough for a
     /// self-contained fixture.
+    /// The original 2-record, single-dir fixture every pre-existing
+    /// `run_with_paths` test uses. `phase1_file_count` (the phase-1
+    /// manifest's `file_count`) intentionally matches the record count here
+    /// — [`write_fixture_inputs_with_records`] is used directly wherever a
+    /// test needs the two to diverge (I3: `--root` scoping; C1: the
+    /// `phase1_files` independence check).
     fn write_fixture_inputs(dir: &std::path::Path) -> StatsPaths {
-        std::fs::write(
-            dir.join("idgames-wads.jsonl"),
-            format!(
-                "{}\n{}\n",
-                serde_json::to_string(&wad_record(
-                    1,
-                    FetchStatus::Ok,
-                    vec![wad_member("F1.WAD", 100, 500)]
-                ))
-                .unwrap(),
-                serde_json::to_string(&wad_record(
-                    2,
-                    FetchStatus::Ok,
-                    vec![wad_member("F2.WAD", 100, 500)]
-                ))
-                .unwrap()
-            ),
+        write_fixture_inputs_with_records(
+            dir,
+            &[
+                wad_record(1, FetchStatus::Ok, vec![wad_member("F1.WAD", 100, 500)]),
+                wad_record(2, FetchStatus::Ok, vec![wad_member("F2.WAD", 100, 500)]),
+            ],
+            2,
         )
-        .unwrap();
+    }
+
+    /// Write every required input under `dir` from an arbitrary `records`
+    /// list (so tests can exercise multiple `dir`s, e.g. for `--root`
+    /// filtering) and an independently-chosen `phase1_file_count` (so tests
+    /// can exercise `Coverage::phase1_files`'s manifest-sourced, not
+    /// record-count-sourced, value). Returns the assembled [`StatsPaths`].
+    fn write_fixture_inputs_with_records(
+        dir: &std::path::Path,
+        records: &[WadRecord],
+        phase1_file_count: u64,
+    ) -> StatsPaths {
+        let mut wads_jsonl = String::new();
+        for record in records {
+            wads_jsonl.push_str(&serde_json::to_string(record).unwrap());
+            wads_jsonl.push('\n');
+        }
+        std::fs::write(dir.join("idgames-wads.jsonl"), wads_jsonl).unwrap();
+
+        let entries_total = u64::try_from(records.len()).unwrap();
         std::fs::write(
             dir.join("wads-manifest.json"),
             serde_json::to_string(&crate::schema::ZipsManifest {
@@ -1198,12 +1309,12 @@ total 1
                 git_rev: None,
                 scoped_root: None,
                 limit: None,
-                entries_total: 2,
-                records_written: 2,
+                entries_total,
+                records_written: entries_total,
                 ledger_count: 0,
                 cache_hits: 0,
-                live_entries: 2,
-                range_requests: 2,
+                live_entries: entries_total,
+                range_requests: entries_total,
                 bytes_transferred: 100,
                 full_downloads: 0,
                 fallback_bytes: 0,
@@ -1229,11 +1340,11 @@ total 1
                 scoped_root: None,
                 limit: None,
                 dir_count: 1,
-                file_count: 2,
+                file_count: phase1_file_count,
                 error_count: 0,
                 cache_hits: 0,
                 live_api_calls: 1,
-                max_file_id: Some(2),
+                max_file_id: Some(entries_total),
             })
             .unwrap(),
         )
@@ -1294,16 +1405,74 @@ total 1
     }
 
     #[test]
-    fn run_with_paths_root_and_limit_scope_both_stats_and_sweep() {
+    fn run_with_paths_limit_scopes_sweep_and_status_counts_but_not_phase1_files() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = write_fixture_inputs(tmp.path());
         run_with_paths(&paths, None, Some(1)).unwrap();
         let stats: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(tmp.path().join("stats.json")).unwrap())
                 .unwrap();
-        assert_eq!(stats["idgames"]["coverage"]["phase1_files"], 1);
+        // C1 fix round 1: `phase1_files` is the phase-1 manifest's
+        // `file_count` (2, from `write_fixture_inputs`) — it must NOT drop
+        // to 1 just because `--limit 1` scoped the records this run loaded.
+        // The scoped record count is visible as Σ status_counts instead.
+        assert_eq!(stats["idgames"]["coverage"]["phase1_files"], 2);
+        let status_sum: u64 = stats["idgames"]["coverage"]["status_counts"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|v| v.as_u64().unwrap())
+            .sum();
+        assert_eq!(status_sum, 1);
         let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
         assert_eq!(sweep_text.lines().count(), 1);
+    }
+
+    #[test]
+    fn run_with_paths_root_filters_by_dir_prefix_not_substring() {
+        // I3 fix round 1: exercise `--root` for real, across two dirs, and
+        // pin the prefix (not substring) semantics: "levels/doom" must
+        // match "levels/doom/..." but NOT "levels/doom2/..." — a naive
+        // (non-slash-anchored) prefix check would wrongly include the
+        // latter.
+        let mut in_scope_a = wad_record(1, FetchStatus::Ok, vec![wad_member("F1.WAD", 100, 500)]);
+        in_scope_a.dir = "levels/doom/0-9/".into();
+        let mut in_scope_b = wad_record(2, FetchStatus::Ok, vec![wad_member("F2.WAD", 100, 500)]);
+        in_scope_b.dir = "levels/doom/a-c/".into();
+        let mut out_of_scope = wad_record(3, FetchStatus::Ok, vec![wad_member("F3.WAD", 100, 500)]);
+        out_of_scope.dir = "levels/doom2/0-9/".into();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs_with_records(
+            tmp.path(),
+            &[in_scope_a, in_scope_b, out_of_scope],
+            3,
+        );
+        run_with_paths(&paths, Some("levels/doom"), None).unwrap();
+
+        let stats: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("stats.json")).unwrap())
+                .unwrap();
+        let status_sum: u64 = stats["idgames"]["coverage"]["status_counts"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|v| v.as_u64().unwrap())
+            .sum();
+        assert_eq!(status_sum, 2); // levels/doom2/... excluded
+        // phase1_files stays at the manifest's file_count regardless of --root.
+        assert_eq!(stats["idgames"]["coverage"]["phase1_files"], 3);
+
+        let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
+        let sweep_ids: Vec<u64> = sweep_text
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["id"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(sweep_ids, vec![1, 2]);
     }
 
     #[test]
@@ -1329,6 +1498,19 @@ total 1
         let tmp = tempfile::tempdir().unwrap();
         let paths = write_fixture_inputs(tmp.path());
         std::fs::remove_file(&paths.phase1_manifest).unwrap();
+        let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
+        assert!(err.contains("just harvest-api"), "{err}");
+    }
+
+    #[test]
+    fn run_with_paths_missing_ledger_names_harvest_api() {
+        // I2 fix round 1: harvest-errors.jsonl is written unconditionally by
+        // `xtask harvest-api` (empty when there were zero failures), so its
+        // absence means a damaged output dir, not "no failures" — must be a
+        // hard error, not a silent `unwrap_or_default()`.
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        std::fs::remove_file(&paths.phase1_ledger).unwrap();
         let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
         assert!(err.contains("just harvest-api"), "{err}");
     }

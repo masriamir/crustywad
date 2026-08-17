@@ -860,8 +860,9 @@ pub struct EntryStats {
 /// actually saw, and how the idgames population was carved out of it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Coverage {
-    /// `idgames-wads.jsonl` records loaded for this run (after `--root`/
-    /// `--limit` scoping), regardless of `fetch_status`.
+    /// Phase-1 `harvest-manifest.json` `file_count` for this snapshot —
+    /// unaffected by stats' own `--root`/`--limit`; the records this run
+    /// loaded are `Σ status_counts`.
     pub phase1_files: u64,
     /// Record count per `fetch_status` wire value, over every loaded record
     /// (not just the population) — mirrors [`ZipsManifest::status_counts`]'s
