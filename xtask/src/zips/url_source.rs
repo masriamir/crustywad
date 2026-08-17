@@ -517,7 +517,16 @@ pub(crate) fn classify_head_response(status: u16, content_length: Option<&str>) 
 ///   start/end to anchor the probe's request to);
 /// - the "length unknown" form (`bytes START-END/*` — nothing to report);
 /// - anything that doesn't parse as `bytes <range>/<total>` at all, or
-///   whose `TOTAL` digits don't fit a `u64`.
+///   whose `TOTAL` digits don't fit a `u64`;
+/// - a `TOTAL` of exactly `0` — same invariant [`classify_head_response`]
+///   enforces on the HEAD path ("0 is never passed onward as a real
+///   size"): a zero-length remote zip is bogus input regardless of which
+///   path reported it, so this is the Content-Range-side half of that same
+///   guarantee, not a second, independent decision to keep in sync by
+///   hand. Filtered here, in the pure parser, rather than at the call
+///   site: every caller of this function inherits the "0 means unusable"
+///   contract for free, with no risk of a future call site forgetting to
+///   filter it out itself.
 ///
 /// This function doesn't need to distinguish *why* a total wasn't
 /// recoverable, only whether one was — every unusable shape is treated
@@ -535,7 +544,7 @@ pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
     }
     match total.trim() {
         "*" => None,
-        n => n.parse().ok(),
+        n => n.parse().ok().filter(|&n| n != 0),
     }
 }
 
@@ -640,6 +649,12 @@ mod tests {
             parse_content_range_total("bytes 0-0/9999999999999999999999999999"),
             None
         );
+        // A literal zero total must never flow through as a real size —
+        // the same "0 is unusable" invariant `classify_head_response`
+        // enforces on the HEAD path, enforced here on the Content-Range
+        // path (fix round 3: this exact shape reached `discover_size` and
+        // set `file_size = Some(0)` before this filter existed).
+        assert_eq!(parse_content_range_total("bytes 0-0/0"), None);
     }
 
     #[test]
