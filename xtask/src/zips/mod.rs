@@ -31,6 +31,7 @@
 pub mod inspect;
 pub mod range_reader;
 pub mod store;
+pub mod url_source;
 
 use std::collections::BTreeMap;
 use std::path::Path;
