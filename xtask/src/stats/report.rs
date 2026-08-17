@@ -427,11 +427,21 @@ fn render_decision_counts(out: &mut String, idgames: &IdgamesStats) {
     push_histogram_table(out, &idgames.zip_size_listing.histogram);
 
     let delta = &idgames.zip_size_listing.api_delta;
+    let size_mismatch_ledgered = coverage
+        .ledger_kinds
+        .get("size_mismatch")
+        .copied()
+        .unwrap_or(0);
     let _ = write!(
         out,
         "\n**API-vs-listing sanity check** (§6.3): {} entries compared, {} mismatched. Among \
          mismatches: max_abs_delta = {}, p50_abs_delta = {}, p99_abs_delta = {}, max_relative = \
-         {:.4}.\n\n",
+         {:.4}.\n\n\
+         Note: entries whose API size disagrees with the mirror listing are largely absent from \
+         this population by construction — phase 2's Content-Range guard refuses them (they land \
+         in `fetch_error`; see the Coverage section's `ledger_kinds` below). The phase-1 ledger \
+         recorded {size_mismatch_ledgered} `size_mismatch` findings — the truer measure of \
+         API-size unreliability than the `mismatched` count above.\n\n",
         delta.entries_compared,
         delta.mismatched,
         delta.max_abs_delta,
@@ -1139,6 +1149,43 @@ mod tests {
         let report = render_report(&stats_fixture(None));
         assert!(
             report.contains("Compression-method counts") && report.contains(".wad`-members-only"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn render_report_api_delta_explains_structural_zero_via_ledger_when_absent() {
+        // Review fix (Task 8 live-smoke finding): `mismatched` reads 0 not
+        // because the API size is accurate, but because phase 2's
+        // Content-Range guard already excluded every disagreeing entry
+        // upstream (they land in `fetch_error`, ledgered as
+        // `size_mismatch`). `idgames_fixture()`'s `ledger_kinds` is empty —
+        // the sentence must still render, deterministically, with `0`.
+        let report = render_report(&stats_fixture(None));
+        assert!(
+            report.contains("recorded 0 `size_mismatch` findings"),
+            "{report}"
+        );
+        assert!(
+            report.contains("Content-Range guard refuses them"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn render_report_api_delta_cites_size_mismatch_count_when_present() {
+        // Real-harvest shape (Task 8 live smoke): 1099 `size_mismatch`
+        // ledger findings alongside a structurally-zero `mismatched` count
+        // in the same report.
+        let mut stats = stats_fixture(None);
+        stats
+            .idgames
+            .coverage
+            .ledger_kinds
+            .insert("size_mismatch".to_owned(), 1099);
+        let report = render_report(&stats);
+        assert!(
+            report.contains("recorded 1099 `size_mismatch` findings"),
             "{report}"
         );
     }
