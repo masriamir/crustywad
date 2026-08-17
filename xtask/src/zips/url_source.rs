@@ -296,18 +296,26 @@ impl RangeSource for UrlRanges {
     /// outcome (`RangeUnsupported`, `NotFound`, or a non-retryable `Http`
     /// status) is terminal immediately — see the module doc.
     ///
-    /// `whole_file` is `offset == 0 && len >= file_size`, but only once
-    /// [`Self::discover_size`] has actually learned `file_size`; before
-    /// that (or if it was never called) it's unconditionally `false` — an
-    /// unknown file size can never be confirmed to match a "whole file"
-    /// request, so treating it as partial is the only sound default. The
-    /// `>=` (not `==`) tolerates the caller-supplied `len` disagreeing with
-    /// the declared size by a few bytes without refusing a legitimate
-    /// whole-file `200`.
+    /// `whole_file` is `offset == 0 && len == file_size` — see
+    /// [`is_whole_file_request`] — but only once [`Self::discover_size`]
+    /// has actually learned `file_size`; before that (or if it was never
+    /// called) it's unconditionally `false` — an unknown file size can
+    /// never be confirmed to match a "whole file" request, so treating it
+    /// as partial is the only sound default. The comparison is exact
+    /// (`==`, not `>=`): the `200` path below reads the body through
+    /// [`read_capped_body`], which *errors* on a body shorter than `len`,
+    /// so a `len` merely tolerated as "close enough" (e.g. `len >
+    /// file_size`) would make a perfectly legitimate range-ignoring `200`
+    /// — which only ever delivers `file_size` bytes — fail as a short
+    /// body; a `>=` "tolerance" here was self-defeating, not generous.
+    /// This matches
+    /// [`crate::zips::range_reader::MirrorRanges::fetch`]'s own
+    /// `offset == 0 && len == self.expected_file_size` check, and costs
+    /// nothing in practice: the only realistic whole-file caller
+    /// (`inspect_zip`'s small-file rule) always requests exactly
+    /// `(0, file_size)`.
     async fn fetch(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, FetchFailure> {
-        let whole_file = self
-            .file_size
-            .is_some_and(|file_size| offset == 0 && len >= file_size);
+        let whole_file = is_whole_file_request(offset, len, self.file_size);
         // `saturating_add`/`saturating_sub`: `offset`/`len` ultimately trace
         // back to CD-derived, untrusted-input-adjacent values (inspect.rs's
         // posture), so the inclusive end computed here must never panic.
@@ -475,6 +483,18 @@ pub(crate) fn classify_range_response(status: u16, whole_file: bool) -> RangeOut
     }
 }
 
+/// Whether a ranged request `(offset, len)` covers the entire file, given
+/// the file's known size (`None` before [`UrlRanges::discover_size`] has
+/// run — always `false` in that case, since an unknown size can never be
+/// confirmed to match). Exact match only (`offset == 0 && len ==
+/// file_size`), matching
+/// [`crate::zips::range_reader::MirrorRanges::fetch`]'s own check: see
+/// [`UrlRanges::fetch`]'s doc comment for why `>=` would be
+/// self-defeating rather than tolerant here.
+pub(crate) fn is_whole_file_request(offset: u64, len: u64, file_size: Option<u64>) -> bool {
+    file_size.is_some_and(|file_size| offset == 0 && len == file_size)
+}
+
 /// What [`UrlRanges::head_content_length`] should do with one `HEAD`
 /// response, from its status and the raw `Content-Length` header text (if
 /// any). Pure and side-effect-free, mirroring [`RangeOutcome`]'s role for
@@ -623,6 +643,25 @@ mod tests {
         ));
         assert!(matches!(classify_range_response(404, false), NotFound));
         assert!(matches!(classify_range_response(500, false), Http));
+    }
+
+    #[test]
+    fn whole_file_request_requires_exact_length_match() {
+        // Before discovery (`file_size = None`): unconditionally false,
+        // no matter what offset/len say.
+        assert!(!is_whole_file_request(0, 100, None));
+        // Exact match: offset 0, len == file_size.
+        assert!(is_whole_file_request(0, 100, Some(100)));
+        // Nonzero offset is never whole-file, even with a matching length.
+        assert!(!is_whole_file_request(1, 99, Some(100)));
+        // A genuine partial request (len < file_size) is not whole-file.
+        assert!(!is_whole_file_request(0, 50, Some(100)));
+        // len > file_size must NOT be treated as whole-file: a 200 to this
+        // request only ever delivers `file_size` bytes, and
+        // `read_capped_body(resp, len, ..)` errors on a body shorter than
+        // `len` — treating this as whole-file (the old `>=` behavior)
+        // would misreport a legitimate range-ignoring 200 as a short body.
+        assert!(!is_whole_file_request(0, 150, Some(100)));
     }
 
     #[test]
