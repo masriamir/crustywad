@@ -381,15 +381,24 @@ fn should_retry(
     Some(backoff_delay(attempt, rng))
 }
 
-/// Stream `resp`'s body, counting every wire byte into `counters.bytes` as
-/// it's read (matching `range_reader`'s accounting posture: a discarded or
-/// truncated byte still moved over the wire, so it still counts) — capped
-/// at `len`: once `len` bytes are buffered, no further chunks are read at
-/// all. A lying or misbehaving host must not be allowed to OOM this
-/// process, so this truncates rather than erroring on an over-long body
-/// (unlike `MirrorRanges::fetch`'s hard cap-exceeded error — a lone URL
-/// with no failover partner gets the body it asked for and nothing more,
-/// rather than failing an entry outright over a chatty extra byte or two).
+/// Stream `resp`'s body, counting every byte actually *read* into
+/// `counters.bytes` — not every byte the server sends. The loop reads
+/// whole chunks (`resp.chunk()` never hands back a partial one), and every
+/// chunk it reads is counted in full before the cap is applied: if the
+/// final accepted chunk pushes the buffer past `len`, its excess bytes
+/// were still read off the wire, so they still count, even though only
+/// the first `remaining` of them are kept in the returned buffer (the rest
+/// are truncated away, matching `range_reader`'s accounting posture of
+/// counting what moved over the wire). The loop condition
+/// (`while bytes.len() < cap`) then stops *before* requesting the next
+/// chunk once the cap is reached, so anything the server would have sent
+/// beyond that accepted chunk is neither read nor counted — a lying or
+/// misbehaving host can push at most one chunk past `len` through this
+/// method, never an unbounded amount, and can't OOM this process. This
+/// truncates rather than erroring on an over-long body (unlike
+/// `MirrorRanges::fetch`'s hard cap-exceeded error — a lone URL with no
+/// failover partner gets the body it asked for and nothing more, rather
+/// than failing an entry outright over a chatty extra byte or two).
 /// Never retried, matching `ApiClient::request`'s posture toward a body
 /// that fails mid-stream (§4.6): a body-stage failure is exchange-level,
 /// not a fresh-request-worthy transient, so [`UrlRanges::fetch`]'s retry
