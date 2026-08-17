@@ -296,6 +296,20 @@ impl RangeSource for UrlRanges {
     /// outcome (`RangeUnsupported`, `NotFound`, or a non-retryable `Http`
     /// status) is terminal immediately — see the module doc.
     ///
+    /// A `206` is not trusted on status alone: its `Content-Range` header
+    /// is validated via [`validate_content_range`] against the range
+    /// actually requested (and, when known, this type's discovered file
+    /// size) before the body is ever read — the same guard
+    /// `MirrorRanges::fetch`'s `accept_partial_content` applies (the one
+    /// that caught 1,099 stale-size phase-2 entries). A mismatch — the
+    /// wrong extent, a disagreeing numeric total, or a missing/malformed
+    /// header — is terminal immediately, not retried: unlike a mirror
+    /// pool, a single URL has no different host to fail over to, so
+    /// retrying against the same misbehaving proxy/CDN would likely just
+    /// reproduce the same wrong answer. Trusting an unvalidated `206`
+    /// would risk splicing a proxy/CDN's *different* range into
+    /// `inspect_zip`'s sparse buffer at the wrong offset.
+    ///
     /// `whole_file` is `offset == 0 && len == file_size` — see
     /// [`is_whole_file_request`] — but only once [`Self::discover_size`]
     /// has actually learned `file_size`; before that (or if it was never
@@ -344,7 +358,26 @@ impl RangeSource for UrlRanges {
 
             let status = resp.status();
             match classify_range_response(status.as_u16(), whole_file) {
-                RangeOutcome::UsePartial | RangeOutcome::UseFullBody => {
+                RangeOutcome::UsePartial => {
+                    // Read (and drop) the header text before `resp` moves
+                    // into `read_capped_body` below — the borrow must not
+                    // outlive that move.
+                    let content_range = resp
+                        .headers()
+                        .get(reqwest::header::CONTENT_RANGE)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned);
+                    if let Err(detail) = validate_content_range(
+                        content_range.as_deref(),
+                        offset,
+                        want_end,
+                        self.file_size,
+                    ) {
+                        return Err(FetchFailure::Http(detail));
+                    }
+                    return read_capped_body(resp, len, &self.counters).await;
+                }
+                RangeOutcome::UseFullBody => {
                     return read_capped_body(resp, len, &self.counters).await;
                 }
                 RangeOutcome::RangeUnsupported => return Err(FetchFailure::RangeUnsupported),
@@ -454,7 +487,8 @@ async fn read_capped_body(
 /// crate — see the task-4 brief).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RangeOutcome {
-    /// `206` — read the body, capped at the requested length.
+    /// `206` — validate its `Content-Range` via [`validate_content_range`]
+    /// before reading the body, capped at the requested length.
     UsePartial,
     /// `200` to a whole-file request: `MirrorRanges` precedent — the server
     /// ignored the range but happened to return exactly what was asked
@@ -538,34 +572,24 @@ pub(crate) fn classify_head_response(status: u16, content_length: Option<&str>) 
     }
 }
 
-/// Extract `TOTAL` from a `Content-Range: bytes START-END/TOTAL` header
-/// value, as sent on a `206` to [`UrlRanges::discover_size_via_range_probe`]'s
-/// `bytes=0-0` probe. `None` for:
-/// - the RFC 7233 §4.2 "unsatisfied range" form (`bytes */TOTAL` — no
-///   start/end to anchor the probe's request to);
-/// - the "length unknown" form (`bytes START-END/*` — nothing to report);
+/// Parse a `Content-Range: bytes START-END/TOTAL` header value into its
+/// three parts. `TOTAL` is `None` for the RFC 7233 §4.2 "length unknown"
+/// form (`bytes START-END/*`). The whole result is `None` for:
+/// - the "unsatisfied range" form (`bytes */TOTAL` — no start/end at all);
 /// - a `START-END` part that isn't literally two `u64`s separated by `-`
 ///   (e.g. `bytes garbage/123`), or whose `START` exceeds its `END` (e.g.
-///   `bytes 5-2/123`) — this function validates the whole header shape,
-///   not just the `TOTAL` it returns, precisely so a misbehaving host
-///   can't feed a size through a malformed range part; a caller trusting
-///   `TOTAL` alone without checking `START`/`END` at all would have let it;
-/// - anything else that doesn't parse as `bytes <range>/<total>`, or whose
-///   `TOTAL` digits don't fit a `u64`;
-/// - a `TOTAL` of exactly `0` — same invariant [`classify_head_response`]
-///   enforces on the HEAD path ("0 is never passed onward as a real
-///   size"): a zero-length remote zip is bogus input regardless of which
-///   path reported it, so this is the Content-Range-side half of that same
-///   guarantee, not a second, independent decision to keep in sync by
-///   hand. Filtered here, in the pure parser, rather than at the call
-///   site: every caller of this function inherits the "0 means unusable"
-///   contract for free, with no risk of a future call site forgetting to
-///   filter it out itself.
+///   `bytes 5-2/123`) — this validates the whole header shape, not just
+///   the `TOTAL` it returns, precisely so a misbehaving host can't feed a
+///   size through a malformed range part;
+/// - anything else that doesn't parse as `bytes <range>/<total>` at all,
+///   or whose `TOTAL` digits don't fit a `u64`.
 ///
-/// This function doesn't need to distinguish *why* a total wasn't
-/// recoverable, only whether one was — every unusable shape is treated
-/// identically by the caller (surfaced as a `FetchFailure::Http` detail).
-pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
+/// This is the shared low-level parse both [`parse_content_range_total`]
+/// (the size probe's `bytes=0-0`-only caller) and
+/// [`validate_content_range`] (`fetch`'s arbitrary-requested-range
+/// validator) build on — it doesn't itself know which range was requested
+/// or what `TOTAL` is expected; that's each caller's own job.
+fn parse_content_range_header(value: &str) -> Option<(u64, u64, Option<u64>)> {
     let (unit, range) = value.split_once(' ')?;
     if !unit.eq_ignore_ascii_case("bytes") {
         return None;
@@ -580,10 +604,95 @@ pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
     if start > end {
         return None;
     }
-    match total.trim() {
+    let total = match total.trim() {
         "*" => None,
-        n => n.parse().ok().filter(|&n| n != 0),
+        n => Some(n.parse().ok()?),
+    };
+    Some((start, end, total))
+}
+
+/// Extract `TOTAL` from a `Content-Range` header value, as sent on a `206`
+/// to [`UrlRanges::discover_size_via_range_probe`]'s `bytes=0-0` probe.
+/// This parser exists *solely* for that one caller, so beyond everything
+/// [`parse_content_range_header`] itself rejects, it additionally requires
+/// `START == 0 && END == 0` — the exact (and only) range the probe ever
+/// requests. A `206` answering a *different* range through this path would
+/// otherwise let a misbehaving host attach an unrelated `TOTAL` to a range
+/// nobody asked for; this is deliberately narrower than `fetch`'s
+/// general-purpose [`validate_content_range`], which checks the header
+/// against whatever range `fetch` actually requested rather than a single
+/// hardcoded one. `None` also for a `TOTAL` of exactly `0` — same
+/// invariant [`classify_head_response`] enforces on the HEAD path ("0 is
+/// never passed onward as a real size"): a zero-length remote zip is bogus
+/// input regardless of which path reported it, so this is the
+/// Content-Range-side half of that same guarantee, not a second,
+/// independent decision to keep in sync by hand. Filtered here, in the
+/// pure parser, rather than at the call site: every caller inherits the
+/// "0 means unusable" contract for free, with no risk of a future call
+/// site forgetting to filter it out itself.
+///
+/// This function doesn't need to distinguish *why* a total wasn't
+/// recoverable, only whether one was — every unusable shape is treated
+/// identically by the caller (surfaced as a `FetchFailure::Http` detail).
+pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
+    let (start, end, total) = parse_content_range_header(value)?;
+    if start != 0 || end != 0 {
+        return None;
     }
+    total.filter(|&n| n != 0)
+}
+
+/// Validate a `206`'s `Content-Range` header against the range
+/// [`UrlRanges::fetch`] actually requested (`[offset, want_end]`) and,
+/// when known, the file's declared total size — before the body is
+/// trusted at all. Mirrors
+/// [`crate::zips::range_reader::MirrorRanges::fetch`]'s own
+/// `accept_partial_content` validation (`range_reader.rs`), the guard that
+/// caught 1,099 stale-size phase-2 entries: a proxy/CDN answering `206`
+/// for a *different* range must never have its bytes spliced into
+/// `inspect_zip`'s sparse buffer at the wrong offset, and a `206` whose
+/// declared total disagrees with a size this type already discovered is
+/// equally untrustworthy.
+///
+/// `header_value` is `None` for both a missing `Content-Range` and one
+/// that isn't valid UTF-8 (the caller collapses both before calling this)
+/// — either way a mismatch: RFC 7233 §4.2 requires this header on every
+/// `206`, so its absence is itself suspicious, never a pass.
+///
+/// `expected_total` is `self.file_size` (`None` before
+/// [`UrlRanges::discover_size`] has run). The simplest honest rule: the
+/// header's own `TOTAL` is always accepted when it's the RFC 7233 §4.2
+/// "length unknown" `*` form (legal on its own terms, and there is
+/// nothing to compare it to either way) or whenever `expected_total` is
+/// itself `None` (nothing known yet to compare against); a *numeric*
+/// header total is required to equal `expected_total` only when the
+/// latter is actually known.
+///
+/// # Errors
+/// A detail string naming got-vs-wanted, matching the phase-2 ledger's
+/// `"Content-Range mismatch: got X, wanted Y"` shape.
+pub(crate) fn validate_content_range(
+    header_value: Option<&str>,
+    offset: u64,
+    want_end: u64,
+    expected_total: Option<u64>,
+) -> Result<(), String> {
+    let Some((start, end, total)) = header_value.and_then(parse_content_range_header) else {
+        return Err("206 with a missing, unparseable, or malformed Content-Range".to_owned());
+    };
+    if start != offset || end != want_end {
+        return Err(format!(
+            "Content-Range mismatch: got {start}-{end}, wanted {offset}-{want_end}"
+        ));
+    }
+    if let (Some(total), Some(expected_total)) = (total, expected_total)
+        && total != expected_total
+    {
+        return Err(format!(
+            "Content-Range mismatch: got total {total}, wanted {expected_total}"
+        ));
+    }
+    Ok(())
 }
 
 /// What [`UrlRanges::discover_size`] should do next, given
@@ -758,6 +867,56 @@ mod tests {
         assert_eq!(parse_content_range_total("bytes garbage/123"), None);
         // Inverted START > END is not a real range either.
         assert_eq!(parse_content_range_total("bytes 5-2/123"), None);
+        // This parser exists solely for the probe's `bytes=0-0` request —
+        // any other (even internally valid, satisfiable) START-END must be
+        // rejected, not just malformed/inverted ones, since a 206
+        // answering a different range through this path could otherwise
+        // attach an unrelated TOTAL to a range nobody asked for.
+        assert_eq!(parse_content_range_total("bytes 5-5/123"), None);
+    }
+
+    #[test]
+    fn content_range_validation_against_requested_range() {
+        // Exact match, no known total to compare against: ok.
+        assert_eq!(
+            validate_content_range(Some("bytes 10-19/100"), 10, 19, None),
+            Ok(())
+        );
+        // Exact match, and the numeric total agrees with the known size: ok.
+        assert_eq!(
+            validate_content_range(Some("bytes 10-19/100"), 10, 19, Some(100)),
+            Ok(())
+        );
+        // "*" (length unknown) total is always accepted — RFC-legal on its
+        // own terms — whether or not the file size is already known.
+        assert_eq!(
+            validate_content_range(Some("bytes 10-19/*"), 10, 19, None),
+            Ok(())
+        );
+        assert_eq!(
+            validate_content_range(Some("bytes 10-19/*"), 10, 19, Some(100)),
+            Ok(())
+        );
+        // Wrong start.
+        assert!(validate_content_range(Some("bytes 0-19/100"), 10, 19, None).is_err());
+        // Wrong end.
+        assert!(validate_content_range(Some("bytes 10-18/100"), 10, 19, None).is_err());
+        // Numeric total disagrees with the already-known file size — the
+        // MirrorRanges-parity check this fix adds: previously any 206 was
+        // trusted regardless of its Content-Range.
+        let err = validate_content_range(Some("bytes 10-19/999"), 10, 19, Some(100)).unwrap_err();
+        assert!(err.contains("999"), "detail should name got: {err}");
+        assert!(err.contains("100"), "detail should name wanted: {err}");
+        // A numeric total is NOT checked when the file size isn't known
+        // yet — nothing to compare it to.
+        assert_eq!(
+            validate_content_range(Some("bytes 10-19/999"), 10, 19, None),
+            Ok(())
+        );
+        // Missing header (a 206 with no Content-Range at all is malformed).
+        assert!(validate_content_range(None, 10, 19, None).is_err());
+        // Garbage header.
+        assert!(validate_content_range(Some("nonsense"), 10, 19, None).is_err());
     }
 
     #[test]
