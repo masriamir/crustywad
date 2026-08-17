@@ -46,13 +46,29 @@ impl SparseBuffer {
     }
 
     /// Insert `bytes` at `offset`, merging any overlapping or adjacent
-    /// segments so reads never see artificial seams.
+    /// segments so reads never see artificial seams. An insert that would
+    /// overflow `u64` or spill past `file_size` is discarded (see below)
+    /// rather than corrupting the segment map.
     pub fn insert(&mut self, offset: u64, bytes: Vec<u8>) {
         if bytes.is_empty() {
             return;
         }
         let len = u64::try_from(bytes.len()).expect("len fits u64");
-        let end = offset + len;
+        // Defensive bound (ADR-0016 posture): the drivers only insert
+        // ranges they fetched, clamped to [0, file_size) — but that
+        // invariant lives in other files. Discarding an out-of-bounds
+        // insert here keeps every stored segment inside [0, file_size],
+        // which in turn makes the `seg_start + seg_len` arithmetic below
+        // provably overflow-free. A discarded insert is fail-closed: the
+        // driver's next read simply misses again and the bounded round
+        // budget converts that into a recorded TooChatty, never silent
+        // corruption.
+        let Some(end) = offset.checked_add(len) else {
+            return;
+        };
+        if end > self.file_size {
+            return;
+        }
 
         // Any segment that touches [offset, end): seg_start <= end and
         // seg_end >= offset. Bounding the range scan by `..=end` is safe
@@ -942,6 +958,21 @@ mod tests {
         r.seek(SeekFrom::Start(10)).unwrap();
         assert_eq!(r.read(&mut []).unwrap(), 0);
         assert_eq!(missing.get(), None);
+    }
+
+    #[test]
+    fn out_of_bounds_inserts_are_discarded_not_corrupting() {
+        let mut buf = SparseBuffer::new(100);
+        // Spills past file_size → discarded.
+        buf.insert(96, vec![1; 10]);
+        let mut out = [0_u8; 4];
+        assert_eq!(buf.read_at(96, &mut out), None);
+        // Offset + len would overflow u64 → discarded, no panic.
+        buf.insert(u64::MAX - 2, vec![1; 10]);
+        assert_eq!(buf.read_at(u64::MAX - 2, &mut out), None);
+        // An exactly-bounded insert still lands.
+        buf.insert(90, vec![7; 10]);
+        assert_eq!(buf.read_at(90, &mut out), Some(4));
     }
 
     #[test]
