@@ -16,12 +16,14 @@
 //! `tool_version`/`git_rev`.
 
 pub mod percentiles;
+mod report;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
 
+use crate::cache::atomic_write;
 use crate::lslar::{ArchiveTree, parse_ls_lar_gz};
 use crate::mirror::LsLarMeta;
 use crate::schema::{
@@ -171,7 +173,7 @@ pub fn run_with_paths(
         git_rev: git_rev(),
     };
     let outlier_records = outliers.as_ref().map(|(records, _)| records.as_slice());
-    let stats = build_stats(
+    let mut stats = build_stats(
         &filtered,
         &ledger,
         &tree,
@@ -179,16 +181,35 @@ pub fn run_with_paths(
         phase1_file_count,
         provenance,
     );
+    // §8: recommendations are set *before* `stats.json` is written, so the
+    // written document always carries them (never the placeholder empty
+    // `vec![]` `build_stats` starts from).
+    stats.recommendations = report::recommendations(&stats.idgames, stats.outliers.as_ref());
 
-    std::fs::create_dir_all(&paths.out_dir)
-        .with_context(|| format!("creating {}", paths.out_dir.display()))?;
-    write_stats_json(&paths.out_dir.join("stats.json"), &stats)?;
-
+    // Build the sweep corpus (and render the report) entirely in memory
+    // before any output file is written. Writing `stats.json` first (the
+    // pre-Task-7 ordering) meant a downstream failure — e.g. sweep's URL
+    // construction erroring on a malformed dir/filename — left an orphaned
+    // `stats.json` on disk with no sibling outputs. Building everything up
+    // front and only then writing makes a `run_with_paths` failure leave
+    // `out_dir` exactly as it was (module invariant, not atomicity across
+    // files — each individual write is still just `atomic_write`).
     let sweep = sweep_entries(&filtered).context(
         "building sweep-corpus entries: a phase-2 record's dir/filename could not be \
          turned into a mirror URL",
     )?;
+    let report = report::render_report(&stats);
+
+    std::fs::create_dir_all(&paths.out_dir)
+        .with_context(|| format!("creating {}", paths.out_dir.display()))?;
     write_sweep_jsonl(&paths.out_dir.join("sweep-corpus.jsonl"), &sweep)?;
+    write_stats_json(&paths.out_dir.join("stats.json"), &stats)?;
+    atomic_write(&paths.out_dir.join("stats-report.md"), report.as_bytes()).with_context(|| {
+        format!(
+            "writing {}",
+            paths.out_dir.join("stats-report.md").display()
+        )
+    })?;
 
     tracing::info!(
         population_entries = stats.idgames.coverage.population_entries,
@@ -196,7 +217,6 @@ pub fn run_with_paths(
         sweep_entries = sweep.len(),
         "stats complete"
     );
-    tracing::info!("stats-report.md pending (#407 task 7)");
     Ok(())
 }
 
@@ -1602,5 +1622,426 @@ total 1
         .unwrap();
         let err = run_with_paths(&paths, None, None).unwrap_err().to_string();
         assert!(err.contains("just harvest-outliers"), "{err}");
+    }
+
+    // ---- Task 7: recommendations + report wiring + trio determinism/PII ----
+
+    /// [`wad_record`] with every field a Task 7 diversity fixture needs to
+    /// override — `dir`/`filename`/`zip_size` (so records can land in different
+    /// ls-laR listing entries with deliberate matches/mismatches/misses),
+    /// `other_members`, `votes`, `date`, and `zip64`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test-only fixture builder — one call site per record, explicit fields read \
+                  far more clearly here than a builder-pattern would for a handful of one-off records"
+    )]
+    fn wad_record_full(
+        id: u64,
+        dir: &str,
+        filename: &str,
+        fetch_status: FetchStatus,
+        zip_size: u64,
+        wads: Vec<crate::schema::WadMember>,
+        other_members: Vec<String>,
+        votes: u64,
+        date: &str,
+        zip64: bool,
+    ) -> WadRecord {
+        let mut r = wad_record(id, fetch_status, wads);
+        r.dir = dir.to_owned();
+        r.filename = filename.to_owned();
+        r.zip_size = zip_size;
+        r.other_members = other_members;
+        r.votes = votes;
+        r.date = date.to_owned();
+        r.zip64 = zip64;
+        r
+    }
+
+    /// The record list half of [`write_diverse_fixture_inputs`]: multi-wad,
+    /// zero-wad, zip64, `full_download`, zero votes, missing date, a
+    /// duplicate id, and a wad-named `other_member`. Split out so neither
+    /// function trips clippy's line-count lint.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "a flat list of 9 one-off fixture records, each already split across its own \
+                  multi-line call — splitting further would hide the diversity this fixture \
+                  exists to enumerate, not clarify it"
+    )]
+    fn diverse_records() -> Vec<WadRecord> {
+        vec![
+            wad_record_full(
+                1,
+                "levels/doom/0-9/",
+                "multi.zip",
+                FetchStatus::Ok,
+                500,
+                vec![
+                    wad_member("A.WAD", 100, 1_000),
+                    wad_member("B.WAD", 50, 500),
+                ],
+                vec![],
+                10,
+                "2019-04-02",
+                false,
+            ),
+            wad_record_full(
+                2,
+                "levels/doom/0-9/",
+                "zero.zip",
+                FetchStatus::Ok,
+                200,
+                vec![],
+                vec![],
+                0,
+                "2020-01-01",
+                false,
+            ),
+            wad_record_full(
+                3,
+                "levels/doom2/Ports/megawads/",
+                "zip64.zip",
+                FetchStatus::FullDownload,
+                700,
+                vec![wad_member("C.WAD", 300, 3_000)],
+                vec![],
+                5,
+                "2021-06-01",
+                true,
+            ),
+            wad_record_full(
+                4,
+                "levels/heretic/0-9/",
+                "nodate.zip",
+                FetchStatus::Ok,
+                800,
+                vec![wad_member("D.WAD", 10, 100)],
+                vec![],
+                1,
+                "",
+                false,
+            ),
+            wad_record_full(
+                5,
+                "levels/hexen/0-9/",
+                "sneaky.zip",
+                FetchStatus::Ok,
+                900,
+                vec![wad_member("E.WAD", 10, 100)],
+                vec!["SNEAKY.WAD".into()],
+                2,
+                "2018-03-03",
+                false,
+            ),
+            wad_record_full(
+                6,
+                "levels/doom/0-9/",
+                "mismatch.zip",
+                FetchStatus::Ok,
+                550, // API says 550; the ls-laR listing below says 600.
+                vec![wad_member("F.WAD", 20, 200)],
+                vec![],
+                0,
+                "2017-07-07",
+                false,
+            ),
+            wad_record_full(
+                7,
+                "levels/doom/0-9/",
+                "missing.zip",
+                FetchStatus::Ok,
+                12_345, // absent from the listing below — a join miss.
+                vec![wad_member("G.WAD", 5, 50)],
+                vec![],
+                0,
+                "2016-01-01",
+                false,
+            ),
+            wad_record_full(
+                42,
+                "levels/doom/a-c/",
+                "dup-a.zip",
+                FetchStatus::Ok,
+                111,
+                vec![wad_member("H.WAD", 1, 10)],
+                vec![],
+                0,
+                "2015-01-01",
+                false,
+            ),
+            wad_record_full(
+                42, // duplicate id — same value as the record above.
+                "levels/doom/a-c/",
+                "dup-b.zip",
+                FetchStatus::Ok,
+                222,
+                vec![wad_member("I.WAD", 2, 20)],
+                vec![],
+                0,
+                "2015-01-02",
+                false,
+            ),
+        ]
+    }
+
+    /// A maximally diverse record set for the trio's byte-identity and PII
+    /// tests (§9.3, ADR-0030 §3): see [`diverse_records`] for the record
+    /// shapes (multi-wad, zero-wad, zip64, `full_download`, zero votes,
+    /// missing date, a duplicate id, a wad-named `other_member`); this
+    /// function additionally builds a matching ls-laR listing with a
+    /// deliberate listing mismatch and a listing miss, plus the §6.4
+    /// outliers pair (one analyzed, one skipped) and a phase-1 ledger entry
+    /// whose free-text-shaped `path`/`detail` fields plant
+    /// `"EVIL_AUTHOR"`/`"EVIL_TITLE"`. `build_stats` never reads a ledger
+    /// entry past its `kind` (see [`ledger_kind_counts`]), so these two
+    /// strings must never surface in any of the three trio outputs —
+    /// `trio_has_no_free_text_keys` is the witness.
+    fn write_diverse_fixture_inputs(dir: &std::path::Path) -> StatsPaths {
+        let records = diverse_records();
+        let record_count = u64::try_from(records.len()).unwrap();
+        let paths = write_fixture_inputs_with_records(dir, &records, record_count);
+
+        // Overwrite the base fixture's ls-laR cache with a listing matching
+        // this diverse set: `multi.zip`/`zip64.zip`/`nodate.zip`/`sneaky.zip`
+        // match their record's `zip_size` exactly; `mismatch.zip` disagrees
+        // (550 vs 600); `missing.zip` and the two `levels/doom/a-c/` dup
+        // records are absent entirely (listing misses).
+        let text = "\
+.:
+total 0
+
+./levels/doom/0-9:
+total 2
+-rw-r--r--  1 ftp ftp  500 Jan  1  2020 multi.zip
+-rw-r--r--  1 ftp ftp  600 Jan  1  2020 mismatch.zip
+
+./levels/doom2/Ports/megawads:
+total 1
+-rw-r--r--  1 ftp ftp  700 Jan  1  2020 zip64.zip
+
+./levels/heretic/0-9:
+total 1
+-rw-r--r--  1 ftp ftp  800 Jan  1  2020 nodate.zip
+
+./levels/hexen/0-9:
+total 1
+-rw-r--r--  1 ftp ftp  900 Jan  1  2020 sneaky.zip
+";
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, text.as_bytes()).unwrap();
+        std::fs::write(&paths.lslar_gz, enc.finish().unwrap()).unwrap();
+
+        write_diverse_ledger_and_outliers(&paths);
+        paths
+    }
+
+    /// The ledger/outliers half of [`write_diverse_fixture_inputs`]: plants
+    /// the PII-shaped ledger strings and writes the §6.4 outliers pair.
+    /// Split out so neither function trips clippy's line-count lint.
+    fn write_diverse_ledger_and_outliers(paths: &StatsPaths) {
+        // Phase-1 ledger: a real `HttpError` entry (so `ledger_kinds` is
+        // non-empty) whose `path`/`detail` plant PII-shaped free text that
+        // `build_stats` never reads past `.kind` — see this fn's doc comment.
+        let ledger = [LedgerEntry {
+            path: "levels/EVIL_TITLE-not-a-real-archive-path/".into(),
+            action: "getcontents".into(),
+            kind: LedgerKind::HttpError,
+            detail: "uploader EVIL_AUTHOR triggered HTTP 500".into(),
+            attempts: 2,
+        }];
+        let mut ledger_text = String::new();
+        for entry in &ledger {
+            ledger_text.push_str(&serde_json::to_string(entry).unwrap());
+            ledger_text.push('\n');
+        }
+        std::fs::write(&paths.phase1_ledger, ledger_text).unwrap();
+
+        // §6.4 outliers pair: one analyzed, one skipped (no range support).
+        let analyzed = OutlierRecord {
+            slug: "curated-megawad".into(),
+            url: "https://example.com/curated-megawad.zip".into(),
+            zip_size: 2_000_000_000,
+            zip64: false,
+            member_count: 1,
+            wads: vec![wad_member("J.WAD", 900_000, 9_000_000)],
+            other_members: vec![],
+            fetch_status: FetchStatus::Ok,
+        };
+        let skipped = OutlierRecord {
+            slug: "refused-host".into(),
+            url: "https://example.com/refused-host.zip".into(),
+            zip_size: 0,
+            zip64: false,
+            member_count: 0,
+            wads: vec![],
+            other_members: vec![],
+            fetch_status: FetchStatus::NoRangeSupport,
+        };
+        let mut outliers_text = String::new();
+        for rec in [&analyzed, &skipped] {
+            outliers_text.push_str(&serde_json::to_string(rec).unwrap());
+            outliers_text.push('\n');
+        }
+        std::fs::write(&paths.outliers_jsonl, outliers_text).unwrap();
+        std::fs::write(
+            &paths.outliers_manifest,
+            serde_json::to_string(&OutliersManifest {
+                id: "harvest-outliers-1".into(),
+                started_at: "2026-08-16T00:00:00Z".into(),
+                duration_secs: 1,
+                tool_version: tool_version(),
+                git_rev: None,
+                limit: None,
+                entries_total: 2,
+                records_written: 2,
+                ledger_count: 0,
+                range_requests: 2,
+                bytes_transferred: 1_000,
+                status_counts: BTreeMap::from([
+                    ("ok".to_owned(), 1),
+                    ("no_range_support".to_owned(), 1),
+                ]),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Reads the three §9.3 trio outputs (in a fixed, named order) as raw
+    /// bytes — the byte-identity witness compares this across two runs.
+    fn read_trio(out_dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+        ["stats.json", "stats-report.md", "sweep-corpus.jsonl"]
+            .into_iter()
+            .map(|name| {
+                let bytes = std::fs::read(out_dir.join(name))
+                    .unwrap_or_else(|e| panic!("reading {name}: {e}"));
+                (name.to_owned(), bytes)
+            })
+            .collect()
+    }
+
+    /// Recursively asserts no JSON object key anywhere in `v` is (or
+    /// contains, case-insensitively) an ADR-0030 §3 forbidden free-text
+    /// field name. Generalizes
+    /// [`crate::api::model::tests::assert_no_email_keys`]'s single-field
+    /// shape to the full forbidden set the trio must never carry.
+    fn assert_no_pii_keys(v: &serde_json::Value) {
+        const FORBIDDEN: [&str; 5] = ["title", "author", "description", "email", "textfile"];
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, val) in map {
+                    let lower = k.to_ascii_lowercase();
+                    assert!(
+                        !FORBIDDEN.iter().any(|f| lower.contains(f)),
+                        "PII-shaped key {k:?} present"
+                    );
+                    assert_no_pii_keys(val);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(assert_no_pii_keys),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn trio_is_byte_identical_across_reruns() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = write_diverse_fixture_inputs(dir.path());
+        run_with_paths(&paths, None, None).unwrap();
+        let first = read_trio(&paths.out_dir);
+        run_with_paths(&paths, None, None).unwrap();
+        let second = read_trio(&paths.out_dir);
+        assert_eq!(first, second);
+        // Sanity: every output is non-trivial (a bug that made every run
+        // write empty files would otherwise pass a byte-identity check
+        // vacuously).
+        for (name, bytes) in &first {
+            assert!(!bytes.is_empty(), "{name} is empty");
+        }
+    }
+
+    #[test]
+    fn trio_has_no_free_text_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = write_diverse_fixture_inputs(dir.path());
+        run_with_paths(&paths, None, None).unwrap();
+
+        let stats_text = std::fs::read_to_string(paths.out_dir.join("stats.json")).unwrap();
+        assert_no_pii_keys(&serde_json::from_str(&stats_text).unwrap());
+
+        let sweep_text = std::fs::read_to_string(paths.out_dir.join("sweep-corpus.jsonl")).unwrap();
+        for line in sweep_text.lines() {
+            assert_no_pii_keys(&serde_json::from_str(line).unwrap());
+        }
+
+        let report_text = std::fs::read_to_string(paths.out_dir.join("stats-report.md")).unwrap();
+        for planted in ["EVIL_AUTHOR", "EVIL_TITLE"] {
+            assert!(!stats_text.contains(planted), "stats.json leaked {planted}");
+            assert!(
+                !sweep_text.contains(planted),
+                "sweep-corpus.jsonl leaked {planted}"
+            );
+            assert!(
+                !report_text.contains(planted),
+                "stats-report.md leaked {planted}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_outliers_is_stated_not_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path()); // no outliers files
+        run_with_paths(&paths, None, None).unwrap();
+
+        let report = std::fs::read_to_string(paths.out_dir.join("stats-report.md")).unwrap();
+        assert!(report.contains("No outliers analyzed"), "{report}");
+
+        let stats: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(paths.out_dir.join("stats.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(stats["outliers"].is_null());
+    }
+
+    #[test]
+    fn stats_json_wire_keys_pin_percentile_serde_renames() {
+        // Task 6 ledgered minor: M2 — `p99.5`/`p99.9` must round-trip on
+        // the actual JSON wire, not just through the Rust struct.
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        run_with_paths(&paths, None, None).unwrap();
+        let text = std::fs::read_to_string(paths.out_dir.join("stats.json")).unwrap();
+        assert!(text.contains("\"p99.5\""), "p99.5 wire key missing");
+        assert!(text.contains("\"p99.9\""), "p99.9 wire key missing");
+    }
+
+    #[test]
+    fn run_with_paths_writes_a_nonempty_report_stating_every_recommendation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = write_fixture_inputs(tmp.path());
+        run_with_paths(&paths, None, None).unwrap();
+        let report = std::fs::read_to_string(paths.out_dir.join("stats-report.md")).unwrap();
+        assert!(report.starts_with("# idgames corpus statistics (phase 3)"));
+        for key in [
+            "wire_cap_zip",
+            "wire_cap_wad",
+            "decoded_cap",
+            "max_member_count",
+            "max_entry_uncompressed_bytes",
+            "max_member_compression_ratio",
+            "compression_method_allowlist",
+            "zip64_statement",
+        ] {
+            assert!(
+                report.contains(key),
+                "recommendation {key} missing from report"
+            );
+        }
+        let stats: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(paths.out_dir.join("stats.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stats["recommendations"].as_array().unwrap().len(), 8);
     }
 }
