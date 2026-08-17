@@ -151,7 +151,14 @@ pub(crate) fn entry_outcome(
 
 /// Build one `outliers-errors.jsonl` line — action is always
 /// `"harvest-outliers"`, `path` is the slug (there's no archive-tree path
-/// for a curated outlier).
+/// for a curated outlier). `attempts` is always `1`: this ledger records
+/// one finding per failed curated entry (ledger-entry granularity), not the
+/// HTTP retry count that actually produced it — [`UrlRanges`] can retry a
+/// single entry's HEAD/range fetches up to 6 times internally before
+/// surfacing the failure this maps from (see [`LedgerEntry::attempts`]'s
+/// doc for the same caveat). Plumbing the real per-request count through
+/// [`crate::zips::inspect::FetchFailure`] into this field is a follow-up,
+/// not this field's current contract.
 fn ledger_line(slug: &str, kind: LedgerKind, detail: String) -> LedgerEntry {
     LedgerEntry {
         path: slug.to_owned(),

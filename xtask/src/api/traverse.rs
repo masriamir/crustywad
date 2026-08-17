@@ -558,7 +558,7 @@ mod tests {
 
     #[tokio::test]
     async fn bfs_subtree_mode_follows_non_include_dirs_under_root() {
-        // A dev `--root` at a Triage root must traverse its whole subtree
+        // A dev `--root` at a Skip root must traverse its whole subtree
         // (tree-mode `--root` parity), while dirs outside the root stay out.
         let tmp = tempfile::tempdir().unwrap();
         let ckpt = tmp.path().join("bfs-frontier.json");
