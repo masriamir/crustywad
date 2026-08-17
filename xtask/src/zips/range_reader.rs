@@ -159,7 +159,10 @@ impl<'a> RangeReader<'a> {
 
 impl Read for RangeReader<'_> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if self.pos >= self.buf.file_size() {
+        // `Read` contract: an empty buffer reads zero bytes, full stop —
+        // it must not record a miss (which would trigger a spurious,
+        // zero-byte-motivated fetch round) even at an uncovered offset.
+        if out.is_empty() || self.pos >= self.buf.file_size() {
             return Ok(0);
         }
         if let Some(n) = self.buf.read_at(self.pos, out) {
@@ -915,6 +918,13 @@ mod tests {
 
         // Negative absolute positions are invalid input.
         assert!(r.seek(SeekFrom::End(-200)).is_err());
+
+        // An empty read is Ok(0) even at an uncovered offset — the Read
+        // contract; it must never record a (zero-length) miss.
+        missing.set(None);
+        r.seek(SeekFrom::Start(10)).unwrap();
+        assert_eq!(r.read(&mut []).unwrap(), 0);
+        assert_eq!(missing.get(), None);
     }
 
     #[test]
