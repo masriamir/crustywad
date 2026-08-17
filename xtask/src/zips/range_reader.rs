@@ -648,9 +648,21 @@ impl MirrorRanges {
     /// mirror without success (§5.2's failover order: all-404 beats a
     /// range refusal, which beats a generic transport/HTTP detail).
     fn fetch_exhausted(&self, last_detail: Option<String>) -> FetchFailure {
+        // §5.2: the budgeted fallback fires only when BOTH mirrors refuse
+        // ranges. `RangeUnsupported` therefore requires a conclusive
+        // verdict (404 or range refusal) from EVERY mirror, with at least
+        // one refusal — a mirror that only failed transiently leaves the
+        // entry `Http`, which records as an uncached `fetch_error` and
+        // retries live next run instead of spending fallback budget on a
+        // download that a healthy mirror may make unnecessary.
+        let conclusive = self
+            .not_found
+            .iter()
+            .zip(self.range_refused.iter())
+            .all(|(&nf, &rr)| nf || rr);
         if self.not_found.iter().all(|&nf| nf) {
             FetchFailure::NotFound
-        } else if self.range_refused.iter().any(|&rr| rr) {
+        } else if conclusive && self.range_refused.iter().any(|&rr| rr) {
             FetchFailure::RangeUnsupported
         } else {
             FetchFailure::Http(last_detail.unwrap_or_else(|| "no mirrors available".into()))
@@ -1096,5 +1108,44 @@ mod tests {
     #[test]
     fn mirror_concurrency_stays_in_the_design_5_4_band() {
         assert!((4..=8).contains(&MIRROR_CONCURRENCY));
+    }
+
+    #[test]
+    fn exhaustion_classification_requires_conclusive_range_refusal() {
+        let counters = std::sync::Arc::new(TransferCounters::default());
+        let mut m = MirrorRanges::new(
+            reqwest::Client::new(),
+            "levels/doom/0-9/",
+            "a.zip",
+            100,
+            counters,
+        )
+        .unwrap();
+        // Transient-only failures: Http, detail preserved.
+        assert!(matches!(
+            m.fetch_exhausted(Some("HTTP 500".into())),
+            FetchFailure::Http(d) if d == "HTTP 500"
+        ));
+        // One refusal + one transient: still Http (§5.2 — the fallback
+        // fires only when BOTH mirrors refuse ranges).
+        m.range_refused[0] = true;
+        assert!(matches!(m.fetch_exhausted(None), FetchFailure::Http(_)));
+        // Refusal + 404: conclusive on every mirror → RangeUnsupported.
+        m.not_found[1] = true;
+        assert!(matches!(
+            m.fetch_exhausted(None),
+            FetchFailure::RangeUnsupported
+        ));
+        // Both refused: RangeUnsupported.
+        m.not_found[1] = false;
+        m.range_refused[1] = true;
+        assert!(matches!(
+            m.fetch_exhausted(None),
+            FetchFailure::RangeUnsupported
+        ));
+        // Both 404: NotFound wins over everything.
+        m.range_refused = [false, false];
+        m.not_found = [true, true];
+        assert!(matches!(m.fetch_exhausted(None), FetchFailure::NotFound));
     }
 }
