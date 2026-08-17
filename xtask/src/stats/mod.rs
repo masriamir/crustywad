@@ -201,9 +201,13 @@ pub fn run_with_paths(
     // pre-Task-7 ordering) meant a downstream failure — e.g. sweep's URL
     // construction erroring on a malformed dir/filename — left an orphaned
     // `stats.json` on disk with no sibling outputs. Building everything up
-    // front and only then writing makes a `run_with_paths` failure leave
-    // `out_dir` exactly as it was (module invariant, not atomicity across
-    // files — each individual write is still just `atomic_write`).
+    // front eliminates that *compute-time* orphaning: a failure before the
+    // write phase below touches `out_dir` not at all. The write phase
+    // itself is only per-file atomic (each write is a single
+    // `atomic_write`/`write_*` call) — it is not atomic *across* the three
+    // files, so an I/O failure partway through the write phase (e.g. disk
+    // full after `sweep-corpus.jsonl` but before `stats.json`) can still
+    // leave a partial output set on disk.
     let sweep = sweep_entries(&filtered).context(
         "building sweep-corpus entries: a phase-2 record's dir/filename could not be \
          turned into a mirror URL",
