@@ -56,12 +56,11 @@ pub struct OutlierSpec {
     pub slug: String,
     /// Direct zip download URL.
     pub url: String,
-    /// One-line human rationale for why the entry is on the list. Never
-    /// copied into any output (the ADR-0030 §3 free-text ban) — documentary
-    /// only, for readers of the committed TOML file itself.
-    // consumed from Task 6 (#407) — a stats-report "why this is on the
-    // list" note is plausible; today nothing in this crate reads it back.
-    #[allow(dead_code)]
+    /// One-line human rationale for why the entry is on the list. Read only
+    /// for [`parse_outliers_toml`]'s non-empty validation — never copied
+    /// into any output (the ADR-0030 §3 free-text ban) and never surfaced
+    /// past parse time, so it's documentary for readers of the committed
+    /// TOML file, not a value the orchestrator otherwise consumes.
     pub note: String,
 }
 
@@ -265,14 +264,24 @@ pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
     runtime.block_on(run_async(limit))
 }
 
+/// Shape the parsed TOML entries into this run's worklist: `--limit` (when
+/// given) truncates to its first N entries, in file order. No `--root`
+/// scoping — there's no archive-tree path to filter a curated URL list by,
+/// which is exactly why [`run`] rejects `--root` outright rather than
+/// silently ignoring it. Pure and unit-tested without network, mirroring
+/// `zips::worklist`'s shaping precedent (`zips/mod.rs`).
+fn worklist(mut specs: Vec<OutlierSpec>, limit: Option<usize>) -> Vec<OutlierSpec> {
+    if let Some(limit) = limit {
+        specs.truncate(limit);
+    }
+    specs
+}
+
 async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
     let toml_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("outliers.toml");
     let text = std::fs::read_to_string(&toml_path)
         .with_context(|| format!("reading {}", toml_path.display()))?;
-    let mut specs = parse_outliers_toml(&text)?;
-    if let Some(limit) = limit {
-        specs.truncate(limit);
-    }
+    let specs = worklist(parse_outliers_toml(&text)?, limit);
     let entries_total = u64::try_from(specs.len()).unwrap_or(u64::MAX);
 
     let scoped = limit.is_some();
@@ -379,6 +388,56 @@ mod tests {
     fn root_flag_is_rejected() {
         let err = run(Some("levels/doom/"), None).unwrap_err();
         assert!(err.to_string().contains("--root does not apply"));
+    }
+
+    fn specs(n: usize) -> Vec<OutlierSpec> {
+        (0..n)
+            .map(|i| OutlierSpec {
+                slug: format!("s{i}"),
+                url: format!("https://example.com/{i}.zip"),
+                note: "n".to_owned(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn worklist_truncates_to_the_limit_in_file_order() {
+        // limit smaller than the list: keeps the first N, in order.
+        let limited = worklist(specs(5), Some(2));
+        assert_eq!(
+            limited.iter().map(|s| s.slug.clone()).collect::<Vec<_>>(),
+            vec!["s0".to_owned(), "s1".to_owned()]
+        );
+    }
+
+    #[test]
+    fn worklist_with_no_limit_keeps_every_entry() {
+        let all = worklist(specs(3), None);
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn worklist_limit_larger_than_the_list_keeps_every_entry() {
+        let all = worklist(specs(3), Some(100));
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn worklist_limit_zero_empties_the_list() {
+        let none = worklist(specs(3), Some(0));
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn scoped_output_dir_matches_the_limit_flag() {
+        // Mirrors phase1::tests::scoped_runs_use_the_dev_output_dir: pins
+        // run_async's `scoped = limit.is_some()` decision, the same way
+        // phase 1/2 pin theirs — a scoped (`--limit`) run must never write
+        // into the same output dir as a full run.
+        let limit: Option<usize> = Some(3);
+        assert!(crate::phase1::output_dir(limit.is_some()).ends_with("data/dev"));
+        let no_limit: Option<usize> = None;
+        assert!(crate::phase1::output_dir(no_limit.is_some()).ends_with("data"));
     }
 
     #[test]
