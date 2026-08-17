@@ -11,6 +11,7 @@ mod mirror;
 mod phase1;
 mod schema;
 mod scope;
+mod zips;
 
 use anyhow::bail;
 use clap::{Parser, Subcommand};
@@ -52,13 +53,9 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::HarvestApi => phase1::run(cli.root.as_deref(), cli.limit),
-        Command::HarvestZips => harvest_zips(cli.root.as_deref(), cli.limit),
+        Command::HarvestZips => zips::run(cli.root.as_deref(), cli.limit),
         Command::Stats => stats(cli.root.as_deref(), cli.limit),
     }
-}
-
-fn harvest_zips(_root: Option<&str>, _limit: Option<usize>) -> anyhow::Result<()> {
-    bail!("`harvest-zips` is not implemented yet — phase 2 lands with #406")
 }
 
 fn stats(_root: Option<&str>, _limit: Option<usize>) -> anyhow::Result<()> {
@@ -116,15 +113,9 @@ mod tests {
     }
 
     #[test]
-    fn stubs_report_their_tracking_issue() {
-        let cases = [
-            (super::harvest_zips(None, None), "#406"),
-            (super::stats(None, None), "#407"),
-        ];
-        for (result, issue) in cases {
-            let err = result.unwrap_err().to_string();
-            assert!(err.contains("not implemented yet"), "{err}");
-            assert!(err.contains(issue), "{err}");
-        }
+    fn stats_stub_reports_its_tracking_issue() {
+        let err = super::stats(None, None).unwrap_err().to_string();
+        assert!(err.contains("not implemented yet"), "{err}");
+        assert!(err.contains("#407"), "{err}");
     }
 }

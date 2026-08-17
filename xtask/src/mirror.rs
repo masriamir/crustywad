@@ -6,11 +6,45 @@
 //! conditional GET answers 304 and no body moves at all.
 
 use std::path::Path;
+use std::time::Duration;
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::atomic_write;
 use crate::lslar::{ArchiveTree, parse_ls_lar_gz};
+
+/// Shared HTTP client builder: both phases send a mainstream browser UA
+/// (§4.6 politeness posture), but ls-laR bootstrap (one whole-body fetch of
+/// a few hundred KB) and phase-2 mirror reads (small ranged fetches
+/// interleaved with rare, large full-file downloads under the §5.2
+/// fallback) have very different failure shapes — a single whole-request
+/// timeout that's safe for the former would abort a legitimate
+/// multi-hundred-MB fallback download, so phase 2 gets its own client
+/// ([`build_zips_http`]) instead of sharing this one's timeout.
+pub(crate) fn build_http() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(crate::api::client::BROWSER_UA)
+        .timeout(Duration::from_mins(2))
+        .build()
+        .context("building mirror HTTP client")
+}
+
+/// Phase-2 (`harvest-zips`) mirror client. Unlike [`build_http`]'s single
+/// whole-request timeout, this splits the budget: a short connect timeout
+/// (a slow/dead mirror should fail fast rather than eat a request slot)
+/// and a per-read idle timeout (a stalled transfer — the slowloris case —
+/// must not hang forever, but an active, slow-but-progressing multi-hundred
+/// MB full-download fallback must not be cut off mid-transfer either, which
+/// a single whole-request timeout would do).
+pub(crate) fn build_zips_http() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(crate::api::client::BROWSER_UA)
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_mins(1))
+        .build()
+        .context("building phase-2 mirror HTTP client")
+}
 
 /// One archive mirror.
 #[derive(Debug, Clone, Copy)]

@@ -122,7 +122,7 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     };
 
     // §5.0 bootstrap, then enrichment — or §4.2 BFS fallback.
-    let http = build_mirror_http()?;
+    let http = mirror::build_http()?;
     let (tree, source) = mirror::fetch_ls_lar(&http, &cache_dir).await;
 
     // Fresh mirror content + a baseline → invalidate exactly the dirs
@@ -330,14 +330,6 @@ fn warn_untriaged_roots(triage: &[String], tree: Option<&ArchiveTree>) {
             "untriaged root skipped — record the include/skip call in xtask/DESIGN.md §4.2"
         );
     }
-}
-
-fn build_mirror_http() -> anyhow::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .user_agent(crate::api::client::BROWSER_UA)
-        .timeout(std::time::Duration::from_mins(2))
-        .build()
-        .context("building mirror HTTP client")
 }
 
 fn latestfiles_ledger(e: &ApiCallError) -> LedgerEntry {
