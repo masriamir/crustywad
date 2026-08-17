@@ -19,7 +19,17 @@
 //! to respect in the first place.
 //!
 //! **Politeness** (ADR-0030 §4 spirit): strictly sequential — one entry at
-//! a time, never a pool — with a full second of spacing between requests.
+//! a time, never a pool — with [`ENTRY_SPACING`] (one second) enforced
+//! *between entries*, not between every request. A single entry can still
+//! issue several back-to-back requests against its host with no pause
+//! between them: [`crate::zips::url_source::UrlRanges::discover_size`]'s
+//! `HEAD` (plus, on a host whose `HEAD` doesn't carry a usable
+//! `Content-Length`, a single-byte ranged-GET size probe), followed by
+//! `inspect_zip`'s own ranged central-directory reads (typically a couple,
+//! occasionally a few more for a `.wad` member whose local header falls
+//! outside the cached tail — see `zips::inspect`'s module doc). What this
+//! module actually guarantees is "no two *entries* start less than a
+//! second apart," not "no two *requests* are less than a second apart."
 //! The curated list is small (n ≈ 8), so there's no resumability store: a
 //! rerun simply refetches every central directory (a few hundred KiB
 //! total across the whole list), matching spec §8's "no resumability

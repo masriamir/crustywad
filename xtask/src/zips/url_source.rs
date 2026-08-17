@@ -95,12 +95,21 @@ impl UrlRanges {
     }
 
     /// `HEAD` the URL (following the client's redirect policy, retrying a
-    /// transport error or a retryable status per [`should_retry`]); if the
-    /// HEAD doesn't carry a usable `Content-Length`, fall back to a
-    /// single-byte ranged-GET size probe
-    /// ([`Self::discover_size_via_range_probe`]). Either way, the learned
-    /// size is recorded for later [`RangeSource::fetch`] calls to
-    /// recognize a whole-file request.
+    /// transport error or a retryable status per [`should_retry`]), then
+    /// fall back to a single-byte ranged-GET size probe
+    /// ([`Self::discover_size_via_range_probe`]) in **two** cases: the HEAD
+    /// succeeded but carried no usable `Content-Length`, or the HEAD failed
+    /// outright with anything other than a `404`. That second case matters
+    /// on its own: a host that blocks `HEAD` (`403`/`405`, a WAF rule, a
+    /// CDN edge that simply doesn't implement the method) but serves
+    /// ranged `GET`s just fine would otherwise be ledgered a dishonest
+    /// `fetch_error` and never analyzed at all, even though the archive is
+    /// perfectly reachable — the fallback is this method's only chance to
+    /// find that out. A `404`, in contrast, is authoritative on either
+    /// path (the resource is absent, full stop) and returns immediately
+    /// without ever trying the other path. Either way, the learned size is
+    /// recorded for later [`RangeSource::fetch`] calls to recognize a
+    /// whole-file request.
     ///
     /// **Why not [`reqwest::Response::content_length`]:** that method
     /// returns the *decoded response body's* size hint, not the literal
@@ -118,29 +127,35 @@ impl UrlRanges {
     /// of bug can't recur silently.
     ///
     /// # Errors
-    /// - A `404` (on either the HEAD or the range-probe fallback) →
-    ///   [`FetchFailure::NotFound`] (consistent with
-    ///   [`classify_range_response`]'s `fetch`-side mapping), never retried.
-    /// - Any other non-success HEAD status (after retries are exhausted, or
-    ///   immediately for a non-retryable one) →
-    ///   `FetchFailure::Http("HEAD status {status}")`. A HEAD landing on a
-    ///   WAF block, a HEAD-disabled host, or a CDN edge case commonly
-    ///   answers `403`/`405`/similar with its own small `Content-Length`
-    ///   (an error page's, not the file's) — trusting that length
-    ///   unconditionally would poison [`Self::file_size`] with a bogus
-    ///   value and misclassify a perfectly healthy host's later `fetch` as
-    ///   a parse failure, so the status is checked *before* the header is
-    ///   ever read (see [`classify_head_response`]).
-    /// - Transport failure on the HEAD, after retries are exhausted →
-    ///   `FetchFailure::Http("HEAD transport: {e}")`.
-    /// - A range-probe `200` (the host ignores ranges outright) →
-    ///   [`FetchFailure::RangeUnsupported`] — see
-    ///   [`Self::discover_size_via_range_probe`] for the fallback's own
-    ///   error shapes.
+    /// - A `404` on the HEAD → [`FetchFailure::NotFound`] immediately,
+    ///   never falling through to the range-probe fallback: a `404` is
+    ///   already the authoritative answer.
+    /// - Any other HEAD failure (a non-retryable status after retries are
+    ///   exhausted, or a transport failure) → the fallback
+    ///   [`Self::discover_size_via_range_probe`] is tried instead, and
+    ///   **its** error — not the HEAD's — is what this method returns if
+    ///   the fallback also fails. The probe's classification is the more
+    ///   truthful one: e.g. a host that blocks HEAD but ignores ranges on
+    ///   GET ends as [`FetchFailure::RangeUnsupported`] (→ the caller's
+    ///   honest `no_range_support`), not the HEAD failure's generic
+    ///   `Http` (→ a misleading `fetch_error`) — see
+    ///   [`Self::discover_size_via_range_probe`]'s own `# Errors` for the
+    ///   full set of shapes it can return.
+    /// - A HEAD success with no usable `Content-Length` behaves
+    ///   identically to a HEAD failure (other than `404`): the range-probe
+    ///   fallback runs, and its error (if any) is what's returned.
     pub async fn discover_size(&mut self) -> Result<u64, FetchFailure> {
-        let size = match self.head_content_length().await? {
-            Some(size) => size,
-            None => self.discover_size_via_range_probe().await?,
+        // The actual branch is delegated to `size_discovery_step` — a pure
+        // function over `head_content_length`'s result — rather than
+        // matched inline, so the decision this doc comment describes is
+        // the one under unit test, not a hand-kept parallel copy of it.
+        let head_result = self.head_content_length().await;
+        let size = match size_discovery_step(&head_result) {
+            SizeDiscoveryStep::UseSize(size) => size,
+            // Only ever produced from `Err(FetchFailure::NotFound)` — see
+            // `size_discovery_step` — so this is exact, not a lossy stand-in.
+            SizeDiscoveryStep::Terminal => return Err(FetchFailure::NotFound),
+            SizeDiscoveryStep::Fallback => self.discover_size_via_range_probe().await?,
         };
         self.file_size = Some(size);
         Ok(size)
@@ -530,6 +545,45 @@ pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
     }
 }
 
+/// What [`UrlRanges::discover_size`] should do next, given
+/// [`UrlRanges::head_content_length`]'s result. Pure:
+/// [`UrlRanges::discover_size`] delegates its actual branching to
+/// [`size_discovery_step`] rather than matching inline, so this is the
+/// real decision under test, not a hand-kept parallel copy of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SizeDiscoveryStep {
+    /// The HEAD alone settled it — use this declared size directly.
+    UseSize(u64),
+    /// Try the range-probe fallback next: either the HEAD succeeded with
+    /// no usable `Content-Length`, or it failed with something other than
+    /// `404` (not authoritative — see [`UrlRanges::discover_size`]'s doc
+    /// comment for why a blocked/disabled HEAD shouldn't end the attempt).
+    Fallback,
+    /// A `404` on the HEAD — authoritative, [`UrlRanges::discover_size`]
+    /// returns immediately without ever trying the fallback.
+    Terminal,
+}
+
+/// Pure classifier: `head_content_length`'s `Result` → what
+/// [`UrlRanges::discover_size`] should do next. See [`SizeDiscoveryStep`]
+/// for the case-by-case rationale. Only `Err(FetchFailure::NotFound)` ever
+/// produces [`SizeDiscoveryStep::Terminal`] — every other `Err` (a
+/// non-retryable HEAD status after retries, or a transport failure) is
+/// [`SizeDiscoveryStep::Fallback`], since a `404` is the only HEAD outcome
+/// this type treats as authoritative about the resource itself.
+pub(crate) fn size_discovery_step(
+    head_result: &Result<Option<u64>, FetchFailure>,
+) -> SizeDiscoveryStep {
+    match head_result {
+        Ok(Some(size)) => SizeDiscoveryStep::UseSize(*size),
+        Err(FetchFailure::NotFound) => SizeDiscoveryStep::Terminal,
+        // A success HEAD with no usable Content-Length, or any other HEAD
+        // failure (a non-404 status, a transport error) — neither is
+        // authoritative the way a 404 is, so both fall back to the probe.
+        Ok(None) | Err(_) => SizeDiscoveryStep::Fallback,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,6 +691,41 @@ mod tests {
         // path (fix round 3: this exact shape reached `discover_size` and
         // set `file_size = Some(0)` before this filter existed).
         assert_eq!(parse_content_range_total("bytes 0-0/0"), None);
+    }
+
+    #[test]
+    fn size_discovery_step_from_head_result() {
+        use SizeDiscoveryStep::*;
+        // A usable HEAD size settles it directly.
+        assert_eq!(size_discovery_step(&Ok(Some(42))), UseSize(42));
+        // A success HEAD with no usable Content-Length falls back to the
+        // range probe.
+        assert_eq!(size_discovery_step(&Ok(None)), Fallback);
+        // 404 is the only HEAD outcome treated as authoritative — terminal,
+        // never falling through to the probe.
+        assert_eq!(size_discovery_step(&Err(FetchFailure::NotFound)), Terminal);
+        // Every other HEAD failure (a blocked/disabled HEAD method, a
+        // transport error the retry policy couldn't recover from, ...)
+        // falls back to the range probe instead of ending the attempt —
+        // this is the S1 fix: a host that blocks HEAD but serves ranged
+        // GETs must not be ledgered a dishonest `fetch_error` without ever
+        // trying the fallback.
+        assert_eq!(
+            size_discovery_step(&Err(FetchFailure::Http("HEAD status 403 Forbidden".into()))),
+            Fallback
+        );
+        assert_eq!(
+            size_discovery_step(&Err(FetchFailure::Http("HEAD transport: timeout".into()))),
+            Fallback
+        );
+        // RangeUnsupported never actually comes out of `head_content_length`
+        // (it's a `fetch`-only classification), but the classifier's
+        // contract is general over any non-NotFound `FetchFailure` —
+        // exercise that generality explicitly rather than assuming it.
+        assert_eq!(
+            size_discovery_step(&Err(FetchFailure::RangeUnsupported)),
+            Fallback
+        );
     }
 
     #[test]
