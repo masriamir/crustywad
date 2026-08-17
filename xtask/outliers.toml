@@ -1,0 +1,33 @@
+# §6.4 modern-outliers curated list (#407). Committed input — data/ is
+# gitignored output. Slugs are ours (not author free text); URLs must be
+# direct zip links. Hosts that refuse range reads stay listed: the ledger
+# and stats-report record the refusal ("where hosting permits").
+[[outlier]]
+slug = "blade-of-agony"
+url = "https://boa.realm667.com/files/boa_c3.zip"
+note = "3-chapter GZDoom megawad, ~2 GiB class — far beyond the idgames tail"
+
+[[outlier]]
+slug = "total-chaos"
+url = "https://www.moddb.com/downloads/mirror/195910/122/09472abd1cf1b5d3a42dd47ea0661418"
+note = "survival-horror TC, ~1.3 GiB — tests redirecting CDN hosting"
+
+[[outlier]]
+slug = "golden-souls-2"
+url = "https://static.moddb.com/downloads/goldensouls2_1.4.zip"
+note = "large GZDoom adventure megawad, hundreds of MiB"
+
+[[outlier]]
+slug = "eviternity-ii"
+url = "https://dsdarchive.com/files/wads/eviternity2.zip"
+note = "Cacoward 2023 megawad; originally distributed off-idgames"
+
+[[outlier]]
+slug = "simons-destiny"
+url = "https://boa.realm667.com/files/simon_v2.zip"
+note = "Castlevania TC — realm667 static hosting, mid-hundreds MiB"
+
+[[outlier]]
+slug = "hands-of-necromancy"
+url = "https://github.com/HandsOfNecromancy/HandsOfNecromancy/releases/latest/download/HandsOfNecromancy.zip"
+note = "GitHub-release hosting — S3-backed, range-friendly control case"

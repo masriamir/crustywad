@@ -79,6 +79,9 @@ harvest-api:
 harvest-zips:
     cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-zips
 
+harvest-outliers:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-outliers
+
 harvest-stats:
     cargo run --manifest-path xtask/Cargo.toml --release --locked -- stats
 

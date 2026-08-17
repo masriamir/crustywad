@@ -523,6 +523,128 @@ pub fn write_sweep_jsonl(path: &Path, entries: &[SweepEntry]) -> anyhow::Result<
     Ok(u64::try_from(entries.len()).expect("entry count fits u64"))
 }
 
+/// One `data/outliers-wads.jsonl` line (spec §7): a curated non-idgames
+/// megawad (§6.4), analyzed with the same central-directory-only machinery
+/// as [`WadRecord`] over [`crate::zips::url_source::UrlRanges`] instead of
+/// the mirror pool. Reuses [`WadMember`]/[`FetchStatus`] verbatim — the only
+/// free text is our own curated `slug`, not author-supplied (ADR-0030 §3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutlierRecord {
+    /// Our own curated identifier (`xtask/outliers.toml`'s `slug`), not
+    /// author free text.
+    pub slug: String,
+    /// Source URL, as given in `xtask/outliers.toml`.
+    pub url: String,
+    /// `Content-Length` observed from the HEAD probe (§6.4); `0` when
+    /// discovery itself failed — no size is known for that entry.
+    pub zip_size: u64,
+    /// ZIP64 EOCD locator present (§5.3).
+    pub zip64: bool,
+    /// Count of *distinct* central-directory entries by name (§5.6 caveat
+    /// applies here too).
+    pub member_count: u64,
+    /// `.wad` members, case-insensitively matched (§5.5).
+    pub wads: Vec<WadMember>,
+    /// Every non-`.wad` member name.
+    pub other_members: Vec<String>,
+    /// Closed §5.6 outcome enum, minus the fallback-only variants (§6.4:
+    /// outliers never take the full-download fallback).
+    pub fetch_status: FetchStatus,
+}
+
+/// Write `data/outliers-wads.jsonl`: records sorted by `slug`, deduped by
+/// `slug` (last occurrence wins), one compact JSON object per line —
+/// mirrors [`write_wads_jsonl`]'s convention with `slug` standing in for
+/// `id` (outliers have no numeric id).
+///
+/// # Errors
+/// Serialization or filesystem failure.
+pub fn write_outliers_jsonl(path: &Path, records: Vec<OutlierRecord>) -> anyhow::Result<u64> {
+    let mut by_slug = std::collections::BTreeMap::new();
+    for rec in records {
+        by_slug.insert(rec.slug.clone(), rec);
+    }
+    let mut out = String::new();
+    for rec in by_slug.values() {
+        out.push_str(&serde_json::to_string(rec).context("serializing outlier record")?);
+        out.push('\n');
+    }
+    atomic_write(path, out.as_bytes()).with_context(|| format!("writing {}", path.display()))?;
+    Ok(u64::try_from(by_slug.len()).expect("record count fits u64"))
+}
+
+/// Read a previous run's `outliers-wads.jsonl` (§6.4). `None` when the file
+/// is missing/unreadable; unparseable lines are skipped with a warning
+/// rather than failing the read, mirroring [`read_wads_jsonl`].
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+pub fn read_outliers_jsonl(path: &Path) -> Option<Vec<OutlierRecord>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut records = Vec::new();
+    let mut skipped = 0_u64;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        match serde_json::from_str(line) {
+            Ok(rec) => records.push(rec),
+            Err(_) => skipped += 1,
+        }
+    }
+    if skipped > 0 {
+        tracing::warn!(skipped, path = %path.display(), "skipped unparseable outlier lines");
+    }
+    Some(records)
+}
+
+/// `data/outliers-manifest.json` (spec §7): the [`ZipsManifest`] shape minus
+/// the mirror-pool/fallback fields that don't apply to a single-URL,
+/// no-fallback source (§6.4 — spec §2.2's locked "no full-download fallback
+/// for outliers" decision). The only phase-3-adjacent file carrying
+/// wall-clock data — it logs a network run, unlike the timestamp-free
+/// `stats` trio (§9.3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutliersManifest {
+    /// `"harvest-outliers-YYYYMMDDTHHMMSSZ"` from the run start.
+    pub id: String,
+    /// RFC 3339 run start.
+    pub started_at: String,
+    /// Wall-clock run duration.
+    pub duration_secs: u64,
+    /// `CARGO_PKG_VERSION` of xtask.
+    pub tool_version: String,
+    /// `git rev-parse --short HEAD`, when available.
+    pub git_rev: Option<String>,
+    /// `--limit` value for a dev-scoped run (`--root` does not apply here).
+    pub limit: Option<u64>,
+    /// `xtask/outliers.toml` entries in this run's worklist (after `--limit`).
+    pub entries_total: u64,
+    /// `outliers-wads.jsonl` lines written.
+    pub records_written: u64,
+    /// `outliers-errors.jsonl` lines written.
+    pub ledger_count: u64,
+    /// Ranged/HEAD requests issued this run.
+    pub range_requests: u64,
+    /// Total response-body bytes read this run.
+    pub bytes_transferred: u64,
+    /// Record count per `fetch_status` wire value.
+    pub status_counts: std::collections::BTreeMap<String, u64>,
+}
+
+/// Write the outliers manifest as pretty JSON with a trailing newline.
+///
+/// # Errors
+/// Serialization or filesystem failure.
+pub fn write_outliers_manifest(path: &Path, manifest: &OutliersManifest) -> anyhow::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(manifest).context("serializing outliers manifest")?;
+    bytes.push(b'\n');
+    atomic_write(path, &bytes).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Read a previous run's outliers manifest, if present and parseable.
+// consumed from Task 6 (#407)
+#[allow(dead_code)]
+pub fn read_outliers_manifest(path: &Path) -> Option<OutliersManifest> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1028,5 +1150,93 @@ pub(crate) mod tests {
         assert!(!lines[0].contains('\n'));
         let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(first["id"], 3);
+    }
+
+    /// Minimal `OutlierRecord` builder for the writer tests.
+    fn outlier_record(slug: &str) -> OutlierRecord {
+        OutlierRecord {
+            slug: slug.to_owned(),
+            url: format!("https://example.com/{slug}.zip"),
+            zip_size: 1_048_576,
+            zip64: false,
+            member_count: 1,
+            wads: vec![WadMember {
+                name: "MAP01.WAD".into(),
+                compressed: 900_000,
+                uncompressed: 4_000_000,
+                method: "deflate".into(),
+                encrypted: false,
+            }],
+            other_members: vec!["README.TXT".into()],
+            fetch_status: FetchStatus::Ok,
+        }
+    }
+
+    #[test]
+    fn outliers_jsonl_is_sorted_deduped_by_slug() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("outliers-wads.jsonl");
+        let n = write_outliers_jsonl(
+            &p,
+            vec![
+                outlier_record("b"),
+                outlier_record("a"),
+                outlier_record("b"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(n, 2);
+        let text = std::fs::read_to_string(&p).unwrap();
+        let slugs: Vec<String> = text
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<serde_json::Value>(l).unwrap()["slug"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(slugs, vec!["a".to_owned(), "b".to_owned()]);
+    }
+
+    #[test]
+    fn outliers_jsonl_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("outliers-wads.jsonl");
+        write_outliers_jsonl(&p, vec![outlier_record("simons-destiny")]).unwrap();
+        let back = read_outliers_jsonl(&p).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].slug, "simons-destiny");
+        assert!(read_outliers_jsonl(&tmp.path().join("missing.jsonl")).is_none());
+        // A corrupt line is skipped, not fatal.
+        std::fs::write(&p, "{ not json\n").unwrap();
+        assert_eq!(read_outliers_jsonl(&p).map(|v| v.len()), Some(0));
+    }
+
+    #[test]
+    fn outliers_manifest_roundtrips_and_writes_trailing_newline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("outliers-manifest.json");
+        let m = OutliersManifest {
+            id: "harvest-outliers-20260817T000000Z".into(),
+            started_at: "2026-08-17T00:00:00+00:00".into(),
+            duration_secs: 12,
+            tool_version: tool_version(),
+            git_rev: git_rev(),
+            limit: None,
+            entries_total: 6,
+            records_written: 6,
+            ledger_count: 1,
+            range_requests: 12,
+            bytes_transferred: 2_000_000,
+            status_counts: std::collections::BTreeMap::from([("ok".to_owned(), 5)]),
+        };
+        write_outliers_manifest(&p, &m).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.ends_with('\n'));
+        let back = read_outliers_manifest(&p).unwrap();
+        assert_eq!(back.id, m.id);
+        assert_eq!(back.entries_total, 6);
+        assert!(read_outliers_manifest(&tmp.path().join("missing.json")).is_none());
     }
 }
