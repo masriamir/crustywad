@@ -59,8 +59,6 @@ const MAX_ATTEMPTS: u32 = 6;
 /// full-download fallback (spec §2.2) — just ranged GETs against one host,
 /// with the same bounded retry policy `api::client` uses (see the module
 /// doc and [`should_retry`]).
-// consumed from Task 5 (#407)
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct UrlRanges {
     /// Shared HTTP client (the caller's concern — UA, timeouts, redirect
@@ -86,8 +84,6 @@ impl UrlRanges {
     /// `url` is already a parsed [`reqwest::Url`], so there is no
     /// segment-construction step that could reject it.
     #[must_use]
-    // consumed from Task 5 (#407)
-    #[allow(dead_code)]
     pub fn new(http: reqwest::Client, url: reqwest::Url, counters: Arc<TransferCounters>) -> Self {
         Self {
             http,
@@ -141,8 +137,6 @@ impl UrlRanges {
     ///   [`FetchFailure::RangeUnsupported`] — see
     ///   [`Self::discover_size_via_range_probe`] for the fallback's own
     ///   error shapes.
-    // consumed from Task 5 (#407)
-    #[allow(dead_code)]
     pub async fn discover_size(&mut self) -> Result<u64, FetchFailure> {
         let size = match self.head_content_length().await? {
             Some(size) => size,
@@ -361,8 +355,6 @@ impl RangeSource for UrlRanges {
 /// module's own classification outcomes are never passed here in the first
 /// place; see the call sites). Otherwise `Some(delay)`: sleep `delay`, then
 /// retry.
-// consumed from Task 5 (#407)
-#[allow(dead_code)]
 fn should_retry(
     attempt: u32,
     status: Option<reqwest::StatusCode>,
@@ -392,8 +384,6 @@ fn should_retry(
 /// under-delivered) is reported as [`FetchFailure::Http`] naming both
 /// sides of the mismatch — accepting a short body would silently
 /// under-report an outlier's declared central-directory/member sizes.
-// consumed from Task 5 (#407)
-#[allow(dead_code)]
 async fn read_capped_body(
     mut resp: reqwest::Response,
     len: u64,
@@ -430,8 +420,6 @@ async fn read_capped_body(
 /// side-effect-free so the six cases in `range_response_classification`
 /// exercise it directly, with no HTTP mock needed (none exists in this
 /// crate — see the task-4 brief).
-// consumed from Task 5 (#407)
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RangeOutcome {
     /// `206` — read the body, capped at the requested length.
@@ -453,8 +441,6 @@ pub(crate) enum RangeOutcome {
 
 /// Pure classifier: `(status, whole_file)` → what [`UrlRanges::fetch`]
 /// should do next. See [`RangeOutcome`] for the case-by-case rationale.
-// consumed from Task 5 (#407)
-#[allow(dead_code)]
 pub(crate) fn classify_range_response(status: u16, whole_file: bool) -> RangeOutcome {
     match status {
         206 => RangeOutcome::UsePartial,
@@ -492,8 +478,6 @@ pub(crate) enum HeadOutcome {
 /// [`HeadOutcome::Fallback`] — since a zero-length remote zip is bogus
 /// input regardless of how (or whether) the header spelled it, so `0` is
 /// never passed onward as a real size.
-// consumed from Task 5 (#407)
-#[allow(dead_code)]
 pub(crate) fn classify_head_response(status: u16, content_length: Option<&str>) -> HeadOutcome {
     if status == 404 {
         return HeadOutcome::NotFound;
@@ -531,8 +515,6 @@ pub(crate) fn classify_head_response(status: u16, content_length: Option<&str>) 
 /// This function doesn't need to distinguish *why* a total wasn't
 /// recoverable, only whether one was — every unusable shape is treated
 /// identically by the caller (surfaced as a `FetchFailure::Http` detail).
-// consumed from Task 5 (#407)
-#[allow(dead_code)]
 pub(crate) fn parse_content_range_total(value: &str) -> Option<u64> {
     let (unit, range) = value.split_once(' ')?;
     if !unit.eq_ignore_ascii_case("bytes") {
