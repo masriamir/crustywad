@@ -259,7 +259,13 @@ pub struct WadRecord {
     pub member_count: u64,
     /// `.wad` members, case-insensitively matched (§5.5).
     pub wads: Vec<WadMember>,
-    /// Every non-`.wad` member name (nested archives §5.5 appear here).
+    /// Every non-`.wad` member name (nested archives §5.5 appear here) —
+    /// plus any `.wad` member whose local file header could not be read
+    /// (genuinely unreadable, not a range-cache miss): its real
+    /// central-directory name lands here rather than in `wads`, since a
+    /// size can't be fabricated for it (see
+    /// `zips::inspect::inspection_from_archive`). Phase-3 consumers must
+    /// not assume every name here is wad-free.
     pub other_members: Vec<String>,
     /// Mirror key that served the bytes; `""` when no mirror was contacted.
     pub mirror: String,
@@ -337,11 +343,21 @@ pub struct ZipsManifest {
     pub zip64_entries: u64,
     /// Record count per `fetch_status` value.
     pub status_counts: std::collections::BTreeMap<String, u64>,
-    /// Worklist entries with neither a record nor a ledger line — §9.3
-    /// demands 0; anything else is a bug surfaced loudly.
+    /// Worklist entries with no `idgames-wads.jsonl` record — computed from
+    /// `records` alone (every failure gets a record too, via the
+    /// ledger-writing branch, so this is not "records ∪ ledger" despite
+    /// what the name suggests). §9.3 demands 0 on a completed run. It is
+    /// EXPECTED to be nonzero on an aborted run (`aborted.is_some()`): the
+    /// entries still in flight when a breaker trips are cancelled without
+    /// ever getting a record. On a non-aborted run, anything else is a bug
+    /// surfaced loudly.
     pub unaccounted_entries: u64,
-    /// `Some(reason)` when the ~2% fallback circuit breaker stopped the
-    /// phase early (§5.2); outputs then cover only the completed prefix.
+    /// `Some(reason)` when either abort breaker stopped the phase early:
+    /// the ~2% fallback circuit breaker (§5.2), or the 4 GiB range-path
+    /// byte ceiling (`RANGE_BYTE_CEILING` in `zips/mod.rs`, tripped by a
+    /// pathological EOCD/central-directory shape that pushes payload down
+    /// the range path invisibly to the fallback budget). Outputs then
+    /// cover only the completed prefix.
     pub aborted: Option<String>,
 }
 

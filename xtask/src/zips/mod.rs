@@ -305,11 +305,28 @@ fn outcome_to_record(
         }
         EntryOutcome::Failed(fail) => {
             let (fetch_status, kind, detail) = fail_ledger_detail(&fail);
+            // `mirror` is non-empty only when some fetch for this entry
+            // actually pinned a mirror before the failure that's being
+            // ledgered here happened (e.g. a later-round Content-Range
+            // mismatch, or a zip-parse failure after a successful full
+            // download) — attribute the detail to that mirror when known,
+            // rather than leaving every ledger line mirror-silent.
+            let detail = if mirror.is_empty() {
+                detail
+            } else {
+                format!("{detail}: last mirror {mirror}")
+            };
             ledger.push(LedgerEntry {
                 path: format!("{}{}", entry.dir, entry.filename),
                 action: "harvest-zips".into(),
                 kind,
                 detail,
+                // Always 1: unlike Phase 1 (which counts per-HTTP-call
+                // attempts on the ledger line itself), this line aggregates
+                // per *entry* — the real per-mirror retry/failover count
+                // for this entry lives inside `MirrorRanges`
+                // (§5.2/§5.4's `MAX_MIRROR_ATTEMPTS` per candidate mirror),
+                // never surfaced onto the ledger.
                 attempts: 1,
             });
             (fetch_status, false, 0, Vec::new(), Vec::new())
@@ -520,6 +537,10 @@ where
     let entries_total = u64::try_from(entries.len()).unwrap_or(u64::MAX);
 
     let mut store = ZipsStore::open(cache_dir.join("zips-log.jsonl"));
+    // The `Duration::days(7)` TTL is inert here: `dir_hashes` below only
+    // ever calls `ApiCache::lookup` (documented "at any age"), never
+    // `is_fresh` — the value is supplied only because `ApiCache::new`
+    // requires one, not because Phase 2 checks staleness of its own.
     let api_cache = crate::cache::ApiCache::new(cache_dir.join("api"), chrono::Duration::days(7))?;
     let hashes = dir_hashes(&entries, &api_cache);
 
@@ -977,6 +998,10 @@ mod tests {
         assert_eq!(ledger.len(), 1);
         assert_eq!(ledger[0].path, "levels/doom/0-9/a.zip");
         assert_eq!(ledger[0].action, "harvest-zips");
+        assert_eq!(
+            ledger[0].detail, "404 on all mirrors",
+            "an unknown mirror (never pinned before the 404) must not be attributed"
+        );
 
         let parse = outcome_to_record(
             &entry,
@@ -990,6 +1015,10 @@ mod tests {
             ledger[1].kind,
             crate::schema::LedgerKind::ParseError
         ));
+        assert_eq!(
+            ledger[1].detail, "bad magic: last mirror infania",
+            "a known mirror must be attributed in the ledger detail"
+        );
 
         let skipped = outcome_to_record(
             &entry,

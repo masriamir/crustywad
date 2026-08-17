@@ -301,28 +301,35 @@ fn fallback_limit(total_entries: u64) -> u64 {
 ///
 /// `filename` must be a single non-empty segment — a `/` in it is rejected
 /// outright, never silently folded into an extra segment or percent-coded
-/// away. `dir` splits on `/` into its own segments. Every segment (from
-/// `base`, `dir`, and `filename` alike) is percent-encoded independently by
-/// `Url`, so a literal `#`/`?`/space can never cross a segment boundary or
-/// turn into a fragment/query.
+/// away, and it may not be exactly `.` or `..` either (see below). `dir`
+/// splits on `/` into its own segments, each held to the same `.`/`..`
+/// rule. Every segment (from `base`, `dir`, and `filename` alike) is
+/// percent-encoded independently by `Url`, so a literal `#`/`?`/space can
+/// never cross a segment boundary or turn into a fragment/query.
 ///
 /// A same-origin, same-path-prefix check runs on the built URL as defense
 /// in depth: segment-by-segment construction should make it unreachable
-/// (unlike `Url::join`, segment pushes cannot rewrite the scheme or host,
-/// and per `url`'s own documented contract a segment that is exactly `.`
-/// or `..` is silently dropped rather than resolved or kept literal —
-/// verified against `url` 2.5.8's `path_segments.rs`, so a `dir` containing
-/// `../` traversal segments can't walk the path outside `base` either), but
-/// a future edit to this function — or a future `url` upgrade — must not be
-/// able to silently regress the invariant this exists to protect.
+/// (unlike `Url::join`, segment pushes cannot rewrite the scheme or host).
+/// It catches a *resolved* escape — one that shortens the built path below
+/// `base`'s own prefix — but it cannot catch a `.`/`..` **segment**: per
+/// `url`'s own documented contract (verified against `url` 2.5.8's
+/// `path_segments.rs`) such a segment is silently DROPPED, not resolved or
+/// kept literal, so an unrejected `dir = "levels/../../x/"` would still
+/// build a URL rooted under `base` — just the WRONG one (`.../x/`, not an
+/// escape) — and the post-condition would never see anything amiss. That
+/// silent-drop case is exactly what the explicit `.`/`..` segment rejection
+/// above exists to catch instead.
 ///
 /// # Errors
-/// `filename` empty or containing `/`; `base` not a valid URL or not
-/// hierarchical (`path_segments_mut` fails on e.g. a `mailto:` URL); or the
-/// built URL fails the same-origin/same-path-prefix post-condition.
+/// `filename` empty, containing `/`, or exactly `.`/`..`; a `dir` segment
+/// that is exactly `.` or `..`; `base` not a valid URL or not hierarchical
+/// (`path_segments_mut` fails on e.g. a `mailto:` URL); or the built URL
+/// fails the same-origin/same-path-prefix post-condition.
 pub(crate) fn entry_url(base: &str, dir: &str, filename: &str) -> anyhow::Result<reqwest::Url> {
-    if filename.is_empty() || filename.contains('/') {
-        anyhow::bail!("filename must be a single non-empty path segment: {filename:?}");
+    if filename.is_empty() || filename.contains('/') || filename == "." || filename == ".." {
+        anyhow::bail!(
+            "filename must be a single non-empty path segment, not \".\" or \"..\": {filename:?}"
+        );
     }
     let base_url = reqwest::Url::parse(base)?;
     let mut url = base_url.clone();
@@ -331,7 +338,16 @@ pub(crate) fn entry_url(base: &str, dir: &str, filename: &str) -> anyhow::Result
             .path_segments_mut()
             .map_err(|()| anyhow::anyhow!("mirror base URL is not hierarchical: {base}"))?;
         segments.pop_if_empty();
-        segments.extend(dir.split('/').filter(|s| !s.is_empty()));
+        for seg in dir.split('/').filter(|s| !s.is_empty()) {
+            if seg == "." || seg == ".." {
+                anyhow::bail!(
+                    "dir segment must not be \".\" or \"..\" — the url crate silently \
+                     drops such segments instead of resolving or rejecting them, which \
+                     would build an in-base but wrong URL: {dir:?}"
+                );
+            }
+            segments.push(seg);
+        }
         segments.push(filename);
     }
     let same_origin = url.scheme() == base_url.scheme()
@@ -344,14 +360,19 @@ pub(crate) fn entry_url(base: &str, dir: &str, filename: &str) -> anyhow::Result
 }
 
 /// Parse a `Content-Range: bytes {start}-{end}/{total}` response header
-/// into inclusive `(start, end)` byte offsets. `None` for anything else,
-/// including the `bytes */{total}` "range not satisfiable" form (no
-/// start/end to compare against) and unparseable garbage — the caller
-/// treats `None` as a mismatch, never a pass: RFC 7233 §4.2 requires this
-/// header on every `206`, so a missing or malformed one is itself
-/// suspicious, not a shape to tolerate.
+/// into inclusive `(start, end)` byte offsets. The `bytes` unit token is
+/// matched case-insensitively (RFC 9110 §8.4: range units are
+/// case-insensitive), so `Bytes 0-9/100` parses the same as `bytes
+/// 0-9/100`. `None` for anything else, including the `bytes */{total}`
+/// "range not satisfiable" form (no start/end to compare against) and
+/// unparseable garbage — the caller treats `None` as a mismatch, never a
+/// pass: RFC 7233 §4.2 requires this header on every `206`, so a missing
+/// or malformed one is itself suspicious, not a shape to tolerate.
 fn parse_content_range(value: &str) -> Option<(u64, u64)> {
-    let range = value.strip_prefix("bytes ")?;
+    let (unit, range) = value.split_once(' ')?;
+    if !unit.eq_ignore_ascii_case("bytes") {
+        return None;
+    }
     let (range, _total) = range.split_once('/')?;
     let (start, end) = range.split_once('-')?;
     Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
@@ -484,6 +505,17 @@ async fn accept_partial_content(
         ),
     }
 }
+
+// Compile-time tripwire: `MirrorRanges` hardcodes the pool arity in its
+// `[Url; 2]`/`[bool; 2]` fields below rather than sizing them off
+// `MIRRORS::len()`. If the mirror pool ever grows or shrinks, this assert
+// fails the build instead of silently truncating/ignoring a mirror — a
+// prompt to update those field types (and every array literal built
+// against them) in the same change.
+const _: () = assert!(
+    MIRRORS.len() == 2,
+    "MirrorRanges hardcodes the pool arity — update its [Url; 2]/[bool; 2] fields when the pool changes"
+);
 
 /// One archive entry's byte source: the §5.1 mirror pool with per-mirror
 /// retries, 404/no-range failover, and capped body reads. Pins to the
@@ -921,23 +953,32 @@ mod tests {
         );
     }
 
-    /// Finding 1: a `dir` containing `../` dot-segments must not let the
-    /// built URL leave the mirror base — the same-origin/same-path-prefix
-    /// post-condition is what actually decides this (segment-by-segment
-    /// construction never touches scheme/host regardless), so whichever
-    /// way it comes out, the result must be safe: either an `Err`, or a URL
-    /// whose full string is still rooted under `base`.
+    /// Final wave: a `dir` containing `../` dot-segments must be a definite
+    /// `Err`, not merely "safe if it happens to succeed." Before the
+    /// explicit per-segment `.`/`..` rejection, this was a vacuous
+    /// either/or: the `url` crate silently DROPS a `.`/`..` segment rather
+    /// than resolving it, so `"levels/../../x/"` built an URL rooted under
+    /// `base` (passing the same-origin/prefix post-condition) but pointing
+    /// at the WRONG path (`.../x/`, not an escape) — a false conclusive
+    /// fact (e.g. `mirror_404_all`) cached as if it were about the real
+    /// entry, or worst case a size attributed to the wrong file.
     #[test]
     fn dir_traversal_segments_stay_rooted_or_are_rejected() {
         let base = "https://ftpmirror1.infania.net/pub/idgames/";
-        // Either outcome is acceptable (the post-condition decides); if it
-        // produced a URL at all, that URL must still be rooted under `base`.
-        if let Ok(url) = entry_url(base, "levels/../../x/", "f.zip") {
-            assert!(
-                url.as_str().starts_with(base),
-                "post-condition must keep the URL rooted under the mirror base: {url}"
-            );
-        }
+        assert!(entry_url(base, "levels/../../x/", "f.zip").is_err());
+        assert!(entry_url(base, "levels/./doom/", "f.zip").is_err());
+    }
+
+    /// Final wave: `filename` exactly `.` or `..` isn't caught by the
+    /// existing "no `/`" rule, and the `url` crate would otherwise silently
+    /// drop it as a path segment — building a mirror URL with no filename
+    /// at all instead of failing loudly.
+    #[test]
+    fn filename_dot_and_dotdot_are_rejected() {
+        let base = "https://ftpmirror1.infania.net/pub/idgames/";
+        let dir = "levels/doom/0-9/";
+        assert!(entry_url(base, dir, ".").is_err());
+        assert!(entry_url(base, dir, "..").is_err());
     }
 
     /// Finding 2: `Content-Range` parsing — happy path, the `*/total`
@@ -954,6 +995,9 @@ mod tests {
         // expecting e.g. (0, 9) is the one that must treat this as a
         // mismatch, not this function.
         assert_eq!(parse_content_range("bytes 500-599/2000"), Some((500, 599)));
+        // RFC 9110 §8.4: range units are case-insensitive.
+        assert_eq!(parse_content_range("Bytes 0-9/100"), Some((0, 9)));
+        assert_eq!(parse_content_range("BYTES 0-9/100"), Some((0, 9)));
     }
 
     #[test]
