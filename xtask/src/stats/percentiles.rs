@@ -25,6 +25,9 @@ pub const P99_9: u32 = 999;
 /// (tenths-of-a-percent): `R = ceil(p10 * n / 1000)`, clamped to `[1, n]`.
 /// Shared by [`nearest_rank`] and [`ratio_at`] so both use the exact same
 /// rank arithmetic. Returns `None` for `n == 0`.
+///
+/// Out-of-range `p10` never panics: `p10 == 0` clamps `R` up to `1` (the
+/// first element); `p10 > 1000` clamps `R` down to `n` (the last element).
 fn rank_index(n: usize, p10: u32) -> Option<usize> {
     if n == 0 {
         return None;
@@ -39,7 +42,9 @@ fn rank_index(n: usize, p10: u32) -> Option<usize> {
 ///
 /// Method (§6.1, load-bearing — these numbers become production constants):
 /// `R = ceil(p10 * n / 1000)`, 1-indexed, clamped to `[1, n]`; the result is
-/// `sorted[R - 1]`. Returns `0` on an empty slice.
+/// `sorted[R - 1]`. Returns `0` on an empty slice. `p10` outside `[0, 1000]`
+/// is clamped rather than rejected: `p10 == 0` yields the first element,
+/// `p10 > 1000` yields the last.
 ///
 /// # Panics
 /// Never in practice: `R` is clamped to `1..=n` and `n` originated as a
@@ -57,7 +62,11 @@ pub fn nearest_rank(sorted: &[u64], p10: u32) -> u64 {
 ///
 /// Walks cumulative weight and returns the first value whose running total
 /// reaches `ceil(p10 * total_weight / 1000)`. Returns `0` when `sorted` is
-/// empty or every weight is `0`.
+/// empty or every weight is `0`. `p10` outside `[0, 1000]` is clamped
+/// rather than rejected: `p10 == 0` yields the first element (the target
+/// is `0`, reached as soon as any weight is counted); `p10 > 1000` yields
+/// the last element via the trailing fallback (the target exceeds the
+/// total weight, so the cumulative walk never reaches it).
 #[must_use]
 pub fn weighted_nearest_rank(sorted: &[(u64, u64)], p10: u32) -> u64 {
     let total: u128 = sorted.iter().map(|&(_, w)| u128::from(w)).sum();
@@ -75,8 +84,8 @@ pub fn weighted_nearest_rank(sorted: &[(u64, u64)], p10: u32) -> u64 {
     sorted.last().map_or(0, |&(v, _)| v)
 }
 
-/// Mean and population standard deviation of `values`. Returns `(0.0, 0.0)`
-/// on an empty slice.
+/// Mean and population standard deviation of `values` (§6.1). Returns
+/// `(0.0, 0.0)` on an empty slice.
 ///
 /// Sums are accumulated exactly in `u128` before the single division to
 /// `f64`, so the only floating-point operations are two divisions and one
@@ -155,9 +164,10 @@ pub fn log2_histogram(sorted: &[u64]) -> Vec<(String, u64)> {
 }
 
 /// Sorts `(uncompressed, compressed)` pairs ascending by the exact ratio
-/// `uncompressed / compressed`, comparing via a cross-multiplied `u128`
-/// product rather than a lossy float division. Stable: equal ratios keep
-/// their input order.
+/// `uncompressed / compressed` (§6.3: the per-member/per-entry compression
+/// ratio distribution), comparing via a cross-multiplied `u128` product
+/// rather than a lossy float division. Stable: equal ratios keep their
+/// input order.
 pub fn sort_ratio_pairs(pairs: &mut [(u64, u64)]) {
     pairs.sort_by(|&(u1, c1), &(u2, c2)| {
         (u128::from(u1) * u128::from(c2)).cmp(&(u128::from(u2) * u128::from(c1)))
@@ -165,11 +175,13 @@ pub fn sort_ratio_pairs(pairs: &mut [(u64, u64)]) {
 }
 
 /// Nearest-rank percentile of the compression ratio `uncompressed /
-/// compressed` over `sorted` pairs (already ordered by [`sort_ratio_pairs`])
-/// at `p10` tenths-of-a-percent. Returns `0.0` on an empty slice.
+/// compressed` (§6.3) over `sorted` pairs (already ordered by
+/// [`sort_ratio_pairs`]) at `p10` tenths-of-a-percent. Returns `0.0` on an
+/// empty slice.
 ///
 /// Uses the same rank arithmetic as [`nearest_rank`] (§6.1) and then
-/// divides the selected pair as `f64`.
+/// divides the selected pair as `f64`. `p10` outside `[0, 1000]` is
+/// clamped, not rejected — see [`nearest_rank`]'s contract.
 #[must_use]
 #[allow(
     clippy::cast_precision_loss,
@@ -214,6 +226,29 @@ mod tests {
     fn weighted_rank_empty_and_zero_weight() {
         assert_eq!(weighted_nearest_rank(&[], P50), 0);
         assert_eq!(weighted_nearest_rank(&[(10, 0), (20, 0)], P50), 0);
+    }
+
+    #[test]
+    fn nearest_rank_clamps_out_of_range_p10() {
+        // p10 = 0: R = ceil(0) = 0, clamped up to the lower bound R = 1 —
+        // exercises rank_index's `clamp(1, n)` lower bound.
+        let v: Vec<u64> = (1..=10).collect();
+        assert_eq!(nearest_rank(&v, 0), 1);
+        // p10 = 1500 (> P99_9's 1000 ceiling): R = ceil(15) = 15, clamped
+        // down to the upper bound R = n = 10 — exercises the upper bound.
+        assert_eq!(nearest_rank(&v, 1500), 10);
+    }
+
+    #[test]
+    fn weighted_rank_clamps_out_of_range_p10() {
+        let pairs = [(10, 1), (20, 1), (30, 98)];
+        // p10 = 0: target = ceil(0) = 0, reached as soon as the first
+        // pair's weight is counted — first element, no walk needed.
+        assert_eq!(weighted_nearest_rank(&pairs, 0), 10);
+        // p10 = 1500: target = ceil(1.5 * total_weight) exceeds the total
+        // weight, so the cumulative walk never reaches it and falls
+        // through to the trailing `sorted.last()` fallback.
+        assert_eq!(weighted_nearest_rank(&pairs, 1500), 30);
     }
 
     #[test]
