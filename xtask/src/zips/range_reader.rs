@@ -360,22 +360,31 @@ pub(crate) fn entry_url(base: &str, dir: &str, filename: &str) -> anyhow::Result
 }
 
 /// Parse a `Content-Range: bytes {start}-{end}/{total}` response header
-/// into inclusive `(start, end)` byte offsets. The `bytes` unit token is
-/// matched case-insensitively (RFC 9110 §8.4: range units are
-/// case-insensitive), so `Bytes 0-9/100` parses the same as `bytes
-/// 0-9/100`. `None` for anything else, including the `bytes */{total}`
-/// "range not satisfiable" form (no start/end to compare against) and
-/// unparseable garbage — the caller treats `None` as a mismatch, never a
-/// pass: RFC 7233 §4.2 requires this header on every `206`, so a missing
-/// or malformed one is itself suspicious, not a shape to tolerate.
-fn parse_content_range(value: &str) -> Option<(u64, u64)> {
+/// into inclusive `(start, end)` byte offsets plus the parsed `total`. The
+/// `bytes` unit token is matched case-insensitively (RFC 9110 §8.4: range
+/// units are case-insensitive), so `Bytes 0-9/100` parses the same as
+/// `bytes 0-9/100`. `total` is `None` for the RFC-legal `*` ("total length
+/// unknown") form and `Some(n)` for a numeric one; a *non*-`*`,
+/// non-numeric total is garbage and fails the whole parse (`None`
+/// overall), the same fail-closed posture as a malformed start/end. The
+/// whole function returns `None` for anything else too, including the
+/// `bytes */{total}` "range not satisfiable" form (no start/end to compare
+/// against) and unparseable garbage — the caller treats an overall `None`
+/// as a mismatch, never a pass: RFC 7233 §4.2 requires this header on
+/// every `206`, so a missing or malformed one is itself suspicious, not a
+/// shape to tolerate.
+fn parse_content_range(value: &str) -> Option<(u64, u64, Option<u64>)> {
     let (unit, range) = value.split_once(' ')?;
     if !unit.eq_ignore_ascii_case("bytes") {
         return None;
     }
-    let (range, _total) = range.split_once('/')?;
+    let (range, total) = range.split_once('/')?;
     let (start, end) = range.split_once('-')?;
-    Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
+    let total = match total.trim() {
+        "*" => None,
+        n => Some(n.parse().ok()?),
+    };
+    Some((start.trim().parse().ok()?, end.trim().parse().ok()?, total))
 }
 
 /// Stream `resp`'s body, counting every byte actually read into
@@ -472,17 +481,23 @@ fn retry_or_give_up(detail: String, attempt: u32) -> StreamOutcome {
 }
 
 /// Validate a `206`'s `Content-Range` against the requested
-/// `[offset, want_end]` before trusting its body at all (fix round 1,
-/// Finding 2): a proxy/CDN node that answers `206` for a *different* range
+/// `[offset, want_end]`, and its `total` against `expected_file_size`,
+/// before trusting its body at all (fix round 1, Finding 2; total check:
+/// review round 1): a proxy/CDN node that answers `206` for a *different*
+/// range — or for the right range but a different-sized underlying file —
 /// than requested must never have its bytes accepted and spliced into the
-/// sparse buffer at `offset` — that would silently fabricate sizes in the
-/// durable output. A missing or unparseable header is treated the same as
-/// a mismatch (RFC 7233 §4.2 requires it on every `206`), never as a pass.
+/// sparse buffer at `offset`, since either would silently fabricate sizes
+/// in the durable output. A `*` total (RFC-legal "length unknown") is
+/// accepted; a missing/unparseable header, a start/end mismatch, or a
+/// numeric total that disagrees with `expected_file_size` are all treated
+/// as a mismatch, never a pass (RFC 7233 §4.2 requires this header on
+/// every `206`).
 async fn accept_partial_content(
     resp: reqwest::Response,
     offset: u64,
     want_end: u64,
     len: u64,
+    expected_file_size: u64,
     counters: &TransferCounters,
     attempt: u32,
 ) -> StreamOutcome {
@@ -492,10 +507,18 @@ async fn accept_partial_content(
         .and_then(|v| v.to_str().ok())
         .and_then(parse_content_range);
     match content_range {
-        Some((start, end)) if start == offset && end == want_end => {
+        Some((start, end, total)) if start == offset && end == want_end => {
+            if let Some(t) = total
+                && t != expected_file_size
+            {
+                return retry_or_give_up(
+                    format!("content-range total {t} != declared size {expected_file_size}"),
+                    attempt,
+                );
+            }
             accept_body(resp, len, counters, "range over-delivery", attempt).await
         }
-        Some((start, end)) => retry_or_give_up(
+        Some((start, end, _)) => retry_or_give_up(
             format!("Content-Range mismatch: got {start}-{end}, wanted {offset}-{want_end}"),
             attempt,
         ),
@@ -745,7 +768,16 @@ impl MirrorRanges {
 
         let status = resp.status();
         if status == reqwest::StatusCode::PARTIAL_CONTENT {
-            accept_partial_content(resp, offset, want_end, len, &self.counters, attempt).await
+            accept_partial_content(
+                resp,
+                offset,
+                want_end,
+                len,
+                self.expected_file_size,
+                &self.counters,
+                attempt,
+            )
+            .await
         } else if status == reqwest::StatusCode::OK && whole_file {
             accept_body(resp, len, &self.counters, "range over-delivery", attempt).await
         } else if status == reqwest::StatusCode::OK {
@@ -985,19 +1017,41 @@ mod tests {
     /// "range not satisfiable" form (no start/end to compare, so `None`),
     /// garbage, and a well-formed but different range (still parses; it's
     /// the caller's offset/len comparison that decides "mismatch").
+    /// Review round 1: the `total` portion — a numeric total parses to
+    /// `Some(n)`, the RFC-legal `*` ("length unknown") to `None`, and a
+    /// non-`*`, non-numeric total fails the *whole* parse.
     #[test]
     fn parse_content_range_cases() {
-        assert_eq!(parse_content_range("bytes 100-199/2000"), Some((100, 199)));
+        assert_eq!(
+            parse_content_range("bytes 100-199/2000"),
+            Some((100, 199, Some(2000)))
+        );
         assert_eq!(parse_content_range("bytes */2000"), None);
         assert_eq!(parse_content_range("not a content range"), None);
         assert_eq!(parse_content_range(""), None);
         // A different-but-well-formed range: parsing succeeds; a caller
-        // expecting e.g. (0, 9) is the one that must treat this as a
+        // expecting e.g. (0, 9, ..) is the one that must treat this as a
         // mismatch, not this function.
-        assert_eq!(parse_content_range("bytes 500-599/2000"), Some((500, 599)));
+        assert_eq!(
+            parse_content_range("bytes 500-599/2000"),
+            Some((500, 599, Some(2000)))
+        );
         // RFC 9110 §8.4: range units are case-insensitive.
-        assert_eq!(parse_content_range("Bytes 0-9/100"), Some((0, 9)));
-        assert_eq!(parse_content_range("BYTES 0-9/100"), Some((0, 9)));
+        assert_eq!(
+            parse_content_range("Bytes 0-9/100"),
+            Some((0, 9, Some(100)))
+        );
+        assert_eq!(
+            parse_content_range("BYTES 0-9/100"),
+            Some((0, 9, Some(100)))
+        );
+        // `*` total ("length unknown", RFC-legal): parses to `None`, not a
+        // parse failure — the caller decides whether an unknown total is
+        // acceptable.
+        assert_eq!(parse_content_range("bytes 0-9/*"), Some((0, 9, None)));
+        // A non-`*`, non-numeric total is garbage: fail the whole parse,
+        // same fail-closed posture as a malformed start/end.
+        assert_eq!(parse_content_range("bytes 0-9/garbage"), None);
     }
 
     #[test]

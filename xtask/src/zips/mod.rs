@@ -48,6 +48,16 @@ use crate::zips::range_reader::{
 };
 use crate::zips::store::{ZipsStore, dir_hashes};
 
+/// ASCII-case-insensitive suffix check without allocating (byte-slice
+/// compare, so a multi-byte UTF-8 name can never panic a char-boundary
+/// slice). Shared by this module's `.zip` filter and `inspect.rs`'s `.wad`
+/// classification — both used to allocate a lowercased `String` per entry
+/// just to throw it away.
+pub(crate) fn has_suffix_ignore_ascii_case(name: &str, suffix: &str) -> bool {
+    let (name, suffix) = (name.as_bytes(), suffix.as_bytes());
+    name.len() >= suffix.len() && name[name.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+}
+
 /// Controller addition (ADR-0030 §4 runaway-cost posture): a single entry
 /// needing the full-download fallback must never be allowed to consume a
 /// large slice of the shared [`range_reader::FALLBACK_BYTE_BUDGET`] by
@@ -619,7 +629,7 @@ fn partition_entries(
     let mut live = Vec::new();
     let mut cache_hits = 0_u64;
     for entry in entries {
-        if !entry.filename.to_ascii_lowercase().ends_with(".zip") {
+        if !has_suffix_ignore_ascii_case(&entry.filename, ".zip") {
             records.push(not_zip_record(entry));
             continue;
         }
@@ -752,7 +762,9 @@ where
                 // the one entry that happened to push it over.
                 if breaker_aborted {
                     aborted = Some(
-                        "fallback breaker: more than ~2% of entries needed full downloads"
+                        "fallback breaker: more than ~2% of entries required the \
+                         full-download fallback (granted, budget-refused, or over \
+                         the per-entry cap)"
                             .to_owned(),
                     );
                 } else if counters.bytes.load(Ordering::Relaxed) > RANGE_BYTE_CEILING {
@@ -919,6 +931,33 @@ mod tests {
             "date": "2019-04-02", "rating": 4.5, "votes": 3
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn has_suffix_ignore_ascii_case_matches_regardless_of_case() {
+        assert!(has_suffix_ignore_ascii_case("ARCHIVE.ZIP", ".zip"));
+        assert!(has_suffix_ignore_ascii_case("archive.Zip", ".zip"));
+        assert!(!has_suffix_ignore_ascii_case("archive.rar", ".zip"));
+    }
+
+    #[test]
+    fn has_suffix_ignore_ascii_case_handles_names_shorter_than_the_suffix() {
+        // Shorter-than-suffix must be a clean `false`, never an underflow
+        // panic on `name.len() - suffix.len()`.
+        assert!(!has_suffix_ignore_ascii_case("zi", ".zip"));
+        assert!(!has_suffix_ignore_ascii_case("", ".zip"));
+    }
+
+    #[test]
+    fn has_suffix_ignore_ascii_case_never_panics_at_a_multi_byte_char_boundary() {
+        // "AB🧟" is 6 bytes: 'A' (1) + 'B' (1) + a 4-byte emoji (bytes
+        // 2..6). Slicing the last 3 bytes (`name.len() - "xyz".len()` = 3)
+        // lands at byte offset 3 — inside the emoji, not a `str`
+        // char-boundary. Indexing the `&str` directly there would panic;
+        // this function slices the byte buffer instead, so it can't.
+        let name = "AB\u{1F9DF}";
+        assert_eq!(name.len(), 6);
+        assert!(!has_suffix_ignore_ascii_case(name, "xyz"));
     }
 
     #[test]

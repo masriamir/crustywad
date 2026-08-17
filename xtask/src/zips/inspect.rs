@@ -55,6 +55,7 @@ use std::cell::Cell;
 use std::io::{Read, Seek};
 
 use crate::schema::WadMember;
+use crate::zips::has_suffix_ignore_ascii_case;
 use crate::zips::range_reader::{RangeReader, SparseBuffer, TAIL_LEN};
 
 /// §5.4/ADR-0016: a lying EOCD can declare any CD size; never read more
@@ -350,7 +351,7 @@ pub fn inspection_from_archive<R: Read + Seek>(
             other_members.push(format!("<unreadable entry {i}>"));
             continue;
         };
-        if !name.to_ascii_lowercase().ends_with(".wad") {
+        if !has_suffix_ignore_ascii_case(name, ".wad") {
             other_members.push(name.to_owned());
             continue;
         }
@@ -396,7 +397,8 @@ pub fn inspection_from_archive<R: Read + Seek>(
 }
 
 /// §5.6 method label: the two expected methods by name, anything §5.5-odd
-/// via the crate's own Display (lowercased) so new methods stay visible.
+/// via the crate's own Debug formatting (lowercased) so new methods stay
+/// visible.
 ///
 /// Compares against [`zip::CompressionMethod::STORE`]/[`zip::CompressionMethod::DEFLATE`]
 /// rather than matching the `Stored`/`Deflated` variants directly: the
