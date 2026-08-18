@@ -20,7 +20,7 @@ pub enum ScopeDecision {
 /// Map-bearing roots (§4.2), also the BFS-fallback seeds.
 pub const BFS_ROOTS: [&str; 5] = ["levels/", "deathmatch/", "combos/", "prefabs/", "themes/"];
 
-const SKIP_ROOTS: [&str; 12] = [
+const SKIP_ROOTS: [&str; 14] = [
     "music/",
     "sounds/",
     "utils/",
@@ -33,6 +33,8 @@ const SKIP_ROOTS: [&str; 12] = [
     "misc/",
     "historic/",
     "roguestuff/",
+    "incoming/",
+    "newstuff/",
 ];
 
 /// Decide scope for a normalized (trailing-slash) directory path.
@@ -43,11 +45,11 @@ const SKIP_ROOTS: [&str; 12] = [
 /// **Include** roots: `levels/`, `deathmatch/`, `combos/`, `prefabs/`, `themes/`.
 /// Exception: `levels/reviews/` is `Skip` (text-only), but subtrees like `levels/doom/reviews/` remain `Include`.
 ///
-/// **Skip** roots: `music/`, `sounds/`, `utils/`, `lmps/`, `docs/`, `graphics/`, `source/`, `idstuff/`, `skins/`, `misc/`, `historic/`, `roguestuff/`.
+/// **Skip** roots: `music/`, `sounds/`, `utils/`, `lmps/`, `docs/`, `graphics/`, `source/`, `idstuff/`, `skins/`, `misc/`, `historic/`, `roguestuff/`, `incoming/`, `newstuff/`.
 ///
 /// **Triage** (skip + surface loudly): any top-level directory not in any list (future-proofing — a new root
 /// must be noticed, not silently skipped). Resolved roots (`misc/`, `historic/`, `roguestuff/` via 2026-08-16
-/// #407 decision) are now in Skip.
+/// #407 decision; `incoming/`, `newstuff/` — staging directories — via 2026-08-18 #408 decision) are now in Skip.
 pub fn decide(dir: &str) -> ScopeDecision {
     if dir.is_empty() {
         return ScopeDecision::Skip;
@@ -123,6 +125,10 @@ mod tests {
             "roguestuff/",
             "misc/sub/",
             "historic/x/",
+            "incoming/",
+            "newstuff/",
+            "incoming/sub/",
+            "newstuff/sub/",
         ] {
             assert_eq!(decide(dir), ScopeDecision::Skip, "{dir}");
         }
