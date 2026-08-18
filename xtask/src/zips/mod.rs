@@ -1687,15 +1687,18 @@ mod tests {
     /// `(offset, len)` it's asked for and always answers
     /// `RangeUnsupported` (routing the entry through the §5.2 fallback
     /// path too, in the same call), and `download_full` records every
-    /// `expected_size` it's handed. Driven through `run_core`'s real
-    /// `drive_worker_pool` → `spawn_one` → `process_entry` →
-    /// `handle_no_range_support` chain — never called directly — so a
-    /// regression reintroducing a stale `entry.size` read anywhere in that
-    /// chain shows up as a value in one of the two recorded vectors that
-    /// disagrees with the resolved size the factory handed back.
+    /// `expected_size` it's handed and then genuinely succeeds (serving
+    /// `zip_bytes`, a valid tiny zip) so a correct run can actually reach
+    /// `full_download` rather than stalling on a probe error — the round-3
+    /// review found that stalling out masked two of the four call sites
+    /// this is meant to discriminate (see the test's doc comment). Driven
+    /// through `run_core`'s real `drive_worker_pool` → `spawn_one` →
+    /// `process_entry` → `handle_no_range_support` chain — never called
+    /// directly.
     struct SizeProbeSource {
         fetch_calls: Arc<std::sync::Mutex<Vec<(u64, u64)>>>,
         download_calls: Arc<std::sync::Mutex<Vec<u64>>>,
+        zip_bytes: Arc<Vec<u8>>,
     }
 
     impl RangeSource for SizeProbeSource {
@@ -1712,45 +1715,73 @@ mod tests {
 
         async fn download_full(&mut self, expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
             self.download_calls.lock().unwrap().push(expected_size);
-            Err(FetchFailure::Http("probe: stop after recording".into()))
+            Ok((*self.zip_bytes).clone())
         }
     }
 
     #[tokio::test]
     async fn resolved_size_not_stale_entry_size_reaches_every_consumer() {
-        // CRITICAL 1 (fix round 1 review) regression: `entry.size` here
-        // stands in for a stale Phase-1 API value; the factory resolves
-        // and hands back a DIFFERENT "listing" size alongside the source —
-        // exactly the shape `run_async`'s real factory produces from
-        // `expected_size(&tree, rec)` (mod.rs). `resolved_size` is chosen
-        // small enough (< `TAIL_LEN`) that the ranged tail fetch reads the
-        // whole file in one call — `inspect_zip`'s first `fetch(0,
-        // file_size)` — so the recorded length alone pins which size fed
-        // it. That same `RangeUnsupported` answer then routes the entry
-        // through `handle_no_range_support`, exercising the per-entry cap
-        // check and `FallbackBudget::admit` (both would have to pass a
-        // `resolved_size` comfortably under `FALLBACK_PER_ENTRY_CAP` for
-        // `download_full` to be reached at all) and finally
-        // `download_full` itself — all four #441 call sites, one test.
+        // CRITICAL 1 (fix round 1 review) regression, corrected per round 3
+        // (the reviewer mutation-tested the prior version and found the
+        // per-entry-cap and `FallbackBudget::admit` sites both slipped
+        // through undetected — see below for why, and
+        // `handle_no_range_support_admits_exactly_its_expected_size_argument`
+        // for the admit-argument half this test does NOT cover).
+        //
+        // `entry.size` stands in for a stale Phase-1 API value; the
+        // factory resolves and hands back a DIFFERENT "listing" size
+        // alongside the source — exactly the shape `run_async`'s real
+        // factory produces from `expected_size(&tree, rec)` (mod.rs).
+        //
+        // - `resolved_size` (12,345) is under `TAIL_LEN`, so the ranged
+        //   tail fetch reads the whole file in one call —
+        //   `inspect_zip`'s first `fetch(0, file_size)` — and the
+        //   recorded length alone pins that call (site #874).
+        // - `stale_entry_size` (600 MiB) is deliberately OVER
+        //   `FALLBACK_PER_ENTRY_CAP` (512 MiB) while `resolved_size` is
+        //   comfortably under it. The prior version used a stale value
+        //   (9,999,999 bytes, ~1.9% of the cap) that was ALSO under the
+        //   cap — so whichever size the cap check (site #915) compared
+        //   against, the branch taken was identical, and the mutation
+        //   passed silently. With the two values straddling the cap, a
+        //   stale-size read there refuses the fallback outright
+        //   (`no_range_support`, `download_full` never called) while a
+        //   resolved-size read proceeds — a real branch difference,
+        //   witnessed by the final `fetch_status`.
+        // - `download_full`'s own argument (site #939) is pinned exactly
+        //   as before, via `download_calls`.
+        //
+        // What this test does NOT discriminate: `FallbackBudget::admit`'s
+        // argument (site #925) specifically. A single entry's admit call
+        // is granted under 2 GiB of budget whether it's handed 600 MiB or
+        // 12,345 bytes — the branch (`Download`) is the same either way,
+        // and `manifest.fallback_bytes` (checked and ruled out below)
+        // doesn't reflect it, so it can't be asserted on here either.
         let tmp = tempfile::tempdir().unwrap();
         let out_dir = tmp.path().join("out");
         let cache_dir = tmp.path().join("cache");
         std::fs::create_dir_all(&out_dir).unwrap();
         std::fs::create_dir_all(&cache_dir).unwrap();
 
-        let stale_entry_size = 9_999_999_u64; // never legitimately observed below
-        let resolved_size = 12_345_u64; // the "listing" value: well under TAIL_LEN and FALLBACK_PER_ENTRY_CAP
+        let stale_entry_size = 600 * 1024 * 1024_u64; // OVER FALLBACK_PER_ENTRY_CAP (512 MiB)
+        let resolved_size = 12_345_u64; // the "listing" value: under TAIL_LEN and well under the cap
         let entries = vec![rec(1, "levels/doom/0-9/", "a.zip", stale_entry_size)];
 
         let fetch_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let download_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (fc, dc) = (Arc::clone(&fetch_calls), Arc::clone(&download_calls));
+        let zip_bytes = Arc::new(tests_zip_fixture());
+        let (fc, dc, zb) = (
+            Arc::clone(&fetch_calls),
+            Arc::clone(&download_calls),
+            Arc::clone(&zip_bytes),
+        );
         let make_source = move |_entry: &crate::api::model::FileRecord,
                                 _counters: Arc<TransferCounters>| {
             (
                 SizeProbeSource {
                     fetch_calls: Arc::clone(&fc),
                     download_calls: Arc::clone(&dc),
+                    zip_bytes: Arc::clone(&zb),
                 },
                 resolved_size,
             )
@@ -1766,15 +1797,100 @@ mod tests {
             "the ranged tail fetch (site #874) must be sized from the resolved \
              #441 value, not entry.size"
         );
+
+        let text = std::fs::read_to_string(out_dir.join("idgames-wads.jsonl")).unwrap();
+        let record: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            record["fetch_status"], "full_download",
+            "the per-entry cap check (site #915) must have compared the \
+             resolved 12,345-byte size against FALLBACK_PER_ENTRY_CAP, not the \
+             600 MiB stale value that's actually over it — a stale-size read \
+             there refuses the fallback outright (no_range_support) and this \
+             would never reach full_download: {text}"
+        );
         assert_eq!(
             *download_calls.lock().unwrap(),
             vec![resolved_size],
-            "reaching download_full at all proves the per-entry cap check \
-             (site #915) admitted the resolved size rather than the wildly \
-             over-cap-looking stale value, FallbackBudget::admit (site #925) was \
-             called with it too, and download_full (site #939) received that \
-             same resolved value — a stale entry.size of 9,999,999 at any of the \
-             three would either never reach here or disagree with resolved_size"
+            "download_full (site #939) must receive the resolved #441 value, \
+             not entry.size"
+        );
+    }
+
+    /// #441 IMPORTANT 2 (round 3): `manifest.fallback_bytes` turns out to
+    /// accumulate `record.zip_size`, which is always `entry.size` — see
+    /// `outcome_to_record`'s `zip_size: entry.size` and
+    /// `drive_worker_pool`'s `fallback_bytes += record.zip_size` — a field
+    /// #441 deliberately leaves untouched (schema doc; phase-3 stats joins
+    /// the listing itself). It therefore cannot discriminate what
+    /// `FallbackBudget::admit` (site #925) was actually called with.
+    /// `FallbackBudget` also exposes no accessor for its remaining budget.
+    /// The only externally observable trace of what one `admit` call
+    /// consumed is a LATER `admit` call against the SAME budget: since
+    /// `FALLBACK_BYTE_BUDGET` (2 GiB) is exactly 4× `FALLBACK_PER_ENTRY_CAP`
+    /// (512 MiB), four direct `handle_no_range_support` calls each passing
+    /// exactly `FALLBACK_PER_ENTRY_CAP` drain the shared budget to
+    /// precisely zero if — and only if — each call really admitted the
+    /// `expected_size` argument it was given, rather than some other
+    /// value; a fifth call with any positive size must then be refused.
+    /// Calling `handle_no_range_support` directly (bypassing `run_core`)
+    /// keeps the budget fully under this test's control.
+    struct DownloadOkSource;
+
+    impl RangeSource for DownloadOkSource {
+        async fn fetch(&mut self, _offset: u64, _len: u64) -> Result<Vec<u8>, FetchFailure> {
+            panic!("handle_no_range_support must never call fetch")
+        }
+    }
+
+    impl EntrySource for DownloadOkSource {
+        fn mirror_key(&self) -> &'static str {
+            "fake"
+        }
+
+        async fn download_full(&mut self, _expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_no_range_support_admits_exactly_its_expected_size_argument() {
+        // A generous `total_entries` keeps the ~2% breaker
+        // (`fallback_limit`) far out of reach of these five calls.
+        let budget = tokio::sync::Mutex::new(FallbackBudget::new(1_000_000));
+        let mut source = DownloadOkSource;
+
+        for call in 1..=4 {
+            let (outcome, aborted) =
+                handle_no_range_support(&mut source, FALLBACK_PER_ENTRY_CAP, &budget).await;
+            assert!(
+                !aborted,
+                "call {call}: must not trip the breaker this early"
+            );
+            assert!(
+                !matches!(
+                    outcome,
+                    EntryOutcome::Failed(FailKind::NoRange {
+                        budget_refused: true
+                    })
+                ),
+                "call {call}: must be granted — the budget isn't exhausted yet \
+                 if each call really only admitted FALLBACK_PER_ENTRY_CAP: \
+                 {outcome:?}"
+            );
+        }
+
+        let (outcome, _aborted) = handle_no_range_support(&mut source, 1, &budget).await;
+        assert!(
+            matches!(
+                outcome,
+                EntryOutcome::Failed(FailKind::NoRange {
+                    budget_refused: true
+                })
+            ),
+            "the 5th call (just 1 byte) must be refused — the budget is exactly \
+             drained if the first four calls each admitted precisely \
+             FALLBACK_PER_ENTRY_CAP, pinning that admit's argument really was \
+             the expected_size passed in: {outcome:?}"
         );
     }
 }
