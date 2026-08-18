@@ -264,8 +264,15 @@ community maps, and a direct skew on the §8 size statistics; `misc/` = 26
 zips of fonts, themes, posters, and walkthroughs whose only WAD-bearing
 items are official id content (`betraysewers.zip`, `sigil_bfg.zip` — RETAIL
 measurement material, not community corpus); `roguestuff/` = 2 Strife demo
-distributions. Any *new* top-level root still lands in `Triage` (skipped
-loudly) until a decision is recorded here.
+distributions. **Triage resolution (2026-08-18, #408):** `incoming/` and
+`newstuff/` are **Skip**. Both surfaced as untriaged roots during the #408
+warm re-runs. Inspection via the cached `ls-laR` listing (2026-08-18):
+`newstuff/` = 29 zips, every one *also* present at its final path elsewhere
+in the tree — recently approved uploads in transit, so including the root
+double-counts 100% of its entries; `incoming/` = 25 zips awaiting review
+(5 already duplicated at final paths) — unreviewed, unstable staging
+content, not part of the curated archive. Any *new* top-level root still
+lands in `Triage` (skipped loudly) until a decision is recorded here.
 
 `action=search` is capped and will not enumerate exhaustively. On the API
 side, `getcontents` is the only reliable traversal — but the primary
@@ -925,9 +932,9 @@ The first full harvest ran to completion and produced a recommended value for
 every §8.1/§8.3 constant — the §9.3 phase-3 acceptance. This subsection is the
 durable record of that run: the numbers the web-UI limits ADR (#447) starts
 from. The §8 scope note applies — these are evidence, not adopted policy. The
-full report (`stats-report.md`) and its inputs are local and gitignored
-(§4.7 governance; internal-only per §10); `just stats` against the manifests
-below reproduces it byte-identically.
+full report (`xtask/data/stats-report.md`) and its inputs are local and
+gitignored (§4.7 governance; internal-only per §10); `just harvest-stats`
+against the manifests below reproduces it byte-identically.
 
 **Provenance**
 
