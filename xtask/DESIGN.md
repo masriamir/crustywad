@@ -2,7 +2,8 @@
 
 **Status:** spike-verified 2026-08-12 (issue #402) — API and mirror assumptions
 probed against reality and corrections folded in; ready to plan against.
-Committed home decided by ADR-0030.
+Committed home decided by ADR-0030. All three phases implemented (#405, #406,
+#407); the first full harvest is recorded in §8.5 (2026-08-18, #408).
 **Target repo:** `masriamir/crustywad`
 **Audience:** implementer (human or Claude Code CLI)
 
@@ -263,8 +264,15 @@ community maps, and a direct skew on the §8 size statistics; `misc/` = 26
 zips of fonts, themes, posters, and walkthroughs whose only WAD-bearing
 items are official id content (`betraysewers.zip`, `sigil_bfg.zip` — RETAIL
 measurement material, not community corpus); `roguestuff/` = 2 Strife demo
-distributions. Any *new* top-level root still lands in `Triage` (skipped
-loudly) until a decision is recorded here.
+distributions. **Triage resolution (2026-08-18, #408):** `incoming/` and
+`newstuff/` are **Skip**. Both surfaced as untriaged roots during the #408
+warm re-runs. Inspection via the cached `ls-laR` listing (2026-08-18):
+`newstuff/` = 29 zips, every one *also* present at its final path elsewhere
+in the tree — recently approved uploads in transit, so including the root
+double-counts 100% of its entries; `incoming/` = 25 zips awaiting review
+(5 already duplicated at final paths) — unreviewed, unstable staging
+content, not part of the curated archive. Any *new* top-level root still
+lands in `Triage` (skipped loudly) until a decision is recorded here.
 
 `action=search` is capped and will not enumerate exhaustively. On the API
 side, `getcontents` is the only reliable traversal — but the primary
@@ -918,6 +926,57 @@ is cheap even with a generous cap. The numbers that bite are *concurrent parses 
 peak RSS* and *concurrent extractions × decoded cap on disk*. Measure both before
 tuning upload size.
 
+### 8.5 First-harvest record (2026-08-18)
+
+The first full harvest ran to completion and produced a recommended value for
+every §8.1/§8.3 constant — the §9.3 phase-3 acceptance. This subsection is the
+durable record of that run: the numbers the web-UI limits ADR (#447) starts
+from. The §8 scope note applies — these are evidence, not adopted policy. The
+full report (`xtask/data/stats-report.md`) and its inputs are local and
+gitignored (§4.7 governance; internal-only per §10); `just harvest-stats`
+against the manifests below reproduces it byte-identically.
+
+**Provenance**
+
+| field | value |
+| --- | --- |
+| phase-1 manifest | `harvest-20260817T023144Z` — 15,732 files, 182 dirs; ls-laR bootstrap: infania, Last-Modified Sun, 16 Aug 2026 05:05:18 GMT |
+| phase-2 manifest | `harvest-zips-20260818T023856Z` — 14,633 cached + 1,099 live retries after #441's listing-size correction |
+| outliers manifest | `harvest-outliers-20260817T065223Z` — 2 analyzed (freedoom, sigil-ii), 4 size-tail anchors refused by their hosts |
+| stats git_rev | `26f2ffc` |
+| coverage | 15,716 of 15,732 phase-1 entries `ok` (99.90%); the residual 16 (1 `fetch_error`, 5 `mirror_404_all`, 10 `zip_parse_error`) are accepted in #408's close-out |
+| determinism | the §9.3 byte-identity criterion was witnessed by double runs on both the 2026-08-17 cold corpus and the 2026-08-18 corrected corpus |
+| populations | 15,716 entries / 16,876 `.wad` members; zip wire-cap population 15,267; sweep corpus 15,267 entries |
+
+**Recommendations** (verbatim from the report's §8 table):
+
+| key | recommended | formula | source |
+| --- | --- | --- | --- |
+| wire_cap_zip | 67108864 (64 MiB) | pow2_ceil(max(idgames p99.5 listing zip size, outliers max zip size)) | idgames p99.5 zip_size_listing = 45414309; outliers max zip_size = 24143781 |
+| wire_cap_wad | 134217728 (128 MiB) | pow2_ceil(max(idgames p99.5 wad uncompressed, outliers max wad uncompressed)) | idgames p99.5 wad_uncompressed = 89601066; outliers max wad_uncompressed = 28795076 |
+| decoded_cap | 134217728 (128 MiB) | same as wire_cap_wad (bounds the same downstream work, §8.1) | mirrors wire_cap_wad: idgames p99.5 wad_uncompressed = 89601066; outliers max wad_uncompressed = 28795076 |
+| max_member_count | 4096 | pow2_ceil(2 × max(idgames max member_count, outliers max member_count)) | idgames max member_count = 1200; outliers max member_count = 11 |
+| max_entry_uncompressed_bytes | 1073741824 (1 GiB) | pow2_ceil(2 × max(idgames max entry_wad_total_uncompressed, outliers max_entry_total_uncompressed)) | idgames max entry_wad_total_uncompressed = 343146439; outliers max_entry_total_uncompressed = 57582824 (wad-member totals only — phase 2 retains no non-wad member sizes) |
+| max_member_compression_ratio | 150 | 10 × ceil(2 × observed max deflate ratio / 10) | idgames max member_deflate ratio = 71.96 (n = 16628) (idgames population only) |
+| compression_method_allowlist | stored, deflate | assertion: report every observed method with its count; recommend stored + deflate; flag any method beyond the allowlist | deflate = 16628, stored = 28, unsupported(1) = 4, unsupported(6) = 215, unsupported(9) = 1 — OBSERVED UNEXPECTED METHOD (.wad members only — non-wad archive members carry no recorded method); adopting stored+deflate would reject 220 members (1.3%): Shrink(1)=4, Implode(6)=215, Deflate64(9)=1 (idgames population only) |
+| zip64_statement | zip64 handled | count of records with zip64: true | 0 zip64 entries observed (records); manifest agrees (idgames population only) |
+
+**Caveats carried with the record** (full method notes live in the report):
+
+- `member_count` counts *distinct* central-directory entry names — a duplicate
+  member name under-counts by design.
+- The envelope-byte and compression-method figures are a `.wad`-members-only
+  census: phase 2 retains no size or method data for non-wad members, while
+  §8.3's allowlist governs *every* member of an upload — so the method census
+  under-represents the true method population.
+- The upper size tail remains truncated by the idgames upload cap — every §6.4
+  size-tail anchor host refused analysis this run, so the recommendations rest
+  on the idgames population plus the two analyzed outliers.
+- Zip-size statistics use the ls-laR listing size (mirror truth), not the API
+  `size` field (§6.3's locked decision). The phase-1 ledger recorded 1,099
+  `size_mismatch` findings; among entries where listing and API disagreed, the
+  API would have misled by up to 31,438,807 bytes (max relative error ≈1,453×).
+
 ---
 
 ## 9. Testing and acceptance criteria
@@ -977,16 +1036,21 @@ a hand-verified uncompressed size.
 - **pk3/pk7 support**, driven by the zero-`.wad` count from §6.3. Materially
   bigger than zip: pk3 is a resource archive with its own directory semantics,
   not a container around a WAD. "We already handle zip" does not carry over.
+  Quantified and filed as #445 (2026-08-18): zero-`.wad` share 449 entries
+  (2.86%).
 - **Member picker richness** — whether it needs map names and lump counts or a
-  plain filename list suffices. Driven by the multi-WAD share.
+  plain filename list suffices. Driven by the multi-WAD share. Quantified and
+  filed as #446 (2026-08-18): multi-WAD share 863 entries (5.49%).
 - **Whether the web UI limits warrant their own ADR** once numbers are in. This
   spec covers the harvest; the limits are a design decision with trade-offs worth
-  recording alongside ADR-0024 through ADR-0026.
+  recording alongside ADR-0024 through ADR-0026. Numbers are in (§8.5); filed
+  as #447 (2026-08-18).
 - ~~**Strife**~~ — resolved 2026-08-03: `levels/strife` is in scope (§4.2,
   ADR-0028).
-- **Publishing the corpus manifest** as a release artifact (so contributors can
-  populate `CRUSTYWAD_SWEEP_DIR` without rerunning the harvest) — deferred;
-  internal-only for now. If flipped on, only the PII-free trio ships (§4.7).
+- ~~**Publishing the corpus manifest** as a release artifact~~ — resolved
+  2026-08-18 (#408): stays internal-only; no external consumer needs
+  `CRUSTYWAD_SWEEP_DIR` today. Revisit if one appears — if flipped on, only the
+  PII-free trio ships (§4.7).
 - **UPLTEMPL port-targeting fields** — deliberately forgone along with
   full-record fetching (§4.3). Revisit only if a concrete need for
   metadata-derived format segmentation appears; the sweep corpus answers format
