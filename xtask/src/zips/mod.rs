@@ -113,7 +113,7 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     let input_path = out_dir.join("idgames-files.jsonl");
     let Some(phase1_records) = schema::read_files_jsonl(&input_path) else {
         anyhow::bail!(
-            "no Phase-1 output at {} — run `xtask harvest-api` first",
+            "no Phase-1 output at {} — run `just harvest-api` first",
             input_path.display()
         );
     };
@@ -125,10 +125,14 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     // `size` stale for ~7% of entries — every one of them then failed the
     // Content-Range integrity guard below (`MirrorRanges::new`'s
     // `expected_size`) because the guard was right and its input was
-    // wrong. Phase 1 unconditionally maintains this cache (mirror.rs), so
-    // its absence here means a damaged data dir, not a legitimate
-    // first-run state — never silently fall back to API-size-only for the
-    // whole run.
+    // wrong. Absence here means Phase 1 has not successfully bootstrapped
+    // this cache — either it hasn't run yet, or it ran but
+    // `mirror::fetch_ls_lar` came back `Unavailable` (every mirror
+    // unreachable at the time; `phase1::is_total_failure` lets that pass
+    // as a legitimate partial BFS harvest when it still enumerated files
+    // via the API) and so never persisted `ls-laR.gz` at all — never
+    // silently fall back to API-size-only for the whole run; rerun Phase 1
+    // instead (the mirrors may be back).
     let lslar_path = cache_dir.join("ls-laR.gz");
     let Ok(lslar_bytes) = std::fs::read(&lslar_path) else {
         anyhow::bail!(
@@ -140,14 +144,25 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
         .with_context(|| format!("parsing {}", lslar_path.display()))?;
 
     let client = crate::mirror::build_zips_http()?;
-    let make_source = move |rec: &FileRecord, counters: Arc<TransferCounters>| -> LiveSource {
+    // #441 fix round 2: the factory hands back the resolved size ALONGSIDE
+    // the source, not just baked into `MirrorRanges`'s own Content-Range
+    // guard — `drive_worker_pool`/`process_entry`/`handle_no_range_support`
+    // thread that same `u64` to every consumer (the ranged tail fetch, the
+    // per-entry fallback cap, `FallbackBudget::admit`, and
+    // `download_full`), so nothing downstream can independently reach for
+    // the stale `FileRecord.size` again.
+    let make_source = move |rec: &FileRecord,
+                            counters: Arc<TransferCounters>|
+          -> (LiveSource, u64) {
         // #441: pass the listing's size, not the Phase-1 API's — see
         // `expected_size`'s doc comment.
         let expected = expected_size(&tree, rec);
-        match MirrorRanges::new(client.clone(), &rec.dir, &rec.filename, expected, counters) {
-            Ok(mirrors) => LiveSource::Mirror(Box::new(mirrors)),
-            Err(e) => LiveSource::UrlError(e.to_string()),
-        }
+        let source =
+            match MirrorRanges::new(client.clone(), &rec.dir, &rec.filename, expected, counters) {
+                Ok(mirrors) => LiveSource::Mirror(Box::new(mirrors)),
+                Err(e) => LiveSource::UrlError(e.to_string()),
+            };
+        (source, expected)
     };
 
     let result = run_core(entries, &out_dir, &cache_dir, make_source).await;
@@ -456,9 +471,15 @@ fn zips_manifest_id(started_at: &chrono::DateTime<Utc>) -> String {
 }
 
 /// Factory yielding one [`RangeSource`] (plus its mirror-key getter and
-/// full-download hook) per entry. Production: [`LiveSource`] over a shared
-/// reqwest client + counters. Tests: fixture-backed fakes with a fetch
-/// counter.
+/// full-download hook) per entry, alongside the `u64` size that was
+/// resolved to build it (#441 fix round 2: [`run_async`]'s real factory
+/// resolves this once via [`expected_size`] and returns it next to the
+/// source it just built with that same value, so `drive_worker_pool` can
+/// thread it — unchanged — through `process_entry`/
+/// `handle_no_range_support` instead of any of those re-deriving it, or
+/// worse, falling back to the stale `FileRecord.size`). Production:
+/// [`LiveSource`] over a shared reqwest client + counters. Tests:
+/// fixture-backed fakes with a fetch counter.
 ///
 /// Deliberately **not** `: Send` (a deviation from the task-6 brief's
 /// sketch, discovered at compile time, not guessed): [`inspect::inspect_zip`]
@@ -580,7 +601,7 @@ async fn run_core<S, F>(
 ) -> anyhow::Result<RunStats>
 where
     S: EntrySource + 'static,
-    F: Fn(&FileRecord, Arc<TransferCounters>) -> S,
+    F: Fn(&FileRecord, Arc<TransferCounters>) -> (S, u64),
 {
     let started_at = Utc::now();
     std::fs::create_dir_all(out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
@@ -738,7 +759,7 @@ async fn drive_worker_pool<S, F>(
 ) -> anyhow::Result<(u64, Option<String>, u64, u64, u64, u64)>
 where
     S: EntrySource + 'static,
-    F: Fn(&FileRecord, Arc<TransferCounters>) -> S,
+    F: Fn(&FileRecord, Arc<TransferCounters>) -> (S, u64),
 {
     let counters = Arc::new(TransferCounters::new());
     let budget = Arc::new(tokio::sync::Mutex::new(FallbackBudget::new(entries_total)));
@@ -774,14 +795,19 @@ where
             let spawn_one = |join_set: &mut WorkerJoinSet, entry: FileRecord| {
                 let sem = Arc::clone(&semaphore);
                 let budget = Arc::clone(&budget);
-                let mut source = make_source(&entry, Arc::clone(&counters));
+                // #441 fix round 2: `expected_size` is resolved once right
+                // here (inside `make_source`) and carried alongside `entry`
+                // into the spawned task — `process_entry`/
+                // `handle_no_range_support` take it as an explicit
+                // parameter and never reach back into `entry.size`.
+                let (mut source, expected_size) = make_source(&entry, Arc::clone(&counters));
                 join_set.spawn_local(async move {
                     let _permit = sem
                         .acquire_owned()
                         .await
                         .expect("semaphore is never closed during a run");
                     let (outcome, breaker_aborted) =
-                        process_entry(&mut source, &entry, &budget).await;
+                        process_entry(&mut source, expected_size, &budget).await;
                     let mirror_key = source.mirror_key();
                     (entry, outcome, mirror_key, breaker_aborted)
                 });
@@ -866,12 +892,21 @@ where
 /// ([`parse_downloaded`]). Returns the outcome plus whether this call just
 /// tripped the fallback breaker (the orchestrator's cue to abort the
 /// phase after recording this entry).
+///
+/// `expected_size` (#441 fix round 2: resolved once by the `make_source`
+/// factory — see its doc comment and [`expected_size`]) is threaded
+/// through to every consumer below in place of the entry's own `size`, so
+/// the ranged inspect, the per-entry cap check, the shared fallback
+/// budget, and the full-download read all agree with the same value the
+/// `source`'s own Content-Range guard was built with. `entry` itself is
+/// no longer needed here — everything this function reads from it used to
+/// be `entry.size` alone.
 async fn process_entry<S: EntrySource>(
     source: &mut S,
-    entry: &FileRecord,
+    expected_size: u64,
     budget: &tokio::sync::Mutex<FallbackBudget>,
 ) -> (EntryOutcome, bool) {
-    match inspect::inspect_zip(source, entry.size).await {
+    match inspect::inspect_zip(source, expected_size).await {
         Ok(inspection) => (
             EntryOutcome::Inspected {
                 inspection,
@@ -883,7 +918,7 @@ async fn process_entry<S: EntrySource>(
             (EntryOutcome::Failed(FailKind::Mirror404All), false)
         }
         Err(InspectError::Fetch(FetchFailure::RangeUnsupported)) => {
-            handle_no_range_support(source, entry, budget).await
+            handle_no_range_support(source, expected_size, budget).await
         }
         Err(InspectError::Fetch(FetchFailure::Http(detail))) => {
             (EntryOutcome::Failed(FailKind::Fetch(detail)), false)
@@ -899,7 +934,8 @@ async fn process_entry<S: EntrySource>(
 }
 
 /// §5.2 budgeted fallback for an entry whose mirrors refused ranges, plus
-/// the controller's per-entry cap: a `.zip` bigger than
+/// the controller's per-entry cap: an `expected_size` (#441 fix round 2 —
+/// see [`process_entry`]'s doc comment) bigger than
 /// [`FALLBACK_PER_ENTRY_CAP`] is refused outright, without ever touching
 /// [`FallbackBudget`]'s byte pool. It still counts toward the breaker:
 /// `admit(u64::MAX)` can never be granted (no real remaining budget is
@@ -909,10 +945,10 @@ async fn process_entry<S: EntrySource>(
 /// reaches `bytes_remaining`.
 async fn handle_no_range_support<S: EntrySource>(
     source: &mut S,
-    entry: &FileRecord,
+    expected_size: u64,
     budget: &tokio::sync::Mutex<FallbackBudget>,
 ) -> (EntryOutcome, bool) {
-    if entry.size > FALLBACK_PER_ENTRY_CAP {
+    if expected_size > FALLBACK_PER_ENTRY_CAP {
         let decision = budget.lock().await.admit(u64::MAX);
         let aborted = matches!(decision, FallbackDecision::Abort);
         return (
@@ -922,7 +958,7 @@ async fn handle_no_range_support<S: EntrySource>(
             aborted,
         );
     }
-    let decision = budget.lock().await.admit(entry.size);
+    let decision = budget.lock().await.admit(expected_size);
     match decision {
         FallbackDecision::Abort => (
             EntryOutcome::Failed(FailKind::NoRange {
@@ -936,7 +972,7 @@ async fn handle_no_range_support<S: EntrySource>(
             }),
             false,
         ),
-        FallbackDecision::Download => match source.download_full(entry.size).await {
+        FallbackDecision::Download => match source.download_full(expected_size).await {
             Ok(bytes) => (parse_downloaded(&bytes), false),
             Err(f) => (EntryOutcome::Failed(FailKind::Fetch(f.to_string())), false),
         },
@@ -1224,14 +1260,23 @@ mod tests {
 
     /// [`SourceFactory`]-shaped closure serving `zip_bytes` and bumping
     /// `fetches`, ignoring the run-wide counters (the byte-ceiling breaker
-    /// isn't exercised by this fixture).
+    /// isn't exercised by this fixture). Resolves the #441 expected size
+    /// to `entry.size` (this fixture doesn't exercise a listing/API
+    /// divergence — see `resolved_size_not_stale_entry_size_reaches_every_consumer`
+    /// for that).
     fn make_fake_factory(
         zip_bytes: Arc<Vec<u8>>,
         fetches: Arc<AtomicU64>,
-    ) -> impl Fn(&crate::api::model::FileRecord, Arc<TransferCounters>) -> FakeEntrySource {
-        move |_entry, _counters| FakeEntrySource {
-            bytes: Arc::clone(&zip_bytes),
-            fetches: Arc::clone(&fetches),
+    ) -> impl Fn(&crate::api::model::FileRecord, Arc<TransferCounters>) -> (FakeEntrySource, u64)
+    {
+        move |entry, _counters| {
+            (
+                FakeEntrySource {
+                    bytes: Arc::clone(&zip_bytes),
+                    fetches: Arc::clone(&fetches),
+                },
+                entry.size,
+            )
         }
     }
 
@@ -1409,10 +1454,16 @@ mod tests {
     fn make_flaky_factory(
         zip_bytes: Arc<Vec<u8>>,
         fail: Arc<std::sync::atomic::AtomicBool>,
-    ) -> impl Fn(&crate::api::model::FileRecord, Arc<TransferCounters>) -> FlakyFakeSource {
-        move |_entry, _counters| FlakyFakeSource {
-            bytes: Arc::clone(&zip_bytes),
-            fail: Arc::clone(&fail),
+    ) -> impl Fn(&crate::api::model::FileRecord, Arc<TransferCounters>) -> (FlakyFakeSource, u64)
+    {
+        move |entry, _counters| {
+            (
+                FlakyFakeSource {
+                    bytes: Arc::clone(&zip_bytes),
+                    fail: Arc::clone(&fail),
+                },
+                entry.size,
+            )
         }
     }
 
@@ -1536,11 +1587,14 @@ mod tests {
             .map(|id| rec(id, "levels/doom/0-9/", &format!("huge{id}.zip"), over_cap))
             .collect();
         let calls_for_factory = Arc::clone(&download_full_calls);
-        let make_source = move |_entry: &crate::api::model::FileRecord,
+        let make_source = move |entry: &crate::api::model::FileRecord,
                                 _counters: Arc<TransferCounters>| {
-            NoRangeFakeSource {
-                download_full_calls: Arc::clone(&calls_for_factory),
-            }
+            (
+                NoRangeFakeSource {
+                    download_full_calls: Arc::clone(&calls_for_factory),
+                },
+                entry.size,
+            )
         };
 
         let err = run_core(entries, &out_dir, &cache_dir, make_source)
@@ -1603,9 +1657,9 @@ mod tests {
         std::fs::create_dir_all(&cache_dir).unwrap();
 
         let entries = vec![rec(1, "levels/doom/0-9/", "a.zip", 10)];
-        let make_source = |_entry: &crate::api::model::FileRecord,
+        let make_source = |entry: &crate::api::model::FileRecord,
                            counters: Arc<TransferCounters>| {
-            ByteBombFakeSource { counters }
+            (ByteBombFakeSource { counters }, entry.size)
         };
 
         let err = run_core(entries, &out_dir, &cache_dir, make_source)
@@ -1627,5 +1681,100 @@ mod tests {
         // Outputs are still written despite the abort.
         assert!(out_dir.join("idgames-wads.jsonl").exists());
         assert!(out_dir.join("wads-errors.jsonl").exists());
+    }
+
+    /// #441 fix-round-2 regression instrument: `fetch` records every
+    /// `(offset, len)` it's asked for and always answers
+    /// `RangeUnsupported` (routing the entry through the §5.2 fallback
+    /// path too, in the same call), and `download_full` records every
+    /// `expected_size` it's handed. Driven through `run_core`'s real
+    /// `drive_worker_pool` → `spawn_one` → `process_entry` →
+    /// `handle_no_range_support` chain — never called directly — so a
+    /// regression reintroducing a stale `entry.size` read anywhere in that
+    /// chain shows up as a value in one of the two recorded vectors that
+    /// disagrees with the resolved size the factory handed back.
+    struct SizeProbeSource {
+        fetch_calls: Arc<std::sync::Mutex<Vec<(u64, u64)>>>,
+        download_calls: Arc<std::sync::Mutex<Vec<u64>>>,
+    }
+
+    impl RangeSource for SizeProbeSource {
+        async fn fetch(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, FetchFailure> {
+            self.fetch_calls.lock().unwrap().push((offset, len));
+            Err(FetchFailure::RangeUnsupported)
+        }
+    }
+
+    impl EntrySource for SizeProbeSource {
+        fn mirror_key(&self) -> &'static str {
+            "fake"
+        }
+
+        async fn download_full(&mut self, expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
+            self.download_calls.lock().unwrap().push(expected_size);
+            Err(FetchFailure::Http("probe: stop after recording".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn resolved_size_not_stale_entry_size_reaches_every_consumer() {
+        // CRITICAL 1 (fix round 1 review) regression: `entry.size` here
+        // stands in for a stale Phase-1 API value; the factory resolves
+        // and hands back a DIFFERENT "listing" size alongside the source —
+        // exactly the shape `run_async`'s real factory produces from
+        // `expected_size(&tree, rec)` (mod.rs). `resolved_size` is chosen
+        // small enough (< `TAIL_LEN`) that the ranged tail fetch reads the
+        // whole file in one call — `inspect_zip`'s first `fetch(0,
+        // file_size)` — so the recorded length alone pins which size fed
+        // it. That same `RangeUnsupported` answer then routes the entry
+        // through `handle_no_range_support`, exercising the per-entry cap
+        // check and `FallbackBudget::admit` (both would have to pass a
+        // `resolved_size` comfortably under `FALLBACK_PER_ENTRY_CAP` for
+        // `download_full` to be reached at all) and finally
+        // `download_full` itself — all four #441 call sites, one test.
+        let tmp = tempfile::tempdir().unwrap();
+        let out_dir = tmp.path().join("out");
+        let cache_dir = tmp.path().join("cache");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let stale_entry_size = 9_999_999_u64; // never legitimately observed below
+        let resolved_size = 12_345_u64; // the "listing" value: well under TAIL_LEN and FALLBACK_PER_ENTRY_CAP
+        let entries = vec![rec(1, "levels/doom/0-9/", "a.zip", stale_entry_size)];
+
+        let fetch_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let download_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (fc, dc) = (Arc::clone(&fetch_calls), Arc::clone(&download_calls));
+        let make_source = move |_entry: &crate::api::model::FileRecord,
+                                _counters: Arc<TransferCounters>| {
+            (
+                SizeProbeSource {
+                    fetch_calls: Arc::clone(&fc),
+                    download_calls: Arc::clone(&dc),
+                },
+                resolved_size,
+            )
+        };
+
+        run_core(entries, &out_dir, &cache_dir, make_source)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *fetch_calls.lock().unwrap(),
+            vec![(0, resolved_size)],
+            "the ranged tail fetch (site #874) must be sized from the resolved \
+             #441 value, not entry.size"
+        );
+        assert_eq!(
+            *download_calls.lock().unwrap(),
+            vec![resolved_size],
+            "reaching download_full at all proves the per-entry cap check \
+             (site #915) admitted the resolved size rather than the wildly \
+             over-cap-looking stale value, FallbackBudget::admit (site #925) was \
+             called with it too, and download_full (site #939) received that \
+             same resolved value — a stale entry.size of 9,999,999 at any of the \
+             three would either never reach here or disagree with resolved_size"
+        );
     }
 }
