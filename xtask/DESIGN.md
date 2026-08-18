@@ -566,6 +566,17 @@ silently do.
 > closes a path where a lying proxy/CDN could otherwise splice foreign bytes
 > into the sparse buffer at a requested offset.
 
+> Correction (#441): the "declared size" the Content-Range guard above
+> validates against is the §5.0 ls-laR listing's own size for the entry —
+> not the Phase-1 API's `size` field — falling back to the API size only
+> for an entry the listing doesn't have (a join miss, e.g. one added
+> between the listing snapshot and the API walk). The listing is the
+> mirror's own account of what it serves, while the API `size` is a
+> separately-maintained field; the first full run (2026-08-17) proved the
+> API size stale for 1,099/15,732 entries (~7%), all of which failed
+> closed as `fetch_error` ("content-range total X != declared size Y")
+> before this fix, because the guard was right and its input was wrong.
+
 For files under ~64 KiB, fetch the whole thing — cheaper than three round trips.
 
 ### 5.3 Hand-rolled fallback
