@@ -133,15 +133,7 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
     // via the API) and so never persisted `ls-laR.gz` at all — never
     // silently fall back to API-size-only for the whole run; rerun Phase 1
     // instead (the mirrors may be back).
-    let lslar_path = cache_dir.join("ls-laR.gz");
-    let Ok(lslar_bytes) = std::fs::read(&lslar_path) else {
-        anyhow::bail!(
-            "no cached ls-laR listing at {} — run `just harvest-api` first",
-            lslar_path.display()
-        );
-    };
-    let tree = parse_ls_lar_gz(&lslar_bytes)
-        .with_context(|| format!("parsing {}", lslar_path.display()))?;
+    let tree = load_lslar_tree(&cache_dir)?;
 
     let client = crate::mirror::build_zips_http()?;
     // #441 fix round 2: the factory hands back the resolved size ALONGSIDE
@@ -188,6 +180,44 @@ async fn run_async(root: Option<&str>, limit: Option<u64>) -> anyhow::Result<()>
         "harvest-zips complete"
     );
     Ok(())
+}
+
+/// Load and parse the §5.0 ls-laR listing cached at `cache_dir` (#441; see
+/// the comment above this call in [`run_async`] for what a missing cache
+/// means). Split out of [`run_async`] as its own testable seam (round 4: a
+/// Copilot review of PR #444 found the original inline version collapsing
+/// every read error into "no cached listing," discarding a real I/O
+/// failure's own error).
+///
+/// # Errors
+/// A `NotFound` read gets the actionable "no cached ls-laR listing ...
+/// run `just harvest-api` first" message. Any other I/O failure
+/// (permissions, a transient fault, ...) is propagated with the source
+/// error intact via `with_context`, instead of being misreported as a
+/// missing cache. A read that succeeds but doesn't parse as a valid
+/// listing is likewise propagated with context.
+fn load_lslar_tree(cache_dir: &Path) -> anyhow::Result<ArchiveTree> {
+    let lslar_path = cache_dir.join("ls-laR.gz");
+    let lslar_bytes = match std::fs::read(&lslar_path) {
+        Ok(bytes) => bytes,
+        // Genuine absence (first run, or Phase 1 never bootstrapped it —
+        // see `run_async`'s call site): the actionable message, no error
+        // to preserve.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!(
+                "no cached ls-laR listing at {} — run `just harvest-api` first",
+                lslar_path.display()
+            );
+        }
+        // Anything else (permissions, a transient I/O fault, ...) is a
+        // real failure, not "run Phase 1" — propagate it with the source
+        // error intact instead of misreporting it as a missing cache.
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("reading ls-laR cache at {}", lslar_path.display()));
+        }
+    };
+    parse_ls_lar_gz(&lslar_bytes).with_context(|| format!("parsing {}", lslar_path.display()))
 }
 
 /// Patch the `scoped_root`/`limit` provenance fields of an already-written
@@ -1097,6 +1127,64 @@ mod tests {
         let tree = crate::lslar::ArchiveTree::default();
         let entry = rec(3, "levels/doom/0-9/", "a.zip", 10);
         assert_eq!(expected_size(&tree, &entry), 10);
+    }
+
+    /// #441 round 4: `load_lslar_tree`'s `NotFound` branch — a fresh cache
+    /// dir (no `ls-laR.gz`) gets the actionable "run `just harvest-api`
+    /// first" guidance, unchanged from before the round-4 refactor.
+    #[test]
+    fn load_lslar_tree_reports_a_missing_cache_with_actionable_guidance() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = load_lslar_tree(tmp.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("no cached ls-laR listing"),
+            "{err}"
+        );
+        assert!(
+            err.to_string().contains("run `just harvest-api` first"),
+            "{err}"
+        );
+    }
+
+    /// #441 round 4 regression (PR #444 Copilot review): a non-`NotFound`
+    /// read failure (here, permission-denied) must NOT be misreported as
+    /// "no cached ls-laR listing" — it must propagate with its own source
+    /// error preserved. Unix-only: an unreadable-file trick like this has
+    /// no portable cross-platform equivalent (a directory-as-file is not
+    /// reliably an I/O error, and Windows ACLs don't map onto `chmod`) —
+    /// same posture as `zips::store`'s
+    /// `unreadable_log_degrades_to_empty_without_panicking`.
+    #[cfg(unix)]
+    #[test]
+    fn load_lslar_tree_preserves_the_source_error_for_non_notfound_failures() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ls-laR.gz");
+        std::fs::write(&path, b"irrelevant").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let err = load_lslar_tree(tmp.path()).unwrap_err();
+        let top = err.to_string();
+        assert!(
+            !top.contains("no cached ls-laR listing"),
+            "a permission failure must not be misreported as a missing cache: {top}"
+        );
+        assert!(
+            top.contains("reading ls-laR cache"),
+            "must name what it was doing: {top}"
+        );
+        // `{:#}` walks the whole `anyhow` chain (context + source), unlike
+        // plain `{}` which shows only the top context — this is how we
+        // confirm the underlying `io::Error` is still reachable, not
+        // discarded by the `with_context` call.
+        let chain = format!("{err:#}");
+        assert!(
+            chain.to_lowercase().contains("permission"),
+            "the source io::Error must survive in the chain: {chain}"
+        );
+
+        // Restore so the tempdir can clean up.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]
