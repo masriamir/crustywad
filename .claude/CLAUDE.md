@@ -350,7 +350,7 @@ The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes f
 1. `git pull origin main`
 2. `git checkout -b feature/###-description`
 3. Commit with Conventional Commits (`feat(scope): ...`)
-4. Run `just ci` before pushing
+4. Run `just ci` before pushing (xtask-only branches: `just ci-xtask`)
 5. Open a PR against `main`
 
 ## Copilot review-comment workflow
