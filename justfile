@@ -131,3 +131,14 @@ test-fast:
 # The pre-push gate plus the workspace build and dependency audit — the full
 # pre-release composition.
 ci-full: build test lint doc deny docs-sync
+
+# Pre-push gate for xtask-only branches. xtask/ is its own cargo workspace
+# (ADR-0030 §1), so the root `ci` recipe compiles none of it and would
+# green-light a broken xtask tree. Mirrors the check job of
+# .github/workflows/xtask.yml; that workflow's separate deny job covers the
+# sub-workspace's dependency audit in CI (locally:
+# `cargo deny check --manifest-path xtask/Cargo.toml`).
+ci-xtask:
+    cargo fmt --manifest-path xtask/Cargo.toml --all --check
+    cargo clippy --manifest-path xtask/Cargo.toml --all-targets --locked -- -D warnings
+    cargo test --manifest-path xtask/Cargo.toml --locked
