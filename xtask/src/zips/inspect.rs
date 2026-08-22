@@ -469,17 +469,24 @@ mod tests {
     }
 
     impl RangeSource for FakeSource {
-        async fn fetch(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, FetchFailure> {
+        // Sync body in the desugared async-trait form (`impl Future` +
+        // `ready`) — clippy 1.98's `unused_async_trait_impl`.
+        fn fetch(
+            &mut self,
+            offset: u64,
+            len: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             self.fetches += 1;
             let start = usize::try_from(offset).unwrap();
             let end = start + usize::try_from(len).unwrap();
-            let served = self
-                .bytes
-                .get(start..end)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| FetchFailure::Http("range beyond EOF".into()))?;
-            self.bytes_served += u64::try_from(served.len()).unwrap();
-            Ok(served)
+            let result = match self.bytes.get(start..end).map(<[u8]>::to_vec) {
+                Some(served) => {
+                    self.bytes_served += u64::try_from(served.len()).unwrap();
+                    Ok(served)
+                }
+                None => Err(FetchFailure::Http("range beyond EOF".into())),
+            };
+            std::future::ready(result)
         }
     }
 
