@@ -977,11 +977,16 @@ mod tests {
     /// every response carries `Connection: close`, so reqwest reconnects
     /// per request and no keep-alive framing is involved. Requests here
     /// never carry bodies (HEAD/ranged GET), so reading to the blank line
-    /// is a complete request read. The thread is deliberately detached:
-    /// it blocks in `accept` after the script is exhausted and dies with
-    /// the test process. Observed requests are recorded before the
-    /// response is written, so once the client has a response, the record
-    /// is visible — no join needed.
+    /// is a complete request read. The thread is deliberately detached and
+    /// never joined: it serves exactly `responses.len()` connections, then
+    /// the loop ends and the closure returns, dropping the listener. A
+    /// request issued after that point is refused rather than left hanging
+    /// — measured locally, it surfaces as a transport-level
+    /// `FetchFailure::Http` once the retry ladder is exhausted, in
+    /// milliseconds under the paused clock — so a test that outruns its
+    /// script fails loudly instead of blocking. Observed requests are
+    /// recorded before the response is written, so once the client has a
+    /// response, the record is visible — no join needed.
     fn scripted_server(
         responses: Vec<String>,
     ) -> (
