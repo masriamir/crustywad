@@ -1348,6 +1348,7 @@ pub(crate) mod tests {
             (FetchStatus::FullDownload, "full_download"),
             (FetchStatus::ZipParseError, "zip_parse_error"),
             (FetchStatus::FetchError, "fetch_error"),
+            (FetchStatus::SkippedKnownDead, "skipped_known_dead"),
         ];
         for (status, wire) in cases {
             assert_eq!(serde_json::to_value(status).unwrap(), wire);
