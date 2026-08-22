@@ -635,7 +635,9 @@ impl MapBlockmap {
         let block_count = columns * rows;
 
         let words: Vec<u16> = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
         if 4 + block_count > words.len() {
