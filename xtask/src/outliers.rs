@@ -420,7 +420,6 @@ async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
             ledger.push(ledger_entry);
             continue;
         }
-        prior_network = true;
         let requests_before = counters.requests.load(Ordering::Relaxed);
         let (zip_size, result) = fetch_and_inspect(&client, spec, Arc::clone(&counters)).await;
         let attempts = u32::try_from(
@@ -430,6 +429,11 @@ async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
                 .saturating_sub(requests_before),
         )
         .unwrap_or(u32::MAX);
+        // Spacing history follows the *measured* request count, not the
+        // intent: an entry that issued zero requests (defensively, an
+        // unparseable URL — see `fetch_and_inspect`) leaves no host to be
+        // polite to, so it must not force the next entry's pacing sleep.
+        prior_network = attempts > 0;
         let (record, ledger_entry) = build_record(spec, zip_size, &result, attempts);
         records.push(record);
         if let Some(entry) = ledger_entry {

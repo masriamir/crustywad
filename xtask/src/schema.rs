@@ -83,7 +83,8 @@ pub struct LedgerEntry {
     pub kind: LedgerKind,
     /// Human-readable detail.
     pub detail: String,
-    /// Attempts made before giving up (1 for non-retried findings).
+    /// Attempts made before giving up (1 for a non-retried finding that
+    /// issued its single request).
     ///
     /// For `outliers::run`'s `harvest-outliers` ledger entries this is the
     /// entry's real HTTP request count as of #442 — the
