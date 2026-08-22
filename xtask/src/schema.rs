@@ -1566,6 +1566,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn read_outliers_jsonl_skips_unparseable_lines_and_keeps_the_rest() {
+        // #442: a corrupt line yields a silently partial population — pin
+        // the skip-don't-fail contract (and the blank-line tolerance)
+        // explicitly so a future "fail fast" refactor is a conscious choice.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outliers-wads.jsonl");
+        let good = serde_json::json!({
+            "slug": "a", "url": "https://x/a.zip", "zip_size": 1, "zip64": false,
+            "member_count": 0, "wads": [], "other_members": [], "fetch_status": "ok"
+        });
+        std::fs::write(&path, format!("{good}\nnot json\n\n{good}\n")).unwrap();
+        let records = read_outliers_jsonl(&path).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].slug, "a");
+        // Missing file stays None, not a panic or an empty Some.
+        assert!(read_outliers_jsonl(&dir.path().join("absent.jsonl")).is_none());
+    }
+
+    #[test]
     fn outliers_manifest_roundtrips_and_writes_trailing_newline() {
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path().join("outliers-manifest.json");

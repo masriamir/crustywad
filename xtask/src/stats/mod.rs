@@ -62,18 +62,14 @@ pub struct StatsPaths {
     pub out_dir: PathBuf,
 }
 
-/// Run `xtask stats`. `root`/`limit` are the §4.6 dev flags: when either is
-/// set, both input and output move to `data/dev/` — the same "scoped"
-/// convention Phase 1/2/outliers use — except the ls-laR cache, which is
-/// always read from `data/cache` regardless of scope.
-///
-/// # Errors
-/// See [`run_with_paths`].
-pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
-    let scoped = root.is_some() || limit.is_some();
+/// Assemble the [`StatsPaths`] set for a scoped (`data/dev/`) or full
+/// (`data/`) run — extracted from [`run`] so the path convention is
+/// unit-tested (#442) instead of resting on the live smoke. The ls-laR
+/// cache pair always lives under `data/cache` regardless of scope.
+pub(crate) fn stats_paths_for(scoped: bool) -> StatsPaths {
     let out_dir = crate::phase1::output_dir(scoped);
     let cache_dir = crate::phase1::data_root().join("cache");
-    let paths = StatsPaths {
+    StatsPaths {
         wads_jsonl: out_dir.join("idgames-wads.jsonl"),
         zips_manifest: out_dir.join("wads-manifest.json"),
         phase1_manifest: out_dir.join("harvest-manifest.json"),
@@ -83,7 +79,18 @@ pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
         outliers_jsonl: out_dir.join("outliers-wads.jsonl"),
         outliers_manifest: out_dir.join("outliers-manifest.json"),
         out_dir,
-    };
+    }
+}
+
+/// Run `xtask stats`. `root`/`limit` are the §4.6 dev flags: when either is
+/// set, both input and output move to `data/dev/` — the same "scoped"
+/// convention Phase 1/2/outliers use — except the ls-laR cache, which is
+/// always read from `data/cache` regardless of scope.
+///
+/// # Errors
+/// See [`run_with_paths`].
+pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
+    let paths = stats_paths_for(root.is_some() || limit.is_some());
     run_with_paths(&paths, root, limit)
 }
 
@@ -2176,5 +2183,36 @@ total 1
         )
         .unwrap();
         assert_eq!(stats["recommendations"].as_array().unwrap().len(), 8);
+    }
+
+    // ---- path assembly ----
+
+    #[test]
+    fn stats_paths_assembly_is_scoped_by_the_dev_convention() {
+        // #442: `run`'s path assembly was live-smoke-only; this pins the
+        // scoped/unscoped split the same way outliers pins its output_dir.
+        let dev = stats_paths_for(true);
+        for p in [
+            &dev.wads_jsonl,
+            &dev.zips_manifest,
+            &dev.phase1_manifest,
+            &dev.phase1_ledger,
+            &dev.outliers_jsonl,
+            &dev.outliers_manifest,
+            &dev.out_dir,
+        ] {
+            assert!(
+                p.parent().is_none_or(|parent| parent.ends_with("data/dev"))
+                    || p.ends_with("data/dev"),
+                "{} not under data/dev",
+                p.display()
+            );
+        }
+        // The ls-laR cache is shared by every run, scoped or not.
+        assert!(dev.lslar_gz.parent().unwrap().ends_with("data/cache"));
+        assert!(dev.lslar_meta.parent().unwrap().ends_with("data/cache"));
+        let full = stats_paths_for(false);
+        assert!(full.out_dir.ends_with("data"));
+        assert!(full.wads_jsonl.parent().unwrap().ends_with("data"));
     }
 }

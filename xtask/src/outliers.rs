@@ -359,6 +359,39 @@ fn worklist(mut specs: Vec<OutlierSpec>, limit: Option<usize>) -> Vec<OutlierSpe
     specs
 }
 
+/// Package one run's outcome into the [`OutliersManifest`] — extracted
+/// from [`run_async`] so the id format, duration clamp, and passthrough
+/// fields are unit-tested without a network run (#442). `now` is a
+/// parameter (not read inside) for the same testability.
+#[allow(clippy::too_many_arguments)] // a manifest is wide by nature; a builder would be ceremony
+pub(crate) fn assemble_manifest(
+    started_at: chrono::DateTime<Utc>,
+    now: chrono::DateTime<Utc>,
+    limit: Option<usize>,
+    entries_total: u64,
+    records_written: u64,
+    ledger_count: u64,
+    range_requests: u64,
+    bytes_transferred: u64,
+    status_counts: std::collections::BTreeMap<String, u64>,
+) -> OutliersManifest {
+    let duration = (now - started_at).num_seconds().max(0);
+    OutliersManifest {
+        id: format!("harvest-outliers-{}", started_at.format("%Y%m%dT%H%M%SZ")),
+        started_at: started_at.to_rfc3339(),
+        duration_secs: u64::try_from(duration).unwrap_or(0),
+        tool_version: schema::tool_version(),
+        git_rev: schema::git_rev(),
+        limit: limit.map(|l| u64::try_from(l).unwrap_or(u64::MAX)),
+        entries_total,
+        records_written,
+        ledger_count,
+        range_requests,
+        bytes_transferred,
+        status_counts,
+    }
+}
+
 async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
     let toml_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("outliers.toml");
     let text = std::fs::read_to_string(&toml_path)
@@ -409,21 +442,17 @@ async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
         schema::write_outliers_jsonl(&out_dir.join("outliers-wads.jsonl"), records)?;
     let ledger_count = schema::write_ledger(&out_dir.join("outliers-errors.jsonl"), ledger)?;
 
-    let duration = (Utc::now() - started_at).num_seconds().max(0);
-    let manifest = OutliersManifest {
-        id: format!("harvest-outliers-{}", started_at.format("%Y%m%dT%H%M%SZ")),
-        started_at: started_at.to_rfc3339(),
-        duration_secs: u64::try_from(duration).unwrap_or(0),
-        tool_version: schema::tool_version(),
-        git_rev: schema::git_rev(),
-        limit: limit.map(|l| u64::try_from(l).unwrap_or(u64::MAX)),
+    let manifest = assemble_manifest(
+        started_at,
+        Utc::now(),
+        limit,
         entries_total,
         records_written,
         ledger_count,
-        range_requests: counters.requests.load(Ordering::Relaxed),
-        bytes_transferred: counters.bytes.load(Ordering::Relaxed),
+        counters.requests.load(Ordering::Relaxed),
+        counters.bytes.load(Ordering::Relaxed),
         status_counts,
-    };
+    );
     schema::write_outliers_manifest(&out_dir.join("outliers-manifest.json"), &manifest)?;
 
     tracing::info!(
@@ -791,5 +820,47 @@ mod tests {
         let counts = status_counts(&[ok, failed]);
         assert_eq!(counts.get("ok"), Some(&1));
         assert_eq!(counts.get("no_range_support"), Some(&1));
+    }
+
+    // ---- manifest assembly ----
+
+    #[test]
+    fn assemble_manifest_derives_id_duration_and_passthroughs() {
+        use chrono::TimeZone as _;
+        let started = chrono::Utc.with_ymd_and_hms(2026, 8, 22, 1, 2, 3).unwrap();
+        let now = started + chrono::Duration::seconds(90);
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert("ok".to_owned(), 2_u64);
+        let m = assemble_manifest(started, now, Some(3), 6, 6, 4, 21, 1234, counts.clone());
+        assert_eq!(m.id, "harvest-outliers-20260822T010203Z");
+        assert_eq!(m.started_at, started.to_rfc3339());
+        assert_eq!(m.duration_secs, 90);
+        assert_eq!(m.limit, Some(3));
+        assert_eq!(m.entries_total, 6);
+        assert_eq!(m.records_written, 6);
+        assert_eq!(m.ledger_count, 4);
+        assert_eq!(m.range_requests, 21);
+        assert_eq!(m.bytes_transferred, 1234);
+        assert_eq!(m.status_counts, counts);
+    }
+
+    #[test]
+    fn assemble_manifest_clamps_a_backwards_clock_to_zero_duration() {
+        use chrono::TimeZone as _;
+        let started = chrono::Utc.with_ymd_and_hms(2026, 8, 22, 1, 0, 0).unwrap();
+        let earlier = started - chrono::Duration::seconds(5);
+        let m = assemble_manifest(
+            started,
+            earlier,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            std::collections::BTreeMap::new(),
+        );
+        assert_eq!(m.duration_secs, 0);
+        assert_eq!(m.limit, None);
     }
 }
