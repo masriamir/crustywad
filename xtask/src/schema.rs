@@ -240,6 +240,11 @@ pub enum FetchStatus {
     ZipParseError,
     /// Transport-level failure after retries on every usable mirror.
     FetchError,
+    /// Curated outlier marked `skip = true` in `xtask/outliers.toml` (§6.4):
+    /// a documented-hostile host, deliberately not probed this run — the
+    /// prior refusal is recorded in the TOML entry's `note`. Outliers-only;
+    /// phase 2 never emits it.
+    SkippedKnownDead,
 }
 
 /// One `.wad` member of an archive entry (§5.6 `wads[]`).

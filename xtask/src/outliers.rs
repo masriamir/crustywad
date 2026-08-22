@@ -28,17 +28,22 @@
 //! `inspect_zip`'s own ranged central-directory reads (typically a couple,
 //! occasionally a few more for a `.wad` member whose local header falls
 //! outside the cached tail — see `zips::inspect`'s module doc). What this
-//! module actually guarantees is "no two *entries* start less than a
-//! second apart," not "no two *requests* are less than a second apart."
+//! module actually guarantees is "no two *network-touching* entries start
+//! less than a second apart" ([`should_pace`]), not "no two *requests* are
+//! less than a second apart." A `skip = true` entry ([`OutlierSpec::skip`],
+//! #442) makes no requests at all, so it neither sleeps nor counts as
+//! spacing history for the entry after it.
 //! The curated list is small (n ≈ 8), so there's no resumability store: a
 //! rerun simply refetches every central directory (a few hundred KiB
 //! total across the whole list), matching spec §8's "no resumability
 //! store" call.
 //!
 //! **Status set** is [`FetchStatus`] minus the mirror-pool/fallback-only
-//! variants: `Ok`, `NoRangeSupport`, `ZipParseError`, `FetchError`. A `404`
-//! maps to `FetchError` here, not `Mirror404All` — that variant names a
-//! *pool* fact (both mirrors independently 404ing), which has no meaning
+//! variants, plus the network-free skip status: `Ok`, `NoRangeSupport`,
+//! `ZipParseError`, `FetchError`, `SkippedKnownDead` (#442, [`skip_record`]
+//! — never probed, so it's outside the fetch/inspect mapping below). A
+//! `404` maps to `FetchError` here, not `Mirror404All` — that variant names
+//! a *pool* fact (both mirrors independently 404ing), which has no meaning
 //! for a single URL (spec §8).
 
 use std::path::Path;
@@ -72,6 +77,14 @@ pub struct OutlierSpec {
     /// past parse time, so it's documentary for readers of the committed
     /// TOML file, not a value the orchestrator otherwise consumes.
     pub note: String,
+    /// `true` marks a documented-hostile host (§6.4 known-dead marker,
+    /// #442): the orchestrator records the entry without touching the
+    /// network — status [`FetchStatus::SkippedKnownDead`], a fixed-string
+    /// ledger line, `attempts: 0` — instead of re-walking a retry ladder
+    /// against a host whose refusal is already ledgered in `note`. Absent
+    /// means `false`: the entry is probed normally.
+    #[serde(default)]
+    pub skip: bool,
 }
 
 /// The `[[outlier]]` array-of-tables shape `xtask/outliers.toml` parses
@@ -214,6 +227,41 @@ pub(crate) fn build_record(
     (record, ledger)
 }
 
+/// Build the record/ledger pair for a `skip = true` entry without any
+/// network contact (#442). The ledger detail is a fixed string — the TOML
+/// `note` carries the human rationale and, like `note` itself, is never
+/// copied into outputs (ADR-0030 §3). `attempts: 0`: zero HTTP requests
+/// were made, and the field records real request counts as of #442.
+pub(crate) fn skip_record(spec: &OutlierSpec) -> (OutlierRecord, LedgerEntry) {
+    let record = OutlierRecord {
+        slug: spec.slug.clone(),
+        url: spec.url.clone(),
+        zip_size: 0,
+        zip64: false,
+        member_count: 0,
+        wads: Vec::new(),
+        other_members: Vec::new(),
+        fetch_status: FetchStatus::SkippedKnownDead,
+    };
+    let ledger = LedgerEntry {
+        path: spec.slug.clone(),
+        action: "harvest-outliers".into(),
+        kind: LedgerKind::HttpError,
+        detail: "skipped: outliers.toml marks the host known-dead (skip = true)".to_owned(),
+        attempts: 0,
+    };
+    (record, ledger)
+}
+
+/// Whether the [`ENTRY_SPACING`] politeness sleep applies before this
+/// entry: only between two *network-touching* entries. A skipped entry
+/// makes no requests, so it neither sleeps nor counts as spacing history —
+/// the guarantee stays "no two network entries start less than a second
+/// apart" (module doc), which a skip can't violate.
+pub(crate) fn should_pace(prior_network: bool, skip: bool) -> bool {
+    prior_network && !skip
+}
+
 /// Record count per `fetch_status` wire value (mirrors
 /// `zips::status_counts`'s convention).
 fn status_counts(records: &[OutlierRecord]) -> std::collections::BTreeMap<String, u64> {
@@ -311,10 +359,18 @@ async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
 
     let mut records = Vec::with_capacity(specs.len());
     let mut ledger = Vec::new();
-    for (i, spec) in specs.iter().enumerate() {
-        if i > 0 {
+    let mut prior_network = false;
+    for spec in &specs {
+        if should_pace(prior_network, spec.skip) {
             tokio::time::sleep(ENTRY_SPACING).await;
         }
+        if spec.skip {
+            let (record, ledger_entry) = skip_record(spec);
+            records.push(record);
+            ledger.push(ledger_entry);
+            continue;
+        }
+        prior_network = true;
         let (zip_size, result) = fetch_and_inspect(&client, spec, Arc::clone(&counters)).await;
         let (record, ledger_entry) = build_record(spec, zip_size, &result);
         records.push(record);
@@ -413,6 +469,7 @@ mod tests {
                 slug: format!("s{i}"),
                 url: format!("https://example.com/{i}.zip"),
                 note: "n".to_owned(),
+                skip: false,
             })
             .collect()
     }
@@ -521,6 +578,7 @@ mod tests {
             slug: slug.to_owned(),
             url: format!("https://example.com/{slug}.zip"),
             note: "test entry".to_owned(),
+            skip: false,
         }
     }
 
@@ -580,6 +638,91 @@ mod tests {
         assert_eq!(record.zip_size, 555_000_000);
         assert!(matches!(record.fetch_status, FetchStatus::ZipParseError));
         assert!(ledger.is_some());
+    }
+
+    #[test]
+    fn toml_skip_defaults_false_and_parses_when_present() {
+        let text = r#"
+            [[outlier]]
+            slug = "alive"
+            url = "https://example.com/a.zip"
+            note = "n"
+
+            [[outlier]]
+            slug = "dead"
+            url = "https://example.com/d.zip"
+            note = "host refuses (probed 2026-08-17)"
+            skip = true
+        "#;
+        let specs = parse_outliers_toml(text).unwrap();
+        assert!(!specs[0].skip);
+        assert!(specs[1].skip);
+    }
+
+    #[test]
+    fn skip_record_is_a_full_record_plus_ledger_line_with_zero_attempts() {
+        let mut s = spec("blade-of-agony");
+        s.skip = true;
+        let (record, ledger) = skip_record(&s);
+        assert_eq!(record.slug, "blade-of-agony");
+        assert_eq!(record.url, s.url);
+        assert_eq!(record.zip_size, 0);
+        assert!(!record.zip64);
+        assert_eq!(record.member_count, 0);
+        assert!(record.wads.is_empty());
+        assert!(record.other_members.is_empty());
+        assert!(matches!(record.fetch_status, FetchStatus::SkippedKnownDead));
+        assert_eq!(ledger.path, "blade-of-agony");
+        assert_eq!(ledger.action, "harvest-outliers");
+        assert!(matches!(ledger.kind, LedgerKind::HttpError));
+        assert_eq!(ledger.attempts, 0);
+        // Fixed string — the TOML `note` free text is never copied into
+        // outputs (ADR-0030 §3 discipline, same as `note` itself).
+        assert!(!ledger.detail.contains("probed 2026-08-17"));
+    }
+
+    #[test]
+    fn skipped_known_dead_wire_label_is_snake_case() {
+        let v = serde_json::to_value(FetchStatus::SkippedKnownDead).unwrap();
+        assert_eq!(v.as_str(), Some("skipped_known_dead"));
+    }
+
+    #[test]
+    fn pacing_sleeps_only_between_network_entries() {
+        // First network entry: nothing before it to space from.
+        assert!(!should_pace(false, false));
+        // Network entry after a prior network entry: space.
+        assert!(should_pace(true, false));
+        // A skipped entry never sleeps, regardless of history.
+        assert!(!should_pace(true, true));
+        assert!(!should_pace(false, true));
+    }
+
+    #[test]
+    fn the_committed_toml_marks_the_four_documented_hostile_hosts() {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("outliers.toml"),
+        )
+        .unwrap();
+        let specs = parse_outliers_toml(&text).unwrap();
+        let skipped: Vec<&str> = specs
+            .iter()
+            .filter(|s| s.skip)
+            .map(|s| s.slug.as_str())
+            .collect();
+        // File order — exactly the four 2026-08-17 refusals, nothing else.
+        assert_eq!(
+            skipped,
+            vec![
+                "blade-of-agony",
+                "total-chaos",
+                "golden-souls-2",
+                "simons-destiny"
+            ]
+        );
+        // The two proven-cooperative entries stay live.
+        assert!(specs.iter().any(|s| s.slug == "freedoom" && !s.skip));
+        assert!(specs.iter().any(|s| s.slug == "sigil-ii" && !s.skip));
     }
 
     #[test]
