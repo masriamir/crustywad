@@ -1178,4 +1178,137 @@ mod tests {
         assert!(seen.iter().all(|r| r.method == "HEAD"));
         assert_eq!(counters.requests.load(Ordering::Relaxed), 2);
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_valid_206_returns_the_exact_bytes() {
+        let (url, seen) = scripted_server(vec![canned(
+            "206 Partial Content",
+            &[
+                ("Content-Range", "bytes 10-14/100"),
+                ("Content-Length", "5"),
+            ],
+            b"hello",
+        )]);
+        let (mut source, counters) = live_source(url);
+        assert_eq!(source.fetch(10, 5).await.unwrap(), b"hello");
+        assert_eq!(
+            seen.lock().unwrap()[0].range.as_deref(),
+            Some("bytes=10-14")
+        );
+        assert_eq!(counters.requests.load(Ordering::Relaxed), 1);
+        assert_eq!(counters.bytes.load(Ordering::Relaxed), 5);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_206_answering_the_wrong_range_is_terminal_not_retried() {
+        let (url, seen) = scripted_server(vec![canned(
+            "206 Partial Content",
+            &[("Content-Range", "bytes 0-4/100"), ("Content-Length", "5")],
+            b"wrong",
+        )]);
+        let (mut source, _) = live_source(url);
+        match source.fetch(10, 5).await {
+            Err(FetchFailure::Http(detail)) => {
+                assert!(detail.contains("Content-Range mismatch"), "{detail}");
+            }
+            other => panic!("expected Http mismatch, got {other:?}"),
+        }
+        // Terminal on the first attempt: a lying host is not retried.
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_200_to_a_partial_request_is_range_unsupported() {
+        let (url, _) =
+            scripted_server(vec![canned("200 OK", &[("Content-Length", "5")], b"whole")]);
+        let (mut source, _) = live_source(url);
+        assert!(matches!(
+            source.fetch(10, 5).await,
+            Err(FetchFailure::RangeUnsupported)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_200_to_a_whole_file_request_reads_the_full_body() {
+        // discover_size first (HEAD), so file_size is known and
+        // (0, file_size) classifies as whole-file; then a range-ignoring
+        // 200 is a legal full-body answer (MirrorRanges precedent).
+        let (url, _) = scripted_server(vec![
+            canned("200 OK", &[("Content-Length", "5")], b""),
+            canned("200 OK", &[("Content-Length", "5")], b"whole"),
+        ]);
+        let (mut source, counters) = live_source(url);
+        assert_eq!(source.discover_size().await.unwrap(), 5);
+        assert_eq!(source.fetch(0, 5).await.unwrap(), b"whole");
+        assert_eq!(counters.bytes.load(Ordering::Relaxed), 5);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_404_is_not_found() {
+        let (url, _) = scripted_server(vec![canned("404 Not Found", &[], b"")]);
+        let (mut source, _) = live_source(url);
+        assert!(matches!(
+            source.fetch(0, 5).await,
+            Err(FetchFailure::NotFound)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_retries_a_502_then_succeeds() {
+        let (url, seen) = scripted_server(vec![
+            canned("502 Bad Gateway", &[], b""),
+            canned(
+                "206 Partial Content",
+                &[("Content-Range", "bytes 0-2/10"), ("Content-Length", "3")],
+                b"abc",
+            ),
+        ]);
+        let (mut source, counters) = live_source(url);
+        assert_eq!(source.fetch(0, 3).await.unwrap(), b"abc");
+        assert_eq!(seen.lock().unwrap().len(), 2);
+        assert_eq!(counters.requests.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn short_body_is_an_http_failure_naming_both_sides() {
+        // Content-Length is set to the *actual* (short) body length, not
+        // the 10 bytes `fetch` will ask for: a Content-Length that lies
+        // about the server's own body is a distinct transport-level
+        // failure hyper surfaces itself (as "body transport: ..."), before
+        // read_capped_body's own `bytes.len() < cap` check ever runs. This
+        // exercises the genuinely-under-delivered case the module doc
+        // describes: a well-formed, honestly-terminated body that is just
+        // shorter than what `fetch` requested.
+        let (url, _) = scripted_server(vec![canned(
+            "206 Partial Content",
+            &[("Content-Range", "bytes 0-9/100"), ("Content-Length", "5")],
+            b"only4", // 5 bytes < the 10 requested by fetch(0, 10)
+        )]);
+        let (mut source, _) = live_source(url);
+        match source.fetch(0, 10).await {
+            Err(FetchFailure::Http(detail)) => {
+                assert!(detail.contains("short body"), "{detail}");
+                assert!(detail.contains("10"), "{detail}");
+            }
+            other => panic!("expected short-body Http failure, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overlong_body_is_truncated_to_len_but_counted_as_read() {
+        // The server sends 8 bytes against a 5-byte ask in one write:
+        // read_capped_body keeps the first 5 and counts what it read off
+        // the wire (module doc: truncate, don't error — no failover
+        // partner to punish a chatty host with).
+        let (url, _) = scripted_server(vec![canned(
+            "206 Partial Content",
+            &[("Content-Range", "bytes 0-4/100"), ("Content-Length", "8")],
+            b"12345678",
+        )]);
+        let (mut source, counters) = live_source(url);
+        assert_eq!(source.fetch(0, 5).await.unwrap(), b"12345");
+        // ≥5: the accepted chunk is counted in full, and chunk boundaries
+        // are the transport's business — assert the floor, not an exact 8.
+        assert!(counters.bytes.load(Ordering::Relaxed) >= 5);
+    }
 }
