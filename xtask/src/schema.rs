@@ -90,8 +90,8 @@ pub struct LedgerEntry {
     /// [`crate::zips::range_reader::TransferCounters`] requests delta
     /// around the entry, covering every request it spent (a retried HEAD
     /// ladder, the range probe, `inspect_zip`'s reads). `0` for an entry
-    /// skipped via `outliers.toml`'s `skip = true` marker: no request was
-    /// ever made.
+    /// that never issued a request: one skipped via `outliers.toml`'s
+    /// `skip = true` marker, or (defensively) one whose URL failed to parse.
     pub attempts: u32,
 }
 

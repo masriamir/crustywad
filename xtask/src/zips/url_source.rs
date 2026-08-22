@@ -1206,7 +1206,7 @@ mod tests {
             &[("Content-Range", "bytes 0-4/100"), ("Content-Length", "5")],
             b"wrong",
         )]);
-        let (mut source, _) = live_source(url);
+        let (mut source, counters) = live_source(url);
         match source.fetch(10, 5).await {
             Err(FetchFailure::Http(detail)) => {
                 assert!(detail.contains("Content-Range mismatch"), "{detail}");
@@ -1215,6 +1215,8 @@ mod tests {
         }
         // Terminal on the first attempt: a lying host is not retried.
         assert_eq!(seen.lock().unwrap().len(), 1);
+        // The mismatch is detected before the body is ever read.
+        assert_eq!(counters.bytes.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test(start_paused = true)]

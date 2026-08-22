@@ -998,6 +998,12 @@ against the manifests below reproduces it byte-identically.
 - Range reader against a file-backed fake implementing the same interface —
   assert the *number* of reads, not just correctness. Regression on request count
   is the point of the caching.
+- Realized (#442): `url_source.rs`'s network bodies are covered by a scripted
+  loopback HTTP/1.1 server driving real `reqwest` under tokio's paused clock —
+  a file-backed fake at the `RangeSource` seam cannot see reqwest-layer bugs
+  (the #407 `content_length()` misclassification lived there), so the
+  live-loopback harness supersedes it for that surface. Loopback only; CI
+  never touches the network.
 - Percentile function against a known vector with a documented method.
 
 ### 9.2 Integration tests (network, opt-in)
