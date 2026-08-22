@@ -984,11 +984,15 @@ mod tests {
     /// — measured locally, it surfaces as a transport-level
     /// `FetchFailure::Http` once the retry ladder is exhausted, in
     /// milliseconds under the paused clock — so a test that outruns its
-    /// script fails loudly instead of blocking. Observed requests are
-    /// recorded before the response is written, so once the client has a
-    /// response, the record is visible — no join needed.
+    /// script fails loudly instead of blocking. The inverse shortfall — a
+    /// test that fails before making all its scripted connections — leaves
+    /// the thread parked in `accept` until process exit: a leaked detached
+    /// thread, not a hung run (libtest never joins it, and the failing
+    /// test still reports). Observed requests are recorded before the
+    /// response is written, so once the client has a response, the record
+    /// is visible — no join needed.
     fn scripted_server(
-        responses: Vec<String>,
+        responses: Vec<Vec<u8>>,
     ) -> (
         reqwest::Url,
         std::sync::Arc<std::sync::Mutex<Vec<RequestSeen>>>,
@@ -1029,7 +1033,7 @@ mod tests {
                     .lock()
                     .expect("seen lock")
                     .push(RequestSeen { method, range });
-                let _ = conn.write_all(response.as_bytes());
+                let _ = conn.write_all(&response);
             }
         });
         let url = reqwest::Url::parse(&format!("http://{addr}/outlier.zip")).expect("url");
@@ -1037,8 +1041,11 @@ mod tests {
     }
 
     /// Canned response builder: status line + headers + optional body,
-    /// always `Connection: close`.
-    fn canned(status: &str, headers: &[(&str, &str)], body: &[u8]) -> String {
+    /// always `Connection: close`. Returns raw bytes — the body is
+    /// appended verbatim, never routed through a UTF-8 conversion, so a
+    /// future binary fixture (a real zip tail, say) goes over the wire
+    /// exactly as given and always matches its declared `Content-Length`.
+    fn canned(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
         let mut r = format!("HTTP/1.1 {status}\r\nConnection: close\r\n");
         for (k, v) in headers {
             // Appended piecewise rather than via `push_str(&format!(..))`:
@@ -1049,8 +1056,9 @@ mod tests {
             r.push_str("\r\n");
         }
         r.push_str("\r\n");
-        r.push_str(&String::from_utf8_lossy(body));
-        r
+        let mut bytes = r.into_bytes();
+        bytes.extend_from_slice(body);
+        bytes
     }
 
     /// A [`UrlRanges`] pointed at a scripted server, plus the counters it
