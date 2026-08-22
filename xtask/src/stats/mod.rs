@@ -97,6 +97,13 @@ pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
 /// exists without the other), a `WadRecord`'s `dir`/`filename` can't be
 /// turned into a sweep-corpus URL, or an environmental failure (directory
 /// creation, output writes).
+#[allow(
+    clippy::too_many_lines,
+    reason = "was already at the 100-line threshold; #442's scoped-run cross-check fix threads \
+              one more `root.is_some() || limit.is_some()` argument through the existing \
+              `recommendations` call rather than splitting an otherwise-cohesive I/O+assembly \
+              function"
+)]
 pub fn run_with_paths(
     paths: &StatsPaths,
     root: Option<&str>,
@@ -194,6 +201,7 @@ pub fn run_with_paths(
         &stats.idgames,
         stats.outliers.as_ref(),
         zips_manifest.zip64_entries,
+        root.is_some() || limit.is_some(),
     );
 
     // Build the sweep corpus (and render the report) entirely in memory

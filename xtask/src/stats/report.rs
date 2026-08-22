@@ -129,12 +129,16 @@ fn combined_row(
 /// [`crate::schema::ZipsManifest::zip64_entries`] (§B2): the
 /// `zip64_statement` row cross-checks the record-derived count it would
 /// otherwise report alone against this independently-tallied one, so a
-/// divergence between the two can't go unnoticed.
+/// divergence between the two can't go unnoticed. `scoped` is `true` when
+/// the run is `--root`/`--limit` filtered (#442): the record population no
+/// longer spans the manifest's full-run tally, so the cross-check is not
+/// applicable and the row states the skip instead of a spurious disagreement.
 #[must_use]
 pub(crate) fn recommendations(
     idgames: &IdgamesStats,
     outliers: Option<&OutliersStats>,
     manifest_zip64_entries: u64,
+    scoped: bool,
 ) -> Vec<Recommendation> {
     let wire_cap_zip = combined_row(
         "wire_cap_zip",
@@ -199,7 +203,7 @@ pub(crate) fn recommendations(
 
     let max_member_compression_ratio = ratio_recommendation(idgames);
     let compression_method_allowlist = method_allowlist_recommendation(idgames);
-    let zip64_statement = zip64_recommendation(idgames, manifest_zip64_entries);
+    let zip64_statement = zip64_recommendation(idgames, manifest_zip64_entries, scoped);
 
     vec![
         wire_cap_zip,
@@ -372,9 +376,19 @@ fn translate_method_label(label: &str) -> String {
 /// against the record-derived `n` here so the two can't silently diverge —
 /// the source states agreement explicitly, or flags a disagreement loudly
 /// rather than trusting the record-derived count alone.
-fn zip64_recommendation(idgames: &IdgamesStats, manifest_zip64: u64) -> Recommendation {
+fn zip64_recommendation(
+    idgames: &IdgamesStats,
+    manifest_zip64: u64,
+    scoped: bool,
+) -> Recommendation {
     let n = idgames.entries.zip64_entries;
-    let agreement = if n == manifest_zip64 {
+    let agreement = if scoped {
+        // #442: under `--root`/`--limit` the record population is
+        // deliberately narrower than the manifest's full-run tally, so a
+        // count mismatch is expected, not a finding — state the skip
+        // instead of a spurious DISAGREES.
+        "scoped run: manifest cross-check skipped (records are --root/--limit filtered)".to_owned()
+    } else if n == manifest_zip64 {
         "manifest agrees".to_owned()
     } else {
         format!("MANIFEST DISAGREES: {manifest_zip64}")
@@ -1008,7 +1022,7 @@ mod tests {
 
     #[test]
     fn recommendations_cover_every_s8_constant() {
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         let keys: Vec<&str> = recs.iter().map(|r| r.key.as_str()).collect();
         assert_eq!(
             keys,
@@ -1030,7 +1044,7 @@ mod tests {
 
     #[test]
     fn outliers_absent_notes_none_analyzed_in_source() {
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         for key in [
             "wire_cap_zip",
             "wire_cap_wad",
@@ -1054,7 +1068,7 @@ mod tests {
         // in the source text even though outliers won.
         let idgames = idgames_fixture();
         let outliers = outliers_fixture(1_610_612_736);
-        let recs = recommendations(&idgames, Some(&outliers), 0);
+        let recs = recommendations(&idgames, Some(&outliers), 0, false);
         let row = recs.iter().find(|r| r.key == "wire_cap_zip").unwrap();
         assert_eq!(row.value, Some(2_147_483_648));
         assert_eq!(row.recommended, "2147483648 (2 GiB)");
@@ -1071,7 +1085,7 @@ mod tests {
         // was nothing for outliers to move).
         let idgames = idgames_fixture();
         let outliers = outliers_fixture(1_000_000); // well under 40 MiB
-        let recs = recommendations(&idgames, Some(&outliers), 0);
+        let recs = recommendations(&idgames, Some(&outliers), 0, false);
         let row = recs.iter().find(|r| r.key == "wire_cap_zip").unwrap();
         assert_eq!(row.value, Some(pow2_ceil(41_943_040)));
         assert!(row.source.contains("1000000"), "{}", row.source);
@@ -1080,7 +1094,7 @@ mod tests {
 
     #[test]
     fn decoded_cap_mirrors_wire_cap_wad_value() {
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         let wire_cap_wad = recs.iter().find(|r| r.key == "wire_cap_wad").unwrap();
         let decoded_cap = recs.iter().find(|r| r.key == "decoded_cap").unwrap();
         assert_eq!(wire_cap_wad.value, decoded_cap.value);
@@ -1090,7 +1104,7 @@ mod tests {
 
     #[test]
     fn max_member_count_is_not_byte_formatted() {
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         let row = recs.iter().find(|r| r.key == "max_member_count").unwrap();
         // max = 12, pow2_ceil(2 * 12) = pow2_ceil(24) = 32 — plain number,
         // never an IEC byte label.
@@ -1100,7 +1114,7 @@ mod tests {
 
     #[test]
     fn max_entry_uncompressed_bytes_source_states_wad_only_caveat() {
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "max_entry_uncompressed_bytes")
@@ -1123,7 +1137,7 @@ mod tests {
             p99: 0.0,
             max: 0.0,
         };
-        let recs = recommendations(&idgames, None, 0);
+        let recs = recommendations(&idgames, None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "max_member_compression_ratio")
@@ -1148,7 +1162,7 @@ mod tests {
             p99: 17.0,
             max: 17.3,
         };
-        let recs = recommendations(&idgames, None, 0);
+        let recs = recommendations(&idgames, None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "max_member_compression_ratio")
@@ -1161,7 +1175,7 @@ mod tests {
     fn compression_method_allowlist_flags_unexpected_method() {
         let mut idgames = idgames_fixture();
         idgames.entries.methods.insert("bzip2".to_owned(), 2);
-        let recs = recommendations(&idgames, None, 0);
+        let recs = recommendations(&idgames, None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1178,7 +1192,7 @@ mod tests {
 
     #[test]
     fn compression_method_allowlist_clean_when_only_stored_and_deflate() {
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1194,7 +1208,7 @@ mod tests {
         // whole-archive one, even though §8.3's allowlist governs every
         // member. The row's source must say so (same treatment as
         // `max_entry_uncompressed_bytes`'s wad-only caveat).
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1222,7 +1236,7 @@ mod tests {
             .entries
             .methods
             .insert("unsupported(9)".to_owned(), 1);
-        let recs = recommendations(&idgames, None, 0);
+        let recs = recommendations(&idgames, None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1245,7 +1259,7 @@ mod tests {
             .entries
             .methods
             .insert("unsupported(99)".to_owned(), 3);
-        let recs = recommendations(&idgames, None, 0);
+        let recs = recommendations(&idgames, None, 0, false);
         let row = recs
             .iter()
             .find(|r| r.key == "compression_method_allowlist")
@@ -1258,7 +1272,7 @@ mod tests {
         // I3(b): rows 6-8 silently exclude the outliers population (unlike
         // the four `combined_row`-based rows above them) — each source must
         // say so explicitly.
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         for key in [
             "max_member_compression_ratio",
             "compression_method_allowlist",
@@ -1277,7 +1291,7 @@ mod tests {
     fn zip64_statement_states_absence_explicitly() {
         // manifest_zip64_entries = 0 agrees with idgames_fixture()'s
         // zip64_entries = 0.
-        let recs = recommendations(&idgames_fixture(), None, 0);
+        let recs = recommendations(&idgames_fixture(), None, 0, false);
         let row = recs.iter().find(|r| r.key == "zip64_statement").unwrap();
         assert_eq!(
             row.source,
@@ -1290,7 +1304,7 @@ mod tests {
     fn zip64_statement_counts_when_present() {
         let mut idgames = idgames_fixture();
         idgames.entries.zip64_entries = 4;
-        let recs = recommendations(&idgames, None, 4); // manifest agrees
+        let recs = recommendations(&idgames, None, 4, false); // manifest agrees
         let row = recs.iter().find(|r| r.key == "zip64_statement").unwrap();
         assert_eq!(
             row.source,
@@ -1306,7 +1320,7 @@ mod tests {
         // silently trusted away in favor of the record-derived count.
         let mut idgames = idgames_fixture();
         idgames.entries.zip64_entries = 4;
-        let recs = recommendations(&idgames, None, 7); // manifest disagrees: 7 != 4
+        let recs = recommendations(&idgames, None, 7, false); // manifest disagrees: 7 != 4
         let row = recs.iter().find(|r| r.key == "zip64_statement").unwrap();
         assert!(
             row.source.contains("4 zip64 entries observed"),
@@ -1320,11 +1334,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn zip64_cross_check_states_agreement_disagreement_and_scoped_skip() {
+        // `idgames_fixture()` is the module's existing builder
+        // (report.rs:866). Read it first: if its `entries.zip64_entries`
+        // isn't 2, adjust this test's literals to whatever it carries —
+        // the three cases only need equal / unequal / scoped-unequal.
+        let mut idgames = idgames_fixture();
+        idgames.entries.zip64_entries = 2;
+        // Unscoped + equal: agreement, verbatim current wording.
+        let r = zip64_recommendation(&idgames, 2, false);
+        assert!(r.source.contains("manifest agrees"), "{}", r.source);
+        // Unscoped + unequal: the loud flag, verbatim current wording.
+        let r = zip64_recommendation(&idgames, 5, false);
+        assert!(r.source.contains("MANIFEST DISAGREES: 5"), "{}", r.source);
+        // Scoped: the cross-check is not applicable — never DISAGREES,
+        // even though the counts differ (#442: a --root/--limit-filtered
+        // record population is expected to diverge from the manifest's
+        // full-run tally).
+        let r = zip64_recommendation(&idgames, 5, true);
+        assert!(
+            r.source
+                .contains("scoped run: manifest cross-check skipped"),
+            "{}",
+            r.source
+        );
+        assert!(!r.source.contains("DISAGREES"), "{}", r.source);
+    }
+
     // ---- render_report ----
 
     fn stats_fixture(outliers: Option<OutliersStats>) -> StatsJson {
         let idgames = idgames_fixture();
-        let recs = recommendations(&idgames, outliers.as_ref(), 0);
+        let recs = recommendations(&idgames, outliers.as_ref(), 0, false);
         StatsJson {
             schema_version: crate::schema::STATS_SCHEMA_VERSION,
             provenance: StatsProvenance {
