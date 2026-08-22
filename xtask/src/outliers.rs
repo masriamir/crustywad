@@ -136,6 +136,7 @@ pub fn parse_outliers_toml(text: &str) -> anyhow::Result<Vec<OutlierSpec>> {
 pub(crate) fn entry_outcome(
     slug: &str,
     result: &Result<Inspection, InspectError>,
+    attempts: u32,
 ) -> (FetchStatus, Option<LedgerEntry>) {
     match result {
         Ok(_) => (FetchStatus::Ok, None),
@@ -145,6 +146,7 @@ pub(crate) fn entry_outcome(
                 slug,
                 LedgerKind::HttpError,
                 "host refuses range requests".to_owned(),
+                attempts,
             )),
         ),
         // No mirror pool here, so there's no `Mirror404All` equivalent —
@@ -155,40 +157,54 @@ pub(crate) fn entry_outcome(
                 slug,
                 LedgerKind::HttpError,
                 "404 not found".to_owned(),
+                attempts,
             )),
         ),
         Err(InspectError::Fetch(FetchFailure::Http(detail))) => (
             FetchStatus::FetchError,
-            Some(ledger_line(slug, LedgerKind::HttpError, detail.clone())),
+            Some(ledger_line(
+                slug,
+                LedgerKind::HttpError,
+                detail.clone(),
+                attempts,
+            )),
         ),
         Err(e @ (InspectError::CdTooLarge { .. } | InspectError::TooChatty { .. })) => (
             FetchStatus::ZipParseError,
-            Some(ledger_line(slug, LedgerKind::ParseError, e.to_string())),
+            Some(ledger_line(
+                slug,
+                LedgerKind::ParseError,
+                e.to_string(),
+                attempts,
+            )),
         ),
         Err(InspectError::Parse(detail)) => (
             FetchStatus::ZipParseError,
-            Some(ledger_line(slug, LedgerKind::ParseError, detail.clone())),
+            Some(ledger_line(
+                slug,
+                LedgerKind::ParseError,
+                detail.clone(),
+                attempts,
+            )),
         ),
     }
 }
 
 /// Build one `outliers-errors.jsonl` line — action is always
 /// `"harvest-outliers"`, `path` is the slug (there's no archive-tree path
-/// for a curated outlier). `attempts` is always `1`: this ledger records
-/// one finding per failed curated entry (ledger-entry granularity), not the
-/// HTTP retry count that actually produced it — [`UrlRanges`] can retry a
-/// single entry's HEAD/range fetches up to 6 times internally before
-/// surfacing the failure this maps from (see [`LedgerEntry::attempts`]'s
-/// doc for the same caveat). Plumbing the real per-request count through
-/// [`crate::zips::inspect::FetchFailure`] into this field is a follow-up,
-/// not this field's current contract.
-fn ledger_line(slug: &str, kind: LedgerKind, detail: String) -> LedgerEntry {
+/// for a curated outlier). `attempts` is the entry's real HTTP request
+/// count (#442): `run_async` measures it as the [`TransferCounters`]
+/// requests delta around the entry — exact because the loop is strictly
+/// sequential — so it reconciles with the manifest's `range_requests` by
+/// construction. It counts every request the entry spent, including a
+/// successful `discover_size`'s, when a later stage failed.
+fn ledger_line(slug: &str, kind: LedgerKind, detail: String, attempts: u32) -> LedgerEntry {
     LedgerEntry {
         path: slug.to_owned(),
         action: "harvest-outliers".into(),
         kind,
         detail,
-        attempts: 1,
+        attempts,
     }
 }
 
@@ -203,8 +219,9 @@ pub(crate) fn build_record(
     spec: &OutlierSpec,
     zip_size: u64,
     result: &Result<Inspection, InspectError>,
+    attempts: u32,
 ) -> (OutlierRecord, Option<LedgerEntry>) {
-    let (fetch_status, ledger) = entry_outcome(&spec.slug, result);
+    let (fetch_status, ledger) = entry_outcome(&spec.slug, result, attempts);
     let (zip64, member_count, wads, other_members) = match result {
         Ok(inspection) => (
             inspection.zip64,
@@ -371,8 +388,16 @@ async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
             continue;
         }
         prior_network = true;
+        let requests_before = counters.requests.load(Ordering::Relaxed);
         let (zip_size, result) = fetch_and_inspect(&client, spec, Arc::clone(&counters)).await;
-        let (record, ledger_entry) = build_record(spec, zip_size, &result);
+        let attempts = u32::try_from(
+            counters
+                .requests
+                .load(Ordering::Relaxed)
+                .saturating_sub(requests_before),
+        )
+        .unwrap_or(u32::MAX);
+        let (record, ledger_entry) = build_record(spec, zip_size, &result, attempts);
         records.push(record);
         if let Some(entry) = ledger_entry {
             ledger.push(entry);
@@ -519,12 +544,14 @@ mod tests {
         let (s, l) = entry_outcome(
             "x",
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         assert!(matches!(s, FetchStatus::NoRangeSupport));
         assert!(l.is_some());
-        let (s, _) = entry_outcome("x", &Err(InspectError::Fetch(FetchFailure::NotFound)));
+        assert_eq!(l.as_ref().unwrap().attempts, 3);
+        let (s, _) = entry_outcome("x", &Err(InspectError::Fetch(FetchFailure::NotFound)), 3);
         assert!(matches!(s, FetchStatus::FetchError)); // no mirror pool → mirror_404_all does not apply
-        let (s, _) = entry_outcome("x", &Err(InspectError::Parse("bad".into())));
+        let (s, _) = entry_outcome("x", &Err(InspectError::Parse("bad".into())), 3);
         assert!(matches!(s, FetchStatus::ZipParseError));
     }
 
@@ -533,6 +560,7 @@ mod tests {
         let (s, l) = entry_outcome(
             "x",
             &Err(InspectError::Fetch(FetchFailure::Http("timeout".into()))),
+            3,
         );
         assert!(matches!(s, FetchStatus::FetchError));
         assert_eq!(l.unwrap().detail, "timeout");
@@ -542,11 +570,12 @@ mod tests {
             &Err(InspectError::CdTooLarge {
                 needed: 999_999_999,
             }),
+            3,
         );
         assert!(matches!(s, FetchStatus::ZipParseError));
         assert!(matches!(l.unwrap().kind, LedgerKind::ParseError));
 
-        let (s, l) = entry_outcome("x", &Err(InspectError::TooChatty { rounds: 12 }));
+        let (s, l) = entry_outcome("x", &Err(InspectError::TooChatty { rounds: 12 }), 3);
         assert!(matches!(s, FetchStatus::ZipParseError));
         assert!(matches!(l.unwrap().kind, LedgerKind::ParseError));
 
@@ -556,7 +585,7 @@ mod tests {
             wads: Vec::new(),
             other_members: Vec::new(),
         };
-        let (s, l) = entry_outcome("x", &Ok(inspection));
+        let (s, l) = entry_outcome("x", &Ok(inspection), 3);
         assert!(matches!(s, FetchStatus::Ok));
         assert!(l.is_none());
     }
@@ -566,11 +595,24 @@ mod tests {
         let (_, l) = entry_outcome(
             "blade-of-agony",
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         let l = l.unwrap();
         assert_eq!(l.path, "blade-of-agony");
         assert_eq!(l.action, "harvest-outliers");
         assert!(matches!(l.kind, LedgerKind::HttpError));
+    }
+
+    #[test]
+    fn ledger_attempts_carries_the_entry_request_count() {
+        let (_, l) = entry_outcome(
+            "x",
+            &Err(InspectError::Fetch(FetchFailure::Http(
+                "range-probe status 500".into(),
+            ))),
+            12,
+        );
+        assert_eq!(l.unwrap().attempts, 12);
     }
 
     fn spec(slug: &str) -> OutlierSpec {
@@ -596,7 +638,7 @@ mod tests {
             }],
             other_members: vec!["readme.txt".into()],
         };
-        let (record, ledger) = build_record(&spec("golden-souls-2"), 12_345, &Ok(inspection));
+        let (record, ledger) = build_record(&spec("golden-souls-2"), 12_345, &Ok(inspection), 3);
         assert_eq!(record.slug, "golden-souls-2");
         assert_eq!(record.zip_size, 12_345);
         assert!(record.zip64);
@@ -615,6 +657,7 @@ mod tests {
             &spec("total-chaos"),
             0,
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         assert_eq!(record.slug, "total-chaos");
         assert_eq!(record.zip_size, 0);
@@ -634,6 +677,7 @@ mod tests {
             &spec("eviternity-ii"),
             555_000_000,
             &Err(InspectError::Parse("bad magic".into())),
+            3,
         );
         assert_eq!(record.zip_size, 555_000_000);
         assert!(matches!(record.fetch_status, FetchStatus::ZipParseError));
@@ -736,11 +780,13 @@ mod tests {
                 wads: Vec::new(),
                 other_members: Vec::new(),
             }),
+            3,
         );
         let (failed, _) = build_record(
             &spec("b"),
             0,
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         let counts = status_counts(&[ok, failed]);
         assert_eq!(counts.get("ok"), Some(&1));

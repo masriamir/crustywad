@@ -85,15 +85,13 @@ pub struct LedgerEntry {
     pub detail: String,
     /// Attempts made before giving up (1 for non-retried findings).
     ///
-    /// Caveat for `outliers::run`'s `harvest-outliers` ledger entries
-    /// specifically (review fix I2): this field always reads `1` there —
-    /// it records *ledger-entry* granularity (one finding per failed
-    /// curated entry), not the underlying HTTP retry count.
-    /// [`crate::zips::url_source::UrlRanges`] can retry a single entry's
-    /// HEAD/range fetches up to 6 times internally (a live manifest's
-    /// `range_requests` count for a retried entry proves it), but that
-    /// per-request attempt count isn't threaded through to this field yet
-    /// — a follow-up, not this field's current contract.
+    /// For `outliers::run`'s `harvest-outliers` ledger entries this is the
+    /// entry's real HTTP request count as of #442 — the
+    /// [`crate::zips::range_reader::TransferCounters`] requests delta
+    /// around the entry, covering every request it spent (a retried HEAD
+    /// ladder, the range probe, `inspect_zip`'s reads). `0` for an entry
+    /// skipped via `outliers.toml`'s `skip = true` marker: no request was
+    /// ever made.
     pub attempts: u32,
 }
 
