@@ -1486,6 +1486,22 @@ total 1
         }
     }
 
+    /// The written `stats.json`'s `zip64_statement` recommendation row's
+    /// `source` text — the field #442's scoped/unscoped cross-check wording
+    /// lands in. Panics if the row is missing (a bug in `recommendations`
+    /// itself, which other tests already cover).
+    fn zip64_statement_source(stats: &serde_json::Value) -> String {
+        stats["recommendations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["key"] == "zip64_statement")
+            .expect("zip64_statement recommendation row missing")["source"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
     #[test]
     fn run_with_paths_writes_stats_and_sweep_with_no_wall_clock() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1507,6 +1523,15 @@ total 1
                 "wall-clock-shaped key {key:?} found in stats.json"
             );
         }
+        // #442: an unscoped run (no --root/--limit) must still run the real
+        // zip64 manifest cross-check, not silently carry the scoped-skip
+        // wording — pins the `false` leg of `run_with_paths`'s
+        // `root.is_some() || limit.is_some()` scoped computation.
+        let zip64_source = zip64_statement_source(&stats);
+        assert!(
+            !zip64_source.contains("scoped run"),
+            "unscoped run wrongly skipped the manifest cross-check: {zip64_source}"
+        );
 
         let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
         assert_eq!(sweep_text.lines().count(), 2);
@@ -1532,6 +1557,16 @@ total 1
             .map(|v| v.as_u64().unwrap())
             .sum();
         assert_eq!(status_sum, 1);
+        // #442: `--limit` alone must scope the record population, so the
+        // zip64 manifest cross-check is expected to diverge and must state
+        // the skip, never a spurious DISAGREES — pins the `limit.is_some()`
+        // leg of `run_with_paths`'s `root.is_some() || limit.is_some()`.
+        let zip64_source = zip64_statement_source(&stats);
+        assert!(
+            zip64_source.contains("scoped run: manifest cross-check skipped"),
+            "{zip64_source}"
+        );
+        assert!(!zip64_source.contains("DISAGREES"), "{zip64_source}");
         let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
         assert_eq!(sweep_text.lines().count(), 1);
     }
@@ -1570,6 +1605,16 @@ total 1
         assert_eq!(status_sum, 2); // levels/doom2/... excluded
         // phase1_files stays at the manifest's file_count regardless of --root.
         assert_eq!(stats["idgames"]["coverage"]["phase1_files"], 3);
+        // #442: `--root` alone must scope the record population too, so the
+        // zip64 manifest cross-check is expected to diverge and must state
+        // the skip, never a spurious DISAGREES — pins the `root.is_some()`
+        // leg of `run_with_paths`'s `root.is_some() || limit.is_some()`.
+        let zip64_source = zip64_statement_source(&stats);
+        assert!(
+            zip64_source.contains("scoped run: manifest cross-check skipped"),
+            "{zip64_source}"
+        );
+        assert!(!zip64_source.contains("DISAGREES"), "{zip64_source}");
 
         let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
         let sweep_ids: Vec<u64> = sweep_text
