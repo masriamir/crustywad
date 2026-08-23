@@ -706,8 +706,10 @@ Every one of these is a data point that feeds a §8 limit:
 `fetch_status` is a **closed enum** mirroring §5.5 — every edge case gets a
 named value, or "record, don't skip" is unenforceable: `ok`, `not_zip`,
 `mirror_404_all`, `no_range_support`, `full_download`, `zip_parse_error`,
-`fetch_error`. Member-level cases (odd compression method, encryption) are
-captured on the `wads[]` entries themselves.
+`fetch_error`, `skipped_known_dead` (outliers-only — §6.4's `skip = true`
+known-dead marker, #442; phase 2 never emits it). Member-level cases (odd
+compression method, encryption) are captured on the `wads[]` entries
+themselves.
 
 **Realized outputs (#406):** the ledger lands at `data/wads-errors.jsonl`
 (the same Phase-1 `LedgerEntry` shape, action `harvest-zips`); run
@@ -796,7 +798,10 @@ statistics computed over ls-laR listing sizes with the API-size delta
 reported (§6.3's sanity check — the 2026-08-17 harvest ledgered ~7% of
 entries as `size_mismatch`); envelope byte totals cover `.wad` members only
 (phase 2 retains no non-wad member sizes); `stats` reads only local files
-and reruns byte-identical on unchanged inputs (§9.3).
+and reruns byte-identical on unchanged inputs (§9.3). An `outliers.toml`
+entry marked `skip = true` (#442) is recorded as `skipped_known_dead`
+without any network contact, for hosts already proven hostile by a prior
+run.
 
 ---
 
@@ -993,6 +998,12 @@ against the manifests below reproduces it byte-identically.
 - Range reader against a file-backed fake implementing the same interface —
   assert the *number* of reads, not just correctness. Regression on request count
   is the point of the caching.
+- Realized (#442): `url_source.rs`'s network bodies are covered by a scripted
+  loopback HTTP/1.1 server driving real `reqwest` under tokio's paused clock —
+  a file-backed fake at the `RangeSource` seam cannot see reqwest-layer bugs
+  (the #407 `content_length()` misclassification lived there), so the
+  live-loopback harness supersedes it for that surface. Loopback only; CI
+  never touches the network.
 - Percentile function against a known vector with a documented method.
 
 ### 9.2 Integration tests (network, opt-in)

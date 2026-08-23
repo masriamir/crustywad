@@ -62,18 +62,14 @@ pub struct StatsPaths {
     pub out_dir: PathBuf,
 }
 
-/// Run `xtask stats`. `root`/`limit` are the §4.6 dev flags: when either is
-/// set, both input and output move to `data/dev/` — the same "scoped"
-/// convention Phase 1/2/outliers use — except the ls-laR cache, which is
-/// always read from `data/cache` regardless of scope.
-///
-/// # Errors
-/// See [`run_with_paths`].
-pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
-    let scoped = root.is_some() || limit.is_some();
+/// Assemble the [`StatsPaths`] set for a scoped (`data/dev/`) or full
+/// (`data/`) run — extracted from [`run`] so the path convention is
+/// unit-tested (#442) instead of resting on the live smoke. The ls-laR
+/// cache pair always lives under `data/cache` regardless of scope.
+pub(crate) fn stats_paths_for(scoped: bool) -> StatsPaths {
     let out_dir = crate::phase1::output_dir(scoped);
     let cache_dir = crate::phase1::data_root().join("cache");
-    let paths = StatsPaths {
+    StatsPaths {
         wads_jsonl: out_dir.join("idgames-wads.jsonl"),
         zips_manifest: out_dir.join("wads-manifest.json"),
         phase1_manifest: out_dir.join("harvest-manifest.json"),
@@ -83,7 +79,18 @@ pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
         outliers_jsonl: out_dir.join("outliers-wads.jsonl"),
         outliers_manifest: out_dir.join("outliers-manifest.json"),
         out_dir,
-    };
+    }
+}
+
+/// Run `xtask stats`. `root`/`limit` are the §4.6 dev flags: when either is
+/// set, both input and output move to `data/dev/` — the same "scoped"
+/// convention Phase 1/2/outliers use — except the ls-laR cache, which is
+/// always read from `data/cache` regardless of scope.
+///
+/// # Errors
+/// See [`run_with_paths`].
+pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
+    let paths = stats_paths_for(root.is_some() || limit.is_some());
     run_with_paths(&paths, root, limit)
 }
 
@@ -97,6 +104,13 @@ pub fn run(root: Option<&str>, limit: Option<usize>) -> anyhow::Result<()> {
 /// exists without the other), a `WadRecord`'s `dir`/`filename` can't be
 /// turned into a sweep-corpus URL, or an environmental failure (directory
 /// creation, output writes).
+#[allow(
+    clippy::too_many_lines,
+    reason = "was already at the 100-line threshold; #442's scoped-run cross-check fix threads \
+              one more `root.is_some() || limit.is_some()` argument through the existing \
+              `recommendations` call rather than splitting an otherwise-cohesive I/O+assembly \
+              function"
+)]
 pub fn run_with_paths(
     paths: &StatsPaths,
     root: Option<&str>,
@@ -194,6 +208,7 @@ pub fn run_with_paths(
         &stats.idgames,
         stats.outliers.as_ref(),
         zips_manifest.zip64_entries,
+        root.is_some() || limit.is_some(),
     );
 
     // Build the sweep corpus (and render the report) entirely in memory
@@ -1478,6 +1493,22 @@ total 1
         }
     }
 
+    /// The written `stats.json`'s `zip64_statement` recommendation row's
+    /// `source` text — the field #442's scoped/unscoped cross-check wording
+    /// lands in. Panics if the row is missing (a bug in `recommendations`
+    /// itself, which other tests already cover).
+    fn zip64_statement_source(stats: &serde_json::Value) -> String {
+        stats["recommendations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["key"] == "zip64_statement")
+            .expect("zip64_statement recommendation row missing")["source"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
     #[test]
     fn run_with_paths_writes_stats_and_sweep_with_no_wall_clock() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1499,6 +1530,15 @@ total 1
                 "wall-clock-shaped key {key:?} found in stats.json"
             );
         }
+        // #442: an unscoped run (no --root/--limit) must still run the real
+        // zip64 manifest cross-check, not silently carry the scoped-skip
+        // wording — pins the `false` leg of `run_with_paths`'s
+        // `root.is_some() || limit.is_some()` scoped computation.
+        let zip64_source = zip64_statement_source(&stats);
+        assert!(
+            !zip64_source.contains("scoped run"),
+            "unscoped run wrongly skipped the manifest cross-check: {zip64_source}"
+        );
 
         let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
         assert_eq!(sweep_text.lines().count(), 2);
@@ -1524,6 +1564,16 @@ total 1
             .map(|v| v.as_u64().unwrap())
             .sum();
         assert_eq!(status_sum, 1);
+        // #442: `--limit` alone must scope the record population, so the
+        // zip64 manifest cross-check is expected to diverge and must state
+        // the skip, never a spurious DISAGREES — pins the `limit.is_some()`
+        // leg of `run_with_paths`'s `root.is_some() || limit.is_some()`.
+        let zip64_source = zip64_statement_source(&stats);
+        assert!(
+            zip64_source.contains("scoped run: manifest cross-check skipped"),
+            "{zip64_source}"
+        );
+        assert!(!zip64_source.contains("DISAGREES"), "{zip64_source}");
         let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
         assert_eq!(sweep_text.lines().count(), 1);
     }
@@ -1562,6 +1612,16 @@ total 1
         assert_eq!(status_sum, 2); // levels/doom2/... excluded
         // phase1_files stays at the manifest's file_count regardless of --root.
         assert_eq!(stats["idgames"]["coverage"]["phase1_files"], 3);
+        // #442: `--root` alone must scope the record population too, so the
+        // zip64 manifest cross-check is expected to diverge and must state
+        // the skip, never a spurious DISAGREES — pins the `root.is_some()`
+        // leg of `run_with_paths`'s `root.is_some() || limit.is_some()`.
+        let zip64_source = zip64_statement_source(&stats);
+        assert!(
+            zip64_source.contains("scoped run: manifest cross-check skipped"),
+            "{zip64_source}"
+        );
+        assert!(!zip64_source.contains("DISAGREES"), "{zip64_source}");
 
         let sweep_text = std::fs::read_to_string(tmp.path().join("sweep-corpus.jsonl")).unwrap();
         let sweep_ids: Vec<u64> = sweep_text
@@ -2123,5 +2183,36 @@ total 1
         )
         .unwrap();
         assert_eq!(stats["recommendations"].as_array().unwrap().len(), 8);
+    }
+
+    // ---- path assembly ----
+
+    #[test]
+    fn stats_paths_assembly_is_scoped_by_the_dev_convention() {
+        // #442: `run`'s path assembly was live-smoke-only; this pins the
+        // scoped/unscoped split the same way outliers pins its output_dir.
+        let dev = stats_paths_for(true);
+        for p in [
+            &dev.wads_jsonl,
+            &dev.zips_manifest,
+            &dev.phase1_manifest,
+            &dev.phase1_ledger,
+            &dev.outliers_jsonl,
+            &dev.outliers_manifest,
+            &dev.out_dir,
+        ] {
+            assert!(
+                p.parent().is_none_or(|parent| parent.ends_with("data/dev"))
+                    || p.ends_with("data/dev"),
+                "{} not under data/dev",
+                p.display()
+            );
+        }
+        // The ls-laR cache is shared by every run, scoped or not.
+        assert!(dev.lslar_gz.parent().unwrap().ends_with("data/cache"));
+        assert!(dev.lslar_meta.parent().unwrap().ends_with("data/cache"));
+        let full = stats_paths_for(false);
+        assert!(full.out_dir.ends_with("data"));
+        assert!(full.wads_jsonl.parent().unwrap().ends_with("data"));
     }
 }
