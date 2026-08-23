@@ -440,7 +440,7 @@ records the concrete decisions that backlog note left open.
      record_size` (or, for V2/V3 `GL_NODES`, from `parse_records`'s own length-derived count) —
      never from an untrusted in-stream count — so memory use is `O(input length)`.
   2. **No unbounded recursion.** Decoding is a strictly sequential, iterative pipeline
-     (`detect_gl_version`, then four `chunks_exact`/`parse_records` passes in dependency order);
+     (`detect_gl_version`, then four fixed-record passes — `as_chunks`/`chunks_exact`/`parse_records` — in dependency order);
      the resulting GL BSP tree is stored as a flat arena, never walked during decode, so no
      crafted input can force recursion.
   3. **A `cargo-fuzz` target**, `fuzz_gl_nodes`, reaches the decoder through the public

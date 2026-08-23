@@ -1324,14 +1324,27 @@ mod tests {
     }
 
     impl RangeSource for FakeEntrySource {
-        async fn fetch(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, FetchFailure> {
+        // Sync bodies below use the desugared async-trait form — clippy
+        // 1.98's `unused_async_trait_impl`: `impl Future` + `ready`, or
+        // `poll_fn` for the panicking guard fake. Same form for every fake
+        // in this module. Side effects (counter bumps, call recording) now
+        // run at future-construction time rather than first poll —
+        // indistinguishable here because every call site awaits in the
+        // same expression.
+        fn fetch(
+            &mut self,
+            offset: u64,
+            len: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             self.fetches.fetch_add(1, Ordering::SeqCst);
             let start = usize::try_from(offset).unwrap();
             let end = start + usize::try_from(len).unwrap();
-            self.bytes
-                .get(start..end)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| FetchFailure::Http("range beyond EOF".into()))
+            std::future::ready(
+                self.bytes
+                    .get(start..end)
+                    .map(<[u8]>::to_vec)
+                    .ok_or_else(|| FetchFailure::Http("range beyond EOF".into())),
+            )
         }
     }
 
@@ -1340,9 +1353,12 @@ mod tests {
             "fake"
         }
 
-        async fn download_full(&mut self, _expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
+        fn download_full(
+            &mut self,
+            _expected_size: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             self.fetches.fetch_add(1, Ordering::SeqCst);
-            Ok((*self.bytes).clone())
+            std::future::ready(Ok((*self.bytes).clone()))
         }
     }
 
@@ -1516,16 +1532,24 @@ mod tests {
     }
 
     impl RangeSource for FlakyFakeSource {
-        async fn fetch(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, FetchFailure> {
+        fn fetch(
+            &mut self,
+            offset: u64,
+            len: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             if self.fail.load(Ordering::SeqCst) {
-                return Err(FetchFailure::Http("simulated transient failure".into()));
+                return std::future::ready(Err(FetchFailure::Http(
+                    "simulated transient failure".into(),
+                )));
             }
             let start = usize::try_from(offset).unwrap();
             let end = start + usize::try_from(len).unwrap();
-            self.bytes
-                .get(start..end)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| FetchFailure::Http("range beyond EOF".into()))
+            std::future::ready(
+                self.bytes
+                    .get(start..end)
+                    .map(<[u8]>::to_vec)
+                    .ok_or_else(|| FetchFailure::Http("range beyond EOF".into())),
+            )
         }
     }
 
@@ -1534,8 +1558,11 @@ mod tests {
             "fake"
         }
 
-        async fn download_full(&mut self, _expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
-            Ok((*self.bytes).clone())
+        fn download_full(
+            &mut self,
+            _expected_size: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
+            std::future::ready(Ok((*self.bytes).clone()))
         }
     }
 
@@ -1630,8 +1657,12 @@ mod tests {
     }
 
     impl RangeSource for NoRangeFakeSource {
-        async fn fetch(&mut self, _offset: u64, _len: u64) -> Result<Vec<u8>, FetchFailure> {
-            Err(FetchFailure::RangeUnsupported)
+        fn fetch(
+            &mut self,
+            _offset: u64,
+            _len: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
+            std::future::ready(Err(FetchFailure::RangeUnsupported))
         }
     }
 
@@ -1640,9 +1671,12 @@ mod tests {
             "fake"
         }
 
-        async fn download_full(&mut self, _expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
+        fn download_full(
+            &mut self,
+            _expected_size: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             self.download_full_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(Vec::new())
+            std::future::ready(Ok(Vec::new()))
         }
     }
 
@@ -1718,11 +1752,17 @@ mod tests {
     }
 
     impl RangeSource for ByteBombFakeSource {
-        async fn fetch(&mut self, _offset: u64, _len: u64) -> Result<Vec<u8>, FetchFailure> {
+        fn fetch(
+            &mut self,
+            _offset: u64,
+            _len: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             self.counters
                 .bytes
                 .fetch_add(5 * 1024 * 1024 * 1024, Ordering::SeqCst);
-            Err(FetchFailure::Http("simulated pathological transfer".into()))
+            std::future::ready(Err(FetchFailure::Http(
+                "simulated pathological transfer".into(),
+            )))
         }
     }
 
@@ -1731,8 +1771,11 @@ mod tests {
             "fake"
         }
 
-        async fn download_full(&mut self, _expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
-            Err(FetchFailure::Http("not used".into()))
+        fn download_full(
+            &mut self,
+            _expected_size: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
+            std::future::ready(Err(FetchFailure::Http("not used".into())))
         }
     }
 
@@ -1790,9 +1833,13 @@ mod tests {
     }
 
     impl RangeSource for SizeProbeSource {
-        async fn fetch(&mut self, offset: u64, len: u64) -> Result<Vec<u8>, FetchFailure> {
+        fn fetch(
+            &mut self,
+            offset: u64,
+            len: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             self.fetch_calls.lock().unwrap().push((offset, len));
-            Err(FetchFailure::RangeUnsupported)
+            std::future::ready(Err(FetchFailure::RangeUnsupported))
         }
     }
 
@@ -1801,9 +1848,12 @@ mod tests {
             "fake"
         }
 
-        async fn download_full(&mut self, expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
+        fn download_full(
+            &mut self,
+            expected_size: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
             self.download_calls.lock().unwrap().push(expected_size);
-            Ok((*self.zip_bytes).clone())
+            std::future::ready(Ok((*self.zip_bytes).clone()))
         }
     }
 
@@ -1925,8 +1975,15 @@ mod tests {
     struct DownloadOkSource;
 
     impl RangeSource for DownloadOkSource {
-        async fn fetch(&mut self, _offset: u64, _len: u64) -> Result<Vec<u8>, FetchFailure> {
-            panic!("handle_no_range_support must never call fetch")
+        fn fetch(
+            &mut self,
+            _offset: u64,
+            _len: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
+            // `poll_fn`, not `ready(panic!(..))`: the panic stays at poll
+            // time (the original `async fn` semantics), and there's no
+            // unreachable `ready` call after a `!` expression.
+            std::future::poll_fn(|_| panic!("handle_no_range_support must never call fetch"))
         }
     }
 
@@ -1935,8 +1992,11 @@ mod tests {
             "fake"
         }
 
-        async fn download_full(&mut self, _expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
-            Ok(Vec::new())
+        fn download_full(
+            &mut self,
+            _expected_size: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
+            std::future::ready(Ok(Vec::new()))
         }
     }
 
