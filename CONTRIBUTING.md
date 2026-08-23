@@ -23,9 +23,10 @@ just ci-fast
 just ci
 just ci-full
 just ci-xtask
+just ci-docs
 ```
 
-**Always run `just ci` before pushing.** It is the fail-fast pre-push gate (`docs-sync`, `lint` — fmt + clippy — `test`, `doc`) and catches failures locally before they reach CI. `just ci-fast` is the mid-iteration loop (skips doctests and the rustdoc pass; not a pre-push substitute), and `just ci-full` adds the workspace `build` and the `cargo deny` dependency audit — use it before releases and on branches that change `Cargo.toml`/`Cargo.lock`. The one exception: branches that touch only `xtask/` gate on `just ci-xtask` instead — `xtask/` is a separate cargo workspace that none of the root recipes compile.
+**Always run `just ci` before pushing.** It is the fail-fast pre-push gate (`docs-sync`, `lint` — fmt + clippy — `test`, `doc`) and catches failures locally before they reach CI. `just ci-fast` is the mid-iteration loop (skips doctests and the rustdoc pass; not a pre-push substitute), and `just ci-full` adds the workspace `build` and the `cargo deny` dependency audit — use it before releases and on branches that change `Cargo.toml`/`Cargo.lock`. Two exceptions: branches that touch only `xtask/` gate on `just ci-xtask` instead — `xtask/` is a separate cargo workspace that none of the root recipes compile — and branches touching only Markdown outside `docs/guide/src/` gate on `just ci-docs` (the doc-drift check alone); guide pages keep the full gate, since their code samples compile as doctests.
 
 ## Conventional Commits
 
