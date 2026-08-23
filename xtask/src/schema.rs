@@ -70,6 +70,12 @@ pub enum LedgerKind {
     ParseError,
     /// API `size` disagrees with the ls-laR listing size (§5.0 guard).
     SizeMismatch,
+    /// Deliberately not attempted (#442): a curated outlier marked
+    /// `skip = true` in `xtask/outliers.toml` — no exchange occurred
+    /// (`attempts: 0`), distinguishing "never asked" from
+    /// [`Self::HttpError`]'s "asked and failed". Outliers-only; phase 1
+    /// never emits it.
+    Skipped,
 }
 
 /// One `harvest-errors.jsonl` line. Deliberately timestamp-free (§4.7).
@@ -1115,6 +1121,8 @@ pub(crate) mod tests {
     fn ledger_kind_serializes_snake_case() {
         let v = serde_json::to_value(LedgerKind::SizeMismatch).unwrap();
         assert_eq!(v, "size_mismatch");
+        let v = serde_json::to_value(LedgerKind::Skipped).unwrap();
+        assert_eq!(v, "skipped");
     }
 
     #[test]

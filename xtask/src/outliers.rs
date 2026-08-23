@@ -31,8 +31,9 @@
 //! module actually guarantees is "no two *network-touching* entries start
 //! less than a second apart" ([`should_pace`]), not "no two *requests* are
 //! less than a second apart." A `skip = true` entry ([`OutlierSpec::skip`],
-//! #442) makes no requests at all, so it neither sleeps nor counts as
-//! spacing history for the entry after it.
+//! #442) makes no requests at all, so it never sleeps and does not
+//! *advance* pacing history — the last network-touching entry still
+//! governs the next pacing decision; a skip neither clears nor extends it.
 //! The curated list is small (n ≈ 8), so there's no resumability store: a
 //! rerun simply refetches every central directory (a few hundred KiB
 //! total across the whole list), matching spec §8's "no resumability
@@ -263,7 +264,9 @@ pub(crate) fn skip_record(spec: &OutlierSpec) -> (OutlierRecord, LedgerEntry) {
     let ledger = LedgerEntry {
         path: spec.slug.clone(),
         action: "harvest-outliers".into(),
-        kind: LedgerKind::HttpError,
+        // `Skipped`, not `HttpError`: no exchange occurred this run — the
+        // prior refusal that earned the marker lives in the TOML `note`.
+        kind: LedgerKind::Skipped,
         detail: "skipped: outliers.toml marks the host known-dead (skip = true)".to_owned(),
         attempts: 0,
     };
@@ -272,8 +275,10 @@ pub(crate) fn skip_record(spec: &OutlierSpec) -> (OutlierRecord, LedgerEntry) {
 
 /// Whether the [`ENTRY_SPACING`] politeness sleep applies before this
 /// entry: only between two *network-touching* entries. A skipped entry
-/// makes no requests, so it neither sleeps nor counts as spacing history —
-/// the guarantee stays "no two network entries start less than a second
+/// makes no requests, so it never sleeps and does not *advance* pacing
+/// history — the caller leaves `prior_network` untouched across a skip, so
+/// the last network-touching entry still governs the next pacing decision.
+/// The guarantee stays "no two network entries start less than a second
 /// apart" (module doc), which a skip can't violate.
 pub(crate) fn should_pace(prior_network: bool, skip: bool) -> bool {
     prior_network && !skip
@@ -751,7 +756,7 @@ mod tests {
         assert!(matches!(record.fetch_status, FetchStatus::SkippedKnownDead));
         assert_eq!(ledger.path, "blade-of-agony");
         assert_eq!(ledger.action, "harvest-outliers");
-        assert!(matches!(ledger.kind, LedgerKind::HttpError));
+        assert!(matches!(ledger.kind, LedgerKind::Skipped));
         assert_eq!(ledger.attempts, 0);
         // Fixed string — the TOML `note` free text is never copied into
         // outputs (ADR-0030 §3 discipline, same as `note` itself).
