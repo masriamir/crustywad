@@ -1141,7 +1141,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn probe_200_means_no_range_support() {
-        let (url, _) = scripted_server(vec![
+        let (url, seen) = scripted_server(vec![
             canned("200 OK", &[], b""), // HEAD without a length
             canned("200 OK", &[("Content-Length", "4")], b"full"), // probe ignored the range
         ]);
@@ -1150,11 +1150,14 @@ mod tests {
             source.discover_size().await,
             Err(FetchFailure::RangeUnsupported)
         ));
+        // Both rungs of the ladder actually ran — the classification came
+        // from the probe's 200, not from a short-circuited HEAD path.
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
     #[tokio::test(start_paused = true)]
     async fn probe_206_with_garbage_content_range_is_an_http_failure() {
-        let (url, _) = scripted_server(vec![
+        let (url, seen) = scripted_server(vec![
             canned("200 OK", &[], b""),
             canned(
                 "206 Partial Content",
@@ -1169,6 +1172,7 @@ mod tests {
             }
             other => panic!("expected Http failure, got {other:?}"),
         }
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1229,13 +1233,15 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn fetch_200_to_a_partial_request_is_range_unsupported() {
-        let (url, _) =
+        let (url, seen) =
             scripted_server(vec![canned("200 OK", &[("Content-Length", "5")], b"whole")]);
         let (mut source, _) = live_source(url);
         assert!(matches!(
             source.fetch(10, 5).await,
             Err(FetchFailure::RangeUnsupported)
         ));
+        // Terminal on the first attempt: a range-ignoring host is not retried.
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1243,7 +1249,7 @@ mod tests {
         // discover_size first (HEAD), so file_size is known and
         // (0, file_size) classifies as whole-file; then a range-ignoring
         // 200 is a legal full-body answer (MirrorRanges precedent).
-        let (url, _) = scripted_server(vec![
+        let (url, seen) = scripted_server(vec![
             canned("200 OK", &[("Content-Length", "5")], b""),
             canned("200 OK", &[("Content-Length", "5")], b"whole"),
         ]);
@@ -1251,16 +1257,19 @@ mod tests {
         assert_eq!(source.discover_size().await.unwrap(), 5);
         assert_eq!(source.fetch(0, 5).await.unwrap(), b"whole");
         assert_eq!(counters.bytes.load(Ordering::Relaxed), 5);
+        assert_eq!(seen.lock().unwrap().len(), 2); // one HEAD, one GET
     }
 
     #[tokio::test(start_paused = true)]
     async fn fetch_404_is_not_found() {
-        let (url, _) = scripted_server(vec![canned("404 Not Found", &[], b"")]);
+        let (url, seen) = scripted_server(vec![canned("404 Not Found", &[], b"")]);
         let (mut source, _) = live_source(url);
         assert!(matches!(
             source.fetch(0, 5).await,
             Err(FetchFailure::NotFound)
         ));
+        // The NotFound came from a real 404 exchange, never fabricated.
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1292,7 +1301,7 @@ mod tests {
         // framing check as a "body transport: ..." error before
         // read_capped_body's `bytes.len() < cap` check ever ran — a
         // different failure mode this fixture deliberately does not build.
-        let (url, _) = scripted_server(vec![canned(
+        let (url, seen) = scripted_server(vec![canned(
             "206 Partial Content",
             &[("Content-Range", "bytes 0-9/100"), ("Content-Length", "5")],
             b"only4", // 5 bytes < the 10 requested by fetch(0, 10)
@@ -1305,6 +1314,7 @@ mod tests {
             }
             other => panic!("expected short-body Http failure, got {other:?}"),
         }
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1313,7 +1323,7 @@ mod tests {
         // read_capped_body keeps the first 5 and counts what it read off
         // the wire (module doc: truncate, don't error — no failover
         // partner to punish a chatty host with).
-        let (url, _) = scripted_server(vec![canned(
+        let (url, seen) = scripted_server(vec![canned(
             "206 Partial Content",
             &[("Content-Range", "bytes 0-4/100"), ("Content-Length", "8")],
             b"12345678",
@@ -1323,5 +1333,6 @@ mod tests {
         // ≥5: the accepted chunk is counted in full, and chunk boundaries
         // are the transport's business — assert the floor, not an exact 8.
         assert!(counters.bytes.load(Ordering::Relaxed) >= 5);
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 }
