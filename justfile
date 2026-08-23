@@ -142,3 +142,11 @@ ci-xtask:
     cargo fmt --manifest-path xtask/Cargo.toml --all --check
     cargo clippy --manifest-path xtask/Cargo.toml --all-targets --locked -- -D warnings
     cargo test --manifest-path xtask/Cargo.toml --locked
+
+# Pre-push gate for branches that touch only Markdown outside
+# docs/guide/src/. Such a diff compiles nothing, so the only live check is
+# the doc-drift detector (anchors + version pins). Guide pages do NOT
+# qualify: their code samples compile as crate doctests (guide-doctests),
+# and the full `ci` gate's doctest pass is the only check that catches API
+# drift in them.
+ci-docs: docs-sync
