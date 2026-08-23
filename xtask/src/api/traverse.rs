@@ -423,13 +423,18 @@ mod tests {
     }
 
     impl ListingSource for Fake {
-        async fn getcontents(&mut self, dir: &str) -> Result<FetchOutcome, ApiCallError> {
+        // Sync body in the desugared async-trait form (`impl Future` +
+        // `ready`) — clippy 1.98's `unused_async_trait_impl`.
+        fn getcontents(
+            &mut self,
+            dir: &str,
+        ) -> impl std::future::Future<Output = Result<FetchOutcome, ApiCallError>> {
             self.calls.push(dir.to_owned());
             if self.fail_with_http.iter().any(|p| p == dir) {
-                return Err(ApiCallError::Http {
+                return std::future::ready(Err(ApiCallError::Http {
                     attempts: 6,
                     detail: "HTTP 500".into(),
-                });
+                }));
             }
             let body = self
                 .responses
@@ -438,11 +443,11 @@ mod tests {
                 .unwrap_or(serde_json::json!({"file": null, "dir": null}));
             let listing: ContentListing = serde_json::from_value(body).unwrap();
             let changed = Some(self.changed_true.iter().any(|p| p == dir));
-            Ok(FetchOutcome {
+            std::future::ready(Ok(FetchOutcome {
                 listing,
                 from_cache: false,
                 changed,
-            })
+            }))
         }
     }
 

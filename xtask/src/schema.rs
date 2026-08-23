@@ -70,6 +70,12 @@ pub enum LedgerKind {
     ParseError,
     /// API `size` disagrees with the ls-laR listing size (§5.0 guard).
     SizeMismatch,
+    /// Deliberately not attempted (#442): a curated outlier marked
+    /// `skip = true` in `xtask/outliers.toml` — no exchange occurred
+    /// (`attempts: 0`), distinguishing "never asked" from
+    /// [`Self::HttpError`]'s "asked and failed". Outliers-only; phase 1
+    /// never emits it.
+    Skipped,
 }
 
 /// One `harvest-errors.jsonl` line. Deliberately timestamp-free (§4.7).
@@ -83,17 +89,16 @@ pub struct LedgerEntry {
     pub kind: LedgerKind,
     /// Human-readable detail.
     pub detail: String,
-    /// Attempts made before giving up (1 for non-retried findings).
+    /// Attempts made before giving up (1 for a non-retried finding that
+    /// issued its single request).
     ///
-    /// Caveat for `outliers::run`'s `harvest-outliers` ledger entries
-    /// specifically (review fix I2): this field always reads `1` there —
-    /// it records *ledger-entry* granularity (one finding per failed
-    /// curated entry), not the underlying HTTP retry count.
-    /// [`crate::zips::url_source::UrlRanges`] can retry a single entry's
-    /// HEAD/range fetches up to 6 times internally (a live manifest's
-    /// `range_requests` count for a retried entry proves it), but that
-    /// per-request attempt count isn't threaded through to this field yet
-    /// — a follow-up, not this field's current contract.
+    /// For `outliers::run`'s `harvest-outliers` ledger entries this is the
+    /// entry's real HTTP request count as of #442 — the
+    /// [`crate::zips::range_reader::TransferCounters`] requests delta
+    /// around the entry, covering every request it spent (a retried HEAD
+    /// ladder, the range probe, `inspect_zip`'s reads). `0` for an entry
+    /// that never issued a request: one skipped via `outliers.toml`'s
+    /// `skip = true` marker, or (defensively) one whose URL failed to parse.
     pub attempts: u32,
 }
 
@@ -240,6 +245,11 @@ pub enum FetchStatus {
     ZipParseError,
     /// Transport-level failure after retries on every usable mirror.
     FetchError,
+    /// Curated outlier marked `skip = true` in `xtask/outliers.toml` (§6.4):
+    /// a documented-hostile host, deliberately not probed this run — the
+    /// prior refusal is recorded in the TOML entry's `note`. Outliers-only;
+    /// phase 2 never emits it.
+    SkippedKnownDead,
 }
 
 /// One `.wad` member of an archive entry (§5.6 `wads[]`).
@@ -1111,6 +1121,8 @@ pub(crate) mod tests {
     fn ledger_kind_serializes_snake_case() {
         let v = serde_json::to_value(LedgerKind::SizeMismatch).unwrap();
         assert_eq!(v, "size_mismatch");
+        let v = serde_json::to_value(LedgerKind::Skipped).unwrap();
+        assert_eq!(v, "skipped");
     }
 
     #[test]
@@ -1343,6 +1355,7 @@ pub(crate) mod tests {
             (FetchStatus::FullDownload, "full_download"),
             (FetchStatus::ZipParseError, "zip_parse_error"),
             (FetchStatus::FetchError, "fetch_error"),
+            (FetchStatus::SkippedKnownDead, "skipped_known_dead"),
         ];
         for (status, wire) in cases {
             assert_eq!(serde_json::to_value(status).unwrap(), wire);
@@ -1559,6 +1572,25 @@ pub(crate) mod tests {
         // A corrupt line is skipped, not fatal.
         std::fs::write(&p, "{ not json\n").unwrap();
         assert_eq!(read_outliers_jsonl(&p).map(|v| v.len()), Some(0));
+    }
+
+    #[test]
+    fn read_outliers_jsonl_skips_unparseable_lines_and_keeps_the_rest() {
+        // #442: a corrupt line yields a silently partial population — pin
+        // the skip-don't-fail contract (and the blank-line tolerance)
+        // explicitly so a future "fail fast" refactor is a conscious choice.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outliers-wads.jsonl");
+        let good = serde_json::json!({
+            "slug": "a", "url": "https://x/a.zip", "zip_size": 1, "zip64": false,
+            "member_count": 0, "wads": [], "other_members": [], "fetch_status": "ok"
+        });
+        std::fs::write(&path, format!("{good}\nnot json\n\n{good}\n")).unwrap();
+        let records = read_outliers_jsonl(&path).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].slug, "a");
+        // Missing file stays None, not a panic or an empty Some.
+        assert!(read_outliers_jsonl(&dir.path().join("absent.jsonl")).is_none());
     }
 
     #[test]

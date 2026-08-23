@@ -17,25 +17,34 @@
 # dsdarchive.com (406 to non-browser requests), itch.io (tokened,
 # expiring), GitHub codeload archives (dynamic — no Content-Length, no
 # ranges).
+#
+# `skip = true` (#442) marks a documented-hostile host: harvest-outliers
+# records the entry (status skipped_known_dead, a fixed-string ledger
+# line) without re-probing it — the refusal evidence lives in `note`.
+# Remove the marker to re-probe an entry, e.g. if hosting changes.
 [[outlier]]
 slug = "blade-of-agony"
 url = "https://boa.realm667.com/files/boa_c3.zip"
 note = "3-chapter GZDoom megawad, ~2 GiB class — tail anchor; host refuses (HEAD/GET 500, probed 2026-08-17)"
+skip = true
 
 [[outlier]]
 slug = "total-chaos"
 url = "https://www.moddb.com/downloads/mirror/195910/122/09472abd1cf1b5d3a42dd47ea0661418"
 note = "survival-horror TC, ~1.3 GiB — tail anchor; ModDB refuses direct links (403, probed 2026-08-17)"
+skip = true
 
 [[outlier]]
 slug = "golden-souls-2"
 url = "https://static.moddb.com/downloads/goldensouls2_1.4.zip"
 note = "large GZDoom adventure megawad — tail anchor; ModDB refuses direct links (403, probed 2026-08-17)"
+skip = true
 
 [[outlier]]
 slug = "simons-destiny"
 url = "https://boa.realm667.com/files/simon_v2.zip"
 note = "Castlevania TC — tail anchor; host refuses (500, probed 2026-08-17)"
+skip = true
 
 [[outlier]]
 slug = "freedoom"

@@ -28,17 +28,23 @@
 //! `inspect_zip`'s own ranged central-directory reads (typically a couple,
 //! occasionally a few more for a `.wad` member whose local header falls
 //! outside the cached tail — see `zips::inspect`'s module doc). What this
-//! module actually guarantees is "no two *entries* start less than a
-//! second apart," not "no two *requests* are less than a second apart."
+//! module actually guarantees is "no two *network-touching* entries start
+//! less than a second apart" ([`should_pace`]), not "no two *requests* are
+//! less than a second apart." A `skip = true` entry ([`OutlierSpec::skip`],
+//! #442) makes no requests at all, so it never sleeps and does not
+//! *advance* pacing history — the last network-touching entry still
+//! governs the next pacing decision; a skip neither clears nor extends it.
 //! The curated list is small (n ≈ 8), so there's no resumability store: a
 //! rerun simply refetches every central directory (a few hundred KiB
 //! total across the whole list), matching spec §8's "no resumability
 //! store" call.
 //!
 //! **Status set** is [`FetchStatus`] minus the mirror-pool/fallback-only
-//! variants: `Ok`, `NoRangeSupport`, `ZipParseError`, `FetchError`. A `404`
-//! maps to `FetchError` here, not `Mirror404All` — that variant names a
-//! *pool* fact (both mirrors independently 404ing), which has no meaning
+//! variants, plus the network-free skip status: `Ok`, `NoRangeSupport`,
+//! `ZipParseError`, `FetchError`, `SkippedKnownDead` (#442, [`skip_record`]
+//! — never probed, so it's outside the fetch/inspect mapping below). A
+//! `404` maps to `FetchError` here, not `Mirror404All` — that variant names
+//! a *pool* fact (both mirrors independently 404ing), which has no meaning
 //! for a single URL (spec §8).
 
 use std::path::Path;
@@ -72,6 +78,14 @@ pub struct OutlierSpec {
     /// past parse time, so it's documentary for readers of the committed
     /// TOML file, not a value the orchestrator otherwise consumes.
     pub note: String,
+    /// `true` marks a documented-hostile host (§6.4 known-dead marker,
+    /// #442): the orchestrator records the entry without touching the
+    /// network — status [`FetchStatus::SkippedKnownDead`], a fixed-string
+    /// ledger line, `attempts: 0` — instead of re-walking a retry ladder
+    /// against a host whose refusal is already ledgered in `note`. Absent
+    /// means `false`: the entry is probed normally.
+    #[serde(default)]
+    pub skip: bool,
 }
 
 /// The `[[outlier]]` array-of-tables shape `xtask/outliers.toml` parses
@@ -123,6 +137,7 @@ pub fn parse_outliers_toml(text: &str) -> anyhow::Result<Vec<OutlierSpec>> {
 pub(crate) fn entry_outcome(
     slug: &str,
     result: &Result<Inspection, InspectError>,
+    attempts: u32,
 ) -> (FetchStatus, Option<LedgerEntry>) {
     match result {
         Ok(_) => (FetchStatus::Ok, None),
@@ -132,6 +147,7 @@ pub(crate) fn entry_outcome(
                 slug,
                 LedgerKind::HttpError,
                 "host refuses range requests".to_owned(),
+                attempts,
             )),
         ),
         // No mirror pool here, so there's no `Mirror404All` equivalent —
@@ -142,40 +158,54 @@ pub(crate) fn entry_outcome(
                 slug,
                 LedgerKind::HttpError,
                 "404 not found".to_owned(),
+                attempts,
             )),
         ),
         Err(InspectError::Fetch(FetchFailure::Http(detail))) => (
             FetchStatus::FetchError,
-            Some(ledger_line(slug, LedgerKind::HttpError, detail.clone())),
+            Some(ledger_line(
+                slug,
+                LedgerKind::HttpError,
+                detail.clone(),
+                attempts,
+            )),
         ),
         Err(e @ (InspectError::CdTooLarge { .. } | InspectError::TooChatty { .. })) => (
             FetchStatus::ZipParseError,
-            Some(ledger_line(slug, LedgerKind::ParseError, e.to_string())),
+            Some(ledger_line(
+                slug,
+                LedgerKind::ParseError,
+                e.to_string(),
+                attempts,
+            )),
         ),
         Err(InspectError::Parse(detail)) => (
             FetchStatus::ZipParseError,
-            Some(ledger_line(slug, LedgerKind::ParseError, detail.clone())),
+            Some(ledger_line(
+                slug,
+                LedgerKind::ParseError,
+                detail.clone(),
+                attempts,
+            )),
         ),
     }
 }
 
 /// Build one `outliers-errors.jsonl` line — action is always
 /// `"harvest-outliers"`, `path` is the slug (there's no archive-tree path
-/// for a curated outlier). `attempts` is always `1`: this ledger records
-/// one finding per failed curated entry (ledger-entry granularity), not the
-/// HTTP retry count that actually produced it — [`UrlRanges`] can retry a
-/// single entry's HEAD/range fetches up to 6 times internally before
-/// surfacing the failure this maps from (see [`LedgerEntry::attempts`]'s
-/// doc for the same caveat). Plumbing the real per-request count through
-/// [`crate::zips::inspect::FetchFailure`] into this field is a follow-up,
-/// not this field's current contract.
-fn ledger_line(slug: &str, kind: LedgerKind, detail: String) -> LedgerEntry {
+/// for a curated outlier). `attempts` is the entry's real HTTP request
+/// count (#442): `run_async` measures it as the [`TransferCounters`]
+/// requests delta around the entry — exact because the loop is strictly
+/// sequential — so it reconciles with the manifest's `range_requests` by
+/// construction. It counts every request the entry spent, including a
+/// successful `discover_size`'s, when a later stage failed.
+fn ledger_line(slug: &str, kind: LedgerKind, detail: String, attempts: u32) -> LedgerEntry {
     LedgerEntry {
         path: slug.to_owned(),
         action: "harvest-outliers".into(),
         kind,
         detail,
-        attempts: 1,
+        attempts,
     }
 }
 
@@ -190,8 +220,9 @@ pub(crate) fn build_record(
     spec: &OutlierSpec,
     zip_size: u64,
     result: &Result<Inspection, InspectError>,
+    attempts: u32,
 ) -> (OutlierRecord, Option<LedgerEntry>) {
-    let (fetch_status, ledger) = entry_outcome(&spec.slug, result);
+    let (fetch_status, ledger) = entry_outcome(&spec.slug, result, attempts);
     let (zip64, member_count, wads, other_members) = match result {
         Ok(inspection) => (
             inspection.zip64,
@@ -212,6 +243,45 @@ pub(crate) fn build_record(
         fetch_status,
     };
     (record, ledger)
+}
+
+/// Build the record/ledger pair for a `skip = true` entry without any
+/// network contact (#442). The ledger detail is a fixed string — the TOML
+/// `note` carries the human rationale and, like `note` itself, is never
+/// copied into outputs (ADR-0030 §3). `attempts: 0`: zero HTTP requests
+/// were made, and the field records real request counts as of #442.
+pub(crate) fn skip_record(spec: &OutlierSpec) -> (OutlierRecord, LedgerEntry) {
+    let record = OutlierRecord {
+        slug: spec.slug.clone(),
+        url: spec.url.clone(),
+        zip_size: 0,
+        zip64: false,
+        member_count: 0,
+        wads: Vec::new(),
+        other_members: Vec::new(),
+        fetch_status: FetchStatus::SkippedKnownDead,
+    };
+    let ledger = LedgerEntry {
+        path: spec.slug.clone(),
+        action: "harvest-outliers".into(),
+        // `Skipped`, not `HttpError`: no exchange occurred this run — the
+        // prior refusal that earned the marker lives in the TOML `note`.
+        kind: LedgerKind::Skipped,
+        detail: "skipped: outliers.toml marks the host known-dead (skip = true)".to_owned(),
+        attempts: 0,
+    };
+    (record, ledger)
+}
+
+/// Whether the [`ENTRY_SPACING`] politeness sleep applies before this
+/// entry: only between two *network-touching* entries. A skipped entry
+/// makes no requests, so it never sleeps and does not *advance* pacing
+/// history — the caller leaves `prior_network` untouched across a skip, so
+/// the last network-touching entry still governs the next pacing decision.
+/// The guarantee stays "no two network entries start less than a second
+/// apart" (module doc), which a skip can't violate.
+pub(crate) fn should_pace(prior_network: bool, skip: bool) -> bool {
+    prior_network && !skip
 }
 
 /// Record count per `fetch_status` wire value (mirrors
@@ -294,6 +364,39 @@ fn worklist(mut specs: Vec<OutlierSpec>, limit: Option<usize>) -> Vec<OutlierSpe
     specs
 }
 
+/// Package one run's outcome into the [`OutliersManifest`] — extracted
+/// from [`run_async`] so the id format, duration clamp, and passthrough
+/// fields are unit-tested without a network run (#442). `now` is a
+/// parameter (not read inside) for the same testability.
+#[allow(clippy::too_many_arguments)] // a manifest is wide by nature; a builder would be ceremony
+pub(crate) fn assemble_manifest(
+    started_at: chrono::DateTime<Utc>,
+    now: chrono::DateTime<Utc>,
+    limit: Option<usize>,
+    entries_total: u64,
+    records_written: u64,
+    ledger_count: u64,
+    range_requests: u64,
+    bytes_transferred: u64,
+    status_counts: std::collections::BTreeMap<String, u64>,
+) -> OutliersManifest {
+    let duration = (now - started_at).num_seconds().max(0);
+    OutliersManifest {
+        id: format!("harvest-outliers-{}", started_at.format("%Y%m%dT%H%M%SZ")),
+        started_at: started_at.to_rfc3339(),
+        duration_secs: u64::try_from(duration).unwrap_or(0),
+        tool_version: schema::tool_version(),
+        git_rev: schema::git_rev(),
+        limit: limit.map(|l| u64::try_from(l).unwrap_or(u64::MAX)),
+        entries_total,
+        records_written,
+        ledger_count,
+        range_requests,
+        bytes_transferred,
+        status_counts,
+    }
+}
+
 async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
     let toml_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("outliers.toml");
     let text = std::fs::read_to_string(&toml_path)
@@ -311,12 +414,32 @@ async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
 
     let mut records = Vec::with_capacity(specs.len());
     let mut ledger = Vec::new();
-    for (i, spec) in specs.iter().enumerate() {
-        if i > 0 {
+    let mut prior_network = false;
+    for spec in &specs {
+        if should_pace(prior_network, spec.skip) {
             tokio::time::sleep(ENTRY_SPACING).await;
         }
+        if spec.skip {
+            let (record, ledger_entry) = skip_record(spec);
+            records.push(record);
+            ledger.push(ledger_entry);
+            continue;
+        }
+        let requests_before = counters.requests.load(Ordering::Relaxed);
         let (zip_size, result) = fetch_and_inspect(&client, spec, Arc::clone(&counters)).await;
-        let (record, ledger_entry) = build_record(spec, zip_size, &result);
+        let attempts = u32::try_from(
+            counters
+                .requests
+                .load(Ordering::Relaxed)
+                .saturating_sub(requests_before),
+        )
+        .unwrap_or(u32::MAX);
+        // Spacing history follows the *measured* request count, not the
+        // intent: an entry that issued zero requests (defensively, an
+        // unparseable URL — see `fetch_and_inspect`) leaves no host to be
+        // polite to, so it must not force the next entry's pacing sleep.
+        prior_network = attempts > 0;
+        let (record, ledger_entry) = build_record(spec, zip_size, &result, attempts);
         records.push(record);
         if let Some(entry) = ledger_entry {
             ledger.push(entry);
@@ -328,21 +451,17 @@ async fn run_async(limit: Option<usize>) -> anyhow::Result<()> {
         schema::write_outliers_jsonl(&out_dir.join("outliers-wads.jsonl"), records)?;
     let ledger_count = schema::write_ledger(&out_dir.join("outliers-errors.jsonl"), ledger)?;
 
-    let duration = (Utc::now() - started_at).num_seconds().max(0);
-    let manifest = OutliersManifest {
-        id: format!("harvest-outliers-{}", started_at.format("%Y%m%dT%H%M%SZ")),
-        started_at: started_at.to_rfc3339(),
-        duration_secs: u64::try_from(duration).unwrap_or(0),
-        tool_version: schema::tool_version(),
-        git_rev: schema::git_rev(),
-        limit: limit.map(|l| u64::try_from(l).unwrap_or(u64::MAX)),
+    let manifest = assemble_manifest(
+        started_at,
+        Utc::now(),
+        limit,
         entries_total,
         records_written,
         ledger_count,
-        range_requests: counters.requests.load(Ordering::Relaxed),
-        bytes_transferred: counters.bytes.load(Ordering::Relaxed),
+        counters.requests.load(Ordering::Relaxed),
+        counters.bytes.load(Ordering::Relaxed),
         status_counts,
-    };
+    );
     schema::write_outliers_manifest(&out_dir.join("outliers-manifest.json"), &manifest)?;
 
     tracing::info!(
@@ -413,6 +532,7 @@ mod tests {
                 slug: format!("s{i}"),
                 url: format!("https://example.com/{i}.zip"),
                 note: "n".to_owned(),
+                skip: false,
             })
             .collect()
     }
@@ -462,12 +582,14 @@ mod tests {
         let (s, l) = entry_outcome(
             "x",
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         assert!(matches!(s, FetchStatus::NoRangeSupport));
         assert!(l.is_some());
-        let (s, _) = entry_outcome("x", &Err(InspectError::Fetch(FetchFailure::NotFound)));
+        assert_eq!(l.as_ref().unwrap().attempts, 3);
+        let (s, _) = entry_outcome("x", &Err(InspectError::Fetch(FetchFailure::NotFound)), 3);
         assert!(matches!(s, FetchStatus::FetchError)); // no mirror pool → mirror_404_all does not apply
-        let (s, _) = entry_outcome("x", &Err(InspectError::Parse("bad".into())));
+        let (s, _) = entry_outcome("x", &Err(InspectError::Parse("bad".into())), 3);
         assert!(matches!(s, FetchStatus::ZipParseError));
     }
 
@@ -476,6 +598,7 @@ mod tests {
         let (s, l) = entry_outcome(
             "x",
             &Err(InspectError::Fetch(FetchFailure::Http("timeout".into()))),
+            3,
         );
         assert!(matches!(s, FetchStatus::FetchError));
         assert_eq!(l.unwrap().detail, "timeout");
@@ -485,11 +608,12 @@ mod tests {
             &Err(InspectError::CdTooLarge {
                 needed: 999_999_999,
             }),
+            3,
         );
         assert!(matches!(s, FetchStatus::ZipParseError));
         assert!(matches!(l.unwrap().kind, LedgerKind::ParseError));
 
-        let (s, l) = entry_outcome("x", &Err(InspectError::TooChatty { rounds: 12 }));
+        let (s, l) = entry_outcome("x", &Err(InspectError::TooChatty { rounds: 12 }), 3);
         assert!(matches!(s, FetchStatus::ZipParseError));
         assert!(matches!(l.unwrap().kind, LedgerKind::ParseError));
 
@@ -499,7 +623,7 @@ mod tests {
             wads: Vec::new(),
             other_members: Vec::new(),
         };
-        let (s, l) = entry_outcome("x", &Ok(inspection));
+        let (s, l) = entry_outcome("x", &Ok(inspection), 3);
         assert!(matches!(s, FetchStatus::Ok));
         assert!(l.is_none());
     }
@@ -509,6 +633,7 @@ mod tests {
         let (_, l) = entry_outcome(
             "blade-of-agony",
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         let l = l.unwrap();
         assert_eq!(l.path, "blade-of-agony");
@@ -516,11 +641,24 @@ mod tests {
         assert!(matches!(l.kind, LedgerKind::HttpError));
     }
 
+    #[test]
+    fn ledger_attempts_carries_the_entry_request_count() {
+        let (_, l) = entry_outcome(
+            "x",
+            &Err(InspectError::Fetch(FetchFailure::Http(
+                "range-probe status 500".into(),
+            ))),
+            12,
+        );
+        assert_eq!(l.unwrap().attempts, 12);
+    }
+
     fn spec(slug: &str) -> OutlierSpec {
         OutlierSpec {
             slug: slug.to_owned(),
             url: format!("https://example.com/{slug}.zip"),
             note: "test entry".to_owned(),
+            skip: false,
         }
     }
 
@@ -538,7 +676,7 @@ mod tests {
             }],
             other_members: vec!["readme.txt".into()],
         };
-        let (record, ledger) = build_record(&spec("golden-souls-2"), 12_345, &Ok(inspection));
+        let (record, ledger) = build_record(&spec("golden-souls-2"), 12_345, &Ok(inspection), 3);
         assert_eq!(record.slug, "golden-souls-2");
         assert_eq!(record.zip_size, 12_345);
         assert!(record.zip64);
@@ -557,6 +695,7 @@ mod tests {
             &spec("total-chaos"),
             0,
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         assert_eq!(record.slug, "total-chaos");
         assert_eq!(record.zip_size, 0);
@@ -576,10 +715,96 @@ mod tests {
             &spec("eviternity-ii"),
             555_000_000,
             &Err(InspectError::Parse("bad magic".into())),
+            3,
         );
         assert_eq!(record.zip_size, 555_000_000);
         assert!(matches!(record.fetch_status, FetchStatus::ZipParseError));
         assert!(ledger.is_some());
+    }
+
+    #[test]
+    fn toml_skip_defaults_false_and_parses_when_present() {
+        let text = r#"
+            [[outlier]]
+            slug = "alive"
+            url = "https://example.com/a.zip"
+            note = "n"
+
+            [[outlier]]
+            slug = "dead"
+            url = "https://example.com/d.zip"
+            note = "host refuses (probed 2026-08-17)"
+            skip = true
+        "#;
+        let specs = parse_outliers_toml(text).unwrap();
+        assert!(!specs[0].skip);
+        assert!(specs[1].skip);
+    }
+
+    #[test]
+    fn skip_record_is_a_full_record_plus_ledger_line_with_zero_attempts() {
+        let mut s = spec("blade-of-agony");
+        s.skip = true;
+        let (record, ledger) = skip_record(&s);
+        assert_eq!(record.slug, "blade-of-agony");
+        assert_eq!(record.url, s.url);
+        assert_eq!(record.zip_size, 0);
+        assert!(!record.zip64);
+        assert_eq!(record.member_count, 0);
+        assert!(record.wads.is_empty());
+        assert!(record.other_members.is_empty());
+        assert!(matches!(record.fetch_status, FetchStatus::SkippedKnownDead));
+        assert_eq!(ledger.path, "blade-of-agony");
+        assert_eq!(ledger.action, "harvest-outliers");
+        assert!(matches!(ledger.kind, LedgerKind::Skipped));
+        assert_eq!(ledger.attempts, 0);
+        // Fixed string — the TOML `note` free text is never copied into
+        // outputs (ADR-0030 §3 discipline, same as `note` itself).
+        assert!(!ledger.detail.contains("probed 2026-08-17"));
+    }
+
+    #[test]
+    fn skipped_known_dead_wire_label_is_snake_case() {
+        let v = serde_json::to_value(FetchStatus::SkippedKnownDead).unwrap();
+        assert_eq!(v.as_str(), Some("skipped_known_dead"));
+    }
+
+    #[test]
+    fn pacing_sleeps_only_between_network_entries() {
+        // First network entry: nothing before it to space from.
+        assert!(!should_pace(false, false));
+        // Network entry after a prior network entry: space.
+        assert!(should_pace(true, false));
+        // A skipped entry never sleeps, regardless of history.
+        assert!(!should_pace(true, true));
+        assert!(!should_pace(false, true));
+    }
+
+    #[test]
+    fn the_committed_toml_marks_the_four_documented_hostile_hosts() {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("outliers.toml"),
+        )
+        .unwrap();
+        let specs = parse_outliers_toml(&text).unwrap();
+        let skipped: Vec<&str> = specs
+            .iter()
+            .filter(|s| s.skip)
+            .map(|s| s.slug.as_str())
+            .collect();
+        // File order — exactly the four 2026-08-17 refusals, nothing else.
+        assert_eq!(
+            skipped,
+            vec![
+                "blade-of-agony",
+                "total-chaos",
+                "golden-souls-2",
+                "simons-destiny"
+            ]
+        );
+        // The two proven-cooperative entries stay live.
+        assert!(specs.iter().any(|s| s.slug == "freedoom" && !s.skip));
+        assert!(specs.iter().any(|s| s.slug == "sigil-ii" && !s.skip));
     }
 
     #[test]
@@ -593,14 +818,58 @@ mod tests {
                 wads: Vec::new(),
                 other_members: Vec::new(),
             }),
+            3,
         );
         let (failed, _) = build_record(
             &spec("b"),
             0,
             &Err(InspectError::Fetch(FetchFailure::RangeUnsupported)),
+            3,
         );
         let counts = status_counts(&[ok, failed]);
         assert_eq!(counts.get("ok"), Some(&1));
         assert_eq!(counts.get("no_range_support"), Some(&1));
+    }
+
+    // ---- manifest assembly ----
+
+    #[test]
+    fn assemble_manifest_derives_id_duration_and_passthroughs() {
+        use chrono::TimeZone as _;
+        let started = chrono::Utc.with_ymd_and_hms(2026, 8, 22, 1, 2, 3).unwrap();
+        let now = started + chrono::Duration::seconds(90);
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert("ok".to_owned(), 2_u64);
+        let m = assemble_manifest(started, now, Some(3), 6, 6, 4, 21, 1234, counts.clone());
+        assert_eq!(m.id, "harvest-outliers-20260822T010203Z");
+        assert_eq!(m.started_at, started.to_rfc3339());
+        assert_eq!(m.duration_secs, 90);
+        assert_eq!(m.limit, Some(3));
+        assert_eq!(m.entries_total, 6);
+        assert_eq!(m.records_written, 6);
+        assert_eq!(m.ledger_count, 4);
+        assert_eq!(m.range_requests, 21);
+        assert_eq!(m.bytes_transferred, 1234);
+        assert_eq!(m.status_counts, counts);
+    }
+
+    #[test]
+    fn assemble_manifest_clamps_a_backwards_clock_to_zero_duration() {
+        use chrono::TimeZone as _;
+        let started = chrono::Utc.with_ymd_and_hms(2026, 8, 22, 1, 0, 0).unwrap();
+        let earlier = started - chrono::Duration::seconds(5);
+        let m = assemble_manifest(
+            started,
+            earlier,
+            None,
+            0,
+            0,
+            0,
+            0,
+            0,
+            std::collections::BTreeMap::new(),
+        );
+        assert_eq!(m.duration_secs, 0);
+        assert_eq!(m.limit, None);
     }
 }

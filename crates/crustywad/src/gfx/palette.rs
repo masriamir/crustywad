@@ -46,12 +46,15 @@ impl Playpal {
             }
         }
         let palettes = bytes
-            .chunks_exact(768)
+            .as_chunks::<768>()
+            .0
+            .iter()
             .map(|chunk| {
                 let mut entries = [[0u8; 3]; 256];
-                for (entry, rgb) in entries.iter_mut().zip(chunk.chunks_exact(3)) {
-                    entry.copy_from_slice(rgb);
-                }
+                // `chunk` is `&[u8; 768]`, so this is exactly 256 triples —
+                // `copy_from_slice` asserts that length instead of silently
+                // truncating if either side ever drifts.
+                entries.copy_from_slice(chunk.as_chunks::<3>().0);
                 Palette(entries)
             })
             .collect();
@@ -112,14 +115,7 @@ impl Colormap {
         } else {
             data.truncate(data.len() - data.len() % 256);
         }
-        let tables = data
-            .chunks_exact(256)
-            .map(|chunk| {
-                let mut table = [0u8; 256];
-                table.copy_from_slice(chunk);
-                table
-            })
-            .collect();
+        let tables = data.as_chunks::<256>().0.to_vec();
         Ok(Self { tables, warnings })
     }
 

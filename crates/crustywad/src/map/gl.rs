@@ -107,7 +107,7 @@ pub(crate) fn detect_gl_version(gl_vert: &[u8], gl_segs: &[u8]) -> Result<GlVers
 /// widening.
 ///
 /// Bounded and panic-safe: iterates `bytes.get(4..).unwrap_or(&[])` in fixed
-/// 8-byte chunks (`chunks_exact`), so memory use is `O(bytes.len())` with no
+/// 8-byte chunks (`as_chunks`), so memory use is `O(bytes.len())` with no
 /// capacity taken from an untrusted count.
 ///
 /// # Errors
@@ -140,7 +140,9 @@ pub(crate) fn decode_gl_vertices(bytes: &[u8]) -> Result<Vec<GlVertex>, MapAssem
     }
 
     Ok(rest
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .map(|chunk| {
             let x_raw = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             let y_raw = i32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
@@ -625,7 +627,7 @@ fn build_gl_node(
 /// error / lenient clamp-to-0 plus a [`MapWarning::DanglingReference`].
 ///
 /// Bounded and panic-safe: V2/V3 goes through [`parse_records`] and V5 iterates
-/// fixed-size chunks (`chunks_exact`), so memory use is `O(bytes.len())` with no
+/// fixed-size chunks (`as_chunks`), so memory use is `O(bytes.len())` with no
 /// capacity taken from an untrusted count.
 ///
 /// # Errors
@@ -697,7 +699,7 @@ pub(crate) fn decode_gl_nodes(
             let node_count = bytes.len() / RECORD_SIZE;
             let rd_i16 = |c: &[u8], off: usize| i16::from_le_bytes([c[off], c[off + 1]]);
             let mut nodes = Vec::with_capacity(node_count);
-            for c in bytes.chunks_exact(RECORD_SIZE) {
+            for c in bytes.as_chunks::<RECORD_SIZE>().0 {
                 let x = rd_i16(c, 0);
                 let y = rd_i16(c, 2);
                 let dx = rd_i16(c, 4);
