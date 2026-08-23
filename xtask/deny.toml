@@ -1,0 +1,45 @@
+# Restates the root workspace's deny.toml policy. xtask/ is its own cargo
+# workspace (ADR-0030 §1) and cargo-deny reads its configuration from the
+# workspace being checked, so the root file never reaches this graph. Keep
+# the two policies aligned when editing either.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# The allowlist matches the root policy, but this graph grows in phases
+# (#405–#407) — allowances the current tree doesn't use yet are expected,
+# not drift.
+unused-allowed-license = "allow"
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+]
+
+# webpki-roots ships Mozilla's CA trust-store as data under
+# CDLA-Permissive-2.0 (its code is MIT OR Apache-2.0). Permissive and
+# data-only; scoped to the one crate that carries it rather than added to
+# the global allowlist.
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

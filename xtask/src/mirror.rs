@@ -1,0 +1,439 @@
+//! Mirror pool and conditional ls-laR.gz fetch (DESIGN.md §5.0–§5.1).
+//!
+//! Never fetch from doomworld.com (web frontend, not a file host). Mirror
+//! fetches are exempt from the 1 req/s API gate (ADR-0030 §4). At most one
+//! ls-laR.gz transfer happens per run; on the warm path the single
+//! conditional GET answers 304 and no body moves at all.
+
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::Context as _;
+use serde::{Deserialize, Serialize};
+
+use crate::cache::atomic_write;
+use crate::lslar::{ArchiveTree, parse_ls_lar_gz};
+
+/// Shared HTTP client builder: both phases send a mainstream browser UA
+/// (§4.6 politeness posture), but ls-laR bootstrap (one whole-body fetch of
+/// a few hundred KB) and phase-2 mirror reads (small ranged fetches
+/// interleaved with rare, large full-file downloads under the §5.2
+/// fallback) have very different failure shapes — a single whole-request
+/// timeout that's safe for the former would abort a legitimate
+/// multi-hundred-MB fallback download, so phase 2 gets its own client
+/// ([`build_zips_http`]) instead of sharing this one's timeout.
+pub(crate) fn build_http() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(crate::api::client::BROWSER_UA)
+        .timeout(Duration::from_mins(2))
+        .build()
+        .context("building mirror HTTP client")
+}
+
+/// Phase-2 (`harvest-zips`) mirror client. Unlike [`build_http`]'s single
+/// whole-request timeout, this splits the budget: a short connect timeout
+/// (a slow/dead mirror should fail fast rather than eat a request slot)
+/// and a per-read idle timeout (a stalled transfer — the slowloris case —
+/// must not hang forever, but an active, slow-but-progressing multi-hundred
+/// MB full-download fallback must not be cut off mid-transfer either, which
+/// a single whole-request timeout would do).
+pub(crate) fn build_zips_http() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(crate::api::client::BROWSER_UA)
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_mins(1))
+        .build()
+        .context("building phase-2 mirror HTTP client")
+}
+
+/// One archive mirror.
+#[derive(Debug, Clone, Copy)]
+pub struct Mirror {
+    /// Short name for manifests and logs.
+    pub key: &'static str,
+    /// Base URL, trailing slash included.
+    pub base: &'static str,
+}
+
+/// §5.1 verified pool: infania primary (same-day Last-Modified when
+/// spiked), gamers.org fallback. Expected to change over the years —
+/// update DESIGN §5.1 in the same commit as this constant.
+pub const MIRRORS: [Mirror; 2] = [
+    Mirror {
+        key: "infania",
+        base: "https://ftpmirror1.infania.net/pub/idgames/",
+    },
+    Mirror {
+        key: "gamers",
+        base: "https://www.gamers.org/pub/idgames/",
+    },
+];
+
+/// Response size guard: `ls-laR.gz` is ~418 KB; a mirror suddenly serving
+/// gigabytes must not OOM the tool (ADR-0016 posture toward untrusted
+/// bytes). Enforced twice: a declared `Content-Length` over the cap skips
+/// the mirror before any body is read, and the body itself is then read
+/// as a bounded stream (chunk-by-chunk) that aborts the instant the
+/// running total would exceed the cap — an unbounded or lying stream is
+/// never fully buffered.
+const MAX_BODY_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Where this run's tree came from (recorded in the manifest).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapSource {
+    /// A mirror served a fresh listing.
+    Fresh {
+        /// Mirror key.
+        mirror: String,
+    },
+    /// The conditional refetch answered 304; the cached listing is current.
+    NotModified {
+        /// Mirror key.
+        mirror: String,
+    },
+    /// Every mirror failed but a previously-cached listing exists.
+    StaleCache,
+    /// No mirror answered and no cache exists — BFS fallback territory.
+    Unavailable,
+}
+
+impl BootstrapSource {
+    /// Manifest label.
+    pub fn label(&self) -> String {
+        match self {
+            BootstrapSource::Fresh { mirror } => format!("ls-lar-fresh:{mirror}"),
+            BootstrapSource::NotModified { mirror } => format!("ls-lar-304:{mirror}"),
+            BootstrapSource::StaleCache => "ls-lar-stale-cache".into(),
+            BootstrapSource::Unavailable => "unavailable".into(),
+        }
+    }
+}
+
+/// Sidecar metadata for the cached `ls-laR.gz`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LsLarMeta {
+    /// Which mirror served the cached bytes.
+    pub mirror: String,
+    /// The mirror's `Last-Modified` header, verbatim, if it sent one.
+    pub last_modified: Option<String>,
+    /// RFC 3339 fetch time (cache metadata, not a harvest output).
+    pub fetched_at: String,
+}
+
+/// The stored validator to echo as `If-Modified-Since` — only meaningful
+/// against the mirror that produced it.
+pub(crate) fn if_modified_since(meta: Option<&LsLarMeta>, mirror_key: &str) -> Option<String> {
+    meta.filter(|m| m.mirror == mirror_key)
+        .and_then(|m| m.last_modified.clone())
+}
+
+/// Fetch (or revalidate) the §5.0 bootstrap listing. Infallible by
+/// contract: failures degrade through the pool, then the stale cache,
+/// then `Unavailable`.
+pub async fn fetch_ls_lar(
+    http: &reqwest::Client,
+    cache_dir: &Path,
+) -> (Option<ArchiveTree>, BootstrapSource) {
+    let gz_path = cache_dir.join("ls-laR.gz");
+    let meta_path = cache_dir.join("ls-laR.meta.json");
+    let meta: Option<LsLarMeta> = std::fs::read(&meta_path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok());
+
+    for mirror in &MIRRORS {
+        let url = format!("{}ls-laR.gz", mirror.base);
+        let mut req = http.get(&url);
+        if let Some(ims) = if_modified_since(meta.as_ref(), mirror.key) {
+            req = req.header(reqwest::header::IF_MODIFIED_SINCE, ims);
+        }
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(mirror = mirror.key, error = %e, "mirror unreachable");
+                continue;
+            }
+        };
+
+        if resp.status() != reqwest::StatusCode::NOT_MODIFIED {
+            if let Some(result) = persist_and_parse(resp, mirror, &gz_path, &meta_path).await {
+                return result;
+            }
+            continue;
+        }
+
+        // 304: the cache must be readable, or we refetch unconditionally
+        // rather than ever surface Unavailable when a clean refetch could
+        // succeed.
+        if let Some(tree) = read_cached_tree(&gz_path) {
+            tracing::info!(mirror = mirror.key, "ls-laR.gz unchanged (304)");
+            return (
+                Some(tree),
+                BootstrapSource::NotModified {
+                    mirror: mirror.key.to_owned(),
+                },
+            );
+        }
+        tracing::warn!(
+            mirror = mirror.key,
+            "304 but cache unreadable; refetching unconditionally"
+        );
+        let _ = std::fs::remove_file(&meta_path);
+        match http.get(&url).send().await {
+            Ok(resp) => {
+                if let Some(result) = persist_and_parse(resp, mirror, &gz_path, &meta_path).await {
+                    return result;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(mirror = mirror.key, error = %e, "refetch failed");
+            }
+        }
+    }
+
+    match read_cached_tree(&gz_path) {
+        Some(tree) => {
+            tracing::warn!("all mirrors failed; using STALE cached ls-laR.gz");
+            (Some(tree), BootstrapSource::StaleCache)
+        }
+        None => (None, BootstrapSource::Unavailable),
+    }
+}
+
+/// Read and parse the cached gz, if present and parseable. `None` covers
+/// both "no cache" and "cache is corrupt" — both mean "cannot serve from
+/// disk, must fetch".
+fn read_cached_tree(gz_path: &Path) -> Option<ArchiveTree> {
+    read_cached_tree_with_cap(gz_path, MAX_BODY_BYTES)
+}
+
+/// Cap-parameterized body of [`read_cached_tree`] so tests can exercise
+/// the guard without a multi-mebibyte fixture. The cached gz was written
+/// under the network cap, but the same bound is enforced on the read path
+/// too (ADR-0016 posture: the invariant is local, not "by construction
+/// elsewhere") — an implausibly large cache file is treated as unreadable,
+/// which routes callers to a clean refetch.
+fn read_cached_tree_with_cap(gz_path: &Path, cap: u64) -> Option<ArchiveTree> {
+    let len = std::fs::metadata(gz_path).ok()?.len();
+    if len > cap {
+        tracing::warn!(
+            path = %gz_path.display(),
+            len,
+            "cached ls-laR.gz exceeds the size cap; ignoring it"
+        );
+        return None;
+    }
+    let bytes = std::fs::read(gz_path).ok()?;
+    parse_ls_lar_gz(&bytes).ok()
+}
+
+/// Persist a 200 response and parse it. `None` means "try the next
+/// mirror" (bad status, oversized body, torn download, or parse failure).
+async fn persist_and_parse(
+    mut resp: reqwest::Response,
+    mirror: &Mirror,
+    gz_path: &Path,
+    meta_path: &Path,
+) -> Option<(Option<ArchiveTree>, BootstrapSource)> {
+    let status = resp.status();
+    if !status.is_success() {
+        tracing::warn!(mirror = mirror.key, %status, "mirror answered non-success");
+        return None;
+    }
+    if resp
+        .content_length()
+        .is_some_and(|len| len > MAX_BODY_BYTES)
+    {
+        tracing::warn!(
+            mirror = mirror.key,
+            "ls-laR.gz implausibly large; skipping mirror"
+        );
+        return None;
+    }
+    let last_modified = resp
+        .headers()
+        .get(reqwest::header::LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    // Read incrementally so a mirror streaming an unbounded body is
+    // aborted mid-transfer rather than fully buffered before the cap is
+    // checked — the declared Content-Length above is a hint, not a bound.
+    let max_len = usize::try_from(MAX_BODY_BYTES).unwrap_or(usize::MAX);
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len() + chunk.len() > max_len {
+                    tracing::warn!(
+                        mirror = mirror.key,
+                        "ls-laR.gz body exceeded cap mid-stream"
+                    );
+                    return None;
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(mirror = mirror.key, error = %e, "body read failed");
+                return None;
+            }
+        }
+    }
+    let tree = match parse_ls_lar_gz(&bytes) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(mirror = mirror.key, error = %e, "ls-laR.gz did not parse");
+            return None;
+        }
+    };
+    let meta = LsLarMeta {
+        mirror: mirror.key.to_owned(),
+        last_modified,
+        fetched_at: chrono::Utc::now().to_rfc3339(),
+    };
+    // Best-effort persistence: a cache write failure degrades future runs
+    // to refetching, it must not fail this one.
+    if let Err(e) = atomic_write(gz_path, &bytes)
+        .and_then(|()| atomic_write(meta_path, &serde_json::to_vec(&meta).unwrap_or_default()))
+    {
+        tracing::warn!(error = %e, "could not persist ls-laR cache");
+    }
+    tracing::info!(
+        mirror = mirror.key,
+        dirs = tree.dirs.len(),
+        "fetched fresh ls-laR.gz"
+    );
+    Some((
+        Some(tree),
+        BootstrapSource::Fresh {
+            mirror: mirror.key.to_owned(),
+        },
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mirror_pool_matches_design_5_1() {
+        assert_eq!(MIRRORS[0].key, "infania");
+        assert_eq!(
+            MIRRORS[0].base,
+            "https://ftpmirror1.infania.net/pub/idgames/"
+        );
+        assert_eq!(MIRRORS[1].key, "gamers");
+        assert_eq!(MIRRORS[1].base, "https://www.gamers.org/pub/idgames/");
+        for m in &MIRRORS {
+            assert!(m.base.ends_with('/'));
+            assert!(
+                !m.base.contains("doomworld.com"),
+                "never pull binaries from doomworld"
+            );
+        }
+    }
+
+    #[test]
+    fn if_modified_since_only_for_the_serving_mirror() {
+        let meta = LsLarMeta {
+            mirror: "infania".into(),
+            last_modified: Some("Wed, 12 Aug 2026 06:00:00 GMT".into()),
+            fetched_at: "2026-08-12T06:01:00Z".into(),
+        };
+        assert_eq!(
+            if_modified_since(Some(&meta), "infania").as_deref(),
+            Some("Wed, 12 Aug 2026 06:00:00 GMT")
+        );
+        assert_eq!(if_modified_since(Some(&meta), "gamers"), None);
+        assert_eq!(if_modified_since(None, "infania"), None);
+        let no_lm = LsLarMeta {
+            last_modified: None,
+            ..meta
+        };
+        assert_eq!(if_modified_since(Some(&no_lm), "infania"), None);
+    }
+
+    #[test]
+    fn meta_roundtrips_through_json() {
+        let meta = LsLarMeta {
+            mirror: "infania".into(),
+            last_modified: Some("Wed, 12 Aug 2026 06:00:00 GMT".into()),
+            fetched_at: "2026-08-12T06:01:00Z".into(),
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: LsLarMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.mirror, "infania");
+        assert_eq!(
+            back.last_modified.as_deref(),
+            Some("Wed, 12 Aug 2026 06:00:00 GMT")
+        );
+    }
+
+    #[test]
+    fn oversized_cached_gz_is_ignored_not_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gz = tmp.path().join("ls-laR.gz");
+        // Valid small gz so the parse itself would succeed if reached.
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, b".:\ntotal 1\n").unwrap();
+        std::fs::write(&gz, enc.finish().unwrap()).unwrap();
+        let len = std::fs::metadata(&gz).unwrap().len();
+        // Above the cap: treated as unreadable (forces a clean refetch).
+        assert!(read_cached_tree_with_cap(&gz, len - 1).is_none());
+        // At/below the cap: parses normally.
+        assert!(read_cached_tree_with_cap(&gz, len).is_some());
+    }
+
+    #[test]
+    fn bootstrap_source_labels() {
+        assert_eq!(
+            BootstrapSource::Fresh {
+                mirror: "infania".into()
+            }
+            .label(),
+            "ls-lar-fresh:infania"
+        );
+        assert_eq!(
+            BootstrapSource::NotModified {
+                mirror: "infania".into()
+            }
+            .label(),
+            "ls-lar-304:infania"
+        );
+        assert_eq!(BootstrapSource::StaleCache.label(), "ls-lar-stale-cache");
+        assert_eq!(BootstrapSource::Unavailable.label(), "unavailable");
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fetches_and_parses_the_real_tree() {
+        if std::env::var_os("XTASK_NETWORK_TESTS").is_none() {
+            eprintln!("skipping: set XTASK_NETWORK_TESTS=1 to run network tests");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let http = reqwest::Client::builder()
+            .user_agent(crate::api::client::BROWSER_UA)
+            .timeout(std::time::Duration::from_mins(2))
+            .build()
+            .unwrap();
+        let (tree, source) = fetch_ls_lar(&http, dir.path()).await;
+        let tree = tree.expect("bootstrap should succeed against live mirrors");
+        assert!(matches!(source, BootstrapSource::Fresh { .. }));
+        // Spike 2026-08-12: 462 directories, 21,375 zips. Assert loose floors.
+        assert!(tree.dirs.len() > 400, "dirs: {}", tree.dirs.len());
+        assert!(tree.zip_count("") > 20_000);
+        assert!(tree.dirs.contains_key("levels/doom/0-9/"));
+
+        // Second call: conditional refetch — 304 or (if the file rolled) fresh.
+        let (tree2, source2) = fetch_ls_lar(&http, dir.path()).await;
+        assert!(tree2.is_some());
+        assert!(matches!(
+            source2,
+            BootstrapSource::NotModified { .. } | BootstrapSource::Fresh { .. }
+        ));
+    }
+}

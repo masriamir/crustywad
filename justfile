@@ -70,6 +70,24 @@ test-sweep dir=(justfile_directory() / "RETAIL") extdir=(justfile_directory() / 
 fuzz target="fuzz_wad_strict":
     cd fuzz && cargo fuzz run {{target}}
 
+# idgames corpus harvest (xtask/ is its own sub-workspace; ADR-0030,
+# xtask/DESIGN.md). These commands touch the network — they run locally
+# only, never in CI.
+harvest-api:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-api
+
+harvest-zips:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-zips
+
+harvest-outliers:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-outliers
+
+harvest-stats:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- stats
+
+# The full pipeline: enumerate, size, outliers, report.
+harvest: harvest-api harvest-zips harvest-outliers harvest-stats
+
 # Run all benchmarks with all features enabled.
 bench:
     cargo bench --all-features --benches
@@ -113,3 +131,22 @@ test-fast:
 # The pre-push gate plus the workspace build and dependency audit — the full
 # pre-release composition.
 ci-full: build test lint doc deny docs-sync
+
+# Pre-push gate for xtask-only branches. xtask/ is its own cargo workspace
+# (ADR-0030 §1), so the root `ci` recipe compiles none of it and would
+# green-light a broken xtask tree. Mirrors the check job of
+# .github/workflows/xtask.yml; that workflow's separate deny job covers the
+# sub-workspace's dependency audit in CI (locally:
+# `cargo deny check --manifest-path xtask/Cargo.toml`).
+ci-xtask:
+    cargo fmt --manifest-path xtask/Cargo.toml --all --check
+    cargo clippy --manifest-path xtask/Cargo.toml --all-targets --locked -- -D warnings
+    cargo test --manifest-path xtask/Cargo.toml --locked
+
+# Pre-push gate for branches that touch only Markdown outside
+# docs/guide/src/. Such a diff compiles nothing, so the only live check is
+# the doc-drift detector (anchors + version pins). Guide pages do NOT
+# qualify: their code samples compile as crate doctests (guide-doctests),
+# and the full `ci` gate's doctest pass is the only check that catches API
+# drift in them.
+ci-docs: docs-sync

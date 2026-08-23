@@ -1,0 +1,56 @@
+# The empty [workspace] table below makes xtask/ its own cargo workspace,
+# excluded from the root workspace on the fuzz/ pattern (ADR-0030 §1): the
+# harvester's dependency tree never enters the library's graph, MSRV
+# resolution, or badges. The audit hole isolation opens is closed by the
+# committed xtask/Cargo.lock, the /xtask stanza in .github/dependabot.yml,
+# and the path-gated xtask CI workflow (fmt/clippy/tests/cargo-deny).
+[workspace]
+
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# xtask/DESIGN.md §3 dependency set, phase-1 slice (#405). `flate2` and
+# `fastrand` are §3 addenda recorded in DESIGN.md: the ls-laR.gz bootstrap
+# is a gzipped payload file (transport Content-Encoding never applies),
+# and backoff jitter needs an RNG.
+anyhow = "1"
+blake3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+fastrand = "2"
+flate2 = "1"
+indicatif = "0.18"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
+# Parse-only use: `xtask/outliers.toml`, the §6.4 curated modern-outliers
+# list (#407) — never written back out.
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# `zip` major is spike-pinned to 8 (DESIGN §2/§5.2; 8.6.0 stable as of
+# 2026-08-12, 9.0 pre-release only). default-features = false: phase 2 reads
+# central-directory metadata only and never decompresses a member, so no
+# codec features belong in the production graph.
+zip = { version = "8", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
+# Test fixtures use the writer; `deflate` lets fixtures carry a
+# non-stored method for the §5.5 member-method edge case. Feature
+# unification enables it for tests only, never the release binary.
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

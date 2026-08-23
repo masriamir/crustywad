@@ -24,8 +24,9 @@
 //! [`Strictness`] modes.
 //!
 //! Oracle: no panic in either mode (ADR-0016 §2 — `decode_gl_group` is a
-//! sequential, iterative decode: `detect_gl_version`, then four
-//! `chunks_exact`/`parse_records` passes over the lumps in dependency order;
+//! sequential, iterative decode: `detect_gl_version`, then four fixed-record
+//! passes (`as_chunks`/`chunks_exact`/`parse_records`) over the lumps in
+//! dependency order;
 //! the GL BSP tree is stored, not walked, so no crafted input can recurse),
 //! and the decoded GL arenas are `O(input)` (ADR-0016 §1) — on a successful
 //! decode, `gl_vertices().len() + gl_segs().len() + gl_subsectors().len() +
