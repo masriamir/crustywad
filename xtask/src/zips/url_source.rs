@@ -1281,14 +1281,17 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn short_body_is_an_http_failure_naming_both_sides() {
-        // Content-Length is set to the *actual* (short) body length, not
-        // the 10 bytes `fetch` will ask for: a Content-Length that lies
-        // about the server's own body is a distinct transport-level
-        // failure hyper surfaces itself (as "body transport: ..."), before
-        // read_capped_body's own `bytes.len() < cap` check ever runs. This
-        // exercises the genuinely-under-delivered case the module doc
-        // describes: a well-formed, honestly-terminated body that is just
-        // shorter than what `fetch` requested.
+        // The case under test: a well-formed, honestly-terminated body
+        // that is simply SHORTER than the 10 bytes `fetch` asks for —
+        // `read_capped_body` reads it to EOF, comes up short of the
+        // requested `len`, and reports its own "short body: got X, wanted
+        // Y" failure (the genuinely-under-delivered case its doc
+        // describes). That is why Content-Length below is "5", the body's
+        // real length: a Content-Length that instead LIED about the body
+        // (say, declaring 10 over these 5 bytes) would die in hyper's own
+        // framing check as a "body transport: ..." error before
+        // read_capped_body's `bytes.len() < cap` check ever ran — a
+        // different failure mode this fixture deliberately does not build.
         let (url, _) = scripted_server(vec![canned(
             "206 Partial Content",
             &[("Content-Range", "bytes 0-9/100"), ("Content-Length", "5")],
