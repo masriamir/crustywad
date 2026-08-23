@@ -77,7 +77,9 @@ impl Pnames {
             }
         }
         let names = bytes[4..4 + count * 8]
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|chunk| String::from_utf8_lossy(trim_nul(chunk)).into_owned())
             .collect();
         Ok(Self { names, warnings })
