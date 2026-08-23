@@ -67,13 +67,7 @@ impl Doom64Png {
         let plte: Vec<[u8; 3]> = info
             .palette
             .as_ref()
-            .map(|p| {
-                p.as_chunks::<3>()
-                    .0
-                    .iter()
-                    .map(|c| [c[0], c[1], c[2]])
-                    .collect()
-            })
+            .map(|p| p.as_chunks::<3>().0.to_vec())
             .unwrap_or_default();
         if plte.is_empty() {
             // Reachable: the `png` crate only enforces PLTE presence when

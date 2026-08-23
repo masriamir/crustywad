@@ -107,7 +107,7 @@ pub(crate) fn detect_gl_version(gl_vert: &[u8], gl_segs: &[u8]) -> Result<GlVers
 /// widening.
 ///
 /// Bounded and panic-safe: iterates `bytes.get(4..).unwrap_or(&[])` in fixed
-/// 8-byte chunks (`chunks_exact`), so memory use is `O(bytes.len())` with no
+/// 8-byte chunks (`as_chunks`), so memory use is `O(bytes.len())` with no
 /// capacity taken from an untrusted count.
 ///
 /// # Errors
@@ -627,7 +627,7 @@ fn build_gl_node(
 /// error / lenient clamp-to-0 plus a [`MapWarning::DanglingReference`].
 ///
 /// Bounded and panic-safe: V2/V3 goes through [`parse_records`] and V5 iterates
-/// fixed-size chunks (`chunks_exact`), so memory use is `O(bytes.len())` with no
+/// fixed-size chunks (`as_chunks`), so memory use is `O(bytes.len())` with no
 /// capacity taken from an untrusted count.
 ///
 /// # Errors

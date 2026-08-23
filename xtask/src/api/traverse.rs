@@ -430,26 +430,24 @@ mod tests {
             dir: &str,
         ) -> impl std::future::Future<Output = Result<FetchOutcome, ApiCallError>> {
             self.calls.push(dir.to_owned());
-            let result = if self.fail_with_http.iter().any(|p| p == dir) {
-                Err(ApiCallError::Http {
+            if self.fail_with_http.iter().any(|p| p == dir) {
+                return std::future::ready(Err(ApiCallError::Http {
                     attempts: 6,
                     detail: "HTTP 500".into(),
-                })
-            } else {
-                let body = self
-                    .responses
-                    .get(dir)
-                    .cloned()
-                    .unwrap_or(serde_json::json!({"file": null, "dir": null}));
-                let listing: ContentListing = serde_json::from_value(body).unwrap();
-                let changed = Some(self.changed_true.iter().any(|p| p == dir));
-                Ok(FetchOutcome {
-                    listing,
-                    from_cache: false,
-                    changed,
-                })
-            };
-            std::future::ready(result)
+                }));
+            }
+            let body = self
+                .responses
+                .get(dir)
+                .cloned()
+                .unwrap_or(serde_json::json!({"file": null, "dir": null}));
+            let listing: ContentListing = serde_json::from_value(body).unwrap();
+            let changed = Some(self.changed_true.iter().any(|p| p == dir));
+            std::future::ready(Ok(FetchOutcome {
+                listing,
+                from_cache: false,
+                changed,
+            }))
         }
     }
 

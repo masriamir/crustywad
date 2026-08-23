@@ -479,14 +479,11 @@ mod tests {
             self.fetches += 1;
             let start = usize::try_from(offset).unwrap();
             let end = start + usize::try_from(len).unwrap();
-            let result = match self.bytes.get(start..end).map(<[u8]>::to_vec) {
-                Some(served) => {
-                    self.bytes_served += u64::try_from(served.len()).unwrap();
-                    Ok(served)
-                }
-                None => Err(FetchFailure::Http("range beyond EOF".into())),
+            let Some(served) = self.bytes.get(start..end).map(<[u8]>::to_vec) else {
+                return std::future::ready(Err(FetchFailure::Http("range beyond EOF".into())));
             };
-            std::future::ready(result)
+            self.bytes_served += u64::try_from(served.len()).unwrap();
+            std::future::ready(Ok(served))
         }
     }
 

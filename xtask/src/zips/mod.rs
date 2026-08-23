@@ -1324,9 +1324,13 @@ mod tests {
     }
 
     impl RangeSource for FakeEntrySource {
-        // Sync bodies below use the desugared async-trait form
-        // (`impl Future` + `ready`) — clippy 1.98's
-        // `unused_async_trait_impl`; same for every fake in this module.
+        // Sync bodies below use the desugared async-trait form — clippy
+        // 1.98's `unused_async_trait_impl`: `impl Future` + `ready`, or
+        // `poll_fn` for the panicking guard fake. Same form for every fake
+        // in this module. Side effects (counter bumps, call recording) now
+        // run at future-construction time rather than first poll —
+        // indistinguishable here because every call site awaits in the
+        // same expression.
         fn fetch(
             &mut self,
             offset: u64,
@@ -1533,17 +1537,19 @@ mod tests {
             offset: u64,
             len: u64,
         ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
-            let result = if self.fail.load(Ordering::SeqCst) {
-                Err(FetchFailure::Http("simulated transient failure".into()))
-            } else {
-                let start = usize::try_from(offset).unwrap();
-                let end = start + usize::try_from(len).unwrap();
+            if self.fail.load(Ordering::SeqCst) {
+                return std::future::ready(Err(FetchFailure::Http(
+                    "simulated transient failure".into(),
+                )));
+            }
+            let start = usize::try_from(offset).unwrap();
+            let end = start + usize::try_from(len).unwrap();
+            std::future::ready(
                 self.bytes
                     .get(start..end)
                     .map(<[u8]>::to_vec)
-                    .ok_or_else(|| FetchFailure::Http("range beyond EOF".into()))
-            };
-            std::future::ready(result)
+                    .ok_or_else(|| FetchFailure::Http("range beyond EOF".into())),
+            )
         }
     }
 
