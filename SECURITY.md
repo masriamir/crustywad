@@ -2,11 +2,11 @@
 
 ## Supported versions
 
-This project is pre-1.0.0. Security fixes will land on the latest `main` branch until a stable release process is established.
+This project is pre-1.0.0. Only the latest published release of each crate is supported: security fixes land on `main` and ship in the next release.
 
 ## Reporting a vulnerability
 
-Please use GitHub Security Advisories or a private maintainer contact path instead of filing a public issue for a suspected vulnerability.
+Please use [private vulnerability reporting](https://github.com/masriamir/crustywad/security/advisories/new) instead of filing a public issue for a suspected vulnerability.
 
 ## Security posture
 
