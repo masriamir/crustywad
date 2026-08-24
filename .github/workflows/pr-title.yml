@@ -1,0 +1,21 @@
+name: PR Title
+
+# PRs squash-merge, so the PR title becomes the only commit on `main` and is the
+# Conventional Commit release-plz reads for the CHANGELOG section and the version
+# bump — nothing else checks it (lefthook's commit-msg hook validates branch
+# commits, which are exactly what squash-merge discards; observed misfiling on
+# #423). Calls the shared reusable workflow, which self-tests and then runs the
+# vendored validator in scripts/ — kept identical to the canonical copy by the
+# meta-check drift gate.
+on:
+  pull_request:
+    # `edited` catches a retitle; `synchronize` re-attaches the check to each new
+    # head SHA, so a push can't leave the latest commit without this signal.
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    uses: masriamir/.github/.github/workflows/pr-title.yml@7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065 # main branch pin
