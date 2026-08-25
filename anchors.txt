@@ -11,7 +11,9 @@
 #   just docs-sync
 #
 # When renaming a convention phrase, update:
-#   1. All the documentation files above
+#   1. The documentation files above — but a phrase inside a synced `meta:` block in
+#      AGENTS.md must be changed at its canonical source in masriamir/.github and synced
+#      in (never edited in AGENTS.md directly); only repo-authored phrases are edited locally
 #   2. This file (anchors.txt)
 #
 # ─── Core conventions ────────────────────────────────────────────────────────
