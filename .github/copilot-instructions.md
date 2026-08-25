@@ -106,6 +106,7 @@ cargo doc --workspace --all-features --no-deps
 ### Language
 - American English spelling everywhere — not only documentation, but identifiers, code comments, doc comments, CLI output, commit messages and PR text. Take the American form of every `-ise`/`-ize`, `-our`/`-or`, `-re`/`-er` and `-ae`/`-e` pair: `initialize`, `honor`, `center`, `artifact`, `color`, `behavior`, `analyze`.
 - Third-party vocabulary is exempt: GitHub Actions' job status literal is `cancelled`. Status values, API fields and dependency identifiers are quoted, never corrected.
+- Applying or flagging this is not a mechanical find-and-replace: skip backticked code spans, and match the *pattern* (`-ise`/`-ize`, and the others above) rather than a literal wrong word — the American forms listed above are the intended spellings, not violations. A rule that lists counter-examples necessarily contains the spellings it forbids.
 
 ### Documentation
 - `missing_docs = "deny"` is enforced workspace-wide — every public item must have a doc comment.
