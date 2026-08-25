@@ -1,4 +1,9 @@
-# CLAUDE.md
+# AGENTS.md
+
+Shared, tool-neutral guidance for any agent working in `crustywad`. Claude reads it via the
+`@AGENTS.md` import in `CLAUDE.md`; GitHub Copilot code review reads it directly. Sections marked
+with `meta:` markers are canonical blocks synced from `masriamir/.github` — edit them upstream,
+not here (see `.meta-manifest.toml` and `just meta-check`).
 
 ## Project overview
 
@@ -45,7 +50,7 @@ docs/
 scripts/
   check_doc_anchors.py # Living-docs anchor drift detector (ADR-0007); run via `just docs-sync`
   check_doc_versions.py # Fails if a documented `crustywad = "X.Y.Z"` pin no longer resolves to the crate's actual version; run via `just docs-sync`
-anchors.txt            # Anchor strings that must appear verbatim in all three main doc files
+anchors.txt            # Anchor strings that must appear verbatim in the checked doc files
 tests/
   fixtures/
     fetch_freedoom.py  # Downloads Freedoom WAD fixtures from GitHub releases
@@ -84,6 +89,7 @@ Install [just](https://github.com/casey/just), then:
 | Dependency audit | `just deny` (requires `cargo-deny`) |
 | Fetch Freedoom fixtures | `just fetch-fixtures` |
 | Doc drift check (anchors + version pins) | `just docs-sync` |
+| Vendored-file drift check | `just meta-check` |
 | Benchmarks | `just bench` (criterion; HTML report in `target/criterion/`) |
 | Benchmarks + open report | `just bench-open` |
 | Mid-iteration check (skips doctests + rustdoc) | `just ci-fast` |
@@ -121,10 +127,12 @@ CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" cargo test --workspace --a
 
 ### Language
 
-- **American English spelling everywhere** — not only documentation: identifiers, code comments, doc comments, CLI output, commit messages and PR text. Take the American form of every `-ise`/`-ize`, `-our`/`-or`, `-re`/`-er` and `-ae`/`-e` pair: `initialize`, `honor`, `center`, `artifact`, `color`, `behavior`, `analyze`.
-- **Check spelling as you write, not only when reviewing.** Until 2026-08-12 this rule covered documentation alone, and the repo still accumulated a dozen violations — one in this very file, and one in a workflow comment using the exact form the old rule named as wrong.
-- **Third-party vocabulary keeps its own spelling.** GitHub Actions' job status literal is `cancelled`; a status value, API field or dependency identifier is quoted, never corrected. The rule governs our words, not other people's.
-- **Sweeping for this is not a plain find-and-replace**, and this section is the proof: a rule that lists counter-examples necessarily contains the spellings it forbids, so the first sweep of this repo corrupted it into `"honor" not "honor"`. Skip backticked code spans, and state the *pattern* rather than quoting the wrong word — which is why the first bullet reads as it does.
+<!-- >>> meta:language-en-us -->
+- **American English spelling everywhere** — not only documentation: identifiers, code comments, doc comments, CLI and other user-visible output, commit messages and PR text. Take the American form of every `-ise`/`-ize`, `-our`/`-or`, `-re`/`-er` and `-ae`/`-e` pair: `initialize`, `honor`, `center`, `artifact`, `color`, `behavior`, `analyze`.
+- **Third-party vocabulary keeps its own spelling.** GitHub Actions' job-status literal is `cancelled`; a status value, API field or dependency identifier is quoted, never corrected. The rule governs our words, not other people's.
+- **Applying or flagging this is not a mechanical find-and-replace.** Skip backticked code spans, and match the *pattern* (`-ise`/`-ize`, and the others above) rather than a literal wrong word — the American forms listed above are the intended spellings, not violations. Because a rule like this must name the very spellings it forbids, a blind sweep rewrites its own counter-examples: a bullet meaning "write `color`, not the `-our` form" gets flattened to "write `color`, not `color`", which forbids nothing.
+- **Check spelling as you write, not only when reviewing** — text copied verbatim from upstream is the usual source of slips.
+<!-- <<< meta:language-en-us -->
 
 ### Error handling
 
@@ -162,7 +170,6 @@ CRUSTYWAD_FREEDOOM_DIR="$PWD/tests/fixtures/freedoom" cargo test --workspace --a
 - Strict mode returns the first `ParseError` encountered.
 - Lenient mode attempts best-effort recovery and collects `ParseWarning` values.
 - Every new validation must honor both modes.
-
 
 ## Testing practices
 
@@ -229,13 +236,12 @@ ADR-0016 for the full rationale.
 
 ## Feature flags
 
-See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations. That file is the single source of truth — it is published via the mdBook guide to GitHub Pages.
+See [`docs/guide/src/features.md`](docs/guide/src/features.md) for the full feature flag reference including usage examples, platform notes, and common `cargo` invocations. That file is the single source of truth — it is published via the mdBook guide to GitHub Pages.
 
-**Sync rule:** when a feature flag is added, removed, or renamed, update **all four** of:
+**Sync rule:** when a feature flag is added, removed, or renamed, update **all three** of:
 1. `docs/guide/src/features.md` — detailed docs, usage examples, and the summary table (primary)
 2. The summary table below in this file
-3. The summary table in `.github/copilot-instructions.md`
-4. The summary table in `README.md`
+3. The summary table in `README.md`
 
 | Feature | Default | Purpose |
 |---|---|---|
@@ -252,129 +258,54 @@ See [`docs/guide/src/features.md`](../docs/guide/src/features.md) for the full f
 
 ## Commit conventions
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
+<!-- >>> meta:commit-conventions -->
+Follow [Conventional Commits](https://www.conventionalcommits.org/): `feat` (new functionality), `fix` (bug fix), `docs` (documentation only), `test` (test-only), `refactor` (no behavior change), `chore` (build/tooling), `ci` (CI workflows). Scope is encouraged — `feat(map):`, `fix(cli):`.
 
-| Prefix | When |
-|---|---|
-| `feat:` | new functionality |
-| `fix:` | bug fixes |
-| `docs:` | documentation only |
-| `test:` | test-only changes |
-| `refactor:` | no behavior change |
-| `chore:` | build, tooling |
-| `ci:` | CI workflow changes |
+**Mark breaking changes** with `!` (`feat(map)!: remove RejectLump`) or a `BREAKING CHANGE:` footer. Release automation derives the version bump from these annotations, so an unmarked breaking change proposes a semver-violating patch release.
 
-Scope is encouraged: `feat(map):`, `fix(cli):`, etc.
+**The PR title is the changelog entry and the version bump.** PRs squash-merge to a single commit whose subject is the PR title and whose body is blank — every branch commit subject is discarded. So the PR title alone selects the changelog section and drives the derived bump. Write it as a real Conventional Commit describing the shipped outcome; never `gh pr create --fill` (it takes the title from the branch name). Title a mixed PR by its highest-impact change (`!` > `feat` > `fix` > everything else), or split it into one PR per type when both halves each earn a changelog line. Never hand-force a version to compensate for a title.
+<!-- <<< meta:commit-conventions -->
 
-**Breaking changes must be marked** with `!` (e.g. `feat(map)!: remove RejectLump`) or a
-`BREAKING CHANGE:` footer — release-plz derives version bumps from these annotations, and an
-unmarked breaking change proposes a semver-violating patch release (caught live on the 0.5.0
-prep). `semver_check = true` in `release-plz.toml` runs `cargo-semver-checks` against the
-published baseline as a safety net, but correct annotations are the first line of defense.
-
-**The PR title is the only Conventional Commit release-plz ever sees.** PRs land as a single
-squash commit whose subject is the PR title and whose body is empty — every branch commit
-subject is discarded. So the PR title alone selects the CHANGELOG section and drives the
-derived bump; a `feat(map):` commit on a branch merged under a `fix(map):` title files its new
-public API under `### Fixed` and never appears under `### Added` (observed on #423 → 0.9.5).
-
-**Title a mixed PR by its highest-impact change** — `!` > `feat` > `fix` > everything else —
-**or split it** into one PR per type when the halves are genuinely separable and each earns its
-own CHANGELOG line. Splitting is the better choice when both entries carry real information;
-titling by highest impact is the default when they do not, or when the halves are
-dependency-ordered.
-
-Pre-1.0 this is a **changelog** decision, not a version one: `feat:` and `fix:` both derive a
-patch and only `!` bumps the minor, so no title choice can change the computed version (see
-[Versioning and Release Policy](../docs/guide/src/versioning.md)). **At 1.0.0 the title becomes
-load-bearing** — `feat:` will bump the minor, and a `fix:`-titled PR that adds public API
-becomes a real SemVer violation — so the habit is built now, while it costs nothing. Never
-hand-force a version to compensate for a title.
-
-The `lefthook.yml` pre-commit hook runs `cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits pattern.
-
-## Project tracking
-
-Work is tracked on the **[Crustywad](https://github.com/users/masriamir/projects/5)** GitHub Project board — the single source of "what to pick up next". Every roadmap issue lives there with three planning dimensions:
-
-- **Status** (workflow stage): `Backlog` → `Ready` → `In progress` → `In review` → `Done`. Pull work from the `Ready` column. Most transitions are **agent-driven** — see [Issue status transitions](#issue-status-transitions-agent-driven) below; only `Done` is set automatically by the board on merge/close.
-- **Horizon** (priority bucket): `Now` / `Next` / `Later`. This carries planning intent for issues that have no milestone yet (e.g. the editor epic #18 and its long-horizon spikes); it replaces the former `Short Term` / `Future` milestones.
-- **Milestone** (release scope): milestones are **release-scoped and scope-named** (`Audio layer`, `Nodebuilder`, …) — each the set of epics/issues intended to ship together. Names deliberately do **not** encode version numbers: crates version independently (ADR-0011 §3) and `release-plz` derives the actual versions from Conventional Commits **at ship time**, so a version-shaped milestone name is a prediction that cannot reliably be kept (the `v0.7.0` milestone shipped as crustywad 0.6.1 / cli 0.3.1 on 2026-07-19, prompting this policy). At closeout, record the shipped crate versions in the milestone description. Historical milestones `v0.1.0`–`v0.6.0` keep their version-shaped names.
-
-**Epics** (the `epic` label, e.g. #17, #18) use GitHub **native sub-issues**, so they show automatic progress rollup — attach each new format/feature issue as a sub-issue of its epic.
-
-Typical flow: pick a `Ready` + `Now` item → begin planning (`In progress`) → branch by its issue number (below) → open a PR (`In review`) → merge closes the issue and sets `Done`.
-
-### Issue status transitions (agent-driven)
-
-I move the board myself as work progresses and **announce each change** in my reply (e.g. "moved #201 → In progress") rather than asking first — board edits are internal and easily reversed. The transitions:
-
-| Transition | Trigger |
-|---|---|
-| `Backlog → Ready` | The user says they want to start work on an issue |
-| `Ready → In progress` | I begin brainstorming or drafting an implementation plan for the issue — **before** any branch or code |
-| `In progress → In review` | The PR opens |
-| `In review → Done` | PR merges/closes — **board-automated**, not manual |
-
-`In review` holds through the entire Copilot review loop, until human review and merge. Transitions apply only to a tracked issue that is on the board; if an issue exists but isn't on the board, add it first. The `gh project item-edit` recipe (Status field + option IDs) lives in the `reference-project-board` memory; it needs the `read:project,project` scope — if that scope is missing, surface it and ask the user to grant it rather than silently skipping the transition.
-
-**Epics** (the `epic` label, e.g. #17, #18) carry an **aggregate** Status distinct from the per-issue flow above: an epic moves to `In progress` when its **first** sub-issue starts work, and stays there until **all** its sub-issues close (only then does the board automate it to `Done`). GitHub does not propagate a sub-issue's board **Status** field up to the epic (only completion progress rolls up automatically), so I set the epic's Status myself and announce it. An epic's Horizon (`Now`/`Next`/`Later`) still carries its planning intent; sub-issue rollup shows its completion progress.
-
-### Milestone closeout (propose-and-confirm)
-
-A milestone is **complete** when BOTH conditions hold:
-
-1. **All milestone items closed** — the milestone reports `open_issues == 0`. That is GitHub's milestone counter, which covers every assigned item (issues *and* any pull requests), not just issues, and is distinct from the board's `Done` Status field — closing an item typically sets both, but the milestone counter is the signal here.
-2. **Shipped** — a `release-plz` PR (`chore: release`) has merged at or after the last milestone item closed. This is tag-agnostic: milestones are scope-named, so no version correspondence is expected — any release PR merged on/after that final close is the ship signal. When closing, add the shipped crate versions to the milestone description.
-
-GitHub never auto-closes milestones. Unlike the agent-driven board Status transitions above, milestone closeout is **propose-and-confirm**: when I notice both conditions hold for an open milestone, I surface it and **ask before closing**. On your approval:
-
-```bash
-gh api -X PATCH repos/masriamir/crustywad/milestones/<milestone_number> -f state=closed
-```
-
-Closure is reversible (`-f state=open`). To find `<milestone_number>` (and its issue counts), the companion listing recipe — `gh api "repos/masriamir/crustywad/milestones?state=all"` — lives in the `reference-project-board` memory.
+Crustywad specifics: `release-plz` derives the version bump from the `!`/`BREAKING CHANGE:`
+annotations, and an unmarked breaking change proposes a semver-violating patch release (caught
+live on the 0.5.0 prep). `semver_check = true` in `release-plz.toml` runs `cargo-semver-checks`
+against the published baseline as a safety net, but correct annotations are the first line of
+defense. Pre-1.0 the PR-title type is a **changelog** decision, not a version one: `feat:` and
+`fix:` both derive a patch and only `!` bumps the minor, so no title choice can change the
+computed version (see [Versioning and Release Policy](docs/guide/src/versioning.md)). **At 1.0.0
+the title becomes load-bearing** — `feat:` will bump the minor, and a `fix:`-titled PR that adds
+public API becomes a real SemVer violation — so the habit is built now, while it costs nothing.
+Never hand-force a version to compensate for a title. The `lefthook.yml` pre-commit hook runs
+`cargo fmt` and `cargo clippy`, and validates commit messages against the Conventional Commits
+pattern.
 
 ## Git branching workflow
 
-All work branches from `main` after a `git pull`. A branch is named `<type>/<slug>`; the slug is descriptive (never a bare issue number) and is prefixed with the issue number when a tracking issue exists.
+<!-- >>> meta:branch-naming -->
+Branch from `main` after a `git pull`. Name every branch `<type>/<slug>` where `type` is one of `feature`, `bugfix`, `hotfix`, `docs`, or `chore`. The slug is descriptive and always required — a bare number such as `feature/42` is rejected — and is prefixed with the issue number when a tracking issue exists (`feature/42-mmap-support`). The number is optional in the pre-push hook but expected for the issue-driven `feature`/`bugfix`/`hotfix` types; `docs`/`chore` branches commonly omit it.
 
-| Branch type | Template | Example |
-|---|---|---|
-| Feature | `feature/###-short-desc` (or `feature/short-desc`) | `feature/42-mmap-support` |
-| Bugfix | `bugfix/###-short-desc` (or `bugfix/short-desc`) | `bugfix/17-header-parse` |
-| Hotfix | `hotfix/###-short-desc` (or `hotfix/short-desc`) | `hotfix/55-oob-read` |
-| Docs | `docs/###-short-desc` (or `docs/short-desc`) | `docs/197-project-workflow` |
-| Chore | `chore/###-short-desc` (or `chore/short-desc`) | `chore/tidy-ci` |
+**Release branches are not used.** Release automation handles version bumps, changelog, and tags from the Conventional Commits on `main`; merge the release PR to ship.
+<!-- <<< meta:branch-naming -->
 
-`###` is the GitHub issue number. It is optional in the pre-push hook but strongly encouraged for `feature`/`bugfix`/`hotfix` branches, which are issue-driven; `docs`/`chore` branches commonly omit it. A descriptive slug is always required — a bare number such as `feature/42` is rejected.
+Crustywad specifics: `release-plz` automates version bumps, CHANGELOG, and git tags
+(`crustywad-v*` / `crustywad-cli-v*`) from Conventional Commits on `main` — merge the `release-plz`
+release PR to ship. The `lefthook.yml` pre-push hook enforces branch naming. Typical loop:
+`git pull origin main` → `git checkout -b <type>/<slug>` → commit with Conventional Commits →
+`just ci` before pushing (xtask-only branches: `just ci-xtask`) → open a PR against `main`.
 
-**Release branches are not used** — `release-plz` automates version bumps, CHANGELOG, and git tags (`crustywad-v*` / `crustywad-cli-v*`) from Conventional Commits on `main`. Merge the `release-plz` release PR to ship.
+## Copilot review
 
-The `lefthook.yml` pre-push hook enforces branch naming and will reject pushes from non-conforming branches.
+<!-- >>> meta:copilot-review-loop -->
+PRs are reviewed automatically by `copilot-pull-request-reviewer`. Work through its comments — review threads **and** the suppressed comments in the review body — across as many rounds as needed. Verify each finding against the actual code before acting; bots are sometimes wrong or working from a stale diff.
 
-**Workflow:**
-1. `git pull origin main`
-2. `git checkout -b feature/###-description`
-3. Commit with Conventional Commits (`feat(scope): ...`)
-4. Run `just ci` before pushing (xtask-only branches: `just ci-xtask`)
-5. Open a PR against `main`
+A PR is ready for human review only when **all** of these hold:
 
-## Copilot review-comment workflow
+- every automated review thread is resolved,
+- every required CI check passes (`gh pr checks`), and
+- the codecov comment reports no uncovered changed lines (or each remaining miss is consciously justified).
 
-PRs are reviewed automatically by `copilot-pull-request-reviewer`. Use the personal
-`resolving-bot-pr-reviews` skill (`~/.claude/skills/resolving-bot-pr-reviews/`) to work
-through its comments across as many rounds as needed.
-
-A PR is ready for human review only when **all** automated review threads are resolved **and**
-all required CI checks pass (`gh pr checks`) — resolved threads over any red required check do
-not make a PR ready. Only then hand off for human review.
-
-Project facts the skill needs:
-- Bot login: `copilot-pull-request-reviewer`
-- CI command: `just ci` (see Development workflow above)
-- Owner/repo: parsed from the `git remote get-url origin` URL
-- Timing: skill defaults (60s poll / 5min dwell / 15min stall) apply — no override needed
+Resolved threads over a red required check — or unaddressed missing coverage — do **not** make a PR ready. Whether a fresh review is auto-requested on push or must be requested by hand is a per-repo ruleset detail (`review_on_push`); check the ruleset when a request seems stuck rather than assuming.
+<!-- <<< meta:copilot-review-loop -->
 
 ## CI pipeline
 
@@ -389,7 +320,9 @@ The CI (`.github/workflows/ci.yml`) runs on every push to `main` and all PRs:
 | `docs` | `cargo doc` with `RUSTDOCFLAGS=-D warnings` |
 | `coverage` | `cargo llvm-cov` + Codecov upload |
 | `security-deny` | `cargo deny check` |
-| `docs-sync` | `python3 scripts/check_doc_anchors.py` — verifies anchor strings are present in all three main doc files; and `python3 scripts/check_doc_versions.py` — verifies every documented `crustywad = "X.Y.Z"` pin still resolves to the crate's actual version |
+| `docs-sync` | `python3 scripts/check_doc_anchors.py` — verifies anchor strings are present in the checked doc files; and `python3 scripts/check_doc_versions.py` — verifies every documented `crustywad = "X.Y.Z"` pin still resolves to the crate's actual version |
+| `meta-check` | calls the shared reusable workflow to verify vendored files match their pinned canonical sources (`.meta-manifest.toml`) |
+| `pr-title` | validates the PR title against the Conventional Commits pattern (the squash subject) |
 
 **Runner policy:** hand-authored workflows use `-latest` runner labels (`ubuntu-latest`; `macos-latest`/`windows-latest` in the test matrix) deliberately. GitHub's labeled images mutate weekly in place, so a version label buys no real reproducibility, while pinned labels become scheduled outages when GitHub retires an image (as happened to `ubuntu-20.04` and `macos-12`). Reproducibility comes from `Cargo.lock`, the pinned msrv toolchain, Dependabot-pinned action versions, and the pinned dist/mdbook tool versions instead. The only pinned runners (`ubuntu-22.04`) live in `release.yml`, which is **generated by dist** — never hand-edit it to normalize runner labels (`dist generate` owns that file), and Linux release artifacts target musl, so runner-image variance barely affects artifact compatibility.
 
@@ -401,12 +334,10 @@ CodeQL (`.github/workflows/codeql.yml`) runs on push, PR, and weekly. It uses `s
 
 **Documented version pins (minor releases):** the README and the guide show `Cargo.toml` snippets pinned to the **full `X.Y.Z`** (`crustywad = "0.3.0"`) — the form `cargo add` itself writes, and the one that states the minimum patch a reader needs. For a `0.x` crate, Cargo's caret requirement is *minor*-pinned — `"0.2.0"` means `>=0.2.0, <0.3.0` — so the moment a release bumps the **minor** version, every stale snippet stops resolving for readers. `scripts/check_doc_versions.py` (part of `just docs-sync`, and run by the `docs-sync` CI job) enforces this: it reads `[package].version` from `crates/crustywad/Cargo.toml`, discovers every doc that carries a pin (no hardcoded file list), and fails when a pin would no longer fetch the current version.
 
-**Consequence: a release PR that bumps the minor version will fail CI until its doc pins are updated.** That is intentional — the pins silently rotted through the `0.1` → `0.2` bump and nobody noticed (#235). When `release-plz` opens a **minor**-bump release PR, push a commit onto its branch updating the pins in `README.md` and `docs/guide/src/`, then merge.
-
-**Patch bumps need no change:** `0.3.0` → `0.3.1` still resolves against a `"0.3.0"` pin (the caret fetches 0.3.1), so CI stays green and the docs need no commit. The check fires only when a pin genuinely stops working.
+**Consequence: a release PR that bumps the minor version will fail CI until its doc pins are updated.** That is intentional — the pins silently rotted through the `0.1` → `0.2` bump and nobody noticed (#235). When `release-plz` opens a **minor**-bump release PR, push a commit onto its branch updating the pins in `README.md` and `docs/guide/src/`, then merge. **Patch bumps need no change:** `0.3.0` → `0.3.1` still resolves against a `"0.3.0"` pin, so CI stays green and the docs need no commit.
 
 **Version bump:** `crates/crustywad-cli/Cargo.toml` pins the `crustywad` path dependency with an explicit version (`crustywad = { path = "../crustywad", version = "X.Y.Z" }`), which Cargo treats as a caret requirement — patch/compatible bumps to `crustywad`'s version need no change here. `cargo-deny` requires this field (`wildcards = "deny"`) but it does not inherit `crustywad`'s version automatically. Crates are versioned independently (ADR-0011 §3, no `version.workspace = true`); update this field only when `crustywad`'s version moves outside the current caret range (e.g. `0.1.z` → `0.2.0`), or `cargo deny check` will fail.
 
 ## Roadmap
 
-The original six-item format roadmap (directory reading, map lump parsing with full graph assembly, graphics, textures, audio, write support) has shipped in full. Current direction lives on the project board (see [Project tracking](#project-tracking) above) — active long-horizon epics: ACS support (#242), editor foundations (#18), and idgames corpus tooling (#401).
+The original six-item format roadmap (directory reading, map lump parsing with full graph assembly, graphics, textures, audio, write support) has shipped in full. Current direction lives on the [Crustywad project board](https://github.com/users/masriamir/projects/5) — active long-horizon epics: ACS support (#242), editor foundations (#18), and idgames corpus tooling (#401).

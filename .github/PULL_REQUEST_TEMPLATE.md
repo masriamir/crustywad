@@ -10,11 +10,10 @@
 
 If this PR renames or introduces a shared convention phrase:
 
-- [ ] Updated the phrase in `.github/copilot-instructions.md`
-- [ ] Updated the phrase in `.claude/CLAUDE.md`
+- [ ] Updated the phrase in `AGENTS.md` — **but** if it lives inside a synced `meta:` block (`language-en-us`, `commit-conventions`, `branch-naming`, `copilot-review-loop`, `board-transitions`), edit the canonical source in `masriamir/.github` and bump the `.meta-manifest.toml` pin instead; editing the marked region directly makes `meta-check` fail
 - [ ] Updated the phrase in `docs/design.md`
 - [ ] Updated `anchors.txt` (added new anchor or updated existing wording)
-- [ ] `just docs-sync` passes locally
+- [ ] `just docs-sync` (and `just meta-check` if a synced block changed) passes locally
 
 If this PR bumps the crate's **minor** version (a `release-plz` release PR):
 

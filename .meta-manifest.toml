@@ -3,49 +3,91 @@
 # then run: python3 scripts/meta_sync.py sync
 [[file]]
 source = "masriamir/.github"
-ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
 path = "templates/editorconfig"
 dest = ".editorconfig"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
 path = "templates/CODEOWNERS"
 dest = ".github/CODEOWNERS"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
 path = "templates/rust/lefthook.yml"
 dest = "lefthook.yml"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
 path = "scripts/check-conventional-subject.py"
 dest = "scripts/check-conventional-subject.py"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
 path = "scripts/test-conventional-subject.sh"
 dest = "scripts/test-conventional-subject.sh"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
 path = "scripts/meta_sync.py"
 dest = "scripts/meta_sync.py"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
 path = "templates/rust/rustfmt.toml"
 dest = "rustfmt.toml"
 mode = "file"
+
+# Shared instruction blocks embedded in AGENTS.md / CLAUDE.md between marker lines
+# (crusty-meta ADR-0002). Edit the canonical source upstream, not the marked region.
+[[file]]
+source = "masriamir/.github"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
+path = "templates/blocks/language-en-us.md"
+dest = "AGENTS.md"
+mode = "block"
+marker = "language-en-us"
+
+[[file]]
+source = "masriamir/.github"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
+path = "templates/blocks/commit-conventions.md"
+dest = "AGENTS.md"
+mode = "block"
+marker = "commit-conventions"
+
+[[file]]
+source = "masriamir/.github"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
+path = "templates/blocks/branch-naming.md"
+dest = "AGENTS.md"
+mode = "block"
+marker = "branch-naming"
+
+[[file]]
+source = "masriamir/.github"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
+path = "templates/blocks/copilot-review-loop.md"
+dest = "AGENTS.md"
+mode = "block"
+marker = "copilot-review-loop"
+
+[[file]]
+source = "masriamir/.github"
+ref = "d6bc0b7f54186f1cc44ceb72551ab7b9ab7b8b5d"
+path = "templates/blocks/board-transitions.md"
+dest = "CLAUDE.md"
+mode = "block"
+marker = "board-transitions"
