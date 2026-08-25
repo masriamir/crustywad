@@ -104,9 +104,9 @@ struct Converter {
     /// reference's `tracksize` (`mus2mid.c:92`).
     track: Vec<u8>,
     /// Per-MUS-channel MIDI channel allocation; `-1` means unallocated
-    /// (`channel_map`, `mus2mid.c:100`, initialised at `mus2mid.c:474-477`).
+    /// (`channel_map`, `mus2mid.c:100`, initialized at `mus2mid.c:474-477`).
     channel_map: [i32; NUM_CHANNELS],
-    /// Per-MIDI-channel cached note velocity, initialised to 127
+    /// Per-MIDI-channel cached note velocity, initialized to 127
     /// (`channelvelocities`, `mus2mid.c:80-84`).
     velocities: [u8; NUM_CHANNELS],
     /// Accumulated delta time awaiting the next event (`queuedtime`,

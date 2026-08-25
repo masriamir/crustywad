@@ -39,7 +39,7 @@ jobs:
           config-file: .github/codeql/codeql-config.yml
 
       # Provide a stable Rust toolchain matching the project MSRV so the
-      # compiler artefacts produced for CodeQL are consistent.
+      # compiler artifacts produced for CodeQL are consistent.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch pin; toolchain set explicitly below
         with:
@@ -49,7 +49,7 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # Build the full workspace so every crate and feature combination is
-      # compiled and thus analysed by CodeQL.
+      # compiled and thus analyzed by CodeQL.
       - name: Build workspace
         run: cargo build --workspace --all-features
 
