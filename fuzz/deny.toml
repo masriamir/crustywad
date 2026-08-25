@@ -1,8 +1,10 @@
-# Restates the root workspace's deny.toml policy. fuzz/ is its own cargo
-# workspace (empty `[workspace]` table, committed Cargo.lock) and cargo-deny
-# reads its configuration from the workspace being checked, so the root file
-# never reaches this graph (#428). Keep the two policies aligned when editing
-# either; xtask/deny.toml restates the same policy for the same reason.
+# Carries the root workspace's deny.toml policy, plus the fuzz-specific
+# departures this graph needs (each commented in place below). fuzz/ is its
+# own cargo workspace (empty `[workspace]` table, committed Cargo.lock) and
+# cargo-deny reads its configuration from the workspace being checked, so the
+# root file never reaches this graph (#428). Keep the shared parts aligned
+# with the root file when editing either; xtask/deny.toml does the same for
+# the same reason.
 
 [graph]
 all-features = true

@@ -32,7 +32,8 @@ cov:
     cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
 # Root workspace only. fuzz/ and xtask/ are their own cargo workspaces with
-# their own deny.toml (each restating this policy); audit them with
+# their own deny.toml (each carrying this policy plus scoped, commented
+# departures its own graph needs); audit them with
 # `cargo deny --manifest-path fuzz/Cargo.toml check` (likewise xtask/) — the
 # path-gated fuzz and xtask workflows run the same check in CI.
 deny:

@@ -42,7 +42,8 @@ jobs:
   # fuzz's dependencies (libfuzzer-sys, ...) escaped every advisory, license,
   # ban, and source check (#428). This job closes that gap on the xtask
   # pattern (ADR-0030 §1): cargo-deny reads its policy from the workspace
-  # being checked, so fuzz/deny.toml restates the root policy. The weekly
+  # being checked, so fuzz/deny.toml carries the root policy plus the scoped
+  # departures the fuzz graph needs. The weekly
   # schedule doubles as the advisory sweep — a new advisory in fuzz's tree
   # would otherwise surface only on the next fuzz/-touching PR.
   deny:
