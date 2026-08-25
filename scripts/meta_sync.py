@@ -18,7 +18,15 @@ Modes:
   block  The destination must contain the canonical content between marker lines
          `>>> meta:<marker>` and `<<< meta:<marker>` (usually behind a comment
          leader). The marker lines belong to the destination, not the canonical
-         file, and must already exist — seed them once when wiring a repo up.
+         file, and must already exist — seed them once when wiring a repo up. The
+         canonical body is inserted with a trailing newline so the closing marker
+         always keeps its own line (a source without a final newline still
+         converges).
+
+Comparison is byte-for-byte: content is fetched, read, compared, and written as
+raw bytes, with no newline translation, so a CRLF/LF divergence between a
+destination and its canonical source is caught rather than silently normalized
+away. Diffs are decoded (UTF-8, replacing undecodable bytes) only for display.
 
 Commands:
 
@@ -49,11 +57,11 @@ def entry_id(entry: dict) -> str:
     return f"{entry['source']}:{entry['path']} -> {entry['dest']}"
 
 
-def fetch(entry: dict) -> str:
+def fetch(entry: dict) -> bytes:
     src = entry["source"]
     try:
         if src.startswith("file:"):
-            return (Path(src[len("file:"):]) / entry["path"]).read_text(encoding="utf-8")
+            return (Path(src[len("file:"):]) / entry["path"]).read_bytes()
         ref = entry["ref"]
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             raise SystemExit(
@@ -62,16 +70,15 @@ def fetch(entry: dict) -> str:
             )
         url = f"https://raw.githubusercontent.com/{src}/{ref}/{entry['path']}"
         with urllib.request.urlopen(url, timeout=30) as response:
-            return response.read().decode("utf-8")
+            return response.read()
     except SystemExit:
         raise
-    except (OSError, UnicodeError) as error:  # URLError/HTTPError/FileNotFoundError
-        # are all OSError; UnicodeError covers non-UTF8 canonical content.
+    except OSError as error:  # URLError/HTTPError/FileNotFoundError are all OSError.
         raise SystemExit(f"meta_sync: cannot fetch {entry_id(entry)}: {error}") from error
 
 
-def find_block(lines: list[str], marker: str) -> tuple[int, int] | None:
-    start, end = f">>> meta:{marker}", f"<<< meta:{marker}"
+def find_block(lines: list[bytes], marker: str) -> tuple[int, int] | None:
+    start, end = f">>> meta:{marker}".encode(), f"<<< meta:{marker}".encode()
     first = None
     for i, line in enumerate(lines):
         if first is None:
@@ -82,10 +89,27 @@ def find_block(lines: list[str], marker: str) -> tuple[int, int] | None:
     return None
 
 
+def block_body(canonical: bytes) -> bytes:
+    """Canonical block content as inserted between markers.
+
+    A non-empty body is given a trailing newline so that, on insertion, the
+    closing marker stays on its own line. Without this, a canonical source
+    lacking a final newline would put the marker on the body's last line, where
+    `find_block` then folds it into the closing-marker line and excludes the body
+    from the next comparison — `sync` and `check` would never converge. Applied
+    identically on both the check and sync paths so the two always agree.
+    """
+    if canonical and not canonical.endswith(b"\n"):
+        return canonical + b"\n"
+    return canonical
+
+
 def load_manifest() -> list[dict]:
     try:
         data = tomllib.loads(MANIFEST.read_text(encoding="utf-8"))
-    except (tomllib.TOMLDecodeError, OSError) as error:
+    except (tomllib.TOMLDecodeError, OSError, UnicodeError) as error:
+        # UnicodeError: a non-UTF-8 manifest should give this diagnostic, not a
+        # traceback (UnicodeDecodeError is a ValueError, not an OSError).
         raise SystemExit(f"meta_sync: cannot parse {MANIFEST}: {error}") from error
     entries = data.get("file", [])
     if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
@@ -109,44 +133,46 @@ def load_manifest() -> list[dict]:
     return entries
 
 
-def check_entry(entry: dict, canonical: str) -> str | None:
+def check_entry(entry: dict, canonical: bytes) -> str | None:
     dest = Path(entry["dest"])
     if not dest.exists():
         return f"{entry_id(entry)}: destination missing"
     try:
-        text = dest.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
+        data = dest.read_bytes()
+    except OSError as error:
         return f"{entry_id(entry)}: cannot read {dest}: {error}"
     if entry.get("mode", "file") == "file":
-        actual, label = text, str(dest)
+        actual, expected, label = data, canonical, str(dest)
     else:
         marker = entry["marker"]
-        lines = text.splitlines(keepends=True)
+        lines = data.splitlines(keepends=True)
         bounds = find_block(lines, marker)
         if bounds is None:
             return (
                 f"{entry_id(entry)}: marker lines '>>> meta:{marker}' / "
                 f"'<<< meta:{marker}' not found"
             )
-        actual, label = "".join(lines[bounds[0] + 1 : bounds[1]]), f"{dest} [block {marker}]"
-    if actual == canonical:
+        actual = b"".join(lines[bounds[0] + 1 : bounds[1]])
+        expected, label = block_body(canonical), f"{dest} [block {marker}]"
+    if actual == expected:
         return None
     # Old file = the local destination, new file = canonical: the `+` lines are
     # what `sync` would bring in, answering "what changes locally to match?".
+    # Bytes are decoded only here, for a human-readable diff.
     diff = difflib.unified_diff(
-        actual.splitlines(keepends=True),
-        canonical.splitlines(keepends=True),
+        actual.decode("utf-8", "replace").splitlines(keepends=True),
+        expected.decode("utf-8", "replace").splitlines(keepends=True),
         label,
         "canonical",
     )
     return f"{entry_id(entry)}: drift\n" + "".join(diff)
 
 
-def sync_entry(entry: dict, canonical: str) -> None:
+def sync_entry(entry: dict, canonical: bytes) -> None:
     dest = Path(entry["dest"])
     if entry.get("mode", "file") == "file":
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(canonical, encoding="utf-8")
+        dest.write_bytes(canonical)
         return
     if not dest.exists():
         raise SystemExit(
@@ -154,8 +180,8 @@ def sync_entry(entry: dict, canonical: str) -> None:
             "block mode needs the file with its marker lines seeded first"
         )
     try:
-        lines = dest.read_text(encoding="utf-8").splitlines(keepends=True)
-    except (OSError, UnicodeError) as error:
+        lines = dest.read_bytes().splitlines(keepends=True)
+    except OSError as error:
         raise SystemExit(f"meta_sync: cannot read {entry_id(entry)}: {error}") from error
     bounds = find_block(lines, entry["marker"])
     if bounds is None:
@@ -163,9 +189,8 @@ def sync_entry(entry: dict, canonical: str) -> None:
             f"meta_sync: cannot sync {entry_id(entry)} — marker lines missing "
             "(seed them first)"
         )
-    dest.write_text(
-        "".join(lines[: bounds[0] + 1]) + canonical + "".join(lines[bounds[1] :]),
-        encoding="utf-8",
+    dest.write_bytes(
+        b"".join(lines[: bounds[0] + 1]) + block_body(canonical) + b"".join(lines[bounds[1] :])
     )
 
 
