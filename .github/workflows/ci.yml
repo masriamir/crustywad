@@ -37,7 +37,7 @@ jobs:
   # match their pinned canonical sources in masriamir/.github — see
   # .meta-manifest.toml; run locally with `just meta-check`.
   meta-check:
-    uses: masriamir/.github/.github/workflows/meta-check.yml@7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065 # main branch pin
+    uses: masriamir/.github/.github/workflows/meta-check.yml@ecd746f06c5c0bf384e90981c274f563c7781186 # main branch pin
 
   test:
     strategy:

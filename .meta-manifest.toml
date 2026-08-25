@@ -3,49 +3,49 @@
 # then run: python3 scripts/meta_sync.py sync
 [[file]]
 source = "masriamir/.github"
-ref = "7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065"
+ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
 path = "templates/editorconfig"
 dest = ".editorconfig"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065"
+ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
 path = "templates/CODEOWNERS"
 dest = ".github/CODEOWNERS"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065"
+ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
 path = "templates/rust/lefthook.yml"
 dest = "lefthook.yml"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065"
+ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
 path = "scripts/check-conventional-subject.py"
 dest = "scripts/check-conventional-subject.py"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065"
+ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
 path = "scripts/test-conventional-subject.sh"
 dest = "scripts/test-conventional-subject.sh"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065"
+ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
 path = "scripts/meta_sync.py"
 dest = "scripts/meta_sync.py"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "7a0f2c0ac0db9e62d1ddb3b46ee8085abeaf6065"
+ref = "ecd746f06c5c0bf384e90981c274f563c7781186"
 path = "templates/rust/rustfmt.toml"
 dest = "rustfmt.toml"
 mode = "file"
