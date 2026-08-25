@@ -31,6 +31,11 @@ guide-test:
 cov:
     cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
+# Root workspace only. fuzz/ and xtask/ are their own cargo workspaces with
+# their own deny.toml (each carrying this policy plus scoped, commented
+# departures its own graph needs); audit them with
+# `cargo deny --manifest-path fuzz/Cargo.toml check` (likewise xtask/) — the
+# path-gated fuzz and xtask workflows run the same check in CI.
 deny:
     cargo deny check
 
@@ -137,7 +142,7 @@ ci-full: build test lint doc deny docs-sync
 # green-light a broken xtask tree. Mirrors the check job of
 # .github/workflows/xtask.yml; that workflow's separate deny job covers the
 # sub-workspace's dependency audit in CI (locally:
-# `cargo deny check --manifest-path xtask/Cargo.toml`).
+# `cargo deny --manifest-path xtask/Cargo.toml check`).
 ci-xtask:
     cargo fmt --manifest-path xtask/Cargo.toml --all --check
     cargo clippy --manifest-path xtask/Cargo.toml --all-targets --locked -- -D warnings

@@ -52,7 +52,8 @@ untrusted bytes.
    currently goes: xtask's job also builds, tests, and runs
    `cargo deny check` for its workspace, because the root `security-deny`
    job audits only the root workspace's graph and a separate workspace
-   escapes it (fuzz's path-gated job today runs fmt/clippy only).
+   escapes it (fuzz's path-gated job at the time ran fmt/clippy only; #428
+   has since brought fuzz to the same posture).
 
 2. **The harvest architecture is `ls-laR.gz`-first.** One request to a
    verified mirror bootstraps the complete tree, filenames, and zip sizes;

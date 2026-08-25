@@ -11,6 +11,9 @@ on:
       # validate here in the PR, not first fail on the weekly schedule.
       - '.github/workflows/fuzz.yml'
 
+permissions:
+  contents: read
+
 jobs:
   # The fuzz workspace is not covered by the main CI pipeline's fmt/clippy
   # gates (it is a separate cargo workspace), so lint drift only ever surfaced
@@ -33,6 +36,31 @@ jobs:
         working-directory: fuzz
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+        working-directory: fuzz
+
+  # The root security-deny job audits only the root workspace's graph, so
+  # fuzz's dependencies (libfuzzer-sys, ...) escaped every advisory, license,
+  # ban, and source check (#428). This job closes that gap on the xtask
+  # pattern (ADR-0030 §1): cargo-deny reads its policy from the workspace
+  # being checked, so fuzz/deny.toml carries the root policy plus the scoped
+  # departures the fuzz graph needs. The weekly
+  # schedule doubles as the advisory sweep — a new advisory in fuzz's tree
+  # would otherwise surface only on the next fuzz/-touching PR.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch pin
+        with:
+          # fuzz/rust-toolchain.toml pins the directory to nightly, so any
+          # cargo invocation under fuzz/ resolves to it — install nightly
+          # explicitly rather than relying on rustup's auto-install.
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@bd62ac5c7f48306b3ae8d936b8868709cab7d6c3 # cargo-deny
+      - run: cargo deny check
         working-directory: fuzz
 
   fuzz:

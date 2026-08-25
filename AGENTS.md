@@ -67,7 +67,7 @@ xtask/
   workflows/codeql.yml        # CodeQL security analysis
   workflows/release-plz.yml  # Automated release PR workflow
   workflows/bench.yml         # Criterion benchmark trend reporting to GitHub Pages
-  workflows/fuzz.yml          # cargo-fuzz targets
+  workflows/fuzz.yml          # cargo-fuzz targets + path-gated fmt/clippy/deny for the fuzz workspace
   workflows/pages.yml         # mdBook guide deployment to GitHub Pages
   workflows/release.yml # dist: cross-platform cwad binaries + installers (CLI releases)
   workflows/xtask.yml         # path-gated xtask workspace CI (fmt/clippy/test/deny + weekly deny sweep)
