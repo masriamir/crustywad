@@ -1,3 +1,5 @@
+# Canonical lefthook config for Rust repositories (masriamir/.github,
+# templates/rust/lefthook.yml — synced whole-file via meta-check).
 pre-push:
   commands:
     branch-name:
@@ -20,15 +22,7 @@ pre-commit:
 
 commit-msg:
   commands:
+    # Shares its validator with the `pr-title` CI workflow, which checks the PR
+    # title — the string squash-merge actually puts on `main`.
     conventional-commits:
-      run: |
-        python3 - <<'PY' "{1}"
-import pathlib
-import re
-import sys
-message = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()[0]
-pattern = re.compile(r'^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._/-]+\))?!?: .+')
-if not pattern.match(message):
-    print('commit message must follow Conventional Commits, e.g. feat(parser): add wad reader')
-    sys.exit(1)
-PY
+      run: python3 scripts/check-conventional-subject.py < "{1}"
