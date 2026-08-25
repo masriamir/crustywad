@@ -1,0 +1,49 @@
+# Restates the root workspace's deny.toml policy. fuzz/ is its own cargo
+# workspace (empty `[workspace]` table, committed Cargo.lock) and cargo-deny
+# reads its configuration from the workspace being checked, so the root file
+# never reaches this graph (#428). Keep the two policies aligned when editing
+# either; xtask/deny.toml restates the same policy for the same reason.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The `crustywad` path dependency is deliberately unversioned so the fuzz
+# targets always exercise the checked-out tree, and this crate is
+# `publish = false` — exactly the case this switch exists for.
+allow-wildcard-paths = true
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# The allowlist matches the root policy; this graph is small and does not
+# exercise every entry, which is expected, not drift.
+unused-allowed-license = "allow"
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+]
+
+# libfuzzer-sys bundles LLVM's libFuzzer, which carries the University of
+# Illinois/NCSA license (OSI-approved, permissive), so its expression is
+# `(MIT OR Apache-2.0) AND NCSA`. Scoped to the one crate that carries it
+# rather than added to the global allowlist.
+[[licenses.exceptions]]
+crate = "libfuzzer-sys"
+allow = ["NCSA"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
