@@ -1,9 +1,9 @@
+# Shared ignores are block-synced from masriamir/.github (see .meta-manifest.toml,
+# `just meta-check`). Edit the canonical source upstream, not inside the markers.
+# >>> meta:gitignore-rust
 # Compiled output / build artifacts
 /target/
 **/target/
-
-# Cargo.lock is intentionally COMMITTED: this workspace ships a binary (CLI).
-# (Do not ignore Cargo.lock.)
 
 # Backup files from rustfmt / editors
 **/*.rs.bk
@@ -17,6 +17,47 @@
 *.profdata
 /lcov.info
 /coverage/
+# <<< meta:gitignore-rust
+
+# Cargo.lock is intentionally COMMITTED: this workspace ships a binary (CLI).
+# (Do not ignore Cargo.lock.)
+
+# >>> meta:gitignore-base
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Environment / local overrides
+.env
+.env.local
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
+# Temporary files
+/.tmp/
+
+# Claude Code agent worktrees (ephemeral, created by Claude Code)
+.claude/worktrees/
+
+# Ad-hoc local git worktrees
+.worktrees/
+
+# AI agent artifacts (superpowers plans/specs — never committed)
+docs/superpowers/
+
+# Playwright MCP browser-session artifacts
+.playwright-mcp/
+# <<< meta:gitignore-base
+
+# ─── crustywad-specific ──────────────────────────────────────────────────────
 
 # Fuzzing (cargo-fuzz)
 /fuzz/target/
@@ -63,39 +104,3 @@ docs/guide/mermaid-init.js
 
 # Benchmark output
 /criterion/
-
-# Environment / local overrides
-.env
-.env.local
-
-# OS / editor cruft
-.DS_Store
-Thumbs.db
-*.swp
-*~
-.idea/
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
-
-# Temporary files
-/.tmp/
-
-# Claude Code agent worktrees (ephemeral, created by Claude Code)
-.claude/worktrees/
-
-# Ad-hoc local git worktrees (not tracked by Claude Code)
-.worktrees/
-
-# AI agent artifacts (superpowers plans, memory files — never committed)
-docs/superpowers/
-
-# Playwright MCP browser-session artifacts (page snapshots + console logs the
-# Playwright MCP server writes into the working directory — ephemeral, never
-# committed)
-.playwright-mcp/
-
-# Python bytecode caches (the docs-sync scripts are imported by ad-hoc checks,
-# which makes CPython write these next to the sources)
-__pycache__/
-*.py[cod]
