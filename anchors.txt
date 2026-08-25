@@ -1,10 +1,9 @@
 # Living-docs anchor strings (ADR-0007).
 #
 # Each non-empty, non-comment line is a substring that must appear verbatim in
-# ALL THREE of the checked documentation files:
+# ALL of the checked documentation files:
 #
-#   .github/copilot-instructions.md
-#   .claude/CLAUDE.md
+#   AGENTS.md
 #   docs/design.md
 #
 # Run the detector locally with:
@@ -12,7 +11,7 @@
 #   just docs-sync
 #
 # When renaming a convention phrase, update:
-#   1. All three documentation files above
+#   1. All the documentation files above
 #   2. This file (anchors.txt)
 #
 # ─── Core conventions ────────────────────────────────────────────────────────

@@ -4,8 +4,7 @@
 Reads anchor strings from ``anchors.txt`` (one per line) and verifies that
 each anchor appears verbatim in every checked documentation file:
 
-- ``.github/copilot-instructions.md``
-- ``.claude/CLAUDE.md``
+- ``AGENTS.md``
 - ``docs/design.md``
 
 Exits with status 0 when every anchor is found in every file.
@@ -29,8 +28,7 @@ from pathlib import Path
 
 ANCHORS_FILE = Path("anchors.txt")
 CHECKED_FILES: list[Path] = [
-    Path(".github/copilot-instructions.md"),
-    Path(".claude/CLAUDE.md"),
+    Path("AGENTS.md"),
     Path("docs/design.md"),
 ]
 
