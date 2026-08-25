@@ -11,6 +11,9 @@ on:
       # validate here in the PR, not first fail on the weekly schedule.
       - '.github/workflows/fuzz.yml'
 
+permissions:
+  contents: read
+
 jobs:
   # The fuzz workspace is not covered by the main CI pipeline's fmt/clippy
   # gates (it is a separate cargo workspace), so lint drift only ever surfaced
