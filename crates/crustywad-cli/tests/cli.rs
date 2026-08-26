@@ -849,6 +849,27 @@ fn diff_missing_file_exits_2() {
 }
 
 #[test]
+fn diff_missing_file_reports_the_loader_error() {
+    // The pk3 sniff (`reject_archive`) opens every WAD path before the loader
+    // does. A file it cannot read must stay its business: the loader re-opens
+    // the same path immediately and owns the wording, so stderr must still be
+    // the `failed to load …` chain, not a message from the sniff.
+    let wad = write_wad(*b"IWAD", &[("THINGS", &[1])]);
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing.wad");
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            wad.path().to_str().unwrap(),
+            missing.to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("failed to load"));
+}
+
+#[test]
 fn diff_json_format_identical() {
     let wad = write_wad(*b"IWAD", &[("THINGS", &[1, 2])]);
     Command::cargo_bin("cwad")
@@ -6866,6 +6887,7 @@ fn build_zip(members: &[(&str, &[u8])]) -> Vec<u8> {
 /// A minimal, always-valid Doom-format `MAP01` (two vertices, one one-sided
 /// linedef, one sidedef, one sector) so `validate --deep` has a map that
 /// assembles.
+#[cfg(feature = "archive")]
 fn build_valid_map_wad() -> Vec<u8> {
     let vertexes: Vec<u8> = [0_i16, 0, 64, 0]
         .iter()
@@ -6907,6 +6929,7 @@ fn write_pk3(members: &[(&str, &[u8])]) -> NamedTempFile {
     file
 }
 
+#[cfg(feature = "archive")]
 #[test]
 fn info_summarizes_a_pk3() {
     let map = build_valid_map_wad();
@@ -6940,6 +6963,7 @@ fn info_summarizes_a_pk3() {
         ));
 }
 
+#[cfg(feature = "archive")]
 #[test]
 fn list_prints_one_row_per_member() {
     let pk3 = write_pk3(&[
@@ -6971,6 +6995,7 @@ fn list_prints_one_row_per_member() {
         ));
 }
 
+#[cfg(feature = "archive")]
 #[test]
 fn validate_deep_covers_maps_and_embedded_wads_in_a_pk3() {
     let map = build_valid_map_wad();
@@ -7001,6 +7026,7 @@ fn validate_deep_covers_maps_and_embedded_wads_in_a_pk3() {
         .stdout(predicate::str::starts_with("ok: "));
 }
 
+#[cfg(feature = "archive")]
 #[test]
 fn validate_reports_an_unreadable_archive_with_exit_2() {
     let mut file = tempfile::Builder::new().suffix(".pk3").tempfile().unwrap();
@@ -7042,6 +7068,20 @@ fn wad_only_commands_reject_archives_clearly() {
         .stderr(predicate::str::contains(
             "is a pk3 archive; diff reads WADs",
         ));
+}
+
+/// The mirror of the four gated tests above: without the `archive` feature the
+/// same input must be refused with the reason, not misread as a WAD.
+#[cfg(not(feature = "archive"))]
+#[test]
+fn info_rejects_a_pk3_without_archive_support() {
+    let pk3 = write_pk3(&[("MAPINFO.txt", b"x")]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", pk3.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("compiled without archive support"));
 }
 
 #[test]

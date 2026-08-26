@@ -1053,12 +1053,11 @@ fn open_input(path: &Path, options: ParseOptions) -> Result<Input> {
         }
         // No path in the message: every caller already names the file, either
         // through its own `failed to load {path}` context or, for `validate`,
-        // in the `error: {path}: …` line it prints.
+        // in the `error: {path}: …` line it prints. Both frames end in
+        // `{path}: `, so the phrase reads as a sentence about that path.
         #[cfg(not(feature = "archive"))]
         {
-            anyhow::bail!(
-                "pk3 archive input is unsupported: this build was compiled without the archive feature"
-            );
+            anyhow::bail!("is a pk3 archive; this build was compiled without archive support");
         }
     }
     Ok(Input::Wad(Wad::from_bytes_with_options(bytes, options)?))
@@ -1066,15 +1065,22 @@ fn open_input(path: &Path, options: ParseOptions) -> Result<Input> {
 
 /// Fails with a clear message when a WAD-only command is handed an archive.
 ///
+/// A file this cannot open or read is left alone: every caller loads the same
+/// path one statement later, so the loader raises the canonical
+/// `failed to load {path}: …` error instead of this sniff pre-empting it with a
+/// different message. Nothing is swallowed — the failure still surfaces, from
+/// the code that owns the wording.
+///
 /// # Errors
 ///
-/// Returns an error when `path` cannot be opened or read, or when its leading
-/// bytes are an archive signature.
+/// Returns an error only when the leading bytes of `path` are an archive
+/// signature.
 fn reject_archive(path: &Path, command: &str) -> Result<()> {
     let mut head = [0_u8; 6];
-    let n = fs::File::open(path)
-        .and_then(|mut f| std::io::Read::read(&mut f, &mut head))
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let Ok(n) = fs::File::open(path).and_then(|mut f| std::io::Read::read(&mut f, &mut head))
+    else {
+        return Ok(());
+    };
     if looks_like_archive(&head[..n]) {
         anyhow::bail!("{} is a pk3 archive; {command} reads WADs", path.display());
     }
