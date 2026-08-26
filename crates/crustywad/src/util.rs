@@ -17,7 +17,6 @@ pub(crate) fn trim_nul(bytes: &[u8]) -> &[u8] {
 /// feature). Table-driven; the table is built at compile time so the crate
 /// takes no checksum dependency.
 #[cfg(feature = "archive")]
-#[allow(dead_code)] // consumed by `archive::zip` from Task 5 on
 pub(crate) fn crc32(bytes: &[u8]) -> u32 {
     const TABLE: [u32; 256] = crc32_table();
     let mut crc = 0xFFFF_FFFF_u32;

@@ -5,7 +5,7 @@
 //! basename becomes an 8-character short name, `maps/<NAME>.wad` members hold
 //! one map each, and a `.wad` at the archive root is an *embedded WAD* the
 //! engine loads recursively. [`Archive`] models exactly that much — container
-//! plus maps — and hands out [`Wad`](crate::Wad) values for the WADs it contains; it does
+//! plus maps — and hands out [`Wad`] values for the WADs it contains; it does
 //! not resolve names across members. The rules are transcribed from `GZDoom`'s
 //! `filesystem.cpp` (`LumpRecord::SetFromLump`), `resourcefile.cpp`
 //! (`FResourceFile::CheckEmbedded`), and `p_openmap.cpp`.
@@ -13,7 +13,7 @@
 //! Nothing is decoded when an archive is opened: the central directory alone
 //! decides what is listed, and every allocation is bounded by
 //! [`Limits`](crate::Limits) — `max_archive_members` for the member table and
-//! `max_decoded_member_bytes` for a single `Archive::read` (ADR-0016).
+//! `max_decoded_member_bytes` for a single [`Archive::read`] (ADR-0016).
 //! Only the stored and deflate methods are decoded; every other method, and
 //! any encrypted member, is rejected by name. The container seam is private,
 //! so a future pk7 (7z) backend can slot in without a public change; today
@@ -31,7 +31,7 @@ use std::path::Path;
 
 pub use error::{ArchiveError, ArchiveWarning};
 
-use crate::{ParseOptions, Strictness};
+use crate::{ParseOptions, Strictness, Wad};
 
 /// Container formats an [`Archive`] can be backed by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -175,7 +175,7 @@ impl Namespace {
 #[non_exhaustive]
 pub enum MapKind {
     /// `maps/<NAME>.wad` — a WAD holding the map's lumps; parse it with
-    /// `Archive::wad`.
+    /// [`Archive::wad`].
     Wad,
     /// `maps/<NAME>.map` — a bare UDMF `TEXTMAP`. Listed, not parsed.
     Textmap,
@@ -211,7 +211,6 @@ impl ArchiveMap {
 
 /// One file inside an [`Archive`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // `entry` is read by `Archive::read` from Task 5 on
 pub struct Member {
     path: String,
     short_name: Option<String>,
@@ -288,7 +287,6 @@ impl Member {
 
 /// A raw container entry, before pk3 semantics are applied.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // `crc32` / `local_header_offset` are read from Task 5 on
 pub(crate) struct RawEntry {
     /// Normalized path (`\` → `/`, no leading `/`).
     pub(crate) path: String,
@@ -308,14 +306,12 @@ pub(crate) trait Container: fmt::Debug {
     /// Every non-directory entry, in central-directory order.
     fn entries(&self) -> &[RawEntry];
     /// Decodes entry `index`, refusing to produce more than `cap` bytes.
-    #[allow(dead_code)] // consumed by `Archive::read` from Task 5 on
     fn read_entry(&self, index: usize, cap: usize) -> Result<Vec<u8>, ArchiveError>;
 }
 
 /// A pk3 (zip) archive: its member table plus the pk3 semantics `GZDoom`
 /// applies to it. See the [module docs](self).
 #[derive(Debug)]
-#[allow(dead_code)] // `options` is read by `Archive::read`/`wad` from Task 5 on
 pub struct Archive {
     container: Box<dyn Container>,
     kind: ArchiveKind,
@@ -344,7 +340,7 @@ impl Archive {
     ///
     /// The container is identified by its leading signature, never by a file
     /// extension; the central directory is parsed and every member is
-    /// listed, but nothing is decoded until `read`. The
+    /// listed, but nothing is decoded until [`read`](Self::read). The
     /// archive's own name is unknown here, so the `<stem>/<file>.wad`
     /// embedded-WAD rule cannot fire until [`with_name`](Self::with_name).
     ///
@@ -464,6 +460,65 @@ impl Archive {
     #[must_use]
     pub fn warnings(&self) -> &[ArchiveWarning] {
         &self.warnings
+    }
+
+    /// Decodes a member's bytes.
+    ///
+    /// # Errors
+    ///
+    /// [`ArchiveError::Encrypted`] / [`UnsupportedMethod`](ArchiveError::UnsupportedMethod)
+    /// / [`MemberTooLarge`](ArchiveError::MemberTooLarge) for members that
+    /// lenient mode listed but cannot read; and, in both modes,
+    /// [`CorruptDirectory`](ArchiveError::CorruptDirectory) when the local
+    /// header disagrees with the central directory,
+    /// [`CorruptStream`](ArchiveError::CorruptStream),
+    /// [`SizeMismatch`](ArchiveError::SizeMismatch), and
+    /// [`ChecksumMismatch`](ArchiveError::ChecksumMismatch).
+    pub fn read(&self, member: &Member) -> Result<Vec<u8>, ArchiveError> {
+        if member.encrypted {
+            return Err(ArchiveError::Encrypted {
+                path: member.path.clone(),
+            });
+        }
+        if !member.method.is_supported() {
+            return Err(ArchiveError::UnsupportedMethod {
+                path: member.path.clone(),
+                method: member.method,
+            });
+        }
+        let cap = self.options.limits.max_decoded_member_bytes;
+        if member.size > cap as u64 {
+            return Err(ArchiveError::MemberTooLarge {
+                path: member.path.clone(),
+                declared: member.size,
+                limit: cap,
+            });
+        }
+        self.container.read_entry(member.entry, cap)
+    }
+
+    /// Decodes a `.wad` member and parses it with the archive's own
+    /// [`ParseOptions`], so a pk3's maps parse exactly like a standalone WAD.
+    ///
+    /// # Errors
+    ///
+    /// [`ArchiveError::NotAWad`] when the member's path does not end in
+    /// `.wad`; everything [`read`](Self::read) reports; and
+    /// [`ArchiveError::Wad`] wrapping the [`ParseError`](crate::ParseError)
+    /// when the bytes are not a valid WAD.
+    pub fn wad(&self, member: &Member) -> Result<Wad, ArchiveError> {
+        // Byte comparison via the shared helper — a `&str` byte-index slice
+        // panics when a multi-byte character straddles the boundary.
+        if !semantics::has_wad_extension(&member.path) {
+            return Err(ArchiveError::NotAWad {
+                path: member.path.clone(),
+            });
+        }
+        let bytes = self.read(member)?;
+        Wad::from_bytes_with_options(bytes, self.options).map_err(|source| ArchiveError::Wad {
+            path: member.path.clone(),
+            source,
+        })
     }
 
     /// Builds the member table from raw entries, applying the open-time

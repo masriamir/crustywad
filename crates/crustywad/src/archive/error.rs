@@ -18,7 +18,7 @@ use crate::error::flatten_control;
 /// names) are reported by [`Archive::from_bytes`][super::Archive::from_bytes]
 /// in strict mode; facts only extraction reveals (local-header mismatch,
 /// inflate failure, size or CRC lies) are reported by
-/// `Archive::read` in both modes (ADR-0031 §6).
+/// [`Archive::read`][super::Archive::read] in both modes (ADR-0031 §6).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ArchiveError {
@@ -126,7 +126,7 @@ pub enum ArchiveError {
         /// The duplicated path.
         path: String,
     },
-    /// `Archive::wad` was called on a member that is
+    /// [`Archive::wad`][super::Archive::wad] was called on a member that is
     /// not a `.wad` file.
     #[error("member `{}` is not a WAD", flatten_control(.path))]
     NotAWad {
@@ -148,7 +148,7 @@ pub enum ArchiveError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum ArchiveWarning {
-    /// The member is listed but `Archive::read` will
+    /// The member is listed but [`Archive::read`][super::Archive::read] will
     /// fail on it (unsupported method or encryption).
     #[error("member `{}` cannot be read: {}", flatten_control(.path), flatten_control(.reason))]
     UnreadableMember {
@@ -157,7 +157,8 @@ pub enum ArchiveWarning {
         /// Why reading will fail.
         reason: String,
     },
-    /// The member declares more than the decoded-size limit; `read` will fail.
+    /// The member declares more than the decoded-size limit;
+    /// [`read`][super::Archive::read] will fail.
     #[error("member `{}` declares {declared} decoded bytes, more than the limit of {limit}", flatten_control(.path))]
     MemberTooLarge {
         /// The member path.

@@ -471,3 +471,283 @@ fn zip64_extra_field_length_lies_are_corrupt() {
         }
     }
 }
+
+#[test]
+fn reads_stored_and_deflated_members_back_exactly() {
+    let big: Vec<u8> = (0..5000_u32).map(|i| (i % 251) as u8).collect();
+    let zip = common::ZipBuilder::new()
+        .stored("a.txt", b"hello")
+        .deflate("b/big.bin", &big)
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        assert_eq!(archive.read(&archive.members()[0]).unwrap(), b"hello");
+        assert_eq!(archive.read(&archive.members()[1]).unwrap(), big);
+    }
+}
+
+#[test]
+fn data_descriptor_members_read_via_central_directory_sizes() {
+    let mut entry = common::ZipEntry::deflate("graphics/A.png", &[9_u8; 1000]);
+    entry.flags = common::ZIP_FLAG_DATA_DESCRIPTOR;
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    assert_eq!(
+        archive.read(&archive.members()[0]).unwrap(),
+        vec![9_u8; 1000]
+    );
+}
+
+#[test]
+fn crc_lie_is_a_checksum_mismatch_in_both_modes() {
+    let mut entry = common::ZipEntry::stored("a.txt", b"hello");
+    entry.crc_override = Some(0xDEAD_BEEF);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::ChecksumMismatch { .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn declared_size_smaller_than_the_stream_is_a_size_mismatch() {
+    let mut entry = common::ZipEntry::deflate("a.bin", &[1_u8; 400]);
+    entry.size_override = Some(100);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ArchiveError::SizeMismatch {
+                    declared: 100,
+                    actual: None,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn declared_size_larger_than_the_stream_is_a_size_mismatch() {
+    let mut entry = common::ZipEntry::deflate("a.bin", &[1_u8; 100]);
+    entry.size_override = Some(400);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ArchiveError::SizeMismatch {
+                    declared: 400,
+                    actual: Some(100),
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn stored_member_whose_sizes_disagree_is_a_size_mismatch() {
+    let mut entry = common::ZipEntry::stored("a.bin", &[1_u8; 100]);
+    entry.size_override = Some(50);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    let err = archive.read(&archive.members()[0]).unwrap_err();
+    assert!(matches!(err, ArchiveError::SizeMismatch { .. }), "{err}");
+}
+
+#[test]
+fn corrupt_deflate_stream_is_reported() {
+    let mut entry = common::ZipEntry::deflate("a.bin", &[1_u8; 100]);
+    entry.compressed_override = Some(vec![0xFF; 20]);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    let err = archive.read(&archive.members()[0]).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ArchiveError::CorruptStream { .. } | ArchiveError::SizeMismatch { .. }
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn local_header_disagreeing_with_the_directory_is_corrupt_at_read() {
+    let zip = common::ZipBuilder::new().stored("abcdef.txt", b"a").build();
+    let mut bad = zip.clone();
+    // Local header name length (offset 26) -> lie.
+    bad[26] = 0xFF;
+    bad[27] = 0x7F;
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(bad.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::CorruptDirectory { index: 0, .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn reading_an_unreadable_lenient_member_fails_by_name() {
+    let mut encrypted = common::ZipEntry::stored("secret.txt", b"x");
+    encrypted.flags = common::ZIP_FLAG_ENCRYPTED;
+    let mut lzma = common::ZipEntry::stored("packed.bin", b"x");
+    lzma.method = 14;
+    let zip = common::ZipBuilder::new()
+        .entry(encrypted)
+        .entry(lzma)
+        .build();
+    let archive = Archive::from_bytes_with_options(zip, ParseOptions::lenient()).unwrap();
+    assert!(matches!(
+        archive.read(&archive.members()[0]).unwrap_err(),
+        ArchiveError::Encrypted { .. }
+    ));
+    assert!(matches!(
+        archive.read(&archive.members()[1]).unwrap_err(),
+        ArchiveError::UnsupportedMethod {
+            method: Method::Lzma,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn reading_a_lenient_oversized_member_fails_with_the_limit() {
+    let zip = common::ZipBuilder::new()
+        .stored("big.bin", &[0_u8; 64])
+        .build();
+    let options = with_limits(
+        ParseOptions::lenient(),
+        Limits::new().with_max_decoded_member_bytes(32),
+    );
+    let archive = Archive::from_bytes_with_options(zip, options).unwrap();
+    let err = archive.read(&archive.members()[0]).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ArchiveError::MemberTooLarge {
+                declared: 64,
+                limit: 32,
+                ..
+            }
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn wad_parses_a_wad_member_and_refuses_non_wads() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .deflate("maps/MAP01.wad", &wad)
+        .stored("readme.txt", b"hi")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    let parsed = archive
+        .wad(&archive.members()[0])
+        .expect("member parses as a WAD");
+    assert_eq!(parsed.lump_count(), 2);
+    let err = archive.wad(&archive.members()[1]).unwrap_err();
+    assert!(matches!(err, ArchiveError::NotAWad { .. }), "{err}");
+}
+
+#[test]
+fn wad_parse_failure_keeps_the_member_path() {
+    let zip = common::ZipBuilder::new()
+        .stored("maps/MAP01.wad", b"PWAD\xff\xff\xff\x7f\0\0\0\0")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    let err = archive.wad(&archive.members()[0]).unwrap_err();
+    assert!(
+        matches!(&err, ArchiveError::Wad { path, .. } if path == "maps/MAP01.wad"),
+        "{err}"
+    );
+    assert!(err.to_string().starts_with("member `maps/MAP01.wad`: "));
+}
+
+#[test]
+fn a_local_header_that_is_missing_or_misplaced_is_corrupt_at_read() {
+    let zip = common::ZipBuilder::new().stored("a.txt", b"hello").build();
+    let cd = central_directory_start(&zip);
+    // The directory points the local header at (a) the end of the file, so
+    // the fixed 30 bytes do not fit, and (b) a spot whose four leading bytes
+    // are not the local-header signature.
+    let past_eof = u32::try_from(zip.len()).expect("fixture fits in u32");
+    for offset in [past_eof, 4] {
+        let mut bad = zip.clone();
+        bad[cd + 42..cd + 46].copy_from_slice(&offset.to_le_bytes());
+        for options in both_modes() {
+            let archive = Archive::from_bytes_with_options(bad.clone(), options).unwrap();
+            let err = archive.read(&archive.members()[0]).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ArchiveError::CorruptDirectory { index: 0, reason }
+                        if *reason == "local header missing or misplaced"
+                ),
+                "{err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_zip64_local_header_offset_of_u64_max_is_corrupt_not_an_overflow() {
+    let zip = common::ZipBuilder::new()
+        .zip64(true)
+        .stored("a.txt", b"hello")
+        .build();
+    let cd = central_directory_start(&zip);
+    let name_len = usize::from(u16::from_le_bytes([zip[cd + 28], zip[cd + 29]]));
+    // ZIP64 extra field: header (4) + uncompressed (8) + compressed (8), then
+    // the local-header offset.
+    let offset_field = cd + 46 + name_len + 4 + 16;
+    let mut bad = zip.clone();
+    bad[offset_field..offset_field + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(bad.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ArchiveError::CorruptDirectory { index: 0, reason }
+                    if *reason == "local header missing or misplaced"
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn a_member_from_another_archive_is_refused_without_panicking() {
+    let one = Archive::from_bytes(common::ZipBuilder::new().stored("a.txt", b"a").build()).unwrap();
+    let two = Archive::from_bytes(
+        common::ZipBuilder::new()
+            .stored("a.txt", b"a")
+            .stored("b.txt", b"b")
+            .build(),
+    )
+    .unwrap();
+    let err = one.read(&two.members()[1]).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            ArchiveError::CorruptDirectory { index: 1, reason }
+                if *reason == "member does not belong to this archive"
+        ),
+        "{err}"
+    );
+}

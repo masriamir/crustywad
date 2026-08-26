@@ -10,6 +10,7 @@
 //! §4.3 and match the harvester's reader (`xtask/src/zips/inspect.rs`).
 
 use super::{ArchiveError, Container, RawEntry};
+use crate::util::crc32;
 
 const EOCD_SIG: u32 = 0x0605_4b50;
 const EOCD_LEN: usize = 22;
@@ -21,6 +22,10 @@ const ZIP64_EOCD_LEN: usize = 56;
 const CENTRAL_SIG: u32 = 0x0201_4b50;
 const CENTRAL_LEN: usize = 46;
 const ZIP64_EXTRA_ID: u16 = 0x0001;
+const LOCAL_SIG: u32 = 0x0403_4b50;
+const LOCAL_LEN: usize = 30;
+const METHOD_STORED: u16 = 0;
+const METHOD_DEFLATE: u16 = 8;
 
 // The three field readers below are the only way this module touches the
 // buffer at a computed offset, so each one is total: `checked_add` keeps an
@@ -236,8 +241,105 @@ impl Container for ZipContainer {
     }
 
     fn read_entry(&self, index: usize, cap: usize) -> Result<Vec<u8>, ArchiveError> {
-        let _ = (index, cap, &self.bytes);
-        Ok(Vec::new()) // Task 5
+        let corrupt = |reason: &'static str| ArchiveError::CorruptDirectory { index, reason };
+        // `index` comes from a `Member` this container produced, so `get` only
+        // fails for a `Member` handed to a different archive; answer that with
+        // an error rather than a panicking index.
+        let entry = self
+            .entries
+            .get(index)
+            .ok_or_else(|| corrupt("member does not belong to this archive"))?;
+        let path = entry.path.clone();
+        // The local header offset and the compressed size are file-derived, so
+        // every offset built from them is `checked_add`-bounded against the
+        // buffer before a slice is taken (ADR-0016 §1).
+        let header = to_index(
+            entry.local_header_offset,
+            index,
+            "local header offset does not fit",
+        )?;
+        let fields_end = header
+            .checked_add(LOCAL_LEN)
+            .filter(|&end| end <= self.bytes.len())
+            .ok_or_else(|| corrupt("local header missing or misplaced"))?;
+        let fixed = &self.bytes[header..fields_end];
+        if u32_at(fixed, 0) != Some(LOCAL_SIG) {
+            return Err(corrupt("local header missing or misplaced"));
+        }
+        // Only the signature and the two lengths are taken from the local
+        // header: its CRC and sizes are zero for data-descriptor entries
+        // (general-purpose flag bit 3), so the central directory stays
+        // authoritative for those. Both offsets are constants inside the
+        // 30 bytes just bounds-checked.
+        let name_len = usize::from(u16_at(fixed, 26).unwrap_or(0));
+        let extra_len = usize::from(u16_at(fixed, 28).unwrap_or(0));
+        let compressed_len =
+            to_index(entry.compressed_size, index, "compressed size does not fit")?;
+        let data_start = fields_end
+            .checked_add(name_len)
+            .and_then(|at| at.checked_add(extra_len))
+            .ok_or_else(|| corrupt("member data lies outside the file"))?;
+        let data_end = data_start
+            .checked_add(compressed_len)
+            .filter(|&end| end <= self.bytes.len())
+            .ok_or_else(|| corrupt("member data lies outside the file"))?;
+        let body = &self.bytes[data_start..data_end];
+        let declared = entry.size;
+        let declared_len = to_index(declared, index, "uncompressed size does not fit")?;
+        if declared_len > cap {
+            return Err(ArchiveError::MemberTooLarge {
+                path,
+                declared,
+                limit: cap,
+            });
+        }
+
+        let decoded = match entry.method {
+            METHOD_STORED => {
+                if body.len() != declared_len {
+                    return Err(ArchiveError::SizeMismatch {
+                        path,
+                        declared,
+                        actual: Some(body.len() as u64),
+                    });
+                }
+                body.to_vec()
+            }
+            METHOD_DEFLATE => {
+                // Cap at the declared size: anything beyond it is a lie, and
+                // the declared size is already within `cap`.
+                match miniz_oxide::inflate::decompress_to_vec_with_limit(body, declared_len) {
+                    Ok(out) => {
+                        if out.len() != declared_len {
+                            return Err(ArchiveError::SizeMismatch {
+                                path,
+                                declared,
+                                actual: Some(out.len() as u64),
+                            });
+                        }
+                        out
+                    }
+                    Err(err) if err.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput => {
+                        return Err(ArchiveError::SizeMismatch {
+                            path,
+                            declared,
+                            actual: None,
+                        });
+                    }
+                    Err(_) => return Err(ArchiveError::CorruptStream { path }),
+                }
+            }
+            code => {
+                return Err(ArchiveError::UnsupportedMethod {
+                    path,
+                    method: super::Method::from_code(code),
+                });
+            }
+        };
+        if crc32(&decoded) != entry.crc32 {
+            return Err(ArchiveError::ChecksumMismatch { path });
+        }
+        Ok(decoded)
     }
 }
 
