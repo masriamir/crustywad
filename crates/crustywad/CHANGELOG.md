@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.5...crustywad-v0.9.6) - 2026-08-26
+
+### Added
+
+- *(archive)* read pk3 archives — members, namespaces, embedded WADs, and maps ([#445](https://github.com/masriamir/crustywad/pull/445)) ([#469](https://github.com/masriamir/crustywad/pull/469))
+
+### Other
+
+- broaden the American English rule beyond documentation and sweep the repo ([#426](https://github.com/masriamir/crustywad/pull/426))
+- conform to Rust 1.98 clippy lints ([#453](https://github.com/masriamir/crustywad/pull/453))
+
 ## [0.9.5](https://github.com/masriamir/crustywad/compare/crustywad-v0.9.4...crustywad-v0.9.5) - 2026-08-09
 
 ### Fixed
