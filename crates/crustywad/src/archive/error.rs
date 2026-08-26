@@ -33,7 +33,9 @@ pub enum ArchiveError {
     },
     /// The bytes carry no recognized archive signature, or a zip signature
     /// with no end-of-central-directory record in the last 65,557 bytes.
-    #[error("not an archive: no zip local-header signature and end-of-central-directory record")]
+    #[error(
+        "not an archive: no zip local-header signature, or no end-of-central-directory record behind one"
+    )]
     NotAnArchive,
     /// A container format this crate recognizes but does not decode.
     #[error("{0} archives are not supported yet")]
