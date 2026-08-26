@@ -43,6 +43,9 @@ struct GettingStarted;
 #[doc = include_str!("../../../docs/guide/src/reading-wads.md")]
 struct ReadingWads;
 
+#[doc = include_str!("../../../docs/guide/src/reading-archives.md")]
+struct ReadingArchives;
+
 #[doc = include_str!("../../../docs/guide/src/writing-wads.md")]
 struct WritingWads;
 

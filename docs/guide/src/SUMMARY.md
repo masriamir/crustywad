@@ -6,6 +6,7 @@
 
 - [Getting Started](getting-started.md)
 - [Reading WAD Files](reading-wads.md)
+- [Reading pk3 Archives](reading-archives.md)
 - [Writing WAD Files](writing-wads.md)
 - [Converting maps](converting-maps.md)
 - [Building nodes](building-nodes.md)

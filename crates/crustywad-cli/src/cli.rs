@@ -107,20 +107,23 @@ pub(crate) enum NodeFormatArg {
 /// Available `cwad` subcommands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum SubCommand {
-    /// Print WAD metadata: kind, lump count, total data size, and detected map names.
+    /// Print WAD metadata (or, for a pk3, its member/namespace/map summary):
+    /// kind, lump count, total data size, and detected map names.
     Info {
-        /// Path to the WAD file.
+        /// Path to the WAD or pk3 archive (detected by magic bytes, not extension).
         path: PathBuf,
     },
-    /// Print the lump directory.
+    /// Print the lump directory (or a pk3's member table).
     List {
-        /// Path to the WAD file.
+        /// Path to the WAD or pk3 archive (detected by magic bytes, not extension).
         path: PathBuf,
     },
     /// Validate WAD correctness. Exits 0 if clean, 1 when `--deep` finds map
     /// validation errors, 2 on I/O or parse error.
+    ///
+    /// Accepts a pk3: --deep validates every maps/*.wad and embedded WAD.
     Validate {
-        /// Path to the WAD file.
+        /// Path to the WAD or pk3 archive (detected by magic bytes, not extension).
         path: PathBuf,
         /// Also assemble every map in the WAD — all formats, including Doom 64
         /// nested-WAD maps — reporting per-map errors and warnings.

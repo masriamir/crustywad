@@ -9,7 +9,7 @@ not here (see `.meta-manifest.toml` and `just meta-check`).
 
 `crustywad` is a Rust workspace providing safe, documented Doom WAD file I/O. It targets the Rust 2024 edition with MSRV 1.94.0 and is dual-licensed under MIT OR Apache-2.0.
 
-**Current state:** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, WAD serialization (`write` feature), zero-copy memory-mapped loading (`mmap` feature), a `cwad` CLI with `info`/`list`/`validate`/`merge`/`diff`/`extract`/`convert`/`build` subcommands, `cargo-fuzz` targets, and Criterion benchmarking infrastructure.
+**Current state:** safe WAD header and lump-directory reading, typed scaffolding for classic Doom map-record lumps, WAD serialization (`write` feature), zero-copy memory-mapped loading (`mmap` feature), pk3 archive reading (`archive` feature), a `cwad` CLI with `info`/`list`/`validate`/`merge`/`diff`/`extract`/`convert`/`build` subcommands, `cargo-fuzz` targets, and Criterion benchmarking infrastructure.
 
 ## Workspace layout
 
@@ -27,6 +27,11 @@ crates/
         graph.rs       #   assembled Map graph — MapVertex/MapLinedef/MapSidedef/MapSector/MapThing, index newtypes, MapWarning
         group.rs       #   MapGroup — identifying one map's lumps (Wad::map_groups/map_group)
       mmap.rs          # Read-only memmap2-backed file loading (feature = "mmap")
+      archive/         # pk3 (zip) archives (feature = "archive", ADR-0031)
+        mod.rs         #   Archive/Member/Namespace API, magic sniffing, private Container seam
+        error.rs       #   ArchiveError / ArchiveWarning
+        semantics.rs   #   GZDoom path rules: namespace, short name, embedded WAD, maps
+        zip.rs         #   central-directory reader, stored/deflate decode, CRC
       util.rs          # Crate-internal helpers (trim_nul: NUL-padding trim for 8-byte names)
     benches/
       helpers.rs       # Synthetic WAD builder + Freedoom loader for bench use
@@ -37,6 +42,8 @@ crates/
       wad_reader.rs    # Integration tests for the main WAD reader API
       map_records.rs   # Integration tests for typed map-record parsing
       freedoom.rs      # Optional Freedoom fixture tests (feature = "freedoom-tests")
+      archive.rs       # Integration tests for pk3 reading (feature = "archive")
+      pk3.rs           # Optional local pk3 sweep (feature = "pk3-tests")
   crustywad-cli/       # CLI binary crate (`cwad`)
     src/main.rs        # `info`/`list`/`validate`/`merge`/`diff`/`extract`/`convert`/`build` subcommands via clap
     src/cli.rs         # CLI argument types (also included by build.rs for shell completions)
@@ -246,10 +253,12 @@ See [`docs/guide/src/features.md`](docs/guide/src/features.md) for the full feat
 | Feature | Default | Purpose |
 |---|---|---|
 | `mmap` | no | Enables `Wad::from_path_mapped[_with_options]` for zero-copy memory-mapped loading via `memmap2`; `from_path` always reads into memory regardless of this flag |
+| `archive` | no | Enables `archive::Archive` for reading pk3 (zip) resource archives — members with GZDoom namespaces and short names, embedded WADs, and `maps/*.wad` maps parsed through the existing map machinery — bounded by `Limits::max_archive_members` / `max_decoded_member_bytes`; stored and deflate only, via the pure-Rust `miniz_oxide` already used by `extended-nodes-zlib`. pk7 (7z) is recognized and refused by name (ADR-0031). Powers `cwad info`/`list`/`validate` on a pk3 |
 | `freedoom-tests` | no | Enables optional integration tests against local Freedoom WADs (supplied via `CRUSTYWAD_FREEDOOM_DIR`; auto-fetchable via `just fetch-fixtures`) |
 | `hexen-tests` | no | Enables optional integration tests against a local Hexen IWAD (supplied via `CRUSTYWAD_HEXEN_DIR`; not auto-fetchable) |
 | `doom64-tests` | no | Enables optional integration tests against a local Doom 64 IWAD (supplied via `CRUSTYWAD_DOOM64_DIR`; not auto-fetchable) |
 | `sweep-tests` | no | Enables an optional sweep test that assembles every map of every WAD in a local collection (supplied via `CRUSTYWAD_SWEEP_DIR`; not auto-fetchable; `just test-sweep`) |
+| `pk3-tests` | no | Enables an optional sweep test over a local pk3 collection (supplied via `CRUSTYWAD_PK3_DIR`; not auto-fetchable; `just test-pk3`) |
 | `guide-doctests` | no | **Internal, CI-only.** Compiles the mdBook guide's Rust code samples as crate doctests (enabled by `--all-features`); not a runtime capability |
 | `write` | no | Enables `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning`, and `Wad::to_builder()` for WAD serialization |
 | `nodebuild` | no | Enables the `map::build` node-lump builders (implies `write`) — `build_blockmap`/`build_reject`/`build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and their `to_lump_bytes` serializers, for clean-room BLOCKMAP/REJECT/BSP node generation (ADR-0024). Also emits a `ZDoom` non-GL `XNOD`/`ZNOD` extended-node stream via `NodeFormat` (ADR-0025), plus the GL `XGLN`/`XGL2`/`XGL3` streams (and their `Z*` twins with `extended-nodes-zlib`), with `NodeFormat::Gl` auto-selecting the minimal dialect, via `build_gl_nodes`/`BuiltGlNodes` (ADR-0026), and a UDMF one-shot (`add_udmf_map_with_nodes`) that builds a `ZNODES` stream for a UDMF map group. Powers `cwad convert --nodes` and `cwad build --nodes`, including UDMF `ZNODES` output — GL dialects by default, `xnod`/`znod` on explicit request |

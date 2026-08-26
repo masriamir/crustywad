@@ -13,7 +13,7 @@ use thiserror::Error;
 /// This keeps the enum-level single-line/no-escape guarantee true even when
 /// the interpolated content comes from outside the crate (an OS error string,
 /// a caller-supplied path).
-fn flatten_control(s: &str) -> String {
+pub(crate) fn flatten_control(s: &str) -> String {
     s.replace(['\n', '\r'], " ").replace('\u{1b}', "")
 }
 

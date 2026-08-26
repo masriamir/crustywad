@@ -61,5 +61,6 @@ implementation begins.**
 | [0028](0028-strife-game-identification.md) | Strife game identification and semantic attribution | Accepted |
 | [0029](0029-degenerate-blockmaps.md) | Degenerate blockmaps — discard, don't patch | Accepted |
 | [0030](0030-xtask-harvest-isolation-and-governance.md) | xtask harvest — workspace isolation, data governance, and verified architecture | Accepted |
+| [0031](0031-pk3-archive-support.md) | pk3 archive support — container plus maps, zip only | Accepted |
 
 <!-- Add new ADRs to the table above in ascending order. -->

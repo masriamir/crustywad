@@ -71,6 +71,13 @@ test-freedoom dir=(justfile_directory() / "tests/fixtures/freedoom"):
 test-sweep dir=(justfile_directory() / "RETAIL") extdir=(justfile_directory() / "RETAIL-EXT"):
     CRUSTYWAD_SWEEP_DIR="{{dir}}" CRUSTYWAD_SWEEP_EXTENDED_DIR="{{extdir}}" cargo test -p crustywad --features sweep-tests,extended-nodes-zlib --test sweep -- --nocapture
 
+# Sweep a local pk3 collection: open every archive strictly, read every
+# member (CRC-verified), and parse every maps/*.wad and embedded WAD
+# (ADR-0031). Nothing is fetched — the gitignored PK3-EXT/ directory is the
+# default; use an absolute dir for the same CWD reason as test-sweep.
+test-pk3 dir=(justfile_directory() / "PK3-EXT"):
+    CRUSTYWAD_PK3_DIR="{{dir}}" cargo test -p crustywad --features pk3-tests --test pk3 -- --nocapture
+
 # Run a fuzz target. The fuzz/ sub-workspace pins nightly via rust-toolchain.toml.
 fuzz target="fuzz_wad_strict":
     cd fuzz && cargo fuzz run {{target}}

@@ -1,0 +1,969 @@
+//! Integration tests for the `archive` feature: pk3 (zip) reading through
+//! the public `crustywad::archive::Archive` API, in both strictness modes.
+
+#![cfg(feature = "archive")]
+
+mod common;
+
+use crustywad::archive::{
+    Archive, ArchiveError, ArchiveWarning, ContainerKind, Member, Method, Namespace,
+};
+use crustywad::{Limits, ParseOptions};
+
+/// Both strictness modes, so every negative test runs under each.
+fn both_modes() -> [ParseOptions; 2] {
+    [ParseOptions::strict(), ParseOptions::lenient()]
+}
+
+#[test]
+fn random_bytes_are_not_an_archive() {
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(b"IWAD\0\0\0\0\0\0\0\0".to_vec(), options)
+            .expect_err("a WAD is not an archive");
+        assert!(matches!(err, ArchiveError::NotAnArchive), "{err}");
+    }
+}
+
+#[test]
+fn empty_archive_signature_is_rejected_by_name() {
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(b"PK\x05\x06".to_vec(), options)
+            .expect_err("empty archive");
+        assert!(matches!(err, ArchiveError::EmptyArchive), "{err}");
+    }
+}
+
+#[test]
+fn spanned_archive_signature_is_rejected_by_name() {
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(b"PK\x07\x08".to_vec(), options)
+            .expect_err("spanned archive");
+        assert!(matches!(err, ArchiveError::SpannedArchive), "{err}");
+    }
+}
+
+#[test]
+fn pk7_is_detected_and_named_in_the_error() {
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(b"7z\xbc\xaf\x27\x1c\0\0".to_vec(), options)
+            .expect_err("7z container");
+        assert!(
+            matches!(err, ArchiveError::UnsupportedContainer(ContainerKind::Pk7)),
+            "{err}"
+        );
+        assert!(
+            err.to_string().contains("pk7"),
+            "message names the format: {err}"
+        );
+    }
+}
+
+/// Compile-time proof that `T` can cross a thread boundary and be shared.
+fn assert_send_sync<T: Send + Sync>() {}
+
+#[test]
+fn archive_and_member_are_send_and_sync() {
+    // `Archive` boxes a private `Container`; the trait carries `Send + Sync`
+    // as supertraits so the boxed object keeps them. Without that bound the
+    // whole type is neither, which no caller could work around.
+    assert_send_sync::<Archive>();
+    assert_send_sync::<Member>();
+}
+
+#[test]
+fn errors_display_on_a_single_line() {
+    let err = Archive::from_bytes(b"PK\x07\x08".to_vec()).unwrap_err();
+    assert!(!err.to_string().contains('\n'));
+}
+
+#[test]
+fn zip_builder_round_trips_through_python_compatible_layout() {
+    // A stored + a deflated member; the archive must open and list both.
+    let zip = common::ZipBuilder::new()
+        .stored("MAPINFO.txt", b"map MAP01 \"Entry\"")
+        .deflate("sprites/TROOA1.png", &[0_u8; 512])
+        .build();
+    assert!(zip.starts_with(b"PK\x03\x04"));
+    let archive = Archive::from_bytes(zip).expect("opens");
+    let paths: Vec<&str> = archive.members().iter().map(Member::path).collect();
+    assert_eq!(paths, ["MAPINFO.txt", "sprites/TROOA1.png"]);
+}
+
+fn with_limits(options: ParseOptions, limits: Limits) -> ParseOptions {
+    let mut o = options;
+    o.limits = limits;
+    o
+}
+
+#[test]
+fn lists_members_with_namespace_short_name_method_and_sizes() {
+    let zip = common::ZipBuilder::new()
+        .stored("MAPINFO.txt", b"x")
+        .deflate("SPRITES/trooa1.png", &[7_u8; 300])
+        .stored("maps/MAP01.wad", b"PWAD")
+        .stored("zscript/actors.zs", b"")
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).expect("opens");
+        let m = archive.members();
+        assert_eq!(m.len(), 4);
+        assert_eq!(
+            (m[0].path(), m[0].namespace(), m[0].short_name()),
+            ("MAPINFO.txt", Namespace::Global, Some("MAPINFO"))
+        );
+        assert_eq!(
+            (m[1].path(), m[1].namespace(), m[1].short_name()),
+            ("SPRITES/trooa1.png", Namespace::Sprites, Some("TROOA1"))
+        );
+        assert_eq!(m[1].method(), Method::Deflate);
+        assert_eq!(m[1].size(), 300);
+        assert!(
+            m[1].compressed_size() < 300,
+            "deflate shrinks 300 identical bytes"
+        );
+        assert_eq!(
+            (m[2].namespace(), m[2].short_name()),
+            (Namespace::Hidden, None)
+        );
+        assert_eq!(m[3].method(), Method::Stored);
+        assert_eq!(m[3].index(), 3);
+        assert!(archive.warnings().is_empty());
+    }
+}
+
+#[test]
+fn directory_entries_are_dropped() {
+    let zip = common::ZipBuilder::new()
+        .stored("sprites/", b"")
+        .stored("sprites/TROOA1.png", b"x")
+        .build();
+    let archive = Archive::from_bytes(zip).expect("opens");
+    assert_eq!(archive.members().len(), 1);
+    assert_eq!(archive.members()[0].path(), "sprites/TROOA1.png");
+}
+
+#[test]
+fn a_member_with_an_empty_name_is_dropped() {
+    // A zero-length name is not a directory entry (it does not end in `/`),
+    // so the empty-path guard is what drops it.
+    let zip = common::ZipBuilder::new()
+        .stored("", b"x")
+        .stored("a.txt", b"a")
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).expect("opens");
+        assert_eq!(archive.members().len(), 1);
+        assert_eq!(archive.members()[0].path(), "a.txt");
+    }
+}
+
+#[test]
+fn raw_names_are_normalized_before_they_reach_a_member() {
+    // Zip names may use `\` (DOS-era writers) and may carry a leading
+    // separator; both are normalized at open, so `path()` never shows them.
+    let zip = common::ZipBuilder::new()
+        .entry(common::ZipEntry::stored("\\sprites\\A.png", b"x"))
+        .entry(common::ZipEntry::stored("/sprites/B.png", b"y"))
+        .build();
+    let archive = Archive::from_bytes(zip).expect("opens");
+    let paths: Vec<&str> = archive.members().iter().map(Member::path).collect();
+    assert_eq!(paths, ["sprites/A.png", "sprites/B.png"]);
+    assert_eq!(archive.members()[0].namespace(), Namespace::Sprites);
+    assert_eq!(archive.members()[0].short_name(), Some("A"));
+}
+
+#[test]
+fn member_lookup_is_case_insensitive_and_accepts_backslashes() {
+    let zip = common::ZipBuilder::new()
+        .stored("maps/MAP01.wad", b"PWAD")
+        .build();
+    let archive = Archive::from_bytes(zip).expect("opens");
+    assert!(archive.member("MAPS/map01.WAD").is_some());
+    assert!(archive.member("maps\\MAP01.wad").is_some());
+    assert!(archive.member("/maps/MAP01.wad").is_some());
+    assert!(archive.member("maps/MAP02.wad").is_none());
+}
+
+#[test]
+fn eocd_is_found_behind_a_maximal_comment_but_not_beyond_it() {
+    let found = common::ZipBuilder::new()
+        .stored("a.txt", b"a")
+        .comment(&vec![b'c'; 65_535])
+        .build();
+    assert_eq!(
+        Archive::from_bytes(found).expect("opens").members().len(),
+        1
+    );
+    let mut lost = common::ZipBuilder::new().stored("a.txt", b"a").build();
+    lost.extend(std::iter::repeat_n(b'c', 65_536));
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(lost.clone(), options).unwrap_err();
+        assert!(matches!(err, ArchiveError::NotAnArchive), "{err}");
+    }
+}
+
+#[test]
+fn zip64_records_are_honored() {
+    let zip = common::ZipBuilder::new()
+        .zip64(true)
+        .stored("MAPINFO.txt", b"hello")
+        .deflate("graphics/A.png", &[1_u8; 100])
+        .build();
+    let archive = Archive::from_bytes(zip).expect("opens");
+    assert_eq!(archive.members().len(), 2);
+    assert_eq!(archive.members()[0].size(), 5);
+    assert_eq!(archive.members()[1].size(), 100);
+}
+
+#[test]
+fn declared_member_count_over_the_limit_is_refused_in_both_modes() {
+    let zip = common::ZipBuilder::new()
+        .stored("a.txt", b"a")
+        .stored("b.txt", b"b")
+        .build();
+    for options in both_modes() {
+        let options = with_limits(options, Limits::new().with_max_archive_members(1));
+        let err = Archive::from_bytes_with_options(zip.clone(), options).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ArchiveError::TooManyMembers {
+                    declared: 2,
+                    limit: 1
+                }
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn a_count_larger_than_the_directory_is_corrupt_in_both_modes() {
+    let zip = common::ZipBuilder::new()
+        .stored("a.txt", b"a")
+        .entry_count_override(50)
+        .build();
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(zip.clone(), options).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::CorruptDirectory { .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn truncated_central_directory_is_corrupt() {
+    let zip = common::ZipBuilder::new().stored("abcdef.txt", b"a").build();
+    // Damage the central directory entry's name length so it overruns.
+    let cd = zip
+        .windows(4)
+        .position(|w| w == [0x50, 0x4b, 0x01, 0x02])
+        .unwrap();
+    let mut bad = zip.clone();
+    bad[cd + 28] = 0xFF; // name length low byte
+    bad[cd + 29] = 0x7F;
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(bad.clone(), options).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::CorruptDirectory { index: 0, .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn unsupported_methods_are_named_strict_errors_and_lenient_warnings() {
+    for (code, method) in [
+        (1_u16, Method::Shrink),
+        (6, Method::Implode),
+        (12, Method::Bzip2),
+        (14, Method::Lzma),
+        (95, Method::Xz),
+        (98, Method::Ppmd),
+        (42, Method::Other(42)),
+    ] {
+        let mut entry = common::ZipEntry::stored("sounds/DSPISTOL.wav", b"data");
+        entry.method = code;
+        let zip = common::ZipBuilder::new()
+            .stored("MAPINFO.txt", b"x")
+            .entry(entry)
+            .build();
+
+        let err =
+            Archive::from_bytes_with_options(zip.clone(), ParseOptions::strict()).unwrap_err();
+        assert!(
+            matches!(&err, ArchiveError::UnsupportedMethod { path, method: m } if path == "sounds/DSPISTOL.wav" && *m == method),
+            "{err}"
+        );
+        assert!(
+            err.to_string().contains(&method.to_string()),
+            "names the method: {err}"
+        );
+
+        let archive = Archive::from_bytes_with_options(zip, ParseOptions::lenient())
+            .expect("lenient lists it");
+        assert_eq!(archive.members().len(), 2);
+        assert_eq!(archive.members()[1].method(), method);
+        assert!(
+            matches!(&archive.warnings()[0], ArchiveWarning::UnreadableMember { path, .. } if path == "sounds/DSPISTOL.wav")
+        );
+    }
+}
+
+#[test]
+fn encrypted_members_are_strict_errors_and_lenient_warnings() {
+    let mut entry = common::ZipEntry::stored("secret.txt", b"data");
+    entry.flags = common::ZIP_FLAG_ENCRYPTED;
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    let err = Archive::from_bytes_with_options(zip.clone(), ParseOptions::strict()).unwrap_err();
+    assert!(matches!(err, ArchiveError::Encrypted { .. }), "{err}");
+    let archive = Archive::from_bytes_with_options(zip, ParseOptions::lenient()).expect("listed");
+    assert!(archive.members()[0].is_encrypted());
+    assert!(matches!(
+        archive.warnings()[0],
+        ArchiveWarning::UnreadableMember { .. }
+    ));
+}
+
+#[test]
+fn non_ascii_paths_are_strict_errors_and_lenient_nameless_members() {
+    let zip = common::ZipBuilder::new()
+        .stored("graphics/T\u{cf}TLE.png", b"x")
+        .build();
+    let err = Archive::from_bytes_with_options(zip.clone(), ParseOptions::strict()).unwrap_err();
+    assert!(matches!(err, ArchiveError::NonAsciiName { .. }), "{err}");
+    let archive = Archive::from_bytes_with_options(zip, ParseOptions::lenient()).expect("listed");
+    assert_eq!(archive.members()[0].short_name(), None);
+    assert_eq!(archive.members()[0].namespace(), Namespace::Graphics);
+    assert!(matches!(
+        archive.warnings()[0],
+        ArchiveWarning::NonAsciiName { .. }
+    ));
+}
+
+#[test]
+fn duplicate_paths_are_kept_in_both_modes_and_the_later_wins() {
+    let zip = common::ZipBuilder::new()
+        .stored("MAPINFO.txt", b"first")
+        .stored("mapinfo.TXT", b"second")
+        .build();
+
+    let strict = Archive::from_bytes_with_options(zip.clone(), ParseOptions::strict())
+        .expect("a duplicate path is not an error in strict mode");
+    assert_eq!(strict.members().len(), 2);
+    let member = strict.member("MAPINFO.txt").unwrap();
+    assert_eq!(member.index(), 1);
+    assert_eq!(strict.read(member).unwrap(), b"second");
+    assert!(strict.warnings().is_empty());
+
+    let lenient = Archive::from_bytes_with_options(zip, ParseOptions::lenient())
+        .expect("a duplicate path is not an error in lenient mode either");
+    assert_eq!(lenient.members().len(), 2);
+    let member = lenient.member("MAPINFO.txt").unwrap();
+    assert_eq!(member.index(), 1);
+    assert_eq!(lenient.read(member).unwrap(), b"second");
+    assert_eq!(lenient.warnings().len(), 1);
+    assert!(matches!(
+        lenient.warnings()[0],
+        ArchiveWarning::DuplicatePath { .. }
+    ));
+}
+
+#[test]
+fn oversized_declared_members_are_refused_strictly_and_flagged_leniently() {
+    let zip = common::ZipBuilder::new()
+        .stored("big.bin", &[0_u8; 64])
+        .build();
+    let limits = Limits::new().with_max_decoded_member_bytes(32);
+    let err =
+        Archive::from_bytes_with_options(zip.clone(), with_limits(ParseOptions::strict(), limits))
+            .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ArchiveError::MemberTooLarge {
+                declared: 64,
+                limit: 32,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    let archive =
+        Archive::from_bytes_with_options(zip, with_limits(ParseOptions::lenient(), limits))
+            .expect("listed");
+    assert!(matches!(
+        archive.warnings()[0],
+        ArchiveWarning::MemberTooLarge {
+            declared: 64,
+            limit: 32,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_hostile_zip64_locator_offset_is_corrupt_not_a_panic() {
+    let zip = common::ZipBuilder::new()
+        .zip64(true)
+        .stored("a.txt", b"a")
+        .build();
+    let locator = zip
+        .windows(4)
+        .rposition(|w| w == [0x50, 0x4b, 0x06, 0x07])
+        .expect("zip64 locator");
+    for target in [0_u64, u64::MAX, u64::from(u32::MAX), 1 << 62] {
+        let mut bad = zip.clone();
+        bad[locator + 8..locator + 16].copy_from_slice(&target.to_le_bytes());
+        for options in both_modes() {
+            let err = Archive::from_bytes_with_options(bad.clone(), options).unwrap_err();
+            assert!(
+                matches!(err, ArchiveError::CorruptDirectory { .. }),
+                "{err}"
+            );
+        }
+    }
+}
+
+/// The offset of the first central-directory entry in a built fixture.
+fn central_directory_start(zip: &[u8]) -> usize {
+    zip.windows(4)
+        .position(|w| w == [0x50, 0x4b, 0x01, 0x02])
+        .expect("central directory")
+}
+
+#[test]
+fn a_buffer_shorter_than_an_eocd_is_not_an_archive() {
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(b"PK\x03\x04\0\0\0\0".to_vec(), options)
+            .expect_err("too short to hold an EOCD");
+        assert!(matches!(err, ArchiveError::NotAnArchive), "{err}");
+    }
+}
+
+#[test]
+fn a_bad_central_directory_signature_is_corrupt() {
+    let zip = common::ZipBuilder::new()
+        .stored("a.txt", b"a")
+        .stored("b.txt", b"b")
+        .build();
+    let second = zip
+        .windows(4)
+        .rposition(|w| w == [0x50, 0x4b, 0x01, 0x02])
+        .expect("second central directory entry");
+    let mut bad = zip;
+    bad[second + 2] = 0xFF;
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(bad.clone(), options).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::CorruptDirectory { index: 1, .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn a_count_the_remaining_directory_cannot_hold_is_corrupt() {
+    // Two entries are declared but only one is written, and it fills the
+    // directory exactly: 46 fixed bytes + a 53-character name = 99 bytes, and
+    // the EOCD records a 99-byte directory. So the second entry starts *at*
+    // `cd_end` with zero bytes left to hold its own 46 — the overrun check
+    // fires on the first read of entry 1, not on a partial entry.
+    let zip = common::ZipBuilder::new()
+        .stored(
+            "a-fifty-character-name-for-a-long-directory-entry.txt",
+            b"a",
+        )
+        .entry_count_override(2)
+        .build();
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(zip.clone(), options).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::CorruptDirectory { index: 1, .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn a_non_utf8_member_name_is_decoded_lossily_and_flagged() {
+    let zip = common::ZipBuilder::new().stored("a.txt", b"a").build();
+    let cd = central_directory_start(&zip);
+    let mut bad = zip;
+    bad[cd + 46] = 0xFF; // first byte of the name is not valid UTF-8
+    let err = Archive::from_bytes_with_options(bad.clone(), ParseOptions::strict()).unwrap_err();
+    assert!(matches!(err, ArchiveError::NonAsciiName { .. }), "{err}");
+    let archive = Archive::from_bytes_with_options(bad, ParseOptions::lenient()).expect("listed");
+    assert_eq!(archive.members()[0].path(), "\u{fffd}.txt");
+    assert_eq!(archive.members()[0].short_name(), None);
+    assert!(matches!(
+        archive.warnings()[0],
+        ArchiveWarning::NonAsciiName { .. }
+    ));
+}
+
+#[test]
+fn zip64_extra_field_length_lies_are_corrupt() {
+    let zip = common::ZipBuilder::new()
+        .zip64(true)
+        .stored("a.txt", b"a")
+        .build();
+    let cd = central_directory_start(&zip);
+    let name_len = usize::from(u16::from_le_bytes([zip[cd + 28], zip[cd + 29]]));
+    let field_len_at = cd + 46 + name_len + 2;
+    // 0xFFFF overruns the entry's own extra region; 8 leaves room for only
+    // one of the three ZIP64 replacements the sentinels ask for.
+    for declared in [0xFFFF_u16, 8] {
+        let mut bad = zip.clone();
+        bad[field_len_at..field_len_at + 2].copy_from_slice(&declared.to_le_bytes());
+        for options in both_modes() {
+            let err = Archive::from_bytes_with_options(bad.clone(), options).unwrap_err();
+            assert!(
+                matches!(err, ArchiveError::CorruptDirectory { index: 0, .. }),
+                "{err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reads_stored_and_deflated_members_back_exactly() {
+    let big: Vec<u8> = (0..5000_u32).map(|i| (i % 251) as u8).collect();
+    let zip = common::ZipBuilder::new()
+        .stored("a.txt", b"hello")
+        .deflate("b/big.bin", &big)
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        assert_eq!(archive.read(&archive.members()[0]).unwrap(), b"hello");
+        assert_eq!(archive.read(&archive.members()[1]).unwrap(), big);
+    }
+}
+
+#[test]
+fn data_descriptor_members_read_via_central_directory_sizes() {
+    let mut entry = common::ZipEntry::deflate("graphics/A.png", &[9_u8; 1000]);
+    entry.flags = common::ZIP_FLAG_DATA_DESCRIPTOR;
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    assert_eq!(
+        archive.read(&archive.members()[0]).unwrap(),
+        vec![9_u8; 1000]
+    );
+}
+
+#[test]
+fn crc_lie_is_a_checksum_mismatch_in_both_modes() {
+    let mut entry = common::ZipEntry::stored("a.txt", b"hello");
+    entry.crc_override = Some(0xDEAD_BEEF);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::ChecksumMismatch { .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn declared_size_smaller_than_the_stream_is_a_size_mismatch() {
+    let mut entry = common::ZipEntry::deflate("a.bin", &[1_u8; 400]);
+    entry.size_override = Some(100);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ArchiveError::SizeMismatch {
+                    declared: 100,
+                    actual: None,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn declared_size_larger_than_the_stream_is_a_size_mismatch() {
+    let mut entry = common::ZipEntry::deflate("a.bin", &[1_u8; 100]);
+    entry.size_override = Some(400);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ArchiveError::SizeMismatch {
+                    declared: 400,
+                    actual: Some(100),
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn stored_member_whose_sizes_disagree_is_a_size_mismatch() {
+    let mut entry = common::ZipEntry::stored("a.bin", &[1_u8; 100]);
+    entry.size_override = Some(50);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(matches!(err, ArchiveError::SizeMismatch { .. }), "{err}");
+    }
+}
+
+#[test]
+fn corrupt_deflate_stream_is_reported() {
+    // `0xFF` opens a block with BFINAL set and the reserved block type `11`,
+    // which the inflater rejects outright — so this is a stream failure, never
+    // a short read that would surface as a size mismatch.
+    let mut entry = common::ZipEntry::deflate("a.bin", &[1_u8; 100]);
+    entry.compressed_override = Some(vec![0xFF; 20]);
+    let zip = common::ZipBuilder::new().entry(entry).build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(matches!(err, ArchiveError::CorruptStream { .. }), "{err}");
+    }
+}
+
+#[test]
+fn an_empty_deflate_member_reads_back_as_no_bytes() {
+    let zip = common::ZipBuilder::new()
+        .deflate("empty.bin", b"")
+        .stored("a.txt", b"a")
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        assert_eq!(archive.members()[0].size(), 0);
+        assert_eq!(
+            archive.read(&archive.members()[0]).unwrap(),
+            Vec::<u8>::new()
+        );
+        // The zero-length cap must not swallow the following member.
+        assert_eq!(archive.read(&archive.members()[1]).unwrap(), b"a");
+    }
+}
+
+#[test]
+fn local_header_disagreeing_with_the_directory_is_corrupt_at_read() {
+    let zip = common::ZipBuilder::new().stored("abcdef.txt", b"a").build();
+    let mut bad = zip.clone();
+    // Local header name length (offset 26) -> lie.
+    bad[26] = 0xFF;
+    bad[27] = 0x7F;
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(bad.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(err, ArchiveError::CorruptDirectory { index: 0, .. }),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn reading_an_unreadable_lenient_member_fails_by_name() {
+    let mut encrypted = common::ZipEntry::stored("secret.txt", b"x");
+    encrypted.flags = common::ZIP_FLAG_ENCRYPTED;
+    let mut lzma = common::ZipEntry::stored("packed.bin", b"x");
+    lzma.method = 14;
+    let zip = common::ZipBuilder::new()
+        .entry(encrypted)
+        .entry(lzma)
+        .build();
+    let archive = Archive::from_bytes_with_options(zip, ParseOptions::lenient()).unwrap();
+    assert!(matches!(
+        archive.read(&archive.members()[0]).unwrap_err(),
+        ArchiveError::Encrypted { .. }
+    ));
+    assert!(matches!(
+        archive.read(&archive.members()[1]).unwrap_err(),
+        ArchiveError::UnsupportedMethod {
+            method: Method::Lzma,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn reading_a_lenient_oversized_member_fails_with_the_limit() {
+    let zip = common::ZipBuilder::new()
+        .stored("big.bin", &[0_u8; 64])
+        .build();
+    let options = with_limits(
+        ParseOptions::lenient(),
+        Limits::new().with_max_decoded_member_bytes(32),
+    );
+    let archive = Archive::from_bytes_with_options(zip, options).unwrap();
+    let err = archive.read(&archive.members()[0]).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ArchiveError::MemberTooLarge {
+                declared: 64,
+                limit: 32,
+                ..
+            }
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn wad_parses_a_wad_member_and_refuses_non_wads() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .deflate("maps/MAP01.wad", &wad)
+        .stored("readme.txt", b"hi")
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let parsed = archive
+            .wad(&archive.members()[0])
+            .expect("member parses as a WAD");
+        assert_eq!(parsed.lump_count(), 2);
+        let err = archive.wad(&archive.members()[1]).unwrap_err();
+        assert!(matches!(err, ArchiveError::NotAWad { .. }), "{err}");
+    }
+}
+
+#[test]
+fn wad_parse_failure_keeps_the_member_path() {
+    // A truncated header, not an out-of-range directory: lenient mode
+    // *recovers* from the latter (clamping the span and recording a warning),
+    // so only a header too short to read at all fails in both modes.
+    let zip = common::ZipBuilder::new()
+        .stored("maps/MAP01.wad", b"PWAD\xff\xff\xff")
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.wad(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(&err, ArchiveError::Wad { path, .. } if path == "maps/MAP01.wad"),
+            "{err}"
+        );
+        assert!(err.to_string().starts_with("member `maps/MAP01.wad`: "));
+    }
+}
+
+#[test]
+fn a_local_header_that_is_missing_or_misplaced_is_corrupt_at_read() {
+    let zip = common::ZipBuilder::new().stored("a.txt", b"hello").build();
+    let cd = central_directory_start(&zip);
+    // The directory points the local header at (a) the end of the file, so
+    // the fixed 30 bytes do not fit, and (b) a spot whose four leading bytes
+    // are not the local-header signature.
+    let past_eof = u32::try_from(zip.len()).expect("fixture fits in u32");
+    for offset in [past_eof, 4] {
+        let mut bad = zip.clone();
+        bad[cd + 42..cd + 46].copy_from_slice(&offset.to_le_bytes());
+        for options in both_modes() {
+            let archive = Archive::from_bytes_with_options(bad.clone(), options).unwrap();
+            let err = archive.read(&archive.members()[0]).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ArchiveError::CorruptDirectory { index: 0, reason }
+                        if *reason == "local header missing or misplaced"
+                ),
+                "{err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_zip64_local_header_offset_of_u64_max_is_corrupt_not_an_overflow() {
+    let zip = common::ZipBuilder::new()
+        .zip64(true)
+        .stored("a.txt", b"hello")
+        .build();
+    let cd = central_directory_start(&zip);
+    let name_len = usize::from(u16::from_le_bytes([zip[cd + 28], zip[cd + 29]]));
+    // ZIP64 extra field: header (4) + uncompressed (8) + compressed (8), then
+    // the local-header offset.
+    let offset_field = cd + 46 + name_len + 4 + 16;
+    let mut bad = zip.clone();
+    bad[offset_field..offset_field + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(bad.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ArchiveError::CorruptDirectory { index: 0, reason }
+                    if *reason == "local header missing or misplaced"
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn a_member_from_another_archive_is_refused_by_name() {
+    for options in both_modes() {
+        let one = Archive::from_bytes_with_options(
+            common::ZipBuilder::new().stored("a.txt", b"a").build(),
+            options,
+        )
+        .unwrap();
+        let two = Archive::from_bytes_with_options(
+            common::ZipBuilder::new()
+                .stored("a.txt", b"a")
+                .stored("maps/MAP01.wad", b"PWAD")
+                .build(),
+            options,
+        )
+        .unwrap();
+        // `two.members()[1]` has no counterpart index in `one`; `[0]` does —
+        // the in-range one would otherwise silently read `one`'s own bytes.
+        for member in [&two.members()[1], &two.members()[0]] {
+            let err = one.read(member).unwrap_err();
+            assert!(
+                matches!(&err, ArchiveError::ForeignMember { path } if path == member.path()),
+                "{err}"
+            );
+        }
+        // `wad` goes through `read`, so it refuses a foreign member too.
+        let err = one.wad(&two.members()[1]).unwrap_err();
+        assert!(matches!(err, ArchiveError::ForeignMember { .. }), "{err}");
+        // A member cloned out of the archive's own table still reads.
+        let mine = one.members()[0].clone();
+        assert_eq!(one.read(&mine).unwrap(), b"a");
+    }
+}
+
+use crustywad::archive::MapKind;
+
+#[test]
+fn maps_are_enumerated_in_directory_order_with_kind() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .stored("maps/MAP02.wad", &wad)
+        .stored("MAPS/e1m1.WAD", &wad)
+        .stored("maps/MAP03.map", b"namespace = \"zdoom\";")
+        .stored("maps/sub/MAP04.wad", &wad)
+        .stored("maps/readme.txt", b"")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    let maps = archive.maps();
+    let summary: Vec<(&str, MapKind, usize)> = maps
+        .iter()
+        .map(|m| (m.name(), m.kind(), m.member_index()))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("MAP02", MapKind::Wad, 0),
+            ("E1M1", MapKind::Wad, 1),
+            ("MAP03", MapKind::Textmap, 2)
+        ]
+    );
+    // The .map member is listed but not parseable as a WAD.
+    let err = archive.wad(&archive.members()[2]).unwrap_err();
+    assert!(matches!(err, ArchiveError::NotAWad { .. }), "{err}");
+    // A maps/ WAD parses and yields its group.
+    let parsed = archive
+        .wad(&archive.members()[maps[0].member_index()])
+        .unwrap();
+    assert_eq!(parsed.map_groups().len(), 1);
+    assert_eq!(archive.members()[3].namespace(), Namespace::Hidden);
+}
+
+#[test]
+fn an_archive_with_no_maps_directory_enumerates_no_maps() {
+    let zip = common::ZipBuilder::new()
+        .stored("MAPINFO.txt", b"x")
+        .stored("sprites/TROOA1.png", b"y")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    assert!(archive.maps().is_empty());
+}
+
+#[test]
+fn an_extensionless_maps_member_is_hidden_and_not_a_map() {
+    let zip = common::ZipBuilder::new()
+        .stored("maps/README", b"read me")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    assert!(archive.maps().is_empty());
+    let member = &archive.members()[0];
+    assert_eq!(member.namespace(), Namespace::Hidden);
+    assert_eq!(member.short_name(), None);
+}
+
+#[test]
+fn method_display_names_every_supported_and_rejected_code() {
+    assert_eq!(Method::Stored.to_string(), "stored");
+    assert_eq!(Method::Deflate.to_string(), "deflate");
+    assert_eq!(Method::Lzma.to_string(), "lzma");
+    assert_eq!(Method::Other(42).to_string(), "#42");
+    assert!(Method::Stored.is_supported());
+    assert!(Method::Deflate.is_supported());
+    assert!(!Method::Lzma.is_supported());
+}
+
+#[test]
+fn namespace_directory_names_the_table_entries_only() {
+    assert_eq!(Namespace::Sprites.directory(), Some("sprites"));
+    assert_eq!(Namespace::Global.directory(), None);
+    assert_eq!(Namespace::Hidden.directory(), None);
+}
+
+#[test]
+fn embedded_wads_are_root_wads_and_stem_folder_wads_once_named() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .stored("extra.wad", &wad)
+        .stored("myproject/inner.wad", &wad)
+        .stored("maps/MAP01.wad", &wad)
+        .stored("other/deep.wad", &wad)
+        .build();
+    let archive = Archive::from_bytes(zip.clone()).unwrap();
+    let paths: Vec<&str> = archive.embedded_wads().iter().map(|m| m.path()).collect();
+    assert_eq!(paths, ["extra.wad"]);
+    assert!(archive.name().is_none());
+
+    let named = archive.with_name("MyProject");
+    let paths: Vec<&str> = named.embedded_wads().iter().map(|m| m.path()).collect();
+    assert_eq!(paths, ["extra.wad", "myproject/inner.wad"]);
+    assert_eq!(named.name(), Some("MyProject"));
+    assert!(named.members()[1].is_embedded_wad());
+    assert!(
+        !named.members()[2].is_embedded_wad(),
+        "maps/ WADs are maps, not embedded"
+    );
+    let parsed = named.wad(named.embedded_wads()[1]).unwrap();
+    assert_eq!(parsed.lump_count(), 2);
+}
+
+#[test]
+fn from_path_names_the_archive_by_file_stem() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .stored("myproject/inner.wad", &wad)
+        .build();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("myproject.pk3");
+    std::fs::write(&path, &zip).unwrap();
+    let archive = Archive::from_path(&path).unwrap();
+    assert_eq!(archive.name(), Some("myproject"));
+    assert_eq!(archive.embedded_wads().len(), 1);
+    assert_eq!(archive.kind(), crustywad::archive::ArchiveKind::Zip);
+
+    let missing = Archive::from_path(dir.path().join("nope.pk3")).unwrap_err();
+    assert!(matches!(missing, ArchiveError::Io { .. }), "{missing}");
+}

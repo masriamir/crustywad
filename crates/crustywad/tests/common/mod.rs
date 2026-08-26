@@ -297,6 +297,62 @@ pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
     found
 }
 
+/// Every file with the given case-insensitive `extension` (without the dot)
+/// inside `iwad_dir(env_var)`, sorted by path — the same skip-note contract
+/// as [`wad_files`].
+#[allow(dead_code)]
+pub fn files_with_extension(env_var: &str, extension: &str) -> Vec<PathBuf> {
+    let Some(dir) = iwad_dir(env_var) else {
+        eprintln!("skipping fixture test: {env_var} not set");
+        return Vec::new();
+    };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!(
+                "skipping fixture test: {env_var} ({}) is not a readable directory: {e}",
+                dir.display()
+            );
+            return Vec::new();
+        }
+    };
+    let mut found: Vec<PathBuf> = entries
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{env_var}: failed to read an entry in {}: {e}",
+                        dir.display()
+                    )
+                })
+                .path()
+        })
+        .filter(|path| {
+            if !path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+            {
+                return false;
+            }
+            // As in `wad_files`: `Path::is_file` swallows metadata errors, so
+            // stat explicitly and fail loudly; a directory named `x.pk3` is
+            // skipped rather than handed to the sweep.
+            let meta = std::fs::metadata(path)
+                .unwrap_or_else(|e| panic!("{env_var}: failed to stat {}: {e}", path.display()));
+            meta.is_file()
+        })
+        .collect();
+    found.sort();
+    if found.is_empty() {
+        eprintln!(
+            "skipping fixture test: {env_var}: no .{extension} files found in {}",
+            dir.display()
+        );
+    }
+    found
+}
+
 /// A Doom 64 map marker lump is named `MAPxx` (`MAP` + two ASCII digits).
 ///
 /// Shared by the `doom64-tests` fixture test and the `sweep-tests` sweep so
@@ -515,4 +571,258 @@ pub fn d64_thing(x: i16, y: i16, z: i16, angle: i16, type_id: i16, flags: i16, i
 #[allow(dead_code)]
 pub fn d64_light(r: u8, g: u8, b: u8, tag: u8) -> Vec<u8> {
     vec![r, g, b, tag, 0, 0]
+}
+
+// ---------------------------------------------------------------------------
+// Zip (pk3) fixture builder for the `archive` feature tests (ADR-0031).
+//
+// Writes a real zip: local headers + data, central directory, optional ZIP64
+// EOCD record + locator, EOCD + comment. Every field an attacker controls can
+// be overridden so tests can lie about sizes, CRCs, and counts.
+// ---------------------------------------------------------------------------
+
+pub const ZIP_METHOD_STORED: u16 = 0;
+pub const ZIP_METHOD_DEFLATE: u16 = 8;
+#[allow(dead_code)]
+pub const ZIP_FLAG_ENCRYPTED: u16 = 0x0001;
+pub const ZIP_FLAG_DATA_DESCRIPTOR: u16 = 0x0008;
+
+/// CRC-32 (IEEE) — a test-local copy so fixtures never depend on the crate.
+#[allow(dead_code)]
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFF_u32;
+    for &b in bytes {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                0xEDB8_8320 ^ (crc >> 1)
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ZipEntry {
+    pub path: String,
+    pub data: Vec<u8>,
+    pub method: u16,
+    pub flags: u16,
+    /// Central-directory CRC to write instead of the real one.
+    pub crc_override: Option<u32>,
+    /// Central-directory uncompressed size to write instead of the real one.
+    pub size_override: Option<u32>,
+    /// Bytes to store as the member body instead of the real encoding.
+    pub compressed_override: Option<Vec<u8>>,
+}
+
+#[allow(dead_code)]
+impl ZipEntry {
+    pub fn stored(path: &str, data: &[u8]) -> Self {
+        Self {
+            path: path.to_string(),
+            data: data.to_vec(),
+            method: ZIP_METHOD_STORED,
+            flags: 0,
+            crc_override: None,
+            size_override: None,
+            compressed_override: None,
+        }
+    }
+
+    pub fn deflate(path: &str, data: &[u8]) -> Self {
+        Self {
+            method: ZIP_METHOD_DEFLATE,
+            ..Self::stored(path, data)
+        }
+    }
+
+    fn body(&self) -> Vec<u8> {
+        if let Some(bytes) = &self.compressed_override {
+            return bytes.clone();
+        }
+        match self.method {
+            ZIP_METHOD_DEFLATE => miniz_oxide::deflate::compress_to_vec(&self.data, 6),
+            _ => self.data.clone(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub struct ZipBuilder {
+    entries: Vec<ZipEntry>,
+    comment: Vec<u8>,
+    zip64: bool,
+    entry_count_override: Option<u16>,
+}
+
+#[allow(dead_code)]
+impl ZipBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn stored(mut self, path: &str, data: &[u8]) -> Self {
+        self.entries.push(ZipEntry::stored(path, data));
+        self
+    }
+
+    pub fn deflate(mut self, path: &str, data: &[u8]) -> Self {
+        self.entries.push(ZipEntry::deflate(path, data));
+        self
+    }
+
+    pub fn entry(mut self, entry: ZipEntry) -> Self {
+        self.entries.push(entry);
+        self
+    }
+
+    pub fn comment(mut self, comment: &[u8]) -> Self {
+        self.comment = comment.to_vec();
+        self
+    }
+
+    /// Emit a ZIP64 EOCD record + locator and mark the EOCD counts/offsets
+    /// as `0xFFFF`/`0xFFFF_FFFF`.
+    pub fn zip64(mut self, on: bool) -> Self {
+        self.zip64 = on;
+        self
+    }
+
+    /// Lie about the entry count in the EOCD (for the members-cap tests).
+    pub fn entry_count_override(mut self, count: u16) -> Self {
+        self.entry_count_override = Some(count);
+        self
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub fn build(self) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for entry in &self.entries {
+            let body = entry.body();
+            let crc = entry.crc_override.unwrap_or_else(|| crc32(&entry.data));
+            let size = entry
+                .size_override
+                .unwrap_or(u32::try_from(entry.data.len()).unwrap());
+            let csize = u32::try_from(body.len()).unwrap();
+            let name = entry.path.as_bytes();
+            let descriptor = entry.flags & ZIP_FLAG_DATA_DESCRIPTOR != 0;
+            let local_offset = u32::try_from(out.len()).unwrap();
+
+            // Local file header (30 bytes + name).
+            out.extend_from_slice(&0x0403_4b50_u32.to_le_bytes());
+            out.extend_from_slice(&20_u16.to_le_bytes()); // version needed
+            out.extend_from_slice(&entry.flags.to_le_bytes());
+            out.extend_from_slice(&entry.method.to_le_bytes());
+            out.extend_from_slice(&0_u16.to_le_bytes()); // mod time
+            out.extend_from_slice(&0_u16.to_le_bytes()); // mod date
+            // With a data descriptor the local header carries zeros.
+            let local_header_fields: [u32; 3] = if descriptor {
+                [0, 0, 0]
+            } else {
+                [crc, csize, size]
+            };
+            for field in local_header_fields {
+                out.extend_from_slice(&field.to_le_bytes());
+            }
+            out.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(&0_u16.to_le_bytes()); // extra len
+            out.extend_from_slice(name);
+            out.extend_from_slice(&body);
+            if descriptor {
+                out.extend_from_slice(&0x0807_4b50_u32.to_le_bytes());
+                out.extend_from_slice(&crc.to_le_bytes());
+                out.extend_from_slice(&csize.to_le_bytes());
+                out.extend_from_slice(&size.to_le_bytes());
+            }
+
+            // Central directory entry (46 bytes + name [+ zip64 extra]).
+            central.extend_from_slice(&0x0201_4b50_u32.to_le_bytes());
+            central.extend_from_slice(&20_u16.to_le_bytes()); // version made by
+            central.extend_from_slice(&20_u16.to_le_bytes()); // version needed
+            central.extend_from_slice(&entry.flags.to_le_bytes());
+            central.extend_from_slice(&entry.method.to_le_bytes());
+            central.extend_from_slice(&0_u16.to_le_bytes()); // mod time
+            central.extend_from_slice(&0_u16.to_le_bytes()); // mod date
+            central.extend_from_slice(&crc.to_le_bytes());
+            if self.zip64 {
+                central.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+                central.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+            } else {
+                central.extend_from_slice(&csize.to_le_bytes());
+                central.extend_from_slice(&size.to_le_bytes());
+            }
+            central.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+            let extra_len: u16 = if self.zip64 { 4 + 24 } else { 0 };
+            central.extend_from_slice(&extra_len.to_le_bytes());
+            central.extend_from_slice(&0_u16.to_le_bytes()); // comment len
+            central.extend_from_slice(&0_u16.to_le_bytes()); // disk start
+            central.extend_from_slice(&0_u16.to_le_bytes()); // internal attrs
+            central.extend_from_slice(&0_u32.to_le_bytes()); // external attrs
+            if self.zip64 {
+                central.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+            } else {
+                central.extend_from_slice(&local_offset.to_le_bytes());
+            }
+            central.extend_from_slice(name);
+            if self.zip64 {
+                // Extra field 0x0001: uncompressed, compressed, local offset (u64 each).
+                central.extend_from_slice(&0x0001_u16.to_le_bytes());
+                central.extend_from_slice(&24_u16.to_le_bytes());
+                central.extend_from_slice(&u64::from(size).to_le_bytes());
+                central.extend_from_slice(&u64::from(csize).to_le_bytes());
+                central.extend_from_slice(&u64::from(local_offset).to_le_bytes());
+            }
+        }
+
+        let cd_offset = out.len();
+        let cd_size = central.len();
+        out.extend_from_slice(&central);
+        let count = self
+            .entry_count_override
+            .unwrap_or(u16::try_from(self.entries.len()).unwrap());
+
+        if self.zip64 {
+            let zip64_eocd_offset = out.len();
+            out.extend_from_slice(&0x0606_4b50_u32.to_le_bytes());
+            out.extend_from_slice(&44_u64.to_le_bytes()); // size of remaining record
+            out.extend_from_slice(&45_u16.to_le_bytes()); // version made by
+            out.extend_from_slice(&45_u16.to_le_bytes()); // version needed
+            out.extend_from_slice(&0_u32.to_le_bytes()); // this disk
+            out.extend_from_slice(&0_u32.to_le_bytes()); // cd disk
+            out.extend_from_slice(&u64::from(count).to_le_bytes()); // entries this disk
+            out.extend_from_slice(&u64::from(count).to_le_bytes()); // total entries
+            out.extend_from_slice(&u64::try_from(cd_size).unwrap().to_le_bytes());
+            out.extend_from_slice(&u64::try_from(cd_offset).unwrap().to_le_bytes());
+            // Locator.
+            out.extend_from_slice(&0x0706_4b50_u32.to_le_bytes());
+            out.extend_from_slice(&0_u32.to_le_bytes()); // disk with zip64 eocd
+            out.extend_from_slice(&u64::try_from(zip64_eocd_offset).unwrap().to_le_bytes());
+            out.extend_from_slice(&1_u32.to_le_bytes()); // total disks
+        }
+
+        // EOCD.
+        out.extend_from_slice(&0x0605_4b50_u32.to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes()); // this disk
+        out.extend_from_slice(&0_u16.to_le_bytes()); // cd disk
+        if self.zip64 {
+            out.extend_from_slice(&0xFFFF_u16.to_le_bytes());
+            out.extend_from_slice(&0xFFFF_u16.to_le_bytes());
+            out.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+            out.extend_from_slice(&0xFFFF_FFFF_u32.to_le_bytes());
+        } else {
+            out.extend_from_slice(&count.to_le_bytes());
+            out.extend_from_slice(&count.to_le_bytes());
+            out.extend_from_slice(&u32::try_from(cd_size).unwrap().to_le_bytes());
+            out.extend_from_slice(&u32::try_from(cd_offset).unwrap().to_le_bytes());
+        }
+        out.extend_from_slice(&u16::try_from(self.comment.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&self.comment);
+        out
+    }
 }

@@ -60,6 +60,8 @@ values alongside the serialized bytes.
 //! The current milestone implements real header and directory parsing plus typed
 //! scaffolding for the classic map record lumps.
 
+#[cfg(feature = "archive")]
+pub mod archive;
 pub mod audio;
 mod error;
 pub mod gfx;
@@ -195,8 +197,10 @@ pub enum Strictness {
 /// of a single `doom64-gfx` PNG decode (`max_decoded_pixels`), and the inflated
 /// output of a single compressed extended-node lump (`max_decoded_node_bytes`,
 /// applied during binary **or** UDMF map assembly when the `extended-nodes-zlib`
-/// feature is enabled). A path that touches none of these — e.g. a classic map
-/// with uncompressed nodes — is unaffected. Construct via [`Limits::new`]
+/// feature is enabled). Archive reading (`archive` feature) is bounded by
+/// `max_archive_members` and `max_decoded_member_bytes`. A path that touches
+/// none of these — e.g. a classic map with uncompressed nodes — is
+/// unaffected. Construct via [`Limits::new`]
 /// and the `with_*` setters — the struct is `#[non_exhaustive]` so future
 /// limits can be added without a breaking change.
 #[non_exhaustive]
@@ -222,12 +226,26 @@ pub struct Limits {
     /// bounded-output guard (ADR-0025 §5). Exceeding it is treated like a
     /// corrupt stream: strict errors, lenient degrades to empty arenas.
     pub max_decoded_node_bytes: usize,
+    /// Maximum number of members an archive's central directory may declare
+    /// before `archive::Archive::from_bytes` refuses it (`archive` feature),
+    /// enforced in BOTH strictness modes. The member table is allocated from
+    /// this declared count, so it is the ADR-0016 §1 bound on that allocation
+    /// (ADR-0031 §4). The largest idgames entry observed holds 1,200 members
+    /// and the largest local pk3 15,105; the default leaves ×4 headroom.
+    pub max_archive_members: usize,
+    /// Maximum number of bytes a single archive member may decode to
+    /// (`archive` feature), enforced in BOTH strictness modes — as a
+    /// declared-size check at open and as the output cap of the
+    /// length-limited inflater at read (ADR-0031 §4). The largest member
+    /// observed in the local pk3 collection decodes to ≈ 200 MiB.
+    pub max_decoded_member_bytes: usize,
 }
 
 impl Limits {
     /// The default limits (`max_depth = 64`, `max_composite_pixels = 1 <<
     /// 24`, `max_decoded_pixels = 1 << 24`, `max_decoded_node_bytes = 1 <<
-    /// 26`).
+    /// 26`, `max_archive_members = 65_536`, `max_decoded_member_bytes = 1 <<
+    /// 28`).
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -235,6 +253,8 @@ impl Limits {
             max_composite_pixels: 1 << 24,
             max_decoded_pixels: 1 << 24,
             max_decoded_node_bytes: 1 << 26,
+            max_archive_members: 65_536,
+            max_decoded_member_bytes: 1 << 28,
         }
     }
 
@@ -263,6 +283,20 @@ impl Limits {
     #[must_use]
     pub const fn with_max_decoded_node_bytes(mut self, max_decoded_node_bytes: usize) -> Self {
         self.max_decoded_node_bytes = max_decoded_node_bytes;
+        self
+    }
+
+    /// Returns these limits with `max_archive_members` replaced.
+    #[must_use]
+    pub const fn with_max_archive_members(mut self, max_archive_members: usize) -> Self {
+        self.max_archive_members = max_archive_members;
+        self
+    }
+
+    /// Returns these limits with `max_decoded_member_bytes` replaced.
+    #[must_use]
+    pub const fn with_max_decoded_member_bytes(mut self, max_decoded_member_bytes: usize) -> Self {
+        self.max_decoded_member_bytes = max_decoded_member_bytes;
         self
     }
 }

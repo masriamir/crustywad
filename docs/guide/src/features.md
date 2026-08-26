@@ -12,6 +12,8 @@ allowing callers to opt in to additional capabilities.
 | [`hexen-tests`](#hexen-tests) | no | Integration tests against a local Hexen IWAD (not auto-fetchable) |
 | [`doom64-tests`](#doom64-tests) | no | Integration tests against a local Doom 64 IWAD (not auto-fetchable) |
 | [`sweep-tests`](#sweep-tests) | no | Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable) |
+| [`archive`](#archive) | no | Read pk3 (zip) resource archives via `archive::Archive` — members, GZDoom namespaces, embedded WADs, `maps/*.wad` maps — bounded by `Limits::max_archive_members` / `max_decoded_member_bytes`; stored + deflate only via `miniz_oxide` (ADR-0031) |
+| [`pk3-tests`](#pk3-tests) | no | Opt-in sweep over a local pk3 collection supplied via `CRUSTYWAD_PK3_DIR` (not auto-fetchable; `just test-pk3`; enables `archive`) |
 | [`guide-doctests`](#guide-doctests) | no | **Internal, CI-only.** Compiles this guide's Rust code samples as crate doctests (enabled by `--all-features`); not a runtime capability |
 | [`write`](#write) | no | WAD serialization — `WadBuilder`, `WriteError`, `WriteOptions`, `WriteWarning` |
 | [`nodebuild`](#nodebuild) | no | Clean-room node-lump builders (enables `write`) — `map::build`, `build_blockmap`, `build_reject`, `build_nodes` (the classic BSP pass: `SEGS`/`SSECTORS`/`NODES`), the `add_doom_map_with_nodes` engine-playable one-shot, and the `to_lump_bytes` serializers; also emits the `XNOD`/`ZNOD` non-GL stream via `NodeFormat`, plus the GL `XGLN`/`XGL2`/`XGL3` streams (and their `Z*` twins with `extended-nodes-zlib`), with `NodeFormat::Gl` auto-selecting the minimal dialect, via `build_gl_nodes` (ADR-0025, ADR-0026), and a UDMF one-shot (`add_udmf_map_with_nodes`) that builds a `ZNODES` stream for a UDMF map group; powers `cwad convert --nodes` and `cwad build --nodes`, including UDMF `ZNODES` output — GL dialects by default, `xnod`/`znod` on explicit request |
@@ -202,6 +204,60 @@ just test-sweep dir=/path/to/wads
 ```
 
 The test skips gracefully when `CRUSTYWAD_SWEEP_DIR` is unset or contains no WAD files.
+
+---
+
+## `archive`
+
+**Enables:** `crustywad::archive::Archive`: pk3 (zip) reading with GZDoom's
+directory semantics — see [Reading pk3 Archives](reading-archives.md)
+
+**Adds dependency:** none new beyond [`miniz_oxide`](https://crates.io/crates/miniz_oxide),
+already pulled in by `extended-nodes-zlib`
+
+Pure central-directory parsing plus the pure-Rust `miniz_oxide` inflater that
+`extended-nodes-zlib` already uses. Off by default so the core build stays
+decompressor-free. Only stored and deflate members can be read; pk7 (7z) is
+recognized and refused by name (ADR-0031).
+
+### Usage
+
+```toml
+# Cargo.toml
+[dependencies]
+crustywad = { version = "0.9.5", features = ["archive"] }
+```
+
+---
+
+## `pk3-tests`
+
+**Enables:** the optional sweep test in `crates/crustywad/tests/pk3.rs`
+
+**Adds dependency:** none — enables `archive`
+
+Opens every `*.pk3` in a local collection strictly, reads every member
+(CRC-verified), and parses every `maps/*.wad` and embedded WAD. pk3s are
+third-party mods and are never fetched or committed.
+
+### Running the tests
+
+Point `CRUSTYWAD_PK3_DIR` at a directory of pk3 files. **Use an absolute path**
+— cargo runs the test binary with its CWD at the package root, so a relative
+path silently misses and the test only prints a skip note:
+
+```bash
+# Using just — defaults to the repo's gitignored PK3-EXT/ directory:
+just test-pk3
+just test-pk3 dir=/path/to/pk3s
+
+# Or run cargo directly:
+CRUSTYWAD_PK3_DIR=/path/to/pk3s \
+  cargo test -p crustywad --features pk3-tests --test pk3 -- --nocapture
+```
+
+The test skips gracefully when `CRUSTYWAD_PK3_DIR` is unset or holds no pk3
+files.
 
 ---
 
@@ -549,6 +605,9 @@ body follow the same contract as the uncompressed decoder.
 | Test with Hexen fixture | `CRUSTYWAD_HEXEN_DIR=… cargo test -p crustywad --features hexen-tests` |
 | Test with Doom 64 fixture | `CRUSTYWAD_DOOM64_DIR=… cargo test -p crustywad --features doom64-tests` |
 | Sweep a local WAD collection | `CRUSTYWAD_SWEEP_DIR=… cargo test -p crustywad --features sweep-tests` |
+| Build with `archive` | `cargo build -p crustywad --features archive` |
+| Test with `archive` | `cargo test -p crustywad --features archive` |
+| Sweep a local pk3 collection | `CRUSTYWAD_PK3_DIR=… cargo test -p crustywad --features pk3-tests --test pk3` |
 | Build with `write` | `cargo build -p crustywad --features write` |
 | Test with `write` | `cargo test -p crustywad --features write` |
 | Build with `nodebuild` | `cargo build -p crustywad --features nodebuild` |
