@@ -24,6 +24,7 @@ mod error;
 mod semantics;
 mod zip;
 
+use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::path::Path;
@@ -547,10 +548,13 @@ impl Archive {
             });
         }
         // Duplicate paths: zips permit them; GZDoom keeps the later entry.
-        let mut seen: Vec<String> = Vec::with_capacity(members.len());
+        // A `HashSet` keeps this O(n) over up to `max_archive_members` entries
+        // (ADR-0016 §1); `insert` returning `false` means the lowercased path
+        // was already present.
+        let mut seen: HashSet<String> = HashSet::with_capacity(members.len());
         for member in &members {
             let lower = member.path.to_ascii_lowercase();
-            if seen.contains(&lower) {
+            if !seen.insert(lower) {
                 if strict {
                     return Err(ArchiveError::DuplicatePath {
                         path: member.path.clone(),
@@ -560,7 +564,6 @@ impl Archive {
                     path: member.path.clone(),
                 });
             }
-            seen.push(lower);
         }
         Ok(Self {
             container,
