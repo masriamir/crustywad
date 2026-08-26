@@ -45,6 +45,19 @@ game family (currently Strife, via its dialogue lumps — see
 [Game identification](map-records.md#game-identification-strife)); a Doom WAD
 prints none.
 
+Given a pk3 (detected by magic bytes, never by extension), `info` summarizes
+the archive instead — member count, declared data size, a per-namespace tally,
+embedded WADs (each with the maps it contains), and the `maps/` maps:
+
+```text
+$ cwad info joymaps2.pk3
+kind:      pk3 (zip)
+members:   140
+data size: 5489725 bytes (declared)
+namespaces: global: 6, flats: 1, textures: 1, patches: 70, graphics: 24, music: 19, hidden: 19
+maps:      MAP01, MAP02, MAP03, MAP04, MAP05, MAP06, MAP07, MAP08, MAP09, MAP10, MAP11, MAP12, MAP13, MAP14, MAP15, MAP16, MAP17, MAP18, MAP19
+```
+
 ### list
 
 Print the full lump directory. Each line contains the zero-based index, the
@@ -59,6 +72,9 @@ $ cwad list doom.wad
 ```
 
 Column order: `index  filepos  size  name`.
+
+For a pk3, one row per member: index, namespace, method, declared size, short
+name (`-` when the member is hidden), and path.
 
 ### validate
 
@@ -108,6 +124,10 @@ one newline-delimited record per map (`{"map":"E1M1","ok":true,"warnings":0}`
 or `{"map":"E1M1","ok":false,"error":"..."}`) followed by the usual summary
 object; in CSV it emits a `map,ok,error` table instead of the shallow
 `ok`/`true` pair.
+
+For a pk3, `--deep` parses every `maps/*.wad` and every embedded WAD and
+validates each map found, prefixing every result with the member path; a
+member that fails to read or parse counts as a failure.
 
 ### merge
 
@@ -488,7 +508,7 @@ true
 |---|---|
 | `0` | Success |
 | `1` | Negative result — the two WADs differ (`diff`), or `validate --deep` found map validation errors |
-| `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found |
+| `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found; `merge`, `diff`, `extract`, and `convert` also exit `2` with `<path> is a pk3 archive; <cmd> reads WADs` when handed an archive |
 | `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`, `merge`, or `convert` — note a non-ASCII lump name decodes under a lenient *read* but is rejected on *write* in both strictness modes); for `convert`, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as `BEHAVIOR` that the target format cannot carry), or a `--map NAME` that matches no map in the WAD; for `build --nodes`, also a Doom map group that fails to assemble or a node build that fails in strict mode |
 
 ## Man page

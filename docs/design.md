@@ -60,6 +60,7 @@ See [Data flow](diagrams/data-flow.md) for the write pipeline flowchart and the 
 
 - `mmap`: enables `Wad::from_path_mapped[_with_options]` for read-only memory-mapped file loading via `memmap2`; `from_path` always reads into memory regardless of this flag.
 - `write`: enables `WadBuilder`, `WriteError`, `WriteWarning`, `WriteOptions`, and `Wad::to_builder()` for WAD serialization.
+- **pk3 archives** (`archive` feature, ADR-0031): shipped — container + maps, zip only; pk7 seam reserved.
 - `freedoom-tests`: optional integration tests that inspect downloaded Freedoom fixtures.
 - Future `async`: alternate I/O constructors without changing the in-memory parse model.
 - Future zero-copy: borrowed views over validated bytes.
