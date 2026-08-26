@@ -154,8 +154,10 @@ fn eocd_is_found_behind_a_maximal_comment_but_not_beyond_it() {
     );
     let mut lost = common::ZipBuilder::new().stored("a.txt", b"a").build();
     lost.extend(std::iter::repeat_n(b'c', 65_536));
-    let err = Archive::from_bytes(lost).unwrap_err();
-    assert!(matches!(err, ArchiveError::NotAnArchive), "{err}");
+    for options in both_modes() {
+        let err = Archive::from_bytes_with_options(lost.clone(), options).unwrap_err();
+        assert!(matches!(err, ArchiveError::NotAnArchive), "{err}");
+    }
 }
 
 #[test]

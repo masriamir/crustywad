@@ -22,20 +22,27 @@ const CENTRAL_SIG: u32 = 0x0201_4b50;
 const CENTRAL_LEN: usize = 46;
 const ZIP64_EXTRA_ID: u16 = 0x0001;
 
+// The three field readers below are the only way this module touches the
+// buffer at a computed offset, so each one is total: `checked_add` keeps an
+// `at` near `usize::MAX` from overflowing before `get` can reject it, and
+// `get` rejects everything past the end. `None` therefore means "not in the
+// buffer" for every possible `at`, never a panic.
+
 fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
-    bytes
-        .get(at..at + 2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    let end = at.checked_add(2)?;
+    bytes.get(at..end).map(|b| u16::from_le_bytes([b[0], b[1]]))
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
+    let end = at.checked_add(4)?;
     bytes
-        .get(at..at + 4)
+        .get(at..end)
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
 fn u64_at(bytes: &[u8], at: usize) -> Option<u64> {
-    bytes.get(at..at + 8).map(|b| {
+    let end = at.checked_add(8)?;
+    bytes.get(at..end).map(|b| {
         let mut a = [0_u8; 8];
         a.copy_from_slice(b);
         u64::from_le_bytes(a)
@@ -231,5 +238,35 @@ impl Container for ZipContainer {
     fn read_entry(&self, index: usize, cap: usize) -> Result<Vec<u8>, ArchiveError> {
         let _ = (index, cap, &self.bytes);
         Ok(Vec::new()) // Task 5
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{u16_at, u32_at, u64_at};
+
+    const SAMPLE: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+
+    #[test]
+    fn field_readers_decode_little_endian_at_the_start() {
+        assert_eq!(u16_at(&SAMPLE, 0), Some(0x0201));
+        assert_eq!(u32_at(&SAMPLE, 0), Some(0x0403_0201));
+        assert_eq!(u64_at(&SAMPLE, 0), Some(0x0807_0605_0403_0201));
+    }
+
+    #[test]
+    fn field_readers_refuse_a_field_that_runs_past_the_end() {
+        let last = SAMPLE.len() - 1;
+        assert_eq!(u16_at(&SAMPLE, last), None);
+        assert_eq!(u32_at(&SAMPLE, last), None);
+        assert_eq!(u64_at(&SAMPLE, last), None);
+    }
+
+    #[test]
+    fn field_readers_refuse_an_offset_that_would_overflow() {
+        // `at + N` overflows here; the readers must answer `None`, not abort.
+        assert_eq!(u16_at(&SAMPLE, usize::MAX), None);
+        assert_eq!(u32_at(&SAMPLE, usize::MAX), None);
+        assert_eq!(u64_at(&SAMPLE, usize::MAX), None);
     }
 }
