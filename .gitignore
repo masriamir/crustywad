@@ -102,5 +102,9 @@ docs/guide/mermaid-init.js
 # gate-expecting sweep, #269 — regenerable, never committed)
 /RETAIL-EXT/
 
+# Local pk3 collection (fixture source for the optional pk3-tests, #445 —
+# archive blobs are never committed)
+/PK3-EXT/
+
 # Benchmark output
 /criterion/
