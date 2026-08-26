@@ -7291,7 +7291,7 @@ fn wad_only_commands_reject_archives_clearly() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "is a pk3 archive; extract reads WADs",
+            "is a pk3 (zip) archive; extract reads WADs",
         ));
     Command::cargo_bin("cwad")
         .unwrap()
@@ -7303,7 +7303,7 @@ fn wad_only_commands_reject_archives_clearly() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "is a pk3 archive; diff reads WADs",
+            "is a pk3 (zip) archive; diff reads WADs",
         ));
 }
 
@@ -7319,6 +7319,24 @@ fn info_rejects_a_pk3_without_archive_support() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("compiled without archive support"));
+}
+
+#[test]
+fn wad_only_commands_name_a_pk7_as_such() {
+    let mut file = tempfile::Builder::new().suffix(".pk7").tempfile().unwrap();
+    std::io::Write::write_all(&mut file, b"7z\xbc\xaf\x27\x1c\0\0\0\0").unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            file.path().to_str().unwrap(),
+            file.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "is a pk7 (7z) archive; diff reads WADs",
+        ));
 }
 
 #[test]

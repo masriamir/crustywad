@@ -508,7 +508,7 @@ true
 |---|---|
 | `0` | Success |
 | `1` | Negative result — the two WADs differ (`diff`), or `validate --deep` found map validation errors |
-| `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found; `merge`, `diff`, `extract`, and `convert` also exit `2` with `<path> is a pk3 archive; <cmd> reads WADs` when handed an archive |
+| `2` | I/O error or parse error (malformed WAD, missing file, etc.); for `extract`, also a nonexistent `--output` directory or a `--lump` name not found; `merge`, `diff`, `extract`, and `convert` also exit `2` with `<path> is a pk3 (zip) archive; <cmd> reads WADs` (or `pk7 (7z)`) when handed an archive |
 | `3` | Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for `build`, `merge`, or `convert` — note a non-ASCII lump name decodes under a lenient *read* but is rejected on *write* in both strictness modes); for `convert`, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as `BEHAVIOR` that the target format cannot carry), or a `--map NAME` that matches no map in the WAD; for `build --nodes`, also a Doom map group that fails to assemble or a node build that fails in strict mode |
 
 ## Man page

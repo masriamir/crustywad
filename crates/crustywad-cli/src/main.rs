@@ -1011,10 +1011,24 @@ enum Input {
 /// three zip records `PK\x03\x04` / `PK\x05\x06` / `PK\x07\x08` and 7z's
 /// `7z\xbc\xaf\x27\x1c`.
 fn looks_like_archive(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"PK\x03\x04")
+    archive_label(bytes).is_some()
+}
+
+/// The user-facing name of the archive format the leading bytes announce —
+/// `pk3 (zip)` for any of the three zip records, `pk7 (7z)` for 7z — or
+/// `None` when they are not an archive signature. Used only for messages;
+/// the library decides what it can actually read.
+fn archive_label(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"PK\x03\x04")
         || bytes.starts_with(b"PK\x05\x06")
         || bytes.starts_with(b"PK\x07\x08")
-        || bytes.starts_with(b"7z\xbc\xaf\x27\x1c")
+    {
+        Some("pk3 (zip)")
+    } else if bytes.starts_with(b"7z\xbc\xaf\x27\x1c") {
+        Some("pk7 (7z)")
+    } else {
+        None
+    }
 }
 
 /// Opens `path` as a WAD or, when its magic says so, as an archive.
@@ -1057,7 +1071,10 @@ fn open_input(path: &Path, options: ParseOptions) -> Result<Input> {
         // `{path}: `, so the phrase reads as a sentence about that path.
         #[cfg(not(feature = "archive"))]
         {
-            anyhow::bail!("is a pk3 archive; this build was compiled without archive support");
+            anyhow::bail!(
+                "is a {} archive; this build was compiled without archive support",
+                archive_label(&bytes).unwrap_or("pk3 (zip)")
+            );
         }
     }
     Ok(Input::Wad(Wad::from_bytes_with_options(bytes, options)?))
@@ -1085,8 +1102,11 @@ fn reject_archive(path: &Path, command: &str) -> Result<()> {
     else {
         return Ok(());
     };
-    if looks_like_archive(&head) {
-        anyhow::bail!("{} is a pk3 archive; {command} reads WADs", path.display());
+    if let Some(label) = archive_label(&head) {
+        anyhow::bail!(
+            "{} is a {label} archive; {command} reads WADs",
+            path.display()
+        );
     }
     Ok(())
 }
