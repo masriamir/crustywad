@@ -83,8 +83,11 @@ pub(crate) fn short_name_of(path: &str, namespace: Namespace) -> Option<String> 
     Some(name)
 }
 
-fn has_wad_extension(path: &str) -> bool {
-    path.len() >= 4 && path[path.len() - 4..].eq_ignore_ascii_case(".wad")
+/// Whether `path` ends in `.wad`, ASCII-case-insensitively. Compares bytes
+/// so a multi-byte character near the end can never split a `&str` slice.
+pub(crate) fn has_wad_extension(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".wad")
 }
 
 /// `GZDoom`'s `CheckEmbedded`: a `.wad` at the root, or exactly
@@ -209,6 +212,13 @@ mod tests {
         assert!(!is_embedded_wad("other/extra.wad", Some("myproject")));
         assert!(!is_embedded_wad("readme.txt", Some("myproject")));
         assert!(!is_embedded_wad("extra.wad.bak", None));
+    }
+
+    #[test]
+    fn embedded_wad_check_never_panics_on_non_ascii_tails() {
+        assert!(!is_embedded_wad("\u{1F600}x", None));
+        assert!(!is_embedded_wad("gr\u{00e4}fik.png", None));
+        assert!(is_embedded_wad("d\u{00e4}ta.wad", None));
     }
 
     #[test]
