@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.8...crustywad-cli-v0.4.9) - 2026-08-26
+
+### Added
+
+- *(archive)* read pk3 archives — members, namespaces, embedded WADs, and maps ([#445](https://github.com/masriamir/crustywad/pull/445)) ([#469](https://github.com/masriamir/crustywad/pull/469))
+
+### Other
+
+- broaden the American English rule beyond documentation and sweep the repo ([#426](https://github.com/masriamir/crustywad/pull/426))
+
 ## [0.4.8](https://github.com/masriamir/crustywad/compare/crustywad-cli-v0.4.7...crustywad-cli-v0.4.8) - 2026-08-09
 
 ### Fixed
