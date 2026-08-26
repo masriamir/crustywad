@@ -328,9 +328,19 @@ pub fn files_with_extension(env_var: &str, extension: &str) -> Vec<PathBuf> {
                 .path()
         })
         .filter(|path| {
-            path.extension()
+            if !path
+                .extension()
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+            {
+                return false;
+            }
+            // As in `wad_files`: `Path::is_file` swallows metadata errors, so
+            // stat explicitly and fail loudly; a directory named `x.pk3` is
+            // skipped rather than handed to the sweep.
+            let meta = std::fs::metadata(path)
+                .unwrap_or_else(|e| panic!("{env_var}: failed to stat {}: {e}", path.display()));
+            meta.is_file()
         })
         .collect();
     found.sort();

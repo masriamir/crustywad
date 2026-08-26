@@ -74,7 +74,7 @@ fn validate_groups(
         match Map::assemble_with_options(wad, group, options) {
             Ok(map) => {
                 for w in map.warnings() {
-                    eprintln!("warning: map {name}: {w}");
+                    eprintln!("warning: map {}: {w}", flatten_control(&name));
                 }
                 match format {
                     Format::Human => {}
@@ -90,7 +90,7 @@ fn validate_groups(
             }
             Err(e) => {
                 failed += 1;
-                eprintln!("error: map {name}: {e:#}");
+                eprintln!("error: map {}: {e:#}", flatten_control(&name));
                 match format {
                     Format::Human => {}
                     Format::Json => println!(
