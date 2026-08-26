@@ -66,7 +66,7 @@ fn validate_groups(
     let prefix = if label.is_empty() {
         String::new()
     } else {
-        format!("{label}: ")
+        format!("{}: ", flatten_control(label))
     };
 
     for group in &groups {
@@ -195,6 +195,21 @@ fn sanitize_lump_name(name: &str) -> String {
 /// Encodes a string as a JSON string literal (including surrounding `"`).
 /// Uses standard JSON `\uXXXX` escapes for control characters, ensuring
 /// output is always valid JSON regardless of the input content.
+/// Renders an untrusted name (an archive member path, a lump name) for a
+/// human-format line: every control character becomes a space and ESC is
+/// dropped, so a crafted name cannot forge extra lines or inject terminal
+/// escape sequences into stdout/stderr. The JSON and CSV paths escape or quote
+/// through `json_string`/`csv_field` and do not use this.
+fn flatten_control(s: &str) -> String {
+    s.chars()
+        .filter_map(|c| match c {
+            '\u{1b}' => None,
+            c if c.is_control() => Some(' '),
+            c => Some(c),
+        })
+        .collect()
+}
+
 fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -1115,7 +1130,10 @@ fn reject_archive(path: &Path, command: &str) -> Result<()> {
 /// (ADR-0031).
 #[cfg(feature = "archive")]
 mod archive_cli {
-    use super::{Format, ParseOptions, csv_field, deep_summary, json_string, validate_groups};
+    use super::{
+        Format, ParseOptions, csv_field, deep_summary, flatten_control, json_string,
+        validate_groups,
+    };
     use crustywad::archive::{Archive, MapKind, Member, Namespace};
     use std::path::Path;
 
@@ -1200,13 +1218,17 @@ mod archive_cli {
                     println!("namespaces: {rendered}");
                 }
                 if !maps.is_empty() {
-                    println!("maps:      {}", maps.join(", "));
+                    println!("maps:      {}", flatten_control(&maps.join(", ")));
                 }
                 for (path, names) in &embedded {
+                    let path = flatten_control(path);
                     if names.is_empty() {
                         println!("embedded:  {path}");
                     } else {
-                        println!("embedded:  {path} (maps: {})", names.join(", "));
+                        println!(
+                            "embedded:  {path} (maps: {})",
+                            flatten_control(&names.join(", "))
+                        );
                     }
                 }
             }
@@ -1269,8 +1291,8 @@ mod archive_cli {
                         m.index(),
                         namespace_label(m.namespace()),
                         m.size(),
-                        m.short_name().unwrap_or("-"),
-                        m.path()
+                        flatten_control(m.short_name().unwrap_or("-")),
+                        flatten_control(m.path())
                     );
                 }
             }
@@ -1337,10 +1359,11 @@ mod archive_cli {
             match archive.wad(member) {
                 Ok(wad) => {
                     let (v, f) = validate_groups(&wad, member.path(), format, options);
+                    let shown = flatten_control(member.path());
                     validated += v;
                     failed += f;
                     for w in wad.warnings() {
-                        eprintln!("warning: {}: {w}", member.path());
+                        eprintln!("warning: {shown}: {w}");
                     }
                 }
                 Err(e) => {

@@ -7339,6 +7339,46 @@ fn wad_only_commands_name_a_pk7_as_such() {
         ));
 }
 
+#[cfg(feature = "archive")]
+#[test]
+fn human_output_flattens_control_characters_in_member_names() {
+    // A crafted member name with a newline and an ANSI escape must not forge
+    // an extra line or inject a terminal escape into human output.
+    let hostile_wad = "evil\nname\u{1b}[31m.wad";
+    let hostile_txt = "bad\rline\u{1b}[0m.txt";
+    let map = build_valid_map_wad();
+    let pk3 = write_pk3(&[(hostile_wad, &map), (hostile_txt, b"x")]);
+    let no_esc = || predicate::str::contains("\u{1b}").not();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["list", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(no_esc())
+        .stdout(predicate::str::contains("evil name [31m.wad"))
+        .stdout(predicate::str::contains("bad line [0m.txt"));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(no_esc())
+        .stdout(predicate::str::contains(
+            "embedded:  evil name [31m.wad (maps: MAP01)",
+        ));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "validate",
+            "--deep",
+            pk3.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(0)
+        .stderr(no_esc());
+}
+
 #[test]
 fn magic_wins_over_extension() {
     // A WAD named .pk3 is still a WAD.
