@@ -58,6 +58,18 @@ fn pk7_is_detected_and_named_in_the_error() {
     }
 }
 
+/// Compile-time proof that `T` can cross a thread boundary and be shared.
+fn assert_send_sync<T: Send + Sync>() {}
+
+#[test]
+fn archive_and_member_are_send_and_sync() {
+    // `Archive` boxes a private `Container`; the trait carries `Send + Sync`
+    // as supertraits so the boxed object keeps them. Without that bound the
+    // whole type is neither, which no caller could work around.
+    assert_send_sync::<Archive>();
+    assert_send_sync::<Member>();
+}
+
 #[test]
 fn errors_display_on_a_single_line() {
     let err = Archive::from_bytes(b"PK\x07\x08".to_vec()).unwrap_err();

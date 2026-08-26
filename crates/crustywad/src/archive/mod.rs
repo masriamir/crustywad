@@ -312,7 +312,13 @@ pub(crate) struct RawEntry {
 
 /// The container seam: a format that yields raw entries and decodes one on
 /// demand. Private so a future 7z backend changes nothing public.
-pub(crate) trait Container: fmt::Debug {
+///
+/// `Send + Sync` are supertraits so `Box<dyn Container>` — and therefore
+/// [`Archive`] — is `Send + Sync` too, the way [`Wad`] is: an archive is an
+/// owned, immutable buffer plus a member table, so it can be handed to another
+/// thread or shared behind an `Arc`. Any future backend must keep that
+/// property (`ZipContainer` holds only a `Vec<u8>` and a `Vec<RawEntry>`).
+pub(crate) trait Container: fmt::Debug + Send + Sync {
     /// Every non-directory entry, in central-directory order.
     fn entries(&self) -> &[RawEntry];
     /// Decodes entry `index`, refusing to produce more than `cap` bytes.
