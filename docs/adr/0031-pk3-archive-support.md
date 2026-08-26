@@ -100,8 +100,13 @@ case.
   non-ASCII member name; an unchecked `record + 56` on the
   attacker-controlled ZIP64 record offset; the same `at + N` pattern in the
   little-endian field readers; and an unchecked `header + 30` on the
-  local-header offset. Every offset addition in the reader is now
-  `checked_add`-bounded, and `fuzz_archive` is the standing proof.
+  local-header offset. File-derived offsets that reach outside the
+  already-checked central-directory extent — the ZIP64 record, the local
+  header, the member body — are now `checked_add`-bounded; arithmetic *inside*
+  that extent stays plain addition, bounded instead by the one `cd_end <= len`
+  check plus small constants (a central-directory entry's fixed 46 bytes and
+  three `u16` lengths, at most 3 × 65,535). `fuzz_archive` is the standing
+  proof for both.
 - The `fuzz_archive` target and the opt-in `pk3-tests` sweep
   (`CRUSTYWAD_PK3_DIR`, `just test-pk3`) are the proof surfaces; the sample
   census above is the derivation for the limit defaults.

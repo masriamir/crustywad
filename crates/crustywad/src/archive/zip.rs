@@ -27,11 +27,14 @@ const LOCAL_LEN: usize = 30;
 const METHOD_STORED: u16 = 0;
 const METHOD_DEFLATE: u16 = 8;
 
-// The three field readers below are the only way this module touches the
-// buffer at a computed offset, so each one is total: `checked_add` keeps an
-// `at` near `usize::MAX` from overflowing before `get` can reject it, and
-// `get` rejects everything past the end. `None` therefore means "not in the
-// buffer" for every possible `at`, never a panic.
+// The three field readers below decode every *field* this module reads, and
+// each one is total: `checked_add` keeps an `at` near `usize::MAX` from
+// overflowing before `get` can reject it, and `get` rejects everything past
+// the end. `None` therefore means "not in the buffer" for every possible `at`,
+// never a panic. The module also slices the buffer directly a few times (the
+// entry name, the 30 fixed local-header bytes, the member body); every one of
+// those is preceded by an explicit range check that fails with
+// `CorruptDirectory` rather than panicking.
 
 fn u16_at(bytes: &[u8], at: usize) -> Option<u16> {
     let end = at.checked_add(2)?;
