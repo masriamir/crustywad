@@ -6800,3 +6800,259 @@ fn convert_to_udmf_with_nodes_retrofit_node_build_failure_exits_3() {
             "failed to build nodes for map MAP01",
         ));
 }
+
+// ---------------------------------------------------------------------------
+// pk3 archive input (ADR-0031). Minimal stored-only zip writer; mirrors the
+// library test suite's ZipBuilder for the subset these tests need.
+// ---------------------------------------------------------------------------
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFF_u32;
+    for &b in bytes {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                0xEDB8_8320 ^ (crc >> 1)
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+fn build_zip(members: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (path, data) in members {
+        let name = path.as_bytes();
+        let crc = crc32(data);
+        let size = u32::try_from(data.len()).unwrap();
+        let offset = u32::try_from(out.len()).unwrap();
+        out.extend_from_slice(&0x0403_4b50_u32.to_le_bytes());
+        out.extend_from_slice(&[20, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // version, flags, method 0, time, date
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(data);
+        central.extend_from_slice(&0x0201_4b50_u32.to_le_bytes());
+        central.extend_from_slice(&[20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // made by, needed, flags, method, time, date
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+        central.extend_from_slice(&[0; 8]); // extra, comment, disk, internal attrs
+        central.extend_from_slice(&0_u32.to_le_bytes()); // external attrs
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name);
+    }
+    let cd_offset = u32::try_from(out.len()).unwrap();
+    let cd_size = u32::try_from(central.len()).unwrap();
+    out.extend_from_slice(&central);
+    let count = u16::try_from(members.len()).unwrap();
+    out.extend_from_slice(&0x0605_4b50_u32.to_le_bytes());
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&cd_size.to_le_bytes());
+    out.extend_from_slice(&cd_offset.to_le_bytes());
+    out.extend_from_slice(&0_u16.to_le_bytes());
+    out
+}
+
+/// A minimal, always-valid Doom-format `MAP01` (two vertices, one one-sided
+/// linedef, one sidedef, one sector) so `validate --deep` has a map that
+/// assembles.
+fn build_valid_map_wad() -> Vec<u8> {
+    let vertexes: Vec<u8> = [0_i16, 0, 64, 0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let mut sidedef = vec![0_u8; 4];
+    for _ in 0..3 {
+        sidedef.extend_from_slice(b"-\0\0\0\0\0\0\0");
+    }
+    sidedef.extend_from_slice(&0_u16.to_le_bytes());
+    let mut sector = Vec::new();
+    sector.extend_from_slice(&0_i16.to_le_bytes());
+    sector.extend_from_slice(&128_i16.to_le_bytes());
+    sector.extend_from_slice(b"-\0\0\0\0\0\0\0");
+    sector.extend_from_slice(b"-\0\0\0\0\0\0\0");
+    sector.extend_from_slice(&160_i16.to_le_bytes());
+    sector.extend_from_slice(&0_i16.to_le_bytes());
+    sector.extend_from_slice(&0_i16.to_le_bytes());
+    let mut linedef = Vec::new();
+    for v in [0_u16, 1, 1, 0, 0, 0, 0xffff] {
+        linedef.extend_from_slice(&v.to_le_bytes());
+    }
+    build_wad(
+        *b"PWAD",
+        &[
+            ("MAP01", &[]),
+            ("THINGS", &[]),
+            ("LINEDEFS", &linedef),
+            ("SIDEDEFS", &sidedef),
+            ("VERTEXES", &vertexes),
+            ("SECTORS", &sector),
+        ],
+    )
+}
+
+fn write_pk3(members: &[(&str, &[u8])]) -> NamedTempFile {
+    let mut file = tempfile::Builder::new().suffix(".pk3").tempfile().unwrap();
+    std::io::Write::write_all(&mut file, &build_zip(members)).unwrap();
+    file
+}
+
+#[test]
+fn info_summarizes_a_pk3() {
+    let map = build_valid_map_wad();
+    let pk3 = write_pk3(&[
+        ("MAPINFO.txt", b"x"),
+        ("sprites/TROOA1.png", &[0; 16]),
+        ("sprites/TROOA2.png", &[0; 16]),
+        ("maps/MAP01.wad", &map),
+        ("extra.wad", &map),
+    ]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kind:      pk3 (zip)"))
+        .stdout(predicate::str::contains("members:   5"))
+        .stdout(predicate::str::contains("sprites: 2"))
+        .stdout(predicate::str::contains("maps:      MAP01"))
+        .stdout(predicate::str::contains("extra.wad (maps: MAP01)"));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "info", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""kind":"pk3""#))
+        .stdout(predicate::str::contains(r#""members":5"#))
+        .stdout(predicate::str::contains(r#""maps":["MAP01"]"#))
+        .stdout(predicate::str::contains(
+            r#""embedded_wads":[{"path":"extra.wad","maps":["MAP01"]}]"#,
+        ));
+}
+
+#[test]
+fn list_prints_one_row_per_member() {
+    let pk3 = write_pk3(&[
+        ("MAPINFO.txt", b"x"),
+        ("sprites/TROOA1.png", &[0; 16]),
+        ("zscript/a.zs", b""),
+    ]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["list", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "0000    global  stored          1 MAPINFO  MAPINFO.txt",
+        ))
+        .stdout(predicate::str::contains(
+            "0001   sprites  stored         16 TROOA1   sprites/TROOA1.png",
+        ))
+        .stdout(predicate::str::contains(
+            "0002    hidden  stored          0 -        zscript/a.zs",
+        ));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "list", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with(
+            "index,path,namespace,short_name,method,size\n0,MAPINFO.txt,global,MAPINFO,stored,1\n",
+        ));
+}
+
+#[test]
+fn validate_deep_covers_maps_and_embedded_wads_in_a_pk3() {
+    let map = build_valid_map_wad();
+    let broken = build_wad(
+        *b"PWAD",
+        &[("MAP02", &[]), ("THINGS", &[]), ("LINEDEFS", &[1, 2, 3])],
+    );
+    let good = write_pk3(&[("maps/MAP01.wad", &map), ("extra.wad", &map)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", good.path().to_str().unwrap()])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("2 map(s) validated"));
+    let bad = write_pk3(&[("maps/MAP01.wad", &map), ("maps/MAP02.wad", &broken)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", bad.path().to_str().unwrap()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("maps/MAP02.wad"));
+    // Shallow validate of a readable archive is clean.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", bad.path().to_str().unwrap()])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::starts_with("ok: "));
+}
+
+#[test]
+fn validate_reports_an_unreadable_archive_with_exit_2() {
+    let mut file = tempfile::Builder::new().suffix(".pk3").tempfile().unwrap();
+    std::io::Write::write_all(&mut file, b"PK\x03\x04garbage-with-no-directory").unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", file.path().to_str().unwrap()])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("not an archive"));
+}
+
+#[test]
+fn wad_only_commands_reject_archives_clearly() {
+    let pk3 = write_pk3(&[("MAPINFO.txt", b"x")]);
+    let out = tempfile::tempdir().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "extract",
+            pk3.path().to_str().unwrap(),
+            "--output",
+            out.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "is a pk3 archive; extract reads WADs",
+        ));
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "diff",
+            pk3.path().to_str().unwrap(),
+            pk3.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "is a pk3 archive; diff reads WADs",
+        ));
+}
+
+#[test]
+fn magic_wins_over_extension() {
+    // A WAD named .pk3 is still a WAD.
+    let mut file = tempfile::Builder::new().suffix(".pk3").tempfile().unwrap();
+    std::io::Write::write_all(&mut file, &build_wad(*b"PWAD", &[("TEST", b"1234")])).unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", file.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kind:      Pwad"));
+}

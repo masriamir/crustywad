@@ -16,11 +16,15 @@ name = "cwad"
 path = "src/main.rs"
 
 [features]
-default = ["extended-nodes-zlib"]
+default = ["extended-nodes-zlib", "archive"]
 mmap = ["crustywad/mmap"]
 # `znod` node output; default-on so the standard install / dist binary supports it.
 # A `--no-default-features` build is decompressor-free and rejects `--node-format znod`.
 extended-nodes-zlib = ["crustywad/extended-nodes-zlib"]
+# pk3 (zip) archive input for `info`/`list`/`validate` (ADR-0031); default-on
+# so the standard install / dist binary supports it. A `--no-default-features`
+# build stays decompressor-free and rejects archive input with a clear error.
+archive = ["crustywad/archive"]
 
 [dependencies]
 anyhow.workspace = true

@@ -6,14 +6,17 @@ mod mus2mid;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 use std::process;
 
 use std::fmt::Write as _;
 
 use anyhow::{Context as _, Result};
 use clap::Parser as _;
+#[cfg(feature = "archive")]
+use crustywad::archive::Archive;
 use crustywad::audio::{AudioKind, DmxSound, MidiInfo, MusScore, WavSound};
-use crustywad::{ParseOptions, Wad, WadBuilder, WadGame, WadKind};
+use crustywad::{ParseError, ParseOptions, Wad, WadBuilder, WadGame, WadKind};
 
 use cli::{Cli, Format, MapFormatArg, NodeFormatArg, SubCommand, WadKindArg};
 
@@ -30,66 +33,96 @@ use cli::{Cli, Format, MapFormatArg, NodeFormatArg, SubCommand, WadKindArg};
 /// found" code, distinct from exit `2` (the container itself is unreadable or
 /// malformed). Container-level lenient warnings print after the summary, per
 /// ADR-0008 §3.
-fn deep_validate(wad: &Wad, path: &std::path::Path, format: Format, options: ParseOptions) -> i32 {
+fn deep_validate(wad: &Wad, path: &Path, format: Format, options: ParseOptions) -> i32 {
+    if matches!(format, Format::Csv) {
+        println!("map,ok,error");
+    }
+    let (validated, failed) = validate_groups(wad, "", format, options);
+    let code = deep_summary(path, format, validated, failed);
+    // ADR-0008 §3: container-level lenient warnings print after the result.
+    for w in wad.warnings() {
+        eprintln!("warning: {w}");
+    }
+    code
+}
+
+/// The per-map body of [`deep_validate`], reusable for the WADs inside an
+/// archive.
+///
+/// Assembles every map group of `wad` under `options`, printing per-map
+/// results with `label` prefixed (empty for a standalone WAD), and returns
+/// `(validated, failed)` counts. The caller prints the CSV header, so one
+/// table can span several WADs.
+fn validate_groups(
+    wad: &Wad,
+    label: &str,
+    format: Format,
+    options: ParseOptions,
+) -> (usize, usize) {
     use crustywad::map::Map;
 
     let groups = wad.map_groups();
     let mut failed = 0usize;
+    let prefix = if label.is_empty() {
+        String::new()
+    } else {
+        format!("{label}: ")
+    };
 
-    if matches!(format, Format::Csv) {
-        println!("map,ok,error");
-    }
     for group in &groups {
+        let name = format!("{prefix}{}", group.name);
         match Map::assemble_with_options(wad, group, options) {
             Ok(map) => {
                 for w in map.warnings() {
-                    eprintln!("warning: map {}: {w}", group.name);
+                    eprintln!("warning: map {name}: {w}");
                 }
                 match format {
                     Format::Human => {}
                     Format::Json => println!(
                         r#"{{"map":{},"ok":true,"warnings":{}}}"#,
-                        json_string(&group.name),
+                        json_string(&name),
                         map.warnings().len()
                     ),
                     Format::Csv => {
-                        println!("{},true,", csv_field(&group.name));
+                        println!("{},true,", csv_field(&name));
                     }
                 }
             }
             Err(e) => {
                 failed += 1;
-                eprintln!("error: map {}: {e:#}", group.name);
+                eprintln!("error: map {name}: {e:#}");
                 match format {
                     Format::Human => {}
                     Format::Json => println!(
                         r#"{{"map":{},"ok":false,"error":{}}}"#,
-                        json_string(&group.name),
+                        json_string(&name),
                         json_string(&e.to_string())
                     ),
                     Format::Csv => {
-                        println!(
-                            "{},false,{}",
-                            csv_field(&group.name),
-                            csv_field(&e.to_string())
-                        );
+                        println!("{},false,{}", csv_field(&name), csv_field(&e.to_string()));
                     }
                 }
             }
         }
     }
 
-    let code = if failed == 0 {
+    (groups.len(), failed)
+}
+
+/// Prints the deep-validation summary and returns the exit code: `0` when
+/// nothing failed, `1` otherwise.
+fn deep_summary(path: &Path, format: Format, validated: usize, failed: usize) -> i32 {
+    if failed == 0 {
         match format {
             Format::Human => {
-                println!("ok: {} ({} map(s) validated)", path.display(), groups.len());
+                println!("ok: {} ({validated} map(s) validated)", path.display());
             }
             Format::Json => println!(r#"{{"ok":true}}"#),
             Format::Csv => {}
         }
         0
     } else {
-        let summary = format!("{failed} of {} map(s) failed validation", groups.len());
+        let summary = format!("{failed} of {validated} map(s) failed validation");
         match format {
             Format::Human => eprintln!("error: {}: {summary}", path.display()),
             Format::Json => {
@@ -98,12 +131,7 @@ fn deep_validate(wad: &Wad, path: &std::path::Path, format: Format, options: Par
             Format::Csv => {}
         }
         1
-    };
-    // ADR-0008 §3: container-level lenient warnings print after the result.
-    for w in wad.warnings() {
-        eprintln!("warning: {w}");
     }
-    code
 }
 
 /// Returns the marker-lump names of every map group in `wad`, in directory
@@ -970,6 +998,348 @@ fn patch_hexen_group_nodes(
     Ok(())
 }
 
+/// What a path turned out to hold, decided by magic bytes only.
+enum Input {
+    /// A WAD file.
+    Wad(Wad),
+    /// A pk3 (zip) resource archive.
+    #[cfg(feature = "archive")]
+    Archive(Archive),
+}
+
+/// True when the leading bytes are a zip or 7z signature (ADR-0031 §7): the
+/// three zip records `PK\x03\x04` / `PK\x05\x06` / `PK\x07\x08` and 7z's
+/// `7z\xbc\xaf\x27\x1c`.
+fn looks_like_archive(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
+        || bytes.starts_with(b"7z\xbc\xaf\x27\x1c")
+}
+
+/// Opens `path` as a WAD or, when its magic says so, as an archive.
+///
+/// Detection is by leading bytes only, never by extension, so a WAD named
+/// `.pk3` still reads as a WAD and a zip named `.wad` still reads as an
+/// archive.
+///
+/// The returned error carries **no** added context, so a caller that reports
+/// the path itself — `validate` — can print the library message verbatim, the
+/// way it did when it called [`Wad::from_path_with_options`] directly. Callers
+/// that want the path in the message add `failed to load {path}` themselves.
+/// The read failure is reported as [`ParseError::Io`], the same error
+/// [`Wad::from_path_with_options`] raises, so the wording does not depend on
+/// which of the two opened the file.
+///
+/// # Errors
+///
+/// Returns an error when `path` cannot be read, when it holds an archive this
+/// build was compiled without support for, or when the WAD or archive fails to
+/// parse under `options`.
+fn open_input(path: &Path, options: ParseOptions) -> Result<Input> {
+    let bytes = fs::read(path).map_err(|source| ParseError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    if looks_like_archive(&bytes) {
+        #[cfg(feature = "archive")]
+        {
+            let archive = Archive::from_bytes_with_options(bytes, options)?;
+            let archive = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(stem) => archive.with_name(stem),
+                None => archive,
+            };
+            return Ok(Input::Archive(archive));
+        }
+        // No path in the message: every caller already names the file, either
+        // through its own `failed to load {path}` context or, for `validate`,
+        // in the `error: {path}: …` line it prints.
+        #[cfg(not(feature = "archive"))]
+        {
+            anyhow::bail!(
+                "pk3 archive input is unsupported: this build was compiled without the archive feature"
+            );
+        }
+    }
+    Ok(Input::Wad(Wad::from_bytes_with_options(bytes, options)?))
+}
+
+/// Fails with a clear message when a WAD-only command is handed an archive.
+///
+/// # Errors
+///
+/// Returns an error when `path` cannot be opened or read, or when its leading
+/// bytes are an archive signature.
+fn reject_archive(path: &Path, command: &str) -> Result<()> {
+    let mut head = [0_u8; 6];
+    let n = fs::File::open(path)
+        .and_then(|mut f| std::io::Read::read(&mut f, &mut head))
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    if looks_like_archive(&head[..n]) {
+        anyhow::bail!("{} is a pk3 archive; {command} reads WADs", path.display());
+    }
+    Ok(())
+}
+
+/// The `info`, `list`, and `validate` arms for pk3 (zip) archive input
+/// (ADR-0031).
+#[cfg(feature = "archive")]
+mod archive_cli {
+    use super::{Format, ParseOptions, csv_field, deep_summary, json_string, validate_groups};
+    use crustywad::archive::{Archive, MapKind, Member, Namespace};
+    use std::path::Path;
+
+    /// Human-readable, lowercase namespace label.
+    pub(super) fn namespace_label(ns: Namespace) -> &'static str {
+        ns.directory().unwrap_or(match ns {
+            Namespace::Global => "global",
+            _ => "hidden",
+        })
+    }
+
+    /// Per-namespace member tally in table order, omitting empty namespaces.
+    pub(super) fn namespace_tally(archive: &Archive) -> Vec<(&'static str, usize)> {
+        let order = [
+            Namespace::Global,
+            Namespace::Flats,
+            Namespace::Textures,
+            Namespace::Hires,
+            Namespace::Sprites,
+            Namespace::Voxels,
+            Namespace::Colormaps,
+            Namespace::Acs,
+            Namespace::Voices,
+            Namespace::Patches,
+            Namespace::Graphics,
+            Namespace::Sounds,
+            Namespace::Music,
+            Namespace::Hidden,
+        ];
+        order
+            .iter()
+            .map(|ns| {
+                (
+                    namespace_label(*ns),
+                    archive
+                        .members()
+                        .iter()
+                        .filter(|m| m.namespace() == *ns)
+                        .count(),
+                )
+            })
+            .filter(|(_, n)| *n > 0)
+            .collect()
+    }
+
+    /// Map names inside an embedded WAD (empty when it fails to parse — the
+    /// failure is `validate --deep`'s job to report, not `info`'s).
+    pub(super) fn embedded_map_names(archive: &Archive, member: &Member) -> Vec<String> {
+        archive
+            .wad(member)
+            .map(|wad| wad.map_groups().into_iter().map(|g| g.name).collect())
+            .unwrap_or_default()
+    }
+
+    /// `info` for an archive: container kind, member and namespace tallies,
+    /// map names, and every embedded WAD with the maps it holds.
+    pub(super) fn info(archive: &Archive, format: Format) {
+        let declared: u64 = archive.members().iter().map(Member::size).sum();
+        let maps: Vec<String> = archive
+            .maps()
+            .iter()
+            .map(|m| m.name().to_string())
+            .collect();
+        let embedded: Vec<(String, Vec<String>)> = archive
+            .embedded_wads()
+            .iter()
+            .map(|m| (m.path().to_string(), embedded_map_names(archive, m)))
+            .collect();
+        let tally = namespace_tally(archive);
+        match format {
+            Format::Human => {
+                println!("kind:      pk3 (zip)");
+                println!("members:   {}", archive.members().len());
+                let unit = if declared == 1 { "byte" } else { "bytes" };
+                println!("data size: {declared} {unit} (declared)");
+                if !tally.is_empty() {
+                    let rendered = tally
+                        .iter()
+                        .map(|(k, n)| format!("{k}: {n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("namespaces: {rendered}");
+                }
+                if !maps.is_empty() {
+                    println!("maps:      {}", maps.join(", "));
+                }
+                for (path, names) in &embedded {
+                    if names.is_empty() {
+                        println!("embedded:  {path}");
+                    } else {
+                        println!("embedded:  {path} (maps: {})", names.join(", "));
+                    }
+                }
+            }
+            Format::Json => {
+                let tally_json = tally
+                    .iter()
+                    .map(|(k, n)| format!(r#""{k}":{n}"#))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let maps_json = maps
+                    .iter()
+                    .map(|m| json_string(m))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let embedded_json = embedded
+                    .iter()
+                    .map(|(path, names)| {
+                        let names = names
+                            .iter()
+                            .map(|n| json_string(n))
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        format!(r#"{{"path":{},"maps":[{names}]}}"#, json_string(path))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                println!(
+                    r#"{{"kind":"pk3","container":"zip","members":{},"declared_size":{declared},"namespaces":{{{tally_json}}},"maps":[{maps_json}],"embedded_wads":[{embedded_json}]}}"#,
+                    archive.members().len()
+                );
+            }
+            Format::Csv => {
+                println!("kind,members,declared_size,maps,embedded_wads");
+                println!(
+                    "pk3,{},{declared},{},{}",
+                    archive.members().len(),
+                    csv_field(&maps.join(" ")),
+                    csv_field(
+                        &embedded
+                            .iter()
+                            .map(|(p, _)| p.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )
+                );
+            }
+        }
+    }
+
+    /// `list` for an archive: one row per member, in central-directory order.
+    pub(super) fn list(archive: &Archive, format: Format) {
+        match format {
+            Format::Human => {
+                for m in archive.members() {
+                    // `Method`'s Display writes directly, so render it first to
+                    // let the column width apply.
+                    let method = m.method().to_string();
+                    println!(
+                        "{:04} {:>9} {method:>7} {:>10} {:<8} {}",
+                        m.index(),
+                        namespace_label(m.namespace()),
+                        m.size(),
+                        m.short_name().unwrap_or("-"),
+                        m.path()
+                    );
+                }
+            }
+            Format::Json => {
+                for m in archive.members() {
+                    let short = m
+                        .short_name()
+                        .map_or_else(|| "null".to_string(), json_string);
+                    println!(
+                        r#"{{"index":{},"path":{},"namespace":"{}","short_name":{short},"method":"{}","size":{},"compressed_size":{},"encrypted":{},"embedded_wad":{}}}"#,
+                        m.index(),
+                        json_string(m.path()),
+                        namespace_label(m.namespace()),
+                        m.method(),
+                        m.size(),
+                        m.compressed_size(),
+                        m.is_encrypted(),
+                        m.is_embedded_wad()
+                    );
+                }
+            }
+            Format::Csv => {
+                println!("index,path,namespace,short_name,method,size");
+                for m in archive.members() {
+                    println!(
+                        "{},{},{},{},{},{}",
+                        m.index(),
+                        csv_field(m.path()),
+                        namespace_label(m.namespace()),
+                        csv_field(m.short_name().unwrap_or("")),
+                        m.method(),
+                        m.size()
+                    );
+                }
+            }
+        }
+    }
+
+    /// `validate --deep` for an archive: every `maps/*.wad` and every
+    /// embedded WAD, member path prefixed. Returns the exit code.
+    ///
+    /// `deep_summary` counts `validated` as *groups validated*, so a member
+    /// that cannot be read adds one failure but no validated group — an
+    /// all-broken archive can truthfully report "1 of 0 map(s) failed".
+    pub(super) fn deep_validate(
+        archive: &Archive,
+        path: &Path,
+        format: Format,
+        options: ParseOptions,
+    ) -> i32 {
+        if matches!(format, Format::Csv) {
+            println!("map,ok,error");
+        }
+        let mut validated = 0usize;
+        let mut failed = 0usize;
+        let mut targets: Vec<&Member> = archive
+            .maps()
+            .iter()
+            .filter(|m| m.kind() == MapKind::Wad)
+            .map(|m| &archive.members()[m.member_index()])
+            .collect();
+        targets.extend(archive.embedded_wads());
+        for member in targets {
+            match archive.wad(member) {
+                Ok(wad) => {
+                    let (v, f) = validate_groups(&wad, member.path(), format, options);
+                    validated += v;
+                    failed += f;
+                    for w in wad.warnings() {
+                        eprintln!("warning: {}: {w}", member.path());
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    eprintln!("error: {e:#}");
+                    match format {
+                        Format::Human => {}
+                        Format::Json => println!(
+                            r#"{{"map":{},"ok":false,"error":{}}}"#,
+                            json_string(member.path()),
+                            json_string(&e.to_string())
+                        ),
+                        Format::Csv => println!(
+                            "{},false,{}",
+                            csv_field(member.path()),
+                            csv_field(&e.to_string())
+                        ),
+                    }
+                }
+            }
+        }
+        let code = deep_summary(path, format, validated, failed);
+        for w in archive.warnings() {
+            eprintln!("warning: {w}");
+        }
+        code
+    }
+}
+
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(c) => c,
@@ -1002,8 +1372,26 @@ fn run(cli: Cli) -> Result<i32> {
 
     match cli.command {
         SubCommand::Info { path } => {
-            let wad = Wad::from_path_with_options(&path, options)
-                .with_context(|| format!("failed to load {}", path.display()))?;
+            // Without `archive`, `Input` has a single variant and clippy reads
+            // this as a needless destructuring match; it is the archive arm's
+            // seat, so keep the shape in both builds.
+            #[cfg_attr(
+                not(feature = "archive"),
+                allow(clippy::infallible_destructuring_match)
+            )]
+            let wad = match open_input(&path, options)
+                .with_context(|| format!("failed to load {}", path.display()))?
+            {
+                Input::Wad(wad) => wad,
+                #[cfg(feature = "archive")]
+                Input::Archive(archive) => {
+                    archive_cli::info(&archive, cli.format);
+                    for w in archive.warnings() {
+                        eprintln!("warning: {w}");
+                    }
+                    return Ok(0);
+                }
+            };
             let data_size: u64 = wad.lumps().iter().map(|l| l.size() as u64).sum();
             let maps = detect_maps(&wad);
             // Per-kind tally of detected audio lumps (detect-only, no parse).
@@ -1073,8 +1461,26 @@ fn run(cli: Cli) -> Result<i32> {
         }
 
         SubCommand::List { path } => {
-            let wad = Wad::from_path_with_options(&path, options)
-                .with_context(|| format!("failed to load {}", path.display()))?;
+            // Without `archive`, `Input` has a single variant and clippy reads
+            // this as a needless destructuring match; it is the archive arm's
+            // seat, so keep the shape in both builds.
+            #[cfg_attr(
+                not(feature = "archive"),
+                allow(clippy::infallible_destructuring_match)
+            )]
+            let wad = match open_input(&path, options)
+                .with_context(|| format!("failed to load {}", path.display()))?
+            {
+                Input::Wad(wad) => wad,
+                #[cfg(feature = "archive")]
+                Input::Archive(archive) => {
+                    archive_cli::list(&archive, cli.format);
+                    for w in archive.warnings() {
+                        eprintln!("warning: {w}");
+                    }
+                    return Ok(0);
+                }
+            };
             // Per-lump audio classification (content-detected, lenient parse);
             // `None` for non-audio lumps, which stay unannotated.
             let annotations: Vec<Option<AudioAnnotation>> = wad
@@ -1134,6 +1540,8 @@ fn run(cli: Cli) -> Result<i32> {
         }
 
         SubCommand::Diff { file1, file2 } => {
+            reject_archive(&file1, "diff")?;
+            reject_archive(&file2, "diff")?;
             let wad1 = Wad::from_path_with_options(&file1, options)
                 .with_context(|| format!("failed to load {}", file1.display()))?;
             let wad2 = Wad::from_path_with_options(&file2, options)
@@ -1222,8 +1630,30 @@ fn run(cli: Cli) -> Result<i32> {
         }
 
         SubCommand::Validate { path, deep } => {
-            match Wad::from_path_with_options(&path, options) {
-                Ok(wad) => {
+            match open_input(&path, options) {
+                #[cfg(feature = "archive")]
+                Ok(Input::Archive(archive)) => {
+                    if deep {
+                        return Ok(archive_cli::deep_validate(
+                            &archive, &path, cli.format, options,
+                        ));
+                    }
+                    match cli.format {
+                        Format::Human => println!("ok: {}", path.display()),
+                        Format::Json => println!(r#"{{"ok":true}}"#),
+                        Format::Csv => {
+                            println!("ok");
+                            println!("true");
+                        }
+                    }
+                    // ADR-0008 §3: lenient container warnings print after the
+                    // successful result.
+                    for w in archive.warnings() {
+                        eprintln!("warning: {w}");
+                    }
+                    Ok(0)
+                }
+                Ok(Input::Wad(wad)) => {
                     if deep {
                         return Ok(deep_validate(&wad, &path, cli.format, options));
                     }
@@ -1245,8 +1675,12 @@ fn run(cli: Cli) -> Result<i32> {
                 Err(e) => {
                     // All parse and I/O errors exit 2 per ADR-0008 (malformed WAD = parse error).
                     // Result output goes to stdout; human diagnostic to stderr.
+                    // `{e}`, not `{e:#}`: `open_input` adds no context, so the
+                    // outermost error is the library's own single-line message.
+                    // The alternate form would instead walk the source chain
+                    // into `binrw`'s multi-line, ANSI-colored backtrace.
                     match cli.format {
-                        Format::Human => eprintln!("error: {}: {e:#}", path.display()),
+                        Format::Human => eprintln!("error: {}: {e}", path.display()),
                         Format::Json => {
                             println!(r#"{{"ok":false,"error":{}}}"#, json_string(&e.to_string()));
                         }
@@ -1265,6 +1699,9 @@ fn run(cli: Cli) -> Result<i32> {
             output,
             kind,
         } => {
+            for path in &inputs {
+                reject_archive(path, "merge")?;
+            }
             let wad_kind = match kind {
                 WadKindArg::Iwad => WadKind::Iwad,
                 WadKindArg::Pwad => WadKind::Pwad,
@@ -1322,6 +1759,7 @@ fn run(cli: Cli) -> Result<i32> {
                 );
             }
 
+            reject_archive(&path, "extract")?;
             let wad = Wad::from_path_with_options(&path, options)
                 .with_context(|| format!("failed to load {}", path.display()))?;
 
@@ -1672,6 +2110,7 @@ fn run(cli: Cli) -> Result<i32> {
             use crustywad::map::detect_map_format;
             use crustywad::map::{Map, MapFormat, MapGroup, add_doom_map, add_udmf_map};
 
+            reject_archive(&input, "convert")?;
             let wad = Wad::from_path_with_options(&input, options)
                 .with_context(|| format!("failed to load {}", input.display()))?;
             for w in wad.warnings() {
