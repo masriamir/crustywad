@@ -764,3 +764,85 @@ fn a_member_from_another_archive_is_refused_by_name() {
         assert_eq!(one.read(&mine).unwrap(), b"a");
     }
 }
+
+use crustywad::archive::MapKind;
+
+#[test]
+fn maps_are_enumerated_in_directory_order_with_kind() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .stored("maps/MAP02.wad", &wad)
+        .stored("MAPS/e1m1.WAD", &wad)
+        .stored("maps/MAP03.map", b"namespace = \"zdoom\";")
+        .stored("maps/sub/MAP04.wad", &wad)
+        .stored("maps/readme.txt", b"")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    let maps = archive.maps();
+    let summary: Vec<(&str, MapKind, usize)> = maps
+        .iter()
+        .map(|m| (m.name(), m.kind(), m.member_index()))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("MAP02", MapKind::Wad, 0),
+            ("E1M1", MapKind::Wad, 1),
+            ("MAP03", MapKind::Textmap, 2)
+        ]
+    );
+    // The .map member is listed but not parseable as a WAD.
+    let err = archive.wad(&archive.members()[2]).unwrap_err();
+    assert!(matches!(err, ArchiveError::NotAWad { .. }), "{err}");
+    // A maps/ WAD parses and yields its group.
+    let parsed = archive
+        .wad(&archive.members()[maps[0].member_index()])
+        .unwrap();
+    assert_eq!(parsed.map_groups().len(), 1);
+    assert_eq!(archive.members()[3].namespace(), Namespace::Hidden);
+}
+
+#[test]
+fn embedded_wads_are_root_wads_and_stem_folder_wads_once_named() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .stored("extra.wad", &wad)
+        .stored("myproject/inner.wad", &wad)
+        .stored("maps/MAP01.wad", &wad)
+        .stored("other/deep.wad", &wad)
+        .build();
+    let archive = Archive::from_bytes(zip.clone()).unwrap();
+    let paths: Vec<&str> = archive.embedded_wads().iter().map(|m| m.path()).collect();
+    assert_eq!(paths, ["extra.wad"]);
+    assert!(archive.name().is_none());
+
+    let named = archive.with_name("MyProject");
+    let paths: Vec<&str> = named.embedded_wads().iter().map(|m| m.path()).collect();
+    assert_eq!(paths, ["extra.wad", "myproject/inner.wad"]);
+    assert_eq!(named.name(), Some("MyProject"));
+    assert!(named.members()[1].is_embedded_wad());
+    assert!(
+        !named.members()[2].is_embedded_wad(),
+        "maps/ WADs are maps, not embedded"
+    );
+    let parsed = named.wad(named.embedded_wads()[1]).unwrap();
+    assert_eq!(parsed.lump_count(), 2);
+}
+
+#[test]
+fn from_path_names_the_archive_by_file_stem() {
+    let wad = common::build_wad(*b"PWAD", &[("MAP01", &[]), ("THINGS", &[])]);
+    let zip = common::ZipBuilder::new()
+        .stored("myproject/inner.wad", &wad)
+        .build();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("myproject.pk3");
+    std::fs::write(&path, &zip).unwrap();
+    let archive = Archive::from_path(&path).unwrap();
+    assert_eq!(archive.name(), Some("myproject"));
+    assert_eq!(archive.embedded_wads().len(), 1);
+    assert_eq!(archive.kind(), crustywad::archive::ArchiveKind::Zip);
+
+    let missing = Archive::from_path(dir.path().join("nope.pk3")).unwrap_err();
+    assert!(matches!(missing, ArchiveError::Io { .. }), "{missing}");
+}

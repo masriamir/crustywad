@@ -105,7 +105,6 @@ pub(crate) fn is_embedded_wad(path: &str, archive_name: Option<&str>) -> bool {
 }
 
 /// `maps/<NAME>.wad` → `(NAME, Wad)`, `maps/<NAME>.map` → `(NAME, Textmap)`.
-#[allow(dead_code)] // consumed by `Archive::maps` from Task 6 on
 pub(crate) fn map_of(path: &str) -> Option<(String, MapKind)> {
     let (first, rest) = path.split_once('/')?;
     if !first.eq_ignore_ascii_case("maps") || rest.contains('/') {

@@ -455,6 +455,31 @@ impl Archive {
         &self.members
     }
 
+    /// Every `maps/<NAME>.wad` and `maps/<NAME>.map` member, in directory
+    /// order, with `NAME` uppercased. Nothing is parsed; pass the member at
+    /// [`ArchiveMap::member_index`] to [`wad`](Self::wad) for a
+    /// [`MapKind::Wad`] entry.
+    #[must_use]
+    pub fn maps(&self) -> Vec<ArchiveMap> {
+        self.members
+            .iter()
+            .filter_map(|m| {
+                semantics::map_of(&m.path).map(|(name, kind)| ArchiveMap {
+                    name,
+                    kind,
+                    member_index: m.index,
+                })
+            })
+            .collect()
+    }
+
+    /// Members `GZDoom` would load as embedded WADs — see
+    /// [`Member::is_embedded_wad`].
+    #[must_use]
+    pub fn embedded_wads(&self) -> Vec<&Member> {
+        self.members.iter().filter(|m| m.embedded_wad).collect()
+    }
+
     /// Finds a member by full path, ASCII-case-insensitively; `\` is accepted
     /// for `/` and a leading `/` is ignored. When duplicates exist the later
     /// entry wins, as in `GZDoom`.
