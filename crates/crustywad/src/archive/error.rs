@@ -118,14 +118,6 @@ pub enum ArchiveError {
         /// The member path, decoded lossily.
         path: String,
     },
-    /// Two members share a path, compared ASCII-case-insensitively (strict
-    /// mode only; lenient keeps both and records
-    /// [`ArchiveWarning::DuplicatePath`]).
-    #[error("member path `{}` appears more than once", flatten_control(.path))]
-    DuplicatePath {
-        /// The duplicated path.
-        path: String,
-    },
     /// The [`Member`][super::Member] was obtained from a different
     /// [`Archive`][super::Archive]; members are only valid against the
     /// archive that produced them.

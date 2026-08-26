@@ -366,10 +366,13 @@ impl Archive {
     ///   [`TooManyMembers`](ArchiveError::TooManyMembers) in both modes.
     /// - In strict mode only: [`UnsupportedMethod`](ArchiveError::UnsupportedMethod),
     ///   [`Encrypted`](ArchiveError::Encrypted),
-    ///   [`MemberTooLarge`](ArchiveError::MemberTooLarge),
-    ///   [`NonAsciiName`](ArchiveError::NonAsciiName), and
-    ///   [`DuplicatePath`](ArchiveError::DuplicatePath); lenient mode lists
+    ///   [`MemberTooLarge`](ArchiveError::MemberTooLarge), and
+    ///   [`NonAsciiName`](ArchiveError::NonAsciiName); lenient mode lists
     ///   the member and records the matching [`ArchiveWarning`].
+    /// - A duplicate member path is never an error in either mode: both
+    ///   members are kept and the later one wins [`member`](Self::member)
+    ///   lookups; lenient mode additionally records
+    ///   [`ArchiveWarning::DuplicatePath`].
     pub fn from_bytes_with_options(
         bytes: impl Into<Vec<u8>>,
         options: ParseOptions,
@@ -652,19 +655,17 @@ impl Archive {
                 archive_id: id,
             });
         }
-        // Duplicate paths: zips permit them; GZDoom keeps the later entry.
-        // A `HashSet` keeps this O(n) over up to `max_archive_members` entries
-        // (ADR-0016 §1); `insert` returning `false` means the lowercased path
-        // was already present.
+        // Duplicate paths: zips permit them, and GZDoom keeps the later
+        // entry, so this is never an error in either mode. Both members stay
+        // in the table; `member` (which searches in reverse) resolves
+        // lookups to the later one. Lenient mode additionally records a
+        // warning. A `HashSet` keeps this O(n) over up to
+        // `max_archive_members` entries (ADR-0016 §1); `insert` returning
+        // `false` means the lowercased path was already present.
         let mut seen: HashSet<String> = HashSet::with_capacity(members.len());
         for member in &members {
             let lower = member.path.to_ascii_lowercase();
-            if !seen.insert(lower) {
-                if strict {
-                    return Err(ArchiveError::DuplicatePath {
-                        path: member.path.clone(),
-                    });
-                }
+            if !seen.insert(lower) && !strict {
                 warnings.push(ArchiveWarning::DuplicatePath {
                     path: member.path.clone(),
                 });

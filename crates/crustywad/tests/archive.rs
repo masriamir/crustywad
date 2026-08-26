@@ -301,19 +301,29 @@ fn non_ascii_paths_are_strict_errors_and_lenient_nameless_members() {
 }
 
 #[test]
-fn duplicate_paths_error_strictly_and_later_wins_leniently() {
+fn duplicate_paths_are_kept_in_both_modes_and_the_later_wins() {
     let zip = common::ZipBuilder::new()
         .stored("MAPINFO.txt", b"first")
         .stored("mapinfo.TXT", b"second")
         .build();
-    let err = Archive::from_bytes_with_options(zip.clone(), ParseOptions::strict()).unwrap_err();
-    assert!(matches!(err, ArchiveError::DuplicatePath { .. }), "{err}");
-    let archive =
-        Archive::from_bytes_with_options(zip, ParseOptions::lenient()).expect("both kept");
-    assert_eq!(archive.members().len(), 2);
-    assert_eq!(archive.member("MAPINFO.txt").unwrap().index(), 1);
+
+    let strict = Archive::from_bytes_with_options(zip.clone(), ParseOptions::strict())
+        .expect("a duplicate path is not an error in strict mode");
+    assert_eq!(strict.members().len(), 2);
+    let member = strict.member("MAPINFO.txt").unwrap();
+    assert_eq!(member.index(), 1);
+    assert_eq!(strict.read(member).unwrap(), b"second");
+    assert!(strict.warnings().is_empty());
+
+    let lenient = Archive::from_bytes_with_options(zip, ParseOptions::lenient())
+        .expect("a duplicate path is not an error in lenient mode either");
+    assert_eq!(lenient.members().len(), 2);
+    let member = lenient.member("MAPINFO.txt").unwrap();
+    assert_eq!(member.index(), 1);
+    assert_eq!(lenient.read(member).unwrap(), b"second");
+    assert_eq!(lenient.warnings().len(), 1);
     assert!(matches!(
-        archive.warnings()[0],
+        lenient.warnings()[0],
         ArchiveWarning::DuplicatePath { .. }
     ));
 }
