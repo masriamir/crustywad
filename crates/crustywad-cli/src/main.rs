@@ -1076,12 +1076,16 @@ fn open_input(path: &Path, options: ParseOptions) -> Result<Input> {
 /// Returns an error only when the leading bytes of `path` are an archive
 /// signature.
 fn reject_archive(path: &Path, command: &str) -> Result<()> {
-    let mut head = [0_u8; 6];
-    let Ok(n) = fs::File::open(path).and_then(|mut f| std::io::Read::read(&mut f, &mut head))
+    // A bounded `read_to_end` (not a single `read`, which may legitimately
+    // return fewer bytes than requested) so the sniff always sees the full
+    // signature when the file has one.
+    let mut head = Vec::with_capacity(6);
+    let Ok(_) = fs::File::open(path)
+        .and_then(|f| std::io::Read::read_to_end(&mut std::io::Read::take(f, 6), &mut head))
     else {
         return Ok(());
     };
-    if looks_like_archive(&head[..n]) {
+    if looks_like_archive(&head) {
         anyhow::bail!("{} is a pk3 archive; {command} reads WADs", path.display());
     }
     Ok(())
