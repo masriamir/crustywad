@@ -732,22 +732,35 @@ fn a_zip64_local_header_offset_of_u64_max_is_corrupt_not_an_overflow() {
 }
 
 #[test]
-fn a_member_from_another_archive_is_refused_without_panicking() {
-    let one = Archive::from_bytes(common::ZipBuilder::new().stored("a.txt", b"a").build()).unwrap();
-    let two = Archive::from_bytes(
-        common::ZipBuilder::new()
-            .stored("a.txt", b"a")
-            .stored("b.txt", b"b")
-            .build(),
-    )
-    .unwrap();
-    let err = one.read(&two.members()[1]).unwrap_err();
-    assert!(
-        matches!(
-            &err,
-            ArchiveError::CorruptDirectory { index: 1, reason }
-                if *reason == "member does not belong to this archive"
-        ),
-        "{err}"
-    );
+fn a_member_from_another_archive_is_refused_by_name() {
+    for options in both_modes() {
+        let one = Archive::from_bytes_with_options(
+            common::ZipBuilder::new().stored("a.txt", b"a").build(),
+            options,
+        )
+        .unwrap();
+        let two = Archive::from_bytes_with_options(
+            common::ZipBuilder::new()
+                .stored("a.txt", b"a")
+                .stored("maps/MAP01.wad", b"PWAD")
+                .build(),
+            options,
+        )
+        .unwrap();
+        // `two.members()[1]` has no counterpart index in `one`; `[0]` does —
+        // the in-range one would otherwise silently read `one`'s own bytes.
+        for member in [&two.members()[1], &two.members()[0]] {
+            let err = one.read(member).unwrap_err();
+            assert!(
+                matches!(&err, ArchiveError::ForeignMember { path } if path == member.path()),
+                "{err}"
+            );
+        }
+        // `wad` goes through `read`, so it refuses a foreign member too.
+        let err = one.wad(&two.members()[1]).unwrap_err();
+        assert!(matches!(err, ArchiveError::ForeignMember { .. }), "{err}");
+        // A member cloned out of the archive's own table still reads.
+        let mine = one.members()[0].clone();
+        assert_eq!(one.read(&mine).unwrap(), b"a");
+    }
 }

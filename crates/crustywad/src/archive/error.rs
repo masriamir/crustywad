@@ -126,6 +126,14 @@ pub enum ArchiveError {
         /// The duplicated path.
         path: String,
     },
+    /// The [`Member`][super::Member] was obtained from a different
+    /// [`Archive`][super::Archive]; members are only valid against the
+    /// archive that produced them.
+    #[error("member `{}` does not belong to this archive", flatten_control(.path))]
+    ForeignMember {
+        /// The member path.
+        path: String,
+    },
     /// [`Archive::wad`][super::Archive::wad] was called on a member that is
     /// not a `.wad` file.
     #[error("member `{}` is not a WAD", flatten_control(.path))]

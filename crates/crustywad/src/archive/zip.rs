@@ -242,13 +242,18 @@ impl Container for ZipContainer {
 
     fn read_entry(&self, index: usize, cap: usize) -> Result<Vec<u8>, ArchiveError> {
         let corrupt = |reason: &'static str| ArchiveError::CorruptDirectory { index, reason };
-        // `index` comes from a `Member` this container produced, so `get` only
-        // fails for a `Member` handed to a different archive; answer that with
-        // an error rather than a panicking index.
+        // Defense in depth: `Archive::read` already refuses a `Member` from
+        // another archive by its archive id, so this cannot fire through the
+        // public API — but the seam must answer an out-of-range index with an
+        // error rather than a panicking index, and it must not claim the file
+        // is corrupt. The container has no path for an entry it does not own,
+        // so the index identifies it instead.
         let entry = self
             .entries
             .get(index)
-            .ok_or_else(|| corrupt("member does not belong to this archive"))?;
+            .ok_or_else(|| ArchiveError::ForeignMember {
+                path: format!("entry {index}"),
+            })?;
         let path = entry.path.clone();
         // The local header offset and the compressed size are file-derived, so
         // every offset built from them is `checked_add`-bounded against the

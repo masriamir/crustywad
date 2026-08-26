@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use error::{ArchiveError, ArchiveWarning};
 
@@ -209,7 +210,15 @@ impl ArchiveMap {
     }
 }
 
+/// Distinguishes members of one archive from another's (see
+/// [`ArchiveError::ForeignMember`]).
+static NEXT_ARCHIVE_ID: AtomicU64 = AtomicU64::new(1);
+
 /// One file inside an [`Archive`].
+///
+/// A `Member` is only valid against the [`Archive`] that produced it:
+/// [`Archive::read`] and [`Archive::wad`] answer
+/// [`ArchiveError::ForeignMember`] for a member from any other archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     path: String,
@@ -222,6 +231,7 @@ pub struct Member {
     embedded_wad: bool,
     index: usize,
     entry: usize,
+    archive_id: u64,
 }
 
 impl Member {
@@ -314,6 +324,7 @@ pub(crate) trait Container: fmt::Debug {
 #[derive(Debug)]
 pub struct Archive {
     container: Box<dyn Container>,
+    id: u64,
     kind: ArchiveKind,
     name: Option<String>,
     members: Vec<Member>,
@@ -466,7 +477,10 @@ impl Archive {
     ///
     /// # Errors
     ///
-    /// [`ArchiveError::Encrypted`] / [`UnsupportedMethod`](ArchiveError::UnsupportedMethod)
+    /// [`ArchiveError::ForeignMember`] when `member` came from a different
+    /// archive — members are only valid against the archive that produced
+    /// them. [`ArchiveError::Encrypted`] /
+    /// [`UnsupportedMethod`](ArchiveError::UnsupportedMethod)
     /// / [`MemberTooLarge`](ArchiveError::MemberTooLarge) for members that
     /// lenient mode listed but cannot read; and, in both modes,
     /// [`CorruptDirectory`](ArchiveError::CorruptDirectory) when the local
@@ -475,6 +489,14 @@ impl Archive {
     /// [`SizeMismatch`](ArchiveError::SizeMismatch), and
     /// [`ChecksumMismatch`](ArchiveError::ChecksumMismatch).
     pub fn read(&self, member: &Member) -> Result<Vec<u8>, ArchiveError> {
+        // A `Member` carries the identity of the archive that produced it, so
+        // a member from another archive is refused by name instead of silently
+        // reading whatever sits at that entry index here.
+        if member.archive_id != self.id {
+            return Err(ArchiveError::ForeignMember {
+                path: member.path.clone(),
+            });
+        }
         if member.encrypted {
             return Err(ArchiveError::Encrypted {
                 path: member.path.clone(),
@@ -503,7 +525,8 @@ impl Archive {
     /// # Errors
     ///
     /// [`ArchiveError::NotAWad`] when the member's path does not end in
-    /// `.wad`; everything [`read`](Self::read) reports; and
+    /// `.wad`; [`ArchiveError::ForeignMember`] when `member` came from a
+    /// different archive; everything [`read`](Self::read) reports; and
     /// [`ArchiveError::Wad`] wrapping the [`ParseError`](crate::ParseError)
     /// when the bytes are not a valid WAD.
     pub fn wad(&self, member: &Member) -> Result<Wad, ArchiveError> {
@@ -528,6 +551,7 @@ impl Archive {
         kind: ArchiveKind,
         options: ParseOptions,
     ) -> Result<Self, ArchiveError> {
+        let id = NEXT_ARCHIVE_ID.fetch_add(1, Ordering::Relaxed);
         let strict = options.strictness == Strictness::Strict;
         let limit = options.limits.max_decoded_member_bytes;
         let mut warnings = Vec::new();
@@ -600,6 +624,7 @@ impl Archive {
                 embedded_wad: semantics::is_embedded_wad(&raw.path, None),
                 index: members.len(),
                 entry: entry_index,
+                archive_id: id,
             });
         }
         // Duplicate paths: zips permit them; GZDoom keeps the later entry.
@@ -622,6 +647,7 @@ impl Archive {
         }
         Ok(Self {
             container,
+            id,
             kind,
             name: None,
             members,
