@@ -396,7 +396,116 @@ impl Container for ZipContainer {
 
 #[cfg(test)]
 mod tests {
-    use super::{u16_at, u32_at, u64_at};
+    use super::{Container, ZipContainer, u16_at, u32_at, u64_at};
+
+    /// A one-member zip: local header + body, one central-directory entry
+    /// (with `extra` appended to it), EOCD. `declared` and `local_offset`
+    /// are written as given so a test can make the directory lie; the CRC
+    /// is written as `0` because every case here fails before the checksum.
+    fn one_member_zip(
+        method: u16,
+        body: &[u8],
+        declared: u32,
+        extra: &[u8],
+        local_offset: u32,
+    ) -> Vec<u8> {
+        let name = b"member.bin";
+        let csize = u32::try_from(body.len()).unwrap();
+        let mut out = Vec::new();
+        out.extend_from_slice(&0x0403_4b50_u32.to_le_bytes());
+        out.extend_from_slice(&[20, 0, 0, 0]);
+        out.extend_from_slice(&method.to_le_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&0_u32.to_le_bytes());
+        out.extend_from_slice(&csize.to_le_bytes());
+        out.extend_from_slice(&declared.to_le_bytes());
+        out.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(body);
+        let cd_offset = u32::try_from(out.len()).unwrap();
+        let mut cd = Vec::new();
+        cd.extend_from_slice(&0x0201_4b50_u32.to_le_bytes());
+        cd.extend_from_slice(&[20, 0, 20, 0, 0, 0]);
+        cd.extend_from_slice(&method.to_le_bytes());
+        cd.extend_from_slice(&[0; 4]);
+        cd.extend_from_slice(&0_u32.to_le_bytes());
+        cd.extend_from_slice(&csize.to_le_bytes());
+        cd.extend_from_slice(&declared.to_le_bytes());
+        cd.extend_from_slice(&u16::try_from(name.len()).unwrap().to_le_bytes());
+        cd.extend_from_slice(&u16::try_from(extra.len()).unwrap().to_le_bytes());
+        cd.extend_from_slice(&[0; 6]); // comment length, disk start, internal attributes
+        cd.extend_from_slice(&0_u32.to_le_bytes()); // external attributes
+        cd.extend_from_slice(&local_offset.to_le_bytes());
+        cd.extend_from_slice(name);
+        cd.extend_from_slice(extra);
+        let cd_size = u32::try_from(cd.len()).unwrap();
+        out.extend_from_slice(&cd);
+        out.extend_from_slice(&0x0605_4b50_u32.to_le_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&1_u16.to_le_bytes());
+        out.extend_from_slice(&1_u16.to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn the_seam_refuses_an_entry_index_it_does_not_own() {
+        let zip = ZipContainer::open(one_member_zip(0, b"hello", 5, &[], 0), 16).unwrap();
+        let err = zip.read_entry(3, 1024).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "member `entry 3` does not belong to this archive"
+        );
+    }
+
+    #[test]
+    fn the_seam_refuses_a_declared_size_over_the_cap() {
+        // `Archive::read` checks this first through the public API; the
+        // seam must hold the line on its own for any future backend.
+        let zip = ZipContainer::open(one_member_zip(0, b"hello", 5, &[], 0), 16).unwrap();
+        let err = zip.read_entry(0, 4).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "member `member.bin` declares 5 decoded bytes, more than the limit of 4"
+        );
+    }
+
+    #[test]
+    fn the_seam_refuses_an_unsupported_method() {
+        let zip = ZipContainer::open(one_member_zip(14, b"hello", 5, &[], 0), 16).unwrap();
+        let err = zip.read_entry(0, 1024).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "member `member.bin` uses unsupported compression method lzma"
+        );
+    }
+
+    #[test]
+    fn extra_fields_that_are_not_zip64_are_skipped_and_partial_zip64_keeps_real_fields() {
+        // A UT timestamp extra field (id 0x5455) is walked past; a ZIP64 extra
+        // that replaces only the local-header offset leaves the sizes alone.
+        let ut = [0x55, 0x54, 5, 0, 3, 1, 2, 3, 4];
+        let zip = ZipContainer::open(one_member_zip(0, b"hello", 5, &ut, 0), 16).unwrap();
+        assert_eq!(zip.entries()[0].size, 5);
+        // The body is fine but the directory's CRC is 0, so the read fails
+        // at the checksum — after the extra field was walked without error.
+        assert_eq!(
+            zip.read_entry(0, 1024).unwrap_err().to_string(),
+            "member `member.bin` failed its CRC-32 check"
+        );
+
+        let mut zip64 = vec![0x01, 0x00, 8, 0];
+        zip64.extend_from_slice(&0_u64.to_le_bytes());
+        let zip = ZipContainer::open(one_member_zip(0, b"hello", 5, &zip64, u32::MAX), 16).unwrap();
+        let entry = &zip.entries()[0];
+        assert_eq!(
+            (entry.size, entry.compressed_size, entry.local_header_offset),
+            (5, 5, 0)
+        );
+    }
 
     const SAMPLE: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 

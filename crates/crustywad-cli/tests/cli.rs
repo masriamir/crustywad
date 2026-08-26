@@ -7379,6 +7379,21 @@ fn human_output_flattens_control_characters_in_member_names() {
         .stderr(no_esc());
 }
 
+#[cfg(feature = "archive")]
+#[test]
+fn info_on_an_archive_with_no_members_omits_the_namespace_tally() {
+    // A zip whose only entry is a directory has no members after the reader
+    // drops directory entries, so the `namespaces:` line is not printed.
+    let pk3 = write_pk3(&[("sprites/", b"")]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("members:   0"))
+        .stdout(predicate::str::contains("namespaces:").not());
+}
+
 #[test]
 fn magic_wins_over_extension() {
     // A WAD named .pk3 is still a WAD.
