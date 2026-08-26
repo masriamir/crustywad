@@ -7355,8 +7355,8 @@ fn human_output_flattens_control_characters_in_member_names() {
         .assert()
         .success()
         .stdout(no_esc())
-        .stdout(predicate::str::contains("evil name [31m.wad"))
-        .stdout(predicate::str::contains("bad line [0m.txt"));
+        .stdout(predicate::str::contains("evil name[31m.wad"))
+        .stdout(predicate::str::contains("bad line[0m.txt"));
     Command::cargo_bin("cwad")
         .unwrap()
         .args(["info", pk3.path().to_str().unwrap()])
@@ -7364,7 +7364,7 @@ fn human_output_flattens_control_characters_in_member_names() {
         .success()
         .stdout(no_esc())
         .stdout(predicate::str::contains(
-            "embedded:  evil name [31m.wad (maps: MAP01)",
+            "embedded:  evil name[31m.wad (maps: MAP01)",
         ));
     Command::cargo_bin("cwad")
         .unwrap()
