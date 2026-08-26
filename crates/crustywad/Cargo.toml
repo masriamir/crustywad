@@ -42,6 +42,14 @@ doom64-gfx = ["dep:png"]
 # ADR-0025 §5, #327). Pulls the pure-Rust `miniz_oxide` inflater; off by default
 # so the core build stays decompressor-free.
 extended-nodes-zlib = ["dep:miniz_oxide"]
+# Read pk3 (zip) resource archives through `archive::Archive` (ADR-0031):
+# pure central-directory parsing plus the pure-Rust `miniz_oxide` inflater
+# that `extended-nodes-zlib` already uses. Off by default so the core build
+# stays decompressor-free.
+archive = ["dep:miniz_oxide"]
+# Optional integration test over a local pk3 collection supplied via
+# `CRUSTYWAD_PK3_DIR` (not auto-fetchable; `just test-pk3`).
+pk3-tests = ["archive"]
 
 [dependencies]
 binrw.workspace = true
