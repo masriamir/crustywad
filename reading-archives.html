@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Versioning and Release Policy - crustywad</title>
+        <title>Reading pk3 Archives - crustywad</title>
 
 
         <!-- Custom HTML head -->
@@ -177,197 +177,119 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="versioning-and-release-policy"><a class="header" href="#versioning-and-release-policy">Versioning and Release Policy</a></h1>
-<p>This page documents the SemVer guarantees, MSRV policy, versioning model, and release
-cadence for <code>crustywad</code> and <code>crustywad-cli</code>.</p>
-<hr>
-<h2 id="semantic-versioning"><a class="header" href="#semantic-versioning">Semantic Versioning</a></h2>
-<p>Both crates follow <a href="https://semver.org/">Semantic Versioning 2.0.0</a>, adapted to the pre-1.0
-phase. While the crates are at <code>0.y.z</code> — which SemVer treats as explicitly unstable — this
-project uses version increments as deliberate compatibility signals; a <code>0.y.z</code> version is not a
-license to make arbitrary breaking changes in patches.</p>
-<h3 id="pre-10-version-mapping-current"><a class="header" href="#pre-10-version-mapping-current">Pre-1.0 version mapping (current)</a></h3>
-<p>Cargo reads a <code>0.MINOR</code> caret requirement (a <code>"0.8"</code> dependency means <code>^0.8</code>, i.e.
-<code>&gt;=0.8.0, &lt;0.9.0</code>) as allowing patch updates but <strong>not</strong> a minor bump. So while at <code>0.y.z</code>, <strong>the
-minor bump is the breaking-change boundary</strong> — the opposite of the post-1.0 intuition where a
-minor release is a safe feature drop. To keep that boundary meaningful, the scheme collapses to
-two levels until 1.0:</p>
+                        <h1 id="reading-pk3-archives"><a class="header" href="#reading-pk3-archives">Reading pk3 Archives</a></h1>
+<p>With the <code>archive</code> feature enabled, <code>crustywad::archive::Archive</code> reads pk3
+(zip) resource archives — the container ZDoom-family engines use alongside
+WADs. It lists members with the namespace their directory selects, derives
+the engine’s 8-character short names, finds embedded WADs and <code>maps/*.wad</code>
+maps, and hands out <code>Wad</code> values for the WADs inside, so a pk3’s maps parse
+exactly like a standalone WAD’s (ADR-0031).</p>
+<pre><code class="language-toml">[dependencies]
+crustywad = { version = "0.9.5", features = ["archive"] }
+</code></pre>
+<h2 id="opening-an-archive"><a class="header" href="#opening-an-archive">Opening an archive</a></h2>
+<p>Detection is by magic bytes, never extension: <code>.pk3</code>, <code>.zip</code>, <code>.pke</code>, and
+<code>.ipk3</code> all open the same way, and a 7z-based <code>.pk7</code> is refused with an error
+that names the format.</p>
+<pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::archive::{Archive, MapKind, Namespace};
+
+let archive = Archive::from_path("mod.pk3")?;
+
+for member in archive.members() {
+    println!(
+        "{:&lt;40} {:?} {:?} {} bytes",
+        member.path(),
+        member.namespace(),
+        member.short_name(),
+        member.size()
+    );
+}
+
+// `maps/MAP01.wad` and friends, in directory order.
+for map in archive.maps() {
+    if map.kind() == MapKind::Wad {
+        let member = &amp;archive.members()[map.member_index()];
+        let wad = archive.wad(member)?;
+        println!("{}: {} map group(s)", map.name(), wad.map_groups().len());
+    }
+}
+
+// A `.wad` at the archive root is an embedded WAD the engine loads whole.
+for member in archive.embedded_wads() {
+    let wad = archive.wad(member)?;
+    println!("embedded {}: {} lumps", member.path(), wad.lump_count());
+}
+
+let sprites = archive
+    .members()
+    .iter()
+    .filter(|m| m.namespace() == Namespace::Sprites)
+    .count();
+println!("{sprites} sprite members");
+<span class="boring">Ok::&lt;(), crustywad::archive::ArchiveError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="what-is-and-is-not-modeled"><a class="header" href="#what-is-and-is-not-modeled">What is and is not modeled</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Change</th><th>Bump while at 0.x</th><th>Does a <code>0.MINOR</code> caret pin auto-upgrade?</th></tr>
+<tr><th>Modeled</th><th>Deferred (ADR-0031 §2)</th></tr>
 </thead>
 <tbody>
-<tr><td>Breaking change (or MSRV raise)</td><td><strong>minor</strong> — <code>0.8.0</code> → <code>0.9.0</code></td><td>No — the consumer must opt in.</td></tr>
-<tr><td>New backward-compatible API or feature</td><td><strong>patch</strong> — <code>0.8.0</code> → <code>0.8.1</code></td><td>Yes.</td></tr>
-<tr><td>Bug fix</td><td><strong>patch</strong> — <code>0.8.0</code> → <code>0.8.1</code></td><td>Yes.</td></tr>
+<tr><td>Members, sizes, compression method</td><td>Cross-member lookup by short name + namespace</td></tr>
+<tr><td>Namespace from the first directory (GZDoom’s table)</td><td><code>filter/&lt;game&gt;/</code> handling and <code>.{id}</code> resource IDs</td></tr>
+<tr><td>Short name: basename, extension stripped, uppercased, 8 bytes, <code>^</code> → <code>\</code> in the sprites, voxels, and hires namespaces</td><td>Bridging <code>Namespace</code> to the WAD-side <code>SectionKind</code></td></tr>
+<tr><td>Embedded WADs: root <code>.wad</code>, or <code>&lt;stem&gt;/&lt;file&gt;.wad</code> (see <code>Archive::with_name</code>)</td><td>Parsing bare <code>maps/*.map</code> <code>TEXTMAP</code> members (listed as <code>MapKind::Textmap</code>)</td></tr>
+<tr><td><code>maps/&lt;NAME&gt;.wad</code> / <code>.map</code> enumeration</td><td>pk7 (7z) decoding — the seam exists, the decoder does not</td></tr>
 </tbody>
 </table>
 </div>
-<p>Every backward-compatible change — new public types/functions/methods, new off-by-default feature
-flags, <em>and</em> bug fixes — ships as a <strong>patch</strong>; the <strong>minor</strong> bump is reserved for breaking changes
-(and MSRV raises, which break the build environment). This maximizes what a <code>0.MINOR</code> consumer
-receives automatically while still giving them a hard signal — the minor bump — before anything
-can break them. <code>release-plz</code> derives the bump from
-<a href="https://www.conventionalcommits.org/">Conventional Commits</a> accordingly: a <code>!</code> / <code>BREAKING CHANGE</code>
-commit bumps the minor; every other releasable commit (<code>feat</code>, <code>fix</code>, …) bumps the patch.</p>
-<p><strong>At <code>1.0.0</code> this expands to standard <code>MAJOR.MINOR.PATCH</code></strong>, and the per-channel meanings below
-apply literally (backward-compatible new API → minor, breaking → major).</p>
-<h3 id="patch-releases-0minorpatch"><a class="header" href="#patch-releases-0minorpatch">Patch releases (<code>0.MINOR.PATCH</code>)</a></h3>
-<p>Canonically (at 1.0+), a patch release fixes a bug without changing any public API, and is safe
-for all existing callers to upgrade without modification. <strong>While at 0.x, a patch release carries
-every backward-compatible change</strong> — bug fixes <em>and</em> new additive API/features (per the pre-1.0
-mapping above), since all of them are safe for a <code>0.MINOR</code> caret consumer to receive.</p>
-<p>Examples of patch changes:</p>
-<ul>
-<li>Correcting incorrect byte offsets in a parser</li>
-<li>Fixing a panic or incorrect error variant in an existing code path</li>
-<li>Adding a new public type, function, or method <em>(0.x — a minor change at 1.0+)</em></li>
-<li>Adding a new off-by-default feature flag, or a variant to a <code>#[non_exhaustive]</code> enum <em>(0.x)</em></li>
-<li>Updating documentation without changing behavior</li>
-<li>Updating a dependency to a compatible patch version</li>
-</ul>
-<h3 id="minor-releases-0minor0"><a class="header" href="#minor-releases-0minor0">Minor releases (<code>0.MINOR.0</code>)</a></h3>
-<p><strong>While at 0.x, a minor bump signals a breaking change</strong> — it is the boundary a <code>0.MINOR</code> caret
-consumer must opt into (see the <a href="#pre-10-version-mapping-current">pre-1.0 mapping</a> above and the
-breaking-change list below). An <strong>MSRV raise is also a minor bump</strong>: a caller on an older compiler
-can no longer build, so it is treated as a build-environment break (see
-<a href="#msrv-policy">MSRV policy</a>).</p>
-<p>Canonically (at 1.0+), the minor channel instead carries backward-compatible new functionality —
-adding a public type, function, or method; a new off-by-default feature flag; a new
-<code>#[non_exhaustive]</code> enum variant. Until 1.0 those ship as <strong>patches</strong> (above); only breaking
-changes and MSRV raises bump the minor.</p>
-<h3 id="major-releases-major00"><a class="header" href="#major-releases-major00">Major releases (<code>MAJOR.0.0</code>)</a></h3>
-<p>A major release contains at least one breaking change. Callers may need to update their
-code after upgrading.</p>
-<blockquote>
-<p><strong>Pre-1.0 note:</strong> While this crate is at <code>0.y.z</code>, there is no <code>1.0.0</code> to bump to.
-Breaking changes are instead signaled by a <strong>minor</strong> bump (e.g. <code>0.1.0</code> → <code>0.2.0</code>).
-The breaking-change examples below apply regardless of whether the release is <code>0.MINOR.0</code>
-or a future <code>MAJOR.0.0</code>.</p>
-</blockquote>
-<p>Examples of breaking changes:</p>
-<ul>
-<li>Removing or renaming a public type, function, method, or field</li>
-<li>Changing a function signature (parameter types, return type, added required parameter)</li>
-<li>Adding a variant to an exhaustive enum</li>
-<li>Changing the behavior of an existing function in a way that violates the previous contract</li>
-<li>Changing a feature flag that is on by default</li>
-<li>Implementing a foreign trait (from <code>std</code> or a dependency) on an existing public type
-(may cause coherence conflicts in downstream code)</li>
-</ul>
-<h3 id="what-is-not-a-breaking-change"><a class="header" href="#what-is-not-a-breaking-change">What is not a breaking change</a></h3>
-<ul>
-<li>Adding new public items (types, functions, methods)</li>
-<li>Adding new trait impls for traits defined in this crate</li>
-<li>Adding variants to enums marked <code>#[non_exhaustive]</code></li>
-<li>Adding optional feature flags</li>
-<li>Internal implementation changes with identical observable behavior</li>
-<li>Updating dependencies to compatible versions (patch or minor per their own SemVer)</li>
-</ul>
-<hr>
-<h2 id="msrv-policy"><a class="header" href="#msrv-policy">MSRV Policy</a></h2>
-<p>The current minimum supported Rust version (MSRV) is <strong>1.94.0</strong>, set via <code>rust-version</code> in
-<code>Cargo.toml</code>. The project targets the Rust 2024 edition.</p>
-<p>Rules:</p>
-<ul>
-<li><strong>An MSRV bump is a minor version change</strong>, never a patch. A caller pinned to the old
-compiler will fail to build after an MSRV bump, so it is treated as a backward-incompatible
-change to the build environment even though the public API is unchanged.</li>
-<li><strong>Rolling N-3 target.</strong> The MSRV tracks a bounded window: at each release it is
-<strong>(latest stable Rust minor at release time) − 3</strong>, so the crates are guaranteed to build on
-the <strong>last four stable Rust releases</strong> (roughly the most recent six months). This replaces the
-former need-driven policy — the window makes the compatibility promise explicit rather than
-leaving it implicit, and keeps the toolchain modern enough for the current dependency
-ecosystem.</li>
-<li><strong>Revisited each release.</strong> The MSRV is reviewed at every release and raised when the rolling
-window advances, or earlier when a required dependency or language feature demands a newer
-toolchain. Raising it stays a <strong>minor</strong> version bump (see the first rule); dropping support for
-releases below the new floor is the deliberate, semver-signaled cost of a bounded window.</li>
-<li><strong>CI enforces the declared MSRV.</strong> The <code>msrv</code> job in CI builds and tests the workspace on
-the declared MSRV on every PR. The toolchain version is pinned explicitly in
-<code>.github/workflows/ci.yml</code> and does not auto-track <code>[workspace.package].rust-version</code>. A
-PR that raises the MSRV must update both the <code>rust-version</code> field in <code>Cargo.toml</code> and the
-<code>toolchain:</code> pin in the workflow file, then bump the version of each affected crate (a
-minor bump) — both crates currently share <code>rust-version.workspace = true</code>, so an MSRV
-bump affects both. If <code>crustywad</code>’s version moves outside <code>crustywad-cli</code>’s pinned caret
-range as a result, update that pin too.</li>
-</ul>
-<hr>
-<h2 id="versioning-model"><a class="header" href="#versioning-model">Versioning Model</a></h2>
-<h3 id="independent-per-crate-versioning"><a class="header" href="#independent-per-crate-versioning">Independent per-crate versioning</a></h3>
-<p>Per <a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md">ADR-0011</a>,
-each crate carries its own explicit <code>version</code> field in its <code>[package]</code> block rather than
-inheriting from <code>[workspace.package]</code>. <code>release-plz</code> manages each package independently,
-proposing version bumps only for crates whose content has changed since the last release.</p>
-<p><strong>Dependency constraint:</strong> <code>crates/crustywad-cli/Cargo.toml</code> pins the library with an explicit
-caret requirement (currently <code>crustywad = { version = "0.9.5", ... }</code>), required by
-<code>cargo-deny</code>’s <code>wildcards = "deny"</code> setting (which disallows <code>*</code> version requirements).
-<code>version = "0.9.5"</code> resolves as <code>^0.9.5</code> (<code>&gt;=0.9.5, &lt;0.10.0</code>), so patch bumps to <code>crustywad</code>
-within the same minor series are satisfied automatically. When <code>crustywad</code>’s version moves
-outside that range (e.g., to <code>0.10.0</code>), this field must be updated manually before merging —
-otherwise <code>cargo build</code> and crates.io publishing will fail.</p>
-<hr>
-<h2 id="release-cadence"><a class="header" href="#release-cadence">Release Cadence</a></h2>
-<p>Releases are automated by <a href="https://release-plz.dev/">release-plz</a>, which monitors
-<code>main</code> for Conventional Commits and opens a release PR whenever releasable changes
-accumulate.</p>
-<p>The workflow:</p>
-<ol>
-<li>Commits land on <code>main</code> via merged PRs, following the
-<a href="https://www.conventionalcommits.org/">Conventional Commits</a> format (<code>feat:</code>, <code>fix:</code>,
-<code>docs:</code>, etc.).</li>
-<li><code>release-plz</code> inspects the commit history and proposes a release PR with a version bump
-and an updated <code>CHANGELOG.md</code>. Breaking changes must be marked (<code>feat!:</code> or a
-<code>BREAKING CHANGE:</code> footer) for the commit-derived bump to be correct; as a safety net,
-<code>release-plz</code> also runs <a href="https://github.com/obi1kenobi/cargo-semver-checks"><code>cargo-semver-checks</code></a>
-against the previously published version (<code>semver_check</code> in <code>release-plz.toml</code>) so
-unmarked API breakage still produces the required minor bump rather than a patch.</li>
-<li>The maintainer reviews and merges the release PR.</li>
-<li><code>release-plz</code> runs <code>cargo publish</code> automatically after the release PR merges, in dependency
-order (<code>crustywad</code> before <code>crustywad-cli</code>), and pushes the <code>crustywad-v*</code> /
-<code>crustywad-cli-v*</code> tags.</li>
-</ol>
-<p>There is no fixed release schedule. Releases happen when meaningful changes have
-accumulated. The <code>release-plz</code> release PR is the signal that a release is ready.</p>
-<p><strong>Publishing status:</strong> Both crates publish to crates.io automatically, authenticated by
-<a href="https://crates.io/docs/trusted-publishing">Trusted Publishing</a> (OIDC — no stored registry
-token). <code>release-plz</code> does not create GitHub Releases; the cross-platform <code>cwad</code> binaries and
-installers are published separately by <a href="https://opensource.axo.dev/cargo-dist/">dist</a> off the
-<code>crustywad-cli-v*</code> tag. See
-<a href="https://github.com/masriamir/crustywad/blob/main/docs/adr/0011-publish-workflow.md">ADR-0011</a>
-for the full publish workflow design.</p>
-<hr>
-<h2 id="version-compatibility-table"><a class="header" href="#version-compatibility-table">Version Compatibility Table</a></h2>
-<p>Both regimes are shown side by side — while at <code>0.y.z</code> the
-<a href="#pre-10-version-mapping-current">pre-1.0 mapping</a> collapses the canonical three channels into
-two, so the same change bumps a different level before and after <code>1.0.0</code>.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Scenario</th><th>Bump while at 0.x (current)</th><th>Bump at 1.0+</th></tr>
-</thead>
-<tbody>
-<tr><td>Bug fix, no API change</td><td>patch</td><td>patch</td></tr>
-<tr><td>New public type or function</td><td><strong>patch</strong></td><td>minor</td></tr>
-<tr><td>New optional feature flag</td><td><strong>patch</strong></td><td>minor</td></tr>
-<tr><td><code>#[non_exhaustive]</code> enum variant added</td><td><strong>patch</strong></td><td>minor</td></tr>
-<tr><td>MSRV raised</td><td>minor</td><td>minor</td></tr>
-<tr><td>Public type removed or renamed</td><td><strong>minor</strong></td><td>major</td></tr>
-<tr><td>Function signature changed</td><td><strong>minor</strong></td><td>major</td></tr>
-<tr><td>Exhaustive enum variant added</td><td><strong>minor</strong></td><td>major</td></tr>
-</tbody>
-</table>
-</div>
+<h2 id="limits-and-strictness"><a class="header" href="#limits-and-strictness">Limits and strictness</a></h2>
+<p>Nothing is decoded when an archive opens; the central directory alone decides
+what is listed. Two <code>Limits</code> fields bound the work, in <strong>both</strong> strictness
+modes: <code>max_archive_members</code> (default 65,536) caps the declared member count
+before the member table is allocated, and <code>max_decoded_member_bytes</code> (default
+256 MiB) caps a single <code>read()</code>. Only stored and deflate members can be read;
+any other method, and any encrypted member, is rejected by name.</p>
+<p>In strict mode those central-directory facts fail <code>from_bytes</code>. In lenient
+mode the member is still listed, an <code>ArchiveWarning</code> is recorded, and
+<code>read()</code> fails on that member alone — so <code>cwad list</code> can still show the
+layout of a pk3 packed with lzma. A duplicate member path is different: zips
+permit duplicates and GZDoom keeps the later entry, so a duplicate is never
+an error in either strictness mode — both members stay listed, <code>member()</code>
+resolves to the later one, and lenient mode additionally records
+<code>ArchiveWarning::DuplicatePath</code>. Facts only extraction reveals (a local
+header disagreeing with the directory, a corrupt deflate stream, a size or
+CRC-32 lie) are <code>read()</code> errors in both modes.</p>
+<p>A <code>Member</code> is only valid against the <code>Archive</code> that produced it: passing one
+to <code>read</code>/<code>wad</code> on a different <code>Archive</code> fails with
+<code>ArchiveError::ForeignMember</code> rather than reading whatever entry happens to
+occupy that index there.</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::archive::Archive;
+use crustywad::{Limits, ParseOptions};
+
+let mut options = ParseOptions::lenient();
+options.limits = Limits::new()
+    .with_max_archive_members(10_000)
+    .with_max_decoded_member_bytes(64 &lt;&lt; 20);
+// `Archive::from_bytes_with_options(bytes, options)` then applies them.
+let _ = options;
+<span class="boring">}</span></code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="lump-hierarchy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="reading-wads.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
+                            <a rel="next prefetch" href="writing-wads.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -375,10 +297,13 @@ two, so the same change bumps a different level before and after <code>1.0.0</co
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="lump-hierarchy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="reading-wads.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
+                    <a rel="next prefetch" href="writing-wads.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
             </nav>
 
         </div>

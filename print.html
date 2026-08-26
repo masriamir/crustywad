@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0482942e.js";
+            window.path_to_searchindex_js = "searchindex-c94d3b18.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-eed51aa7.js"></script>
+        <script src="toc-2849de99.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -397,6 +397,108 @@ match wad.kind() {
 }
 <span class="boring">Ok::&lt;(), crustywad::ParseError&gt;(())
 </span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="reading-pk3-archives"><a class="header" href="#reading-pk3-archives">Reading pk3 Archives</a></h1>
+<p>With the <code>archive</code> feature enabled, <code>crustywad::archive::Archive</code> reads pk3
+(zip) resource archives — the container ZDoom-family engines use alongside
+WADs. It lists members with the namespace their directory selects, derives
+the engine’s 8-character short names, finds embedded WADs and <code>maps/*.wad</code>
+maps, and hands out <code>Wad</code> values for the WADs inside, so a pk3’s maps parse
+exactly like a standalone WAD’s (ADR-0031).</p>
+<pre><code class="language-toml">[dependencies]
+crustywad = { version = "0.9.5", features = ["archive"] }
+</code></pre>
+<h2 id="opening-an-archive"><a class="header" href="#opening-an-archive">Opening an archive</a></h2>
+<p>Detection is by magic bytes, never extension: <code>.pk3</code>, <code>.zip</code>, <code>.pke</code>, and
+<code>.ipk3</code> all open the same way, and a 7z-based <code>.pk7</code> is refused with an error
+that names the format.</p>
+<pre class="playground"><code class="language-rust no_run"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::archive::{Archive, MapKind, Namespace};
+
+let archive = Archive::from_path("mod.pk3")?;
+
+for member in archive.members() {
+    println!(
+        "{:&lt;40} {:?} {:?} {} bytes",
+        member.path(),
+        member.namespace(),
+        member.short_name(),
+        member.size()
+    );
+}
+
+// `maps/MAP01.wad` and friends, in directory order.
+for map in archive.maps() {
+    if map.kind() == MapKind::Wad {
+        let member = &amp;archive.members()[map.member_index()];
+        let wad = archive.wad(member)?;
+        println!("{}: {} map group(s)", map.name(), wad.map_groups().len());
+    }
+}
+
+// A `.wad` at the archive root is an embedded WAD the engine loads whole.
+for member in archive.embedded_wads() {
+    let wad = archive.wad(member)?;
+    println!("embedded {}: {} lumps", member.path(), wad.lump_count());
+}
+
+let sprites = archive
+    .members()
+    .iter()
+    .filter(|m| m.namespace() == Namespace::Sprites)
+    .count();
+println!("{sprites} sprite members");
+<span class="boring">Ok::&lt;(), crustywad::archive::ArchiveError&gt;(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="what-is-and-is-not-modeled"><a class="header" href="#what-is-and-is-not-modeled">What is and is not modeled</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Modeled</th><th>Deferred (ADR-0031 §2)</th></tr>
+</thead>
+<tbody>
+<tr><td>Members, sizes, compression method</td><td>Cross-member lookup by short name + namespace</td></tr>
+<tr><td>Namespace from the first directory (GZDoom’s table)</td><td><code>filter/&lt;game&gt;/</code> handling and <code>.{id}</code> resource IDs</td></tr>
+<tr><td>Short name: basename, extension stripped, uppercased, 8 bytes, <code>^</code> → <code>\</code> in the sprites, voxels, and hires namespaces</td><td>Bridging <code>Namespace</code> to the WAD-side <code>SectionKind</code></td></tr>
+<tr><td>Embedded WADs: root <code>.wad</code>, or <code>&lt;stem&gt;/&lt;file&gt;.wad</code> (see <code>Archive::with_name</code>)</td><td>Parsing bare <code>maps/*.map</code> <code>TEXTMAP</code> members (listed as <code>MapKind::Textmap</code>)</td></tr>
+<tr><td><code>maps/&lt;NAME&gt;.wad</code> / <code>.map</code> enumeration</td><td>pk7 (7z) decoding — the seam exists, the decoder does not</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limits-and-strictness"><a class="header" href="#limits-and-strictness">Limits and strictness</a></h2>
+<p>Nothing is decoded when an archive opens; the central directory alone decides
+what is listed. Two <code>Limits</code> fields bound the work, in <strong>both</strong> strictness
+modes: <code>max_archive_members</code> (default 65,536) caps the declared member count
+before the member table is allocated, and <code>max_decoded_member_bytes</code> (default
+256 MiB) caps a single <code>read()</code>. Only stored and deflate members can be read;
+any other method, and any encrypted member, is rejected by name.</p>
+<p>In strict mode those central-directory facts fail <code>from_bytes</code>. In lenient
+mode the member is still listed, an <code>ArchiveWarning</code> is recorded, and
+<code>read()</code> fails on that member alone — so <code>cwad list</code> can still show the
+layout of a pk3 packed with lzma. A duplicate member path is different: zips
+permit duplicates and GZDoom keeps the later entry, so a duplicate is never
+an error in either strictness mode — both members stay listed, <code>member()</code>
+resolves to the later one, and lenient mode additionally records
+<code>ArchiveWarning::DuplicatePath</code>. Facts only extraction reveals (a local
+header disagreeing with the directory, a corrupt deflate stream, a size or
+CRC-32 lie) are <code>read()</code> errors in both modes.</p>
+<p>A <code>Member</code> is only valid against the <code>Archive</code> that produced it: passing one
+to <code>read</code>/<code>wad</code> on a different <code>Archive</code> fails with
+<code>ArchiveError::ForeignMember</code> rather than reading whatever entry happens to
+occupy that index there.</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use crustywad::archive::Archive;
+use crustywad::{Limits, ParseOptions};
+
+let mut options = ParseOptions::lenient();
+options.limits = Limits::new()
+    .with_max_archive_members(10_000)
+    .with_max_decoded_member_bytes(64 &lt;&lt; 20);
+// `Archive::from_bytes_with_options(bytes, options)` then applies them.
+let _ = options;
+<span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="writing-wad-files"><a class="header" href="#writing-wad-files">Writing WAD Files</a></h1>
 <p><code>WadBuilder</code>, behind the <code>write</code> feature flag, builds a new WAD from scratch
@@ -1964,6 +2066,16 @@ audio:     midi: 3, digital: 12
 game family (currently Strife, via its dialogue lumps — see
 <a href="#game-identification-strife">Game identification</a>); a Doom WAD
 prints none.</p>
+<p>Given a pk3 (detected by magic bytes, never by extension), <code>info</code> summarizes
+the archive instead — member count, declared data size, a per-namespace tally,
+embedded WADs (each with the maps it contains), and the <code>maps/</code> maps:</p>
+<pre><code class="language-text">$ cwad info joymaps2.pk3
+kind:      pk3 (zip)
+members:   140
+data size: 5489725 bytes (declared)
+namespaces: global: 6, flats: 1, textures: 1, patches: 70, graphics: 24, music: 19, hidden: 19
+maps:      MAP01, MAP02, MAP03, MAP04, MAP05, MAP06, MAP07, MAP08, MAP09, MAP10, MAP11, MAP12, MAP13, MAP14, MAP15, MAP16, MAP17, MAP18, MAP19
+</code></pre>
 <h3 id="list"><a class="header" href="#list">list</a></h3>
 <p>Print the full lump directory. Each line contains the zero-based index, the
 file offset (<code>filepos</code>), the byte size, and the lump name.</p>
@@ -1974,6 +2086,8 @@ file offset (<code>filepos</code>), the byte size, and the lump name.</p>
 ...
 </code></pre>
 <p>Column order: <code>index  filepos  size  name</code>.</p>
+<p>For a pk3, one row per member: index, namespace, method, declared size, short
+name (<code>-</code> when the member is hidden), and path.</p>
 <h3 id="validate"><a class="header" href="#validate">validate</a></h3>
 <p>Check whether a WAD file parses without errors and exits with the
 appropriate code (see <a href="#exit-codes">Exit codes</a>).</p>
@@ -2007,6 +2121,9 @@ one newline-delimited record per map (<code>{"map":"E1M1","ok":true,"warnings":0
 or <code>{"map":"E1M1","ok":false,"error":"..."}</code>) followed by the usual summary
 object; in CSV it emits a <code>map,ok,error</code> table instead of the shallow
 <code>ok</code>/<code>true</code> pair.</p>
+<p>For a pk3, <code>--deep</code> parses every <code>maps/*.wad</code> and every embedded WAD and
+validates each map found, prefixing every result with the member path; a
+member that fails to read or parse counts as a failure.</p>
 <h3 id="merge"><a class="header" href="#merge">merge</a></h3>
 <p>Combine multiple WAD files into one, writing lumps in the order the input
 files are given.</p>
@@ -2294,7 +2411,7 @@ true
 <tbody>
 <tr><td><code>0</code></td><td>Success</td></tr>
 <tr><td><code>1</code></td><td>Negative result — the two WADs differ (<code>diff</code>), or <code>validate --deep</code> found map validation errors</td></tr>
-<tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.); for <code>extract</code>, also a nonexistent <code>--output</code> directory or a <code>--lump</code> name not found</td></tr>
+<tr><td><code>2</code></td><td>I/O error or parse error (malformed WAD, missing file, etc.); for <code>extract</code>, also a nonexistent <code>--output</code> directory or a <code>--lump</code> name not found; <code>merge</code>, <code>diff</code>, <code>extract</code>, and <code>convert</code> also exit <code>2</code> with <code>&lt;path&gt; is a pk3 (zip) archive; &lt;cmd&gt; reads WADs</code> (or <code>pk7 (7z)</code>) when handed an archive</td></tr>
 <tr><td><code>3</code></td><td>Usage error (unknown subcommand, invalid flag value, missing required argument, or a lump-name/size validation failure when writing for <code>build</code>, <code>merge</code>, or <code>convert</code> — note a non-ASCII lump name decodes under a lenient <em>read</em> but is rejected on <em>write</em> in both strictness modes); for <code>convert</code>, also a map that fails to assemble, a map that cannot be converted without loss in strict mode (including a group lump such as <code>BEHAVIOR</code> that the target format cannot carry), or a <code>--map NAME</code> that matches no map in the WAD; for <code>build --nodes</code>, also a Doom map group that fails to assemble or a node build that fails in strict mode</td></tr>
 </tbody>
 </table>
@@ -2330,6 +2447,8 @@ allowing callers to opt in to additional capabilities.</p>
 <tr><td><a href="#hexen-tests"><code>hexen-tests</code></a></td><td>no</td><td>Integration tests against a local Hexen IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#doom64-tests"><code>doom64-tests</code></a></td><td>no</td><td>Integration tests against a local Doom 64 IWAD (not auto-fetchable)</td></tr>
 <tr><td><a href="#sweep-tests"><code>sweep-tests</code></a></td><td>no</td><td>Sweep test that assembles every map of every WAD in a local collection (not auto-fetchable)</td></tr>
+<tr><td><a href="#archive"><code>archive</code></a></td><td>no</td><td>Read pk3 (zip) resource archives via <code>archive::Archive</code> — members, GZDoom namespaces, embedded WADs, <code>maps/*.wad</code> maps — bounded by <code>Limits::max_archive_members</code> / <code>max_decoded_member_bytes</code>; stored + deflate only via <code>miniz_oxide</code> (ADR-0031)</td></tr>
+<tr><td><a href="#pk3-tests"><code>pk3-tests</code></a></td><td>no</td><td>Opt-in sweep over a local pk3 collection supplied via <code>CRUSTYWAD_PK3_DIR</code> (not auto-fetchable; <code>just test-pk3</code>; enables <code>archive</code>)</td></tr>
 <tr><td><a href="#guide-doctests"><code>guide-doctests</code></a></td><td>no</td><td><strong>Internal, CI-only.</strong> Compiles this guide’s Rust code samples as crate doctests (enabled by <code>--all-features</code>); not a runtime capability</td></tr>
 <tr><td><a href="#write"><code>write</code></a></td><td>no</td><td>WAD serialization — <code>WadBuilder</code>, <code>WriteError</code>, <code>WriteOptions</code>, <code>WriteWarning</code></td></tr>
 <tr><td><a href="#nodebuild"><code>nodebuild</code></a></td><td>no</td><td>Clean-room node-lump builders (enables <code>write</code>) — <code>map::build</code>, <code>build_blockmap</code>, <code>build_reject</code>, <code>build_nodes</code> (the classic BSP pass: <code>SEGS</code>/<code>SSECTORS</code>/<code>NODES</code>), the <code>add_doom_map_with_nodes</code> engine-playable one-shot, and the <code>to_lump_bytes</code> serializers; also emits the <code>XNOD</code>/<code>ZNOD</code> non-GL stream via <code>NodeFormat</code>, plus the GL <code>XGLN</code>/<code>XGL2</code>/<code>XGL3</code> streams (and their <code>Z*</code> twins with <code>extended-nodes-zlib</code>), with <code>NodeFormat::Gl</code> auto-selecting the minimal dialect, via <code>build_gl_nodes</code> (ADR-0025, ADR-0026), and a UDMF one-shot (<code>add_udmf_map_with_nodes</code>) that builds a <code>ZNODES</code> stream for a UDMF map group; powers <code>cwad convert --nodes</code> and <code>cwad build --nodes</code>, including UDMF <code>ZNODES</code> output — GL dialects by default, <code>xnod</code>/<code>znod</code> on explicit request</td></tr>
@@ -2462,6 +2581,42 @@ just test-sweep dir=/path/to/wads
 </code></pre>
 <p>The test skips gracefully when <code>CRUSTYWAD_SWEEP_DIR</code> is unset or contains no WAD files.</p>
 <hr>
+<h2 id="archive"><a class="header" href="#archive"><code>archive</code></a></h2>
+<p><strong>Enables:</strong> <code>crustywad::archive::Archive</code>: pk3 (zip) reading with GZDoom’s
+directory semantics — see <a href="#reading-pk3-archives">Reading pk3 Archives</a></p>
+<p><strong>Adds dependency:</strong> none new beyond <a href="https://crates.io/crates/miniz_oxide"><code>miniz_oxide</code></a>,
+already pulled in by <code>extended-nodes-zlib</code></p>
+<p>Pure central-directory parsing plus the pure-Rust <code>miniz_oxide</code> inflater that
+<code>extended-nodes-zlib</code> already uses. Off by default so the core build stays
+decompressor-free. Only stored and deflate members can be read; pk7 (7z) is
+recognized and refused by name (ADR-0031).</p>
+<h3 id="usage-1"><a class="header" href="#usage-1">Usage</a></h3>
+<pre><code class="language-toml"># Cargo.toml
+[dependencies]
+crustywad = { version = "0.9.5", features = ["archive"] }
+</code></pre>
+<hr>
+<h2 id="pk3-tests"><a class="header" href="#pk3-tests"><code>pk3-tests</code></a></h2>
+<p><strong>Enables:</strong> the optional sweep test in <code>crates/crustywad/tests/pk3.rs</code></p>
+<p><strong>Adds dependency:</strong> none — enables <code>archive</code></p>
+<p>Opens every <code>*.pk3</code> in a local collection strictly, reads every member
+(CRC-verified), and parses every <code>maps/*.wad</code> and embedded WAD. pk3s are
+third-party mods and are never fetched or committed.</p>
+<h3 id="running-the-tests-4"><a class="header" href="#running-the-tests-4">Running the tests</a></h3>
+<p>Point <code>CRUSTYWAD_PK3_DIR</code> at a directory of pk3 files. <strong>Use an absolute path</strong>
+— cargo runs the test binary with its CWD at the package root, so a relative
+path silently misses and the test only prints a skip note:</p>
+<pre><code class="language-bash"># Using just — defaults to the repo's gitignored PK3-EXT/ directory:
+just test-pk3
+just test-pk3 dir=/path/to/pk3s
+
+# Or run cargo directly:
+CRUSTYWAD_PK3_DIR=/path/to/pk3s \
+  cargo test -p crustywad --features pk3-tests --test pk3 -- --nocapture
+</code></pre>
+<p>The test skips gracefully when <code>CRUSTYWAD_PK3_DIR</code> is unset or holds no pk3
+files.</p>
+<hr>
 <h2 id="guide-doctests"><a class="header" href="#guide-doctests"><code>guide-doctests</code></a></h2>
 <p><strong>Enables:</strong> compiling this guide’s own Rust code samples as crate doctests
 (<code>crates/crustywad/src/guide_doctests.rs</code>)</p>
@@ -2484,7 +2639,7 @@ locally.</p>
 <p>Adds WAD serialization support. <code>WadBuilder</code> accumulates lumps and serializes them to a
 <code>Vec&lt;u8&gt;</code> in the canonical Doom WAD layout:
 <code>[12-byte header][lump data blobs][16-byte directory entries]</code>.</p>
-<h3 id="usage-1"><a class="header" href="#usage-1">Usage</a></h3>
+<h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.9.0", features = ["write"] }
 </code></pre>
@@ -2573,7 +2728,7 @@ and <code>XGL3</code> additionally allows fractional (sub-unit) node partitions.
 need a specific dialect can request <code>Gl</code> and get the smallest stream that round-trips it.
 <code>cwad convert --nodes</code>/<code>build --nodes</code> expose the full set through <code>--node-format</code>
 (<code>xgln</code>/<code>xgl2</code>/<code>xgl3</code>/<code>gl</code>, plus their <code>z*</code> twins), each GL stream carried in <code>SSECTORS</code>.</p>
-<h3 id="usage-2"><a class="header" href="#usage-2">Usage</a></h3>
+<h3 id="usage-3"><a class="header" href="#usage-3">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.9.0", features = ["nodebuild"] }
 </code></pre>
@@ -2633,7 +2788,7 @@ convention). The declared <code>width × height</code> is checked against
 <a href="https://docs.rs/crustywad/latest/crustywad/struct.Limits.html#structfield.max_decoded_pixels"><code>Limits::max_decoded_pixels</code></a>
 — and a 65535-per-side cap — before any pixel buffer is allocated, fired in <strong>both</strong>
 strictness modes (the same DoS-cap exception <code>TextureSet::compose</code>’s composite limit uses).</p>
-<h3 id="usage-3"><a class="header" href="#usage-3">Usage</a></h3>
+<h3 id="usage-4"><a class="header" href="#usage-4">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.9.0", features = ["doom64-gfx"] }
 </code></pre>
@@ -2699,7 +2854,7 @@ dialect’s body for <code>Zgln</code>/<code>Zgl2</code>/<code>Zgl3</code> (and 
 <code>miniz_oxide::deflate::compress_to_vec_zlib</code>
 before prepending the matching four-byte tag. Requesting compressed output without this feature
 returns <code>NodeBuildError::CompressionUnavailable</code> rather than panicking.</p>
-<h3 id="usage-4"><a class="header" href="#usage-4">Usage</a></h3>
+<h3 id="usage-5"><a class="header" href="#usage-5">Usage</a></h3>
 <pre><code class="language-toml"># Cargo.toml
 crustywad = { version = "0.9.0", features = ["extended-nodes-zlib"] }
 </code></pre>
@@ -2748,6 +2903,9 @@ body follow the same contract as the uncompressed decoder.</p>
 <tr><td>Test with Hexen fixture</td><td><code>CRUSTYWAD_HEXEN_DIR=… cargo test -p crustywad --features hexen-tests</code></td></tr>
 <tr><td>Test with Doom 64 fixture</td><td><code>CRUSTYWAD_DOOM64_DIR=… cargo test -p crustywad --features doom64-tests</code></td></tr>
 <tr><td>Sweep a local WAD collection</td><td><code>CRUSTYWAD_SWEEP_DIR=… cargo test -p crustywad --features sweep-tests</code></td></tr>
+<tr><td>Build with <code>archive</code></td><td><code>cargo build -p crustywad --features archive</code></td></tr>
+<tr><td>Test with <code>archive</code></td><td><code>cargo test -p crustywad --features archive</code></td></tr>
+<tr><td>Sweep a local pk3 collection</td><td><code>CRUSTYWAD_PK3_DIR=… cargo test -p crustywad --features pk3-tests --test pk3</code></td></tr>
 <tr><td>Build with <code>write</code></td><td><code>cargo build -p crustywad --features write</code></td></tr>
 <tr><td>Test with <code>write</code></td><td><code>cargo test -p crustywad --features write</code></td></tr>
 <tr><td>Build with <code>nodebuild</code></td><td><code>cargo build -p crustywad --features nodebuild</code></td></tr>
