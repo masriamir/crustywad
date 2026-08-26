@@ -93,13 +93,14 @@ case.
 - `Limits` gains two fields (`#[non_exhaustive]`, so not a breaking change);
   `ParseOptions` is reused unchanged and a pk3's maps parse exactly like a
   standalone WAD's.
-- Every offset computation in the zip reader (central-directory record spans,
-  the end-of-central-directory search, local-header offsets) is
-  `checked_add`-bounded against attacker-controlled `u64`/`usize` values
-  rather than assumed to fit; implementation caught and fixed three
-  overflow/panic defects of exactly this shape (plus one non-ASCII `&str`
-  byte-index slice on a member path) before they reached `main`, and the
-  `fuzz_archive` target below is the standing regression proof.
+- Implementation caught and fixed four latent panics in the reader as
+  originally specified, all of the class ADR-0016 targets: a `&str`
+  byte-index slice in the `.wad` extension check that panicked on a
+  non-ASCII member name; an unchecked `record + 56` on the
+  attacker-controlled ZIP64 record offset; the same `at + N` pattern in the
+  little-endian field readers; and an unchecked `header + 30` on the
+  local-header offset. Every offset addition in the reader is now
+  `checked_add`-bounded, and `fuzz_archive` is the standing proof.
 - The `fuzz_archive` target and the opt-in `pk3-tests` sweep
   (`CRUSTYWAD_PK3_DIR`, `just test-pk3`) are the proof surfaces; the sample
   census above is the derivation for the limit defaults.
