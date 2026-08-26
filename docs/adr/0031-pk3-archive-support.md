@@ -47,7 +47,8 @@ case.
    prefix test on `flats/ textures/ hires/ sprites/ voxels/ colormaps/ acs/
    voices/ patches/ graphics/ sounds/ music/`, root files global, anything
    else hidden; short name = basename, extension stripped, uppercased, eight
-   bytes, `^` standing for `\`. `resourcefile.cpp` `FResourceFile::CheckEmbedded`
+   bytes, with `^` standing for `\` in the sprites, voxels, and hires
+   namespaces. `resourcefile.cpp` `FResourceFile::CheckEmbedded`
    / `IsFileInFolder` — a `.wad` at the root, or `<archive-stem>/<file>.wad`,
    is an embedded WAD. `p_openmap.cpp` — `maps/<NAME>.wad` and
    `maps/<NAME>.map` are found by full-path lookup.

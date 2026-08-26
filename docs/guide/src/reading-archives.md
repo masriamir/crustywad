@@ -63,7 +63,7 @@ println!("{sprites} sprite members");
 |---|---|
 | Members, sizes, compression method | Cross-member lookup by short name + namespace |
 | Namespace from the first directory (GZDoom's table) | `filter/<game>/` handling and `.{id}` resource IDs |
-| Short name: basename, extension stripped, uppercased, 8 bytes, `^` → `\` | Bridging `Namespace` to the WAD-side `SectionKind` |
+| Short name: basename, extension stripped, uppercased, 8 bytes, `^` → `\` in the sprites, voxels, and hires namespaces | Bridging `Namespace` to the WAD-side `SectionKind` |
 | Embedded WADs: root `.wad`, or `<stem>/<file>.wad` (see `Archive::with_name`) | Parsing bare `maps/*.map` `TEXTMAP` members (listed as `MapKind::Textmap`) |
 | `maps/<NAME>.wad` / `.map` enumeration | pk7 (7z) decoding — the seam exists, the decoder does not |
 

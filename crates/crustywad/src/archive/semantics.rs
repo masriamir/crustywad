@@ -2,8 +2,9 @@
 //!
 //! - namespace from the first path component (`filesystem.cpp`,
 //!   `LumpRecord::SetFromLump`'s `strncmp` table);
-//! - short name = basename, extension stripped, uppercased, 8 bytes, `^` → `\`
-//!   (same function; `\` cannot appear in a zip name);
+//! - short name = basename, extension stripped, uppercased, 8 bytes, with
+//!   `^` → `\` in the sprites, voxels, and hires namespaces only (same
+//!   function; `\` cannot appear in a zip name);
 //! - embedded WAD = `.wad` at the root, or `<archive-stem>/<file>.wad`
 //!   (`resourcefile.cpp`, `FResourceFile::CheckEmbedded` / `IsFileInFolder`);
 //! - maps = `maps/<NAME>.wad` / `maps/<NAME>.map` looked up by full path
@@ -69,11 +70,20 @@ pub(crate) fn short_name_of(path: &str, namespace: Namespace) -> Option<String> 
     if stem.is_empty() {
         return None;
     }
+    // `SetFromLump` runs its `memchr(shortName, '^')` replacement only under
+    // `if (Namespace == ns_sprites || Namespace == ns_voxels ||
+    // Namespace == ns_hires)`, because `^` stands in for the `\` of a sprite
+    // frame character and only those three namespaces carry sprite-shaped
+    // names. Everywhere else a `^` is an ordinary name character.
+    let caret_is_backslash = matches!(
+        namespace,
+        Namespace::Sprites | Namespace::Voxels | Namespace::Hires
+    );
     let name: String = stem
         .chars()
         .take(8)
         .map(|c| {
-            if c == '^' {
+            if caret_is_backslash && c == '^' {
                 '\\'
             } else {
                 c.to_ascii_uppercase()
@@ -194,6 +204,31 @@ mod tests {
         );
         assert_eq!(short_name_of("maps/MAP01.wad", Namespace::Hidden), None);
         assert_eq!(short_name_of("sprites/", Namespace::Sprites), None);
+    }
+
+    #[test]
+    fn caret_becomes_a_backslash_only_in_sprites_voxels_and_hires() {
+        assert_eq!(
+            short_name_of("sprites/PLAYA^1.png", Namespace::Sprites).as_deref(),
+            Some("PLAYA\\1")
+        );
+        assert_eq!(
+            short_name_of("voxels/A^B.kvx", Namespace::Voxels).as_deref(),
+            Some("A\\B")
+        );
+        assert_eq!(
+            short_name_of("hires/A^B.png", Namespace::Hires).as_deref(),
+            Some("A\\B")
+        );
+        // Every other namespace keeps the `^` verbatim.
+        assert_eq!(
+            short_name_of("graphics/M^1.png", Namespace::Graphics).as_deref(),
+            Some("M^1")
+        );
+        assert_eq!(
+            short_name_of("A^B.lmp", Namespace::Global).as_deref(),
+            Some("A^B")
+        );
     }
 
     #[test]
