@@ -6842,16 +6842,32 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
+/// Compression method 0 — the only one these fixtures actually encode.
+const ZIP_METHOD_STORED: u16 = 0;
+
 fn build_zip(members: &[(&str, &[u8])]) -> Vec<u8> {
+    let with_method: Vec<(&str, &[u8], u16)> = members
+        .iter()
+        .map(|(path, data)| (*path, *data, ZIP_METHOD_STORED))
+        .collect();
+    build_zip_with_methods(&with_method)
+}
+
+/// [`build_zip`] with a per-member method code. The bytes are always stored
+/// verbatim, so a member declared as (say) method 14 is a *listing* fixture:
+/// the reader must name the method it cannot decode without ever inflating it.
+fn build_zip_with_methods(members: &[(&str, &[u8], u16)]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
-    for (path, data) in members {
+    for (path, data, method) in members {
         let name = path.as_bytes();
         let crc = crc32(data);
         let size = u32::try_from(data.len()).unwrap();
         let offset = u32::try_from(out.len()).unwrap();
         out.extend_from_slice(&0x0403_4b50_u32.to_le_bytes());
-        out.extend_from_slice(&[20, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // version, flags, method 0, time, date
+        out.extend_from_slice(&[20, 0, 0, 0]); // version needed, flags
+        out.extend_from_slice(&method.to_le_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0]); // mod time, mod date
         out.extend_from_slice(&crc.to_le_bytes());
         out.extend_from_slice(&size.to_le_bytes());
         out.extend_from_slice(&size.to_le_bytes());
@@ -6860,7 +6876,9 @@ fn build_zip(members: &[(&str, &[u8])]) -> Vec<u8> {
         out.extend_from_slice(name);
         out.extend_from_slice(data);
         central.extend_from_slice(&0x0201_4b50_u32.to_le_bytes());
-        central.extend_from_slice(&[20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // made by, needed, flags, method, time, date
+        central.extend_from_slice(&[20, 0, 20, 0, 0, 0]); // made by, needed, flags
+        central.extend_from_slice(&method.to_le_bytes());
+        central.extend_from_slice(&[0, 0, 0, 0]); // mod time, mod date
         central.extend_from_slice(&crc.to_le_bytes());
         central.extend_from_slice(&size.to_le_bytes());
         central.extend_from_slice(&size.to_le_bytes());
@@ -6927,6 +6945,33 @@ fn write_pk3(members: &[(&str, &[u8])]) -> NamedTempFile {
     let mut file = tempfile::Builder::new().suffix(".pk3").tempfile().unwrap();
     std::io::Write::write_all(&mut file, &build_zip(members)).unwrap();
     file
+}
+
+#[cfg(feature = "archive")]
+fn write_pk3_with_methods(members: &[(&str, &[u8], u16)]) -> NamedTempFile {
+    let mut file = tempfile::Builder::new().suffix(".pk3").tempfile().unwrap();
+    std::io::Write::write_all(&mut file, &build_zip_with_methods(members)).unwrap();
+    file
+}
+
+/// A pk3 with one member the reader refuses to decode (method 14, lzma), so
+/// opening it strictly fails and opening it leniently records an
+/// `ArchiveWarning` the CLI must print.
+#[cfg(feature = "archive")]
+fn write_unreadable_member_pk3() -> NamedTempFile {
+    write_pk3_with_methods(&[("MAPINFO.txt", b"x", 0), ("packed.bin", b"raw", 14)])
+}
+
+/// A WAD whose single directory entry declares a lump running past the end of
+/// the file: a strict parse error, and under `--lenient` a clamped read that
+/// leaves a `ParseWarning` behind for the CLI to report per member.
+#[cfg(feature = "archive")]
+fn build_wad_with_an_out_of_range_lump() -> Vec<u8> {
+    let mut wad = build_wad(*b"PWAD", &[("TEST", b"x")]);
+    let directory_offset = 12 + 1; // 12-byte header + the lump's one payload byte
+    let size_field = directory_offset + 4; // the entry's `filepos` comes first
+    wad[size_field..size_field + 4].copy_from_slice(&0x7fff_ffff_u32.to_le_bytes());
+    wad
 }
 
 #[cfg(feature = "archive")]
@@ -7037,6 +7082,198 @@ fn validate_reports_an_unreadable_archive_with_exit_2() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("not an archive"));
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn info_names_an_embedded_wad_that_holds_no_maps() {
+    // The `(maps: …)` suffix is only appended when the embedded WAD parses to
+    // at least one map group; a WAD with a lone non-map lump prints bare.
+    let mapless = build_wad(*b"PWAD", &[("TEST", b"x")]);
+    let pk3 = write_pk3(&[("extra.wad", &mapless)]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("embedded:  extra.wad\n"))
+        .stdout(predicate::str::contains("(maps:").not());
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn info_csv_on_a_pk3_is_a_header_and_one_row() {
+    let map = build_valid_map_wad();
+    let pk3 = write_pk3(&[
+        ("MAPINFO.txt", b"x"),
+        ("maps/MAP01.wad", &map),
+        ("extra.wad", &map),
+    ]);
+    // `declared_size` sums every member's declared uncompressed size; these
+    // members are stored, so that is exactly the input length.
+    let declared = 1 + 2 * map.len();
+    let expected = format!(
+        "kind,members,declared_size,maps,embedded_wads\npk3,3,{declared},MAP01,extra.wad\n"
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "info", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(expected);
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn list_json_on_a_pk3_prints_one_object_per_member() {
+    let pk3 = write_pk3(&[("MAPINFO.txt", b"x"), ("zscript/a.zs", b"")]);
+    // Stored members compress to themselves, so `compressed_size` == `size`.
+    let global = concat!(
+        r#"{"index":0,"path":"MAPINFO.txt","namespace":"global","short_name":"MAPINFO","#,
+        r#""method":"stored","size":1,"compressed_size":1,"encrypted":false,"#,
+        r#""embedded_wad":false}"#
+    );
+    // A hidden member has no short name, and JSON says so with `null`.
+    let hidden = concat!(
+        r#"{"index":1,"path":"zscript/a.zs","namespace":"hidden","short_name":null,"#,
+        r#""method":"stored","size":0,"compressed_size":0,"encrypted":false,"#,
+        r#""embedded_wad":false}"#
+    );
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "list", pk3.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(format!("{global}\n{hidden}\n"));
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn validate_deep_reports_a_member_that_is_not_a_wad_in_every_format() {
+    // `maps/MAP01.wad` reads fine but is not a WAD, so `archive.wad()` fails
+    // and the member takes the `Err` arm — one failure, zero groups validated.
+    let pk3 = write_pk3(&[("maps/MAP01.wad", b"not a wad")]);
+    let path = pk3.path().to_str().unwrap();
+    let error = "member `maps/MAP01.wad`: failed to parse WAD header: unexpected end of input";
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["validate", "--deep", path])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(format!("error: {error}\n")))
+        .stderr(predicate::str::contains("1 of 0 map(s) failed validation"));
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "validate", "--deep", path])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::starts_with(format!(
+            r#"{{"map":"maps/MAP01.wad","ok":false,"error":"{error}"}}"#
+        )))
+        .stdout(predicate::str::contains(
+            r#"{"ok":false,"error":"1 of 0 map(s) failed validation"}"#,
+        ));
+
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "validate", "--deep", path])
+        .assert()
+        .code(1)
+        .stdout(format!("map,ok,error\nmaps/MAP01.wad,false,{error}\n"));
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn validate_deep_lenient_reports_per_member_and_archive_warnings() {
+    // One fixture, three warning sources: an unparseable member (the `Err`
+    // arm), a member whose lenient WAD parse leaves warnings, and an
+    // archive-level warning printed after the summary.
+    let pk3 = write_pk3_with_methods(&[
+        ("maps/MAP01.wad", b"not a wad", 0),
+        ("maps/MAP02.wad", &build_wad_with_an_out_of_range_lump(), 0),
+        ("packed.bin", b"raw", 14),
+    ]);
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args([
+            "--lenient",
+            "validate",
+            "--deep",
+            pk3.path().to_str().unwrap(),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "error: member `maps/MAP01.wad`: failed to parse WAD header",
+        ))
+        .stderr(predicate::str::contains("warning: maps/MAP02.wad: "))
+        .stderr(predicate::str::contains("warning: member `packed.bin`"))
+        .stderr(predicate::str::contains("lzma"));
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn info_and_list_report_archive_warnings_only_in_lenient_mode() {
+    let pk3 = write_unreadable_member_pk3();
+    let path = pk3.path().to_str().unwrap();
+    let warning =
+        "warning: member `packed.bin` cannot be read: unsupported compression method lzma";
+
+    for command in ["info", "list"] {
+        Command::cargo_bin("cwad")
+            .unwrap()
+            .args(["--lenient", command, path])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains(warning));
+    }
+
+    // Strict mode never reaches the listing: the method is a central-directory
+    // fact, so opening the archive fails outright.
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["info", path])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "uses unsupported compression method lzma",
+        ));
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn shallow_validate_on_a_pk3_reports_ok_in_json_and_csv() {
+    let pk3 = write_pk3(&[("MAPINFO.txt", b"x")]);
+    let path = pk3.path().to_str().unwrap();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "json", "validate", path])
+        .assert()
+        .code(0)
+        .stdout("{\"ok\":true}\n");
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["-F", "csv", "validate", path])
+        .assert()
+        .code(0)
+        .stdout("ok\ntrue\n");
+}
+
+#[cfg(feature = "archive")]
+#[test]
+fn shallow_validate_prints_archive_warnings_after_the_result() {
+    let pk3 = write_unreadable_member_pk3();
+    Command::cargo_bin("cwad")
+        .unwrap()
+        .args(["--lenient", "validate", pk3.path().to_str().unwrap()])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::starts_with("ok: "))
+        .stderr(predicate::str::contains(
+            "warning: member `packed.bin` cannot be read",
+        ));
 }
 
 #[test]
