@@ -50,12 +50,24 @@ const fn crc32_table() -> [u32; 256] {
 
 #[cfg(all(test, feature = "archive"))]
 mod tests {
-    use super::crc32;
+    use super::{crc32, crc32_table};
 
     #[test]
     fn crc32_matches_the_ieee_check_value() {
         // The standard CRC-32 check value (RFC 1952 §8 uses the same table).
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn crc32_table_matches_the_published_entries() {
+        // Called here at *runtime* — `crc32` itself only ever evaluates the
+        // table in a `const` context, so the generator loop would otherwise
+        // never execute. Entries 1 and 255 are the reflected-polynomial
+        // table's published values.
+        let table = crc32_table();
+        assert_eq!(table[0], 0);
+        assert_eq!(table[1], 0x7707_3096);
+        assert_eq!(table[255], 0x2D02_EF8D);
     }
 }

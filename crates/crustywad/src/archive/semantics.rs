@@ -202,6 +202,11 @@ mod tests {
             short_name_of("textures/no_ext", Namespace::Textures).as_deref(),
             Some("NO_EXT")
         );
+        // Only the *last* dot ends the stem, so an inner dot survives.
+        assert_eq!(
+            short_name_of("graphics/a.b.png", Namespace::Graphics).as_deref(),
+            Some("A.B")
+        );
         assert_eq!(short_name_of("maps/MAP01.wad", Namespace::Hidden), None);
         assert_eq!(short_name_of("sprites/", Namespace::Sprites), None);
     }
@@ -268,6 +273,11 @@ mod tests {
         assert_eq!(
             map_of("maps/MAP02.map"),
             Some(("MAP02".to_string(), MapKind::Textmap))
+        );
+        // The stem is everything before the last dot, inner dots included.
+        assert_eq!(
+            map_of("maps/E1M1.v2.wad"),
+            Some(("E1M1.V2".to_string(), MapKind::Wad))
         );
         assert_eq!(map_of("maps/sub/MAP03.wad"), None);
         assert_eq!(map_of("maps/.wad"), None);

@@ -143,6 +143,36 @@ fn directory_entries_are_dropped() {
 }
 
 #[test]
+fn a_member_with_an_empty_name_is_dropped() {
+    // A zero-length name is not a directory entry (it does not end in `/`),
+    // so the empty-path guard is what drops it.
+    let zip = common::ZipBuilder::new()
+        .stored("", b"x")
+        .stored("a.txt", b"a")
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).expect("opens");
+        assert_eq!(archive.members().len(), 1);
+        assert_eq!(archive.members()[0].path(), "a.txt");
+    }
+}
+
+#[test]
+fn raw_names_are_normalized_before_they_reach_a_member() {
+    // Zip names may use `\` (DOS-era writers) and may carry a leading
+    // separator; both are normalized at open, so `path()` never shows them.
+    let zip = common::ZipBuilder::new()
+        .entry(common::ZipEntry::stored("\\sprites\\A.png", b"x"))
+        .entry(common::ZipEntry::stored("/sprites/B.png", b"y"))
+        .build();
+    let archive = Archive::from_bytes(zip).expect("opens");
+    let paths: Vec<&str> = archive.members().iter().map(Member::path).collect();
+    assert_eq!(paths, ["sprites/A.png", "sprites/B.png"]);
+    assert_eq!(archive.members()[0].namespace(), Namespace::Sprites);
+    assert_eq!(archive.members()[0].short_name(), Some("A"));
+}
+
+#[test]
 fn member_lookup_is_case_insensitive_and_accepts_backslashes() {
     let zip = common::ZipBuilder::new()
         .stored("maps/MAP01.wad", b"PWAD")
@@ -435,8 +465,11 @@ fn a_bad_central_directory_signature_is_corrupt() {
 
 #[test]
 fn a_count_the_remaining_directory_cannot_hold_is_corrupt() {
-    // Two entries are declared but only one 96-byte entry is written, so the
-    // second read starts inside the last 46 bytes of the directory.
+    // Two entries are declared but only one is written, and it fills the
+    // directory exactly: 46 fixed bytes + a 53-character name = 99 bytes, and
+    // the EOCD records a 99-byte directory. So the second entry starts *at*
+    // `cd_end` with zero bytes left to hold its own 46 — the overrun check
+    // fires on the first read of entry 1, not on a partial entry.
     let zip = common::ZipBuilder::new()
         .stored(
             "a-fifty-character-name-for-a-long-directory-entry.txt",
@@ -584,25 +617,44 @@ fn stored_member_whose_sizes_disagree_is_a_size_mismatch() {
     let mut entry = common::ZipEntry::stored("a.bin", &[1_u8; 100]);
     entry.size_override = Some(50);
     let zip = common::ZipBuilder::new().entry(entry).build();
-    let archive = Archive::from_bytes(zip).unwrap();
-    let err = archive.read(&archive.members()[0]).unwrap_err();
-    assert!(matches!(err, ArchiveError::SizeMismatch { .. }), "{err}");
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(matches!(err, ArchiveError::SizeMismatch { .. }), "{err}");
+    }
 }
 
 #[test]
 fn corrupt_deflate_stream_is_reported() {
+    // `0xFF` opens a block with BFINAL set and the reserved block type `11`,
+    // which the inflater rejects outright — so this is a stream failure, never
+    // a short read that would surface as a size mismatch.
     let mut entry = common::ZipEntry::deflate("a.bin", &[1_u8; 100]);
     entry.compressed_override = Some(vec![0xFF; 20]);
     let zip = common::ZipBuilder::new().entry(entry).build();
-    let archive = Archive::from_bytes(zip).unwrap();
-    let err = archive.read(&archive.members()[0]).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            ArchiveError::CorruptStream { .. } | ArchiveError::SizeMismatch { .. }
-        ),
-        "{err}"
-    );
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.read(&archive.members()[0]).unwrap_err();
+        assert!(matches!(err, ArchiveError::CorruptStream { .. }), "{err}");
+    }
+}
+
+#[test]
+fn an_empty_deflate_member_reads_back_as_no_bytes() {
+    let zip = common::ZipBuilder::new()
+        .deflate("empty.bin", b"")
+        .stored("a.txt", b"a")
+        .build();
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        assert_eq!(archive.members()[0].size(), 0);
+        assert_eq!(
+            archive.read(&archive.members()[0]).unwrap(),
+            Vec::<u8>::new()
+        );
+        // The zero-length cap must not swallow the following member.
+        assert_eq!(archive.read(&archive.members()[1]).unwrap(), b"a");
+    }
 }
 
 #[test]
@@ -677,27 +729,34 @@ fn wad_parses_a_wad_member_and_refuses_non_wads() {
         .deflate("maps/MAP01.wad", &wad)
         .stored("readme.txt", b"hi")
         .build();
-    let archive = Archive::from_bytes(zip).unwrap();
-    let parsed = archive
-        .wad(&archive.members()[0])
-        .expect("member parses as a WAD");
-    assert_eq!(parsed.lump_count(), 2);
-    let err = archive.wad(&archive.members()[1]).unwrap_err();
-    assert!(matches!(err, ArchiveError::NotAWad { .. }), "{err}");
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let parsed = archive
+            .wad(&archive.members()[0])
+            .expect("member parses as a WAD");
+        assert_eq!(parsed.lump_count(), 2);
+        let err = archive.wad(&archive.members()[1]).unwrap_err();
+        assert!(matches!(err, ArchiveError::NotAWad { .. }), "{err}");
+    }
 }
 
 #[test]
 fn wad_parse_failure_keeps_the_member_path() {
+    // A truncated header, not an out-of-range directory: lenient mode
+    // *recovers* from the latter (clamping the span and recording a warning),
+    // so only a header too short to read at all fails in both modes.
     let zip = common::ZipBuilder::new()
-        .stored("maps/MAP01.wad", b"PWAD\xff\xff\xff\x7f\0\0\0\0")
+        .stored("maps/MAP01.wad", b"PWAD\xff\xff\xff")
         .build();
-    let archive = Archive::from_bytes(zip).unwrap();
-    let err = archive.wad(&archive.members()[0]).unwrap_err();
-    assert!(
-        matches!(&err, ArchiveError::Wad { path, .. } if path == "maps/MAP01.wad"),
-        "{err}"
-    );
-    assert!(err.to_string().starts_with("member `maps/MAP01.wad`: "));
+    for options in both_modes() {
+        let archive = Archive::from_bytes_with_options(zip.clone(), options).unwrap();
+        let err = archive.wad(&archive.members()[0]).unwrap_err();
+        assert!(
+            matches!(&err, ArchiveError::Wad { path, .. } if path == "maps/MAP01.wad"),
+            "{err}"
+        );
+        assert!(err.to_string().starts_with("member `maps/MAP01.wad`: "));
+    }
 }
 
 #[test]
@@ -822,6 +881,46 @@ fn maps_are_enumerated_in_directory_order_with_kind() {
         .unwrap();
     assert_eq!(parsed.map_groups().len(), 1);
     assert_eq!(archive.members()[3].namespace(), Namespace::Hidden);
+}
+
+#[test]
+fn an_archive_with_no_maps_directory_enumerates_no_maps() {
+    let zip = common::ZipBuilder::new()
+        .stored("MAPINFO.txt", b"x")
+        .stored("sprites/TROOA1.png", b"y")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    assert!(archive.maps().is_empty());
+}
+
+#[test]
+fn an_extensionless_maps_member_is_hidden_and_not_a_map() {
+    let zip = common::ZipBuilder::new()
+        .stored("maps/README", b"read me")
+        .build();
+    let archive = Archive::from_bytes(zip).unwrap();
+    assert!(archive.maps().is_empty());
+    let member = &archive.members()[0];
+    assert_eq!(member.namespace(), Namespace::Hidden);
+    assert_eq!(member.short_name(), None);
+}
+
+#[test]
+fn method_display_names_every_supported_and_rejected_code() {
+    assert_eq!(Method::Stored.to_string(), "stored");
+    assert_eq!(Method::Deflate.to_string(), "deflate");
+    assert_eq!(Method::Lzma.to_string(), "lzma");
+    assert_eq!(Method::Other(42).to_string(), "#42");
+    assert!(Method::Stored.is_supported());
+    assert!(Method::Deflate.is_supported());
+    assert!(!Method::Lzma.is_supported());
+}
+
+#[test]
+fn namespace_directory_names_the_table_entries_only() {
+    assert_eq!(Namespace::Sprites.directory(), Some("sprites"));
+    assert_eq!(Namespace::Global.directory(), None);
+    assert_eq!(Namespace::Hidden.directory(), None);
 }
 
 #[test]
