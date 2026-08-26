@@ -234,8 +234,13 @@ fn locate_directory(bytes: &[u8]) -> Result<DirectoryLocation, ArchiveError> {
     let last = bytes.len() - EOCD_LEN;
     let first = last.saturating_sub(MAX_COMMENT);
     let eocd = (first..=last).rev().find(|&at| {
+        // `at ≤ len - 22` so this cannot overflow; `checked_add` keeps the
+        // predicate in the same form as every other offset addition here.
         u32_at(bytes, at) == Some(EOCD_SIG)
-            && at + EOCD_LEN + usize::from(u16_at(bytes, at + 20).unwrap_or(0)) == bytes.len()
+            && at
+                .checked_add(EOCD_LEN)
+                .and_then(|end| end.checked_add(usize::from(u16_at(bytes, at + 20).unwrap_or(0))))
+                == Some(bytes.len())
     });
     let Some(eocd) = eocd else {
         return Err(ArchiveError::NotAnArchive);
