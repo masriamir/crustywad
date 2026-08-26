@@ -192,9 +192,6 @@ fn sanitize_lump_name(name: &str) -> String {
     }
 }
 
-/// Encodes a string as a JSON string literal (including surrounding `"`).
-/// Uses standard JSON `\uXXXX` escapes for control characters, ensuring
-/// output is always valid JSON regardless of the input content.
 /// Renders an untrusted name (an archive member path, a lump name) for a
 /// human-format line: every control character becomes a space and ESC is
 /// dropped, so a crafted name cannot forge extra lines or inject terminal
@@ -210,6 +207,9 @@ fn flatten_control(s: &str) -> String {
         .collect()
 }
 
+/// Encodes a string as a JSON string literal (including surrounding `"`).
+/// Uses standard JSON `\uXXXX` escapes for control characters, ensuring
+/// output is always valid JSON regardless of the input content.
 fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -1120,7 +1120,7 @@ fn reject_archive(path: &Path, command: &str) -> Result<()> {
     if let Some(label) = archive_label(&head) {
         anyhow::bail!(
             "{} is a {label} archive; {command} reads WADs",
-            path.display()
+            flatten_control(&path.display().to_string())
         );
     }
     Ok(())
