@@ -297,6 +297,52 @@ pub fn wad_files(env_var: &str) -> Vec<PathBuf> {
     found
 }
 
+/// Every file with the given case-insensitive `extension` (without the dot)
+/// inside `iwad_dir(env_var)`, sorted by path — the same skip-note contract
+/// as [`wad_files`].
+#[allow(dead_code)]
+pub fn files_with_extension(env_var: &str, extension: &str) -> Vec<PathBuf> {
+    let Some(dir) = iwad_dir(env_var) else {
+        eprintln!("skipping fixture test: {env_var} not set");
+        return Vec::new();
+    };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!(
+                "skipping fixture test: {env_var} ({}) is not a readable directory: {e}",
+                dir.display()
+            );
+            return Vec::new();
+        }
+    };
+    let mut found: Vec<PathBuf> = entries
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{env_var}: failed to read an entry in {}: {e}",
+                        dir.display()
+                    )
+                })
+                .path()
+        })
+        .filter(|path| {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+        })
+        .collect();
+    found.sort();
+    if found.is_empty() {
+        eprintln!(
+            "skipping fixture test: {env_var}: no .{extension} files found in {}",
+            dir.display()
+        );
+    }
+    found
+}
+
 /// A Doom 64 map marker lump is named `MAPxx` (`MAP` + two ASCII digits).
 ///
 /// Shared by the `doom64-tests` fixture test and the `sweep-tests` sweep so
