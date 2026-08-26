@@ -49,7 +49,9 @@ fuzz_target!(|data: &[u8]| {
             data.len() / 46
         );
         assert!(members <= MAX_MEMBERS, "member cap not enforced");
-        let mut decoded_total = 0usize;
+        // `u64` + saturating arithmetic: `MAX_MEMBERS × MAX_DECODED` is 4 GiB,
+        // which overflows a 32-bit `usize`.
+        let mut decoded_total = 0_u64;
         for member in archive.members() {
             if let Ok(bytes) = archive.read(member) {
                 assert!(
@@ -57,14 +59,18 @@ fuzz_target!(|data: &[u8]| {
                     "decoded {} bytes over the cap",
                     bytes.len()
                 );
-                decoded_total += bytes.len();
+                decoded_total =
+                    decoded_total.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
             }
             if member.is_embedded_wad() {
                 let _ = std::hint::black_box(archive.wad(member));
             }
         }
         assert!(
-            decoded_total <= members.saturating_mul(MAX_DECODED),
+            decoded_total
+                <= u64::try_from(members)
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(u64::try_from(MAX_DECODED).unwrap_or(u64::MAX)),
             "total decoded output {decoded_total} exceeds members × cap"
         );
         for map in archive.maps() {

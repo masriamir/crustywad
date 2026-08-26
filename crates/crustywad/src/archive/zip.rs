@@ -109,7 +109,14 @@ impl ZipContainer {
         let mut ptr = cd_start;
         for index in 0..declared {
             let corrupt = |reason: &'static str| ArchiveError::CorruptDirectory { index, reason };
-            if ptr + CENTRAL_LEN > cd_end {
+            // Every addition below is `checked_add` so an overflow surfaces as
+            // `CorruptDirectory` rather than wrapping past a bounds check;
+            // the fixed-field offsets (`ptr + 8` … `ptr + 42`) sit inside the
+            // `fixed_end` span this first check proves is in range.
+            let fixed_end = ptr
+                .checked_add(CENTRAL_LEN)
+                .ok_or_else(|| corrupt("entry offset overflows"))?;
+            if fixed_end > cd_end {
                 return Err(corrupt("entry overruns the central directory"));
             }
             if u32_at(&bytes, ptr) != Some(CENTRAL_SIG) {
@@ -124,44 +131,28 @@ impl ZipContainer {
             let extra_len = usize::from(u16_at(&bytes, ptr + 30).unwrap_or(0));
             let comment_len = usize::from(u16_at(&bytes, ptr + 32).unwrap_or(0));
             let mut local_header_offset = u64::from(u32_at(&bytes, ptr + 42).unwrap_or(0));
-            let name_start = ptr + CENTRAL_LEN;
-            let extra_start = name_start + name_len;
-            let next = extra_start + extra_len + comment_len;
+            let name_start = fixed_end;
+            let extra_start = name_start
+                .checked_add(name_len)
+                .ok_or_else(|| corrupt("entry name length overflows"))?;
+            let extra_end = extra_start
+                .checked_add(extra_len)
+                .ok_or_else(|| corrupt("entry extra length overflows"))?;
+            let next = extra_end
+                .checked_add(comment_len)
+                .ok_or_else(|| corrupt("entry comment length overflows"))?;
             if next > cd_end {
                 return Err(corrupt(
                     "entry name, extra, or comment overruns the central directory",
                 ));
             }
-            // ZIP64 extra field: u64 replacements, in order, only for the
-            // fixed fields that read 0xFFFF_FFFF.
-            let mut extra = extra_start;
-            let extra_end = extra_start + extra_len;
-            while extra + 4 <= extra_end {
-                let id = u16_at(&bytes, extra).unwrap_or(0);
-                let len = usize::from(u16_at(&bytes, extra + 2).unwrap_or(0));
-                let field_start = extra + 4;
-                let field_end = field_start + len;
-                if field_end > extra_end {
-                    return Err(corrupt("extra field overruns its declared length"));
-                }
-                if id == ZIP64_EXTRA_ID {
-                    let mut at = field_start;
-                    let mut take = |target: &mut u64| -> Result<(), ArchiveError> {
-                        if *target == u64::from(u32::MAX) {
-                            if at + 8 > field_end {
-                                return Err(corrupt("ZIP64 extra field is too short"));
-                            }
-                            *target = u64_at(&bytes, at).unwrap_or(0);
-                            at += 8;
-                        }
-                        Ok(())
-                    };
-                    take(&mut size)?;
-                    take(&mut compressed_size)?;
-                    take(&mut local_header_offset)?;
-                }
-                extra = field_end;
-            }
+            read_zip64_extra(
+                &bytes,
+                extra_start,
+                extra_end,
+                index,
+                (&mut size, &mut compressed_size, &mut local_header_offset),
+            )?;
             let raw_name = &bytes[name_start..extra_start];
             let (path, utf8) = match std::str::from_utf8(raw_name) {
                 Ok(s) => (s.to_string(), true),
@@ -185,6 +176,53 @@ impl ZipContainer {
         }
         Ok(Self { bytes, entries })
     }
+}
+
+/// Applies the ZIP64 extra field (id `0x0001`) found in `[extra_start,
+/// extra_end)`: `u64` replacements, in order, only for the fixed fields
+/// (uncompressed size, compressed size, local-header offset) that read
+/// `0xFFFF_FFFF`. Every offset addition is `checked_add`; an overflow or an
+/// overrun is `CorruptDirectory`.
+fn read_zip64_extra(
+    bytes: &[u8],
+    extra_start: usize,
+    extra_end: usize,
+    index: usize,
+    (size, compressed_size, local_header_offset): (&mut u64, &mut u64, &mut u64),
+) -> Result<(), ArchiveError> {
+    let corrupt = |reason: &'static str| ArchiveError::CorruptDirectory { index, reason };
+    let mut extra = extra_start;
+    while let Some(field_start) = extra.checked_add(4).filter(|&start| start <= extra_end) {
+        let id = u16_at(bytes, extra).unwrap_or(0);
+        let len = usize::from(u16_at(bytes, extra + 2).unwrap_or(0));
+        let field_end = field_start
+            .checked_add(len)
+            .ok_or_else(|| corrupt("extra field length overflows"))?;
+        if field_end > extra_end {
+            return Err(corrupt("extra field overruns its declared length"));
+        }
+        if id == ZIP64_EXTRA_ID {
+            let mut at = field_start;
+            let mut take = |target: &mut u64| -> Result<(), ArchiveError> {
+                if *target == u64::from(u32::MAX) {
+                    let end = at
+                        .checked_add(8)
+                        .ok_or_else(|| corrupt("ZIP64 extra field offset overflows"))?;
+                    if end > field_end {
+                        return Err(corrupt("ZIP64 extra field is too short"));
+                    }
+                    *target = u64_at(bytes, at).unwrap_or(0);
+                    at = end;
+                }
+                Ok(())
+            };
+            take(size)?;
+            take(compressed_size)?;
+            take(local_header_offset)?;
+        }
+        extra = field_end;
+    }
+    Ok(())
 }
 
 /// Finds the EOCD (scanning back over at most a maximal comment) and, when a
@@ -266,11 +304,11 @@ impl Container for ZipContainer {
             index,
             "local header offset does not fit",
         )?;
-        let fields_end = header
+        let fixed_end = header
             .checked_add(LOCAL_LEN)
             .filter(|&end| end <= self.bytes.len())
             .ok_or_else(|| corrupt("local header missing or misplaced"))?;
-        let fixed = &self.bytes[header..fields_end];
+        let fixed = &self.bytes[header..fixed_end];
         if u32_at(fixed, 0) != Some(LOCAL_SIG) {
             return Err(corrupt("local header missing or misplaced"));
         }
@@ -283,7 +321,7 @@ impl Container for ZipContainer {
         let extra_len = usize::from(u16_at(fixed, 28).unwrap_or(0));
         let compressed_len =
             to_index(entry.compressed_size, index, "compressed size does not fit")?;
-        let data_start = fields_end
+        let data_start = fixed_end
             .checked_add(name_len)
             .and_then(|at| at.checked_add(extra_len))
             .ok_or_else(|| corrupt("member data lies outside the file"))?;
