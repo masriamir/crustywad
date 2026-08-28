@@ -825,10 +825,12 @@ sweep, which re-runs against the same maps every vocabulary release).
   download in memory, and phase 2 already bounds that at this cap. An entry
   whose `filename` is not a single safe path segment — empty, `.` or `..`,
   containing `/` or `\`, containing any of `: * ? " < > |` (illegal in a path
-  segment on at least one filesystem the sample may be written to), or
-  containing any ASCII control character — is likewise refused as `failed:`
-  without touching the filesystem or contacting a mirror, so the run never
-  aborts on one entry's oddball name.
+  segment on at least one filesystem the sample may be written to),
+  containing any ASCII control character, or ending in a trailing `.` or
+  space (stripped or rejected by Win32 path APIs) — is likewise refused as
+  `failed:` before any per-entry filesystem operation (no metadata check, no
+  write) and without contacting a mirror, so the run never aborts on one
+  entry's oddball name.
 - **Manifest:** `<out>/sample-manifest.json` — `seed`, `count`, `frame_rows`,
   `fetch_list_hash` (`blake3:` over the fetch list's bytes, so a changed list
   is visible), and per-entry `{id, dir, filename, zip_size, status}` with

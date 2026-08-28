@@ -102,17 +102,21 @@ pub(crate) fn entry_filename(rec: &WadRecord) -> String {
 /// Whether `name` is safe to use as a single on-disk path segment:
 /// non-empty, not `.` or `..`, free of `/` and `\` (so a value built from
 /// it cannot address a nested or out-of-tree path), free of the characters
-/// Windows forbids in a path segment (`: * ? " < > |`), and free of every
-/// ASCII control character (which subsumes NUL) — so one entry's oddball
-/// name can never turn into a fatal filesystem error on whatever
-/// filesystem the sample is written to; it becomes a `failed:` status
-/// instead, keeping the run alive for the rest of the sample.
+/// Windows forbids in a path segment (`: * ? " < > |`), free of every
+/// ASCII control character (which subsumes NUL), and not ending in `.` or
+/// a space (Win32 path APIs strip or reject a trailing dot or space in a
+/// path segment) — so one entry's oddball name can never turn into a fatal
+/// filesystem error on whatever filesystem the sample is written to; it
+/// becomes a `failed:` status instead, keeping the run alive for the rest
+/// of the sample.
 fn safe_single_segment(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
         && !name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
         && !name.chars().any(|c| c.is_ascii_control())
+        && !name.ends_with('.')
+        && !name.ends_with(' ')
 }
 
 /// Writes the manifest atomically (pretty JSON).
@@ -401,6 +405,8 @@ mod tests {
         assert!(!safe_single_segment("a|b.zip"));
         assert!(!safe_single_segment("a\"b.zip"));
         assert!(!safe_single_segment("a\tb.zip"));
+        assert!(!safe_single_segment("a.zip."));
+        assert!(!safe_single_segment("a.zip "));
     }
 
     #[test]
