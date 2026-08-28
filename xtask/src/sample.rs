@@ -110,11 +110,11 @@ pub(crate) fn write_manifest(path: &Path, manifest: &SampleManifest) -> anyhow::
 
 /// Reads a prior manifest; `None` when missing or unparseable.
 ///
-/// `write_manifest`'s natural read-side counterpart, exercised today only
-/// by `manifest_round_trips` below — `run` writes a fresh manifest every
-/// call and has no resume-from-manifest path yet. Kept as a reserved API
-/// surface for a future consumer rather than deleted.
-#[allow(dead_code)]
+/// `write_manifest`'s read-side counterpart, kept only to prove the
+/// manifest round-trips in `manifest_round_trips` below — the manifest's
+/// production reader is crustygen (a separate repo), not xtask itself, so
+/// there is no in-crate caller and no `--resume` path is planned.
+#[cfg(test)]
 pub(crate) fn read_manifest(path: &Path) -> Option<SampleManifest> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
