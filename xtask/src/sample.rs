@@ -19,6 +19,11 @@
 // lint fires on every item below.
 #![allow(dead_code)]
 
+use std::path::Path;
+
+use anyhow::Context as _;
+use serde::{Deserialize, Serialize};
+
 use crate::schema::{FetchStatus, WadRecord};
 
 /// The sampling frame: map-bearing entries only — a successful phase-2
@@ -58,6 +63,57 @@ pub(crate) fn draw(frame: &[WadRecord], seed: u64, count: usize) -> Vec<WadRecor
         idx.swap(i, j);
     }
     idx[..take].iter().map(|&i| frame[i].clone()).collect()
+}
+
+/// One sampled entry's outcome, as written to `sample-manifest.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SampleEntry {
+    pub id: u64,
+    pub dir: String,
+    pub filename: String,
+    pub zip_size: u64,
+    /// `"ok"`, `"skipped_present"` (already on disk at the declared size),
+    /// or `"failed:<detail>"`.
+    pub status: String,
+}
+
+/// `sample-manifest.json` — everything needed to rebuild this sample.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SampleManifest {
+    pub seed: u64,
+    pub count: usize,
+    /// Rows in the sampling frame the draw ran over.
+    pub frame_rows: usize,
+    /// `blake3:<hex>` of the fetch list file (`idgames-wads.jsonl`).
+    pub fetch_list_hash: String,
+    pub entries: Vec<SampleEntry>,
+}
+
+/// `blake3:<hex>` over the fetch list's bytes — the same convention
+/// `cache.rs` uses for body hashes.
+pub(crate) fn fetch_list_hash(bytes: &[u8]) -> String {
+    format!("blake3:{}", blake3::hash(bytes).to_hex())
+}
+
+/// On-disk name for a sampled zip: `<id>-<filename>`, so two archive
+/// directories carrying the same filename cannot collide.
+pub(crate) fn entry_filename(rec: &WadRecord) -> String {
+    format!("{}-{}", rec.id, rec.filename)
+}
+
+/// Writes the manifest atomically (pretty JSON).
+///
+/// # Errors
+/// Serialization or filesystem failure.
+pub(crate) fn write_manifest(path: &Path, manifest: &SampleManifest) -> anyhow::Result<()> {
+    let text = serde_json::to_string_pretty(manifest).context("serializing sample manifest")?;
+    crate::cache::atomic_write(path, text.as_bytes())
+        .with_context(|| format!("writing {}", path.display()))
+}
+
+/// Reads a prior manifest; `None` when missing or unparseable.
+pub(crate) fn read_manifest(path: &Path) -> Option<SampleManifest> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
 #[cfg(test)]
@@ -133,5 +189,41 @@ mod tests {
         let frame: Vec<WadRecord> = (1..=3).map(|i| rec(i, FetchStatus::Ok, 1)).collect();
         assert_eq!(draw(&frame, 1, 10).len(), 3);
         assert!(draw(&[], 1, 10).is_empty());
+    }
+
+    #[test]
+    fn fetch_list_hash_is_blake3_prefixed_and_stable() {
+        let h = fetch_list_hash(b"{}\n");
+        assert!(h.starts_with("blake3:"));
+        assert_eq!(h.len(), "blake3:".len() + 64);
+        assert_eq!(h, fetch_list_hash(b"{}\n"));
+        assert_ne!(h, fetch_list_hash(b"{ }\n"));
+    }
+
+    #[test]
+    fn entry_filename_prefixes_the_id() {
+        assert_eq!(entry_filename(&rec(11, FetchStatus::Ok, 1)), "11-f11.zip");
+    }
+
+    #[test]
+    fn manifest_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample-manifest.json");
+        let manifest = SampleManifest {
+            seed: 42,
+            count: 1,
+            frame_rows: 9,
+            fetch_list_hash: fetch_list_hash(b"x"),
+            entries: vec![SampleEntry {
+                id: 11,
+                dir: "levels/doom/a/".into(),
+                filename: "f11.zip".into(),
+                zip_size: 111,
+                status: "ok".into(),
+            }],
+        };
+        write_manifest(&path, &manifest).unwrap();
+        assert_eq!(read_manifest(&path), Some(manifest));
+        assert_eq!(read_manifest(&dir.path().join("missing.json")), None);
     }
 }
