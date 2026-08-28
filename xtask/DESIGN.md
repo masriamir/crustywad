@@ -803,6 +803,34 @@ entry marked `skip = true` (#442) is recorded as `skipped_known_dead`
 without any network contact, for hosts already proven hostile by a prior
 run.
 
+### 6.6 Sample (`harvest-sample`)
+
+`cargo run -- harvest-sample --seed <u64> --count <N> [--out DIR]` draws a
+reproducible sample of the map-bearing corpus and downloads it in full, for
+offline sweeps by downstream tools (first consumer: crustygen's expressibility
+sweep, which re-runs against the same maps every vocabulary release).
+
+- **Frame:** `data/idgames-wads.jsonl` rows with `fetch_status == ok` and a
+  non-empty `wads[]`.
+- **Draw:** partial Fisher–Yates over the frame's row indices, driven by a
+  self-contained splitmix64 generator seeded from `--seed` — not `fastrand`,
+  whose stream is not a stability contract. Same seed + same fetch list ⇒ the
+  same sample, indefinitely; a unit test pins the stream.
+- **Download:** sequential, one outstanding request at a time, through the §5.1
+  mirror pool (`MirrorRanges::download_full` — same UA, retry/failover, and
+  `Content-Length` integrity as phase 2). Files land at `<out>/<id>-<filename>`;
+  an entry already present at its declared size is skipped, so a rerun resumes.
+- **Manifest:** `<out>/sample-manifest.json` — `seed`, `count`, `frame_rows`,
+  `fetch_list_hash` (`blake3:` over the fetch list's bytes, so a changed list
+  is visible), and per-entry `{id, dir, filename, zip_size, status}` with
+  `status ∈ {ok, skipped_present, failed:<detail>}`.
+- **Governance:** everything lands under gitignored `data/` (§4.7). Downstream
+  reports record seed, count, frame rows, hash, and the id list — public archive
+  paths, no PII — which is enough to rebuild the sample elsewhere.
+- **Exit codes:** `0` every entry downloaded or already present; `1` a fatal
+  error, or any `failed:` entry (the manifest is written first); clap's `2` for
+  usage errors.
+
 ---
 
 ## 7. Reproducibility

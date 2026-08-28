@@ -97,6 +97,11 @@ harvest-outliers:
 harvest-stats:
     cargo run --manifest-path xtask/Cargo.toml --release --locked -- stats
 
+# Seeded corpus sample, fully downloaded to xtask/data/samples/<seed>-<count>/
+# (DESIGN.md §6.6). Network-dependent; never part of `just ci`.
+harvest-sample seed count:
+    cargo run --manifest-path xtask/Cargo.toml --release --locked -- harvest-sample --seed {{seed}} --count {{count}}
+
 # The full pipeline: enumerate, size, outliers, report.
 harvest: harvest-api harvest-zips harvest-outliers harvest-stats
 

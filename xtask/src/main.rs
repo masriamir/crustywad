@@ -45,6 +45,20 @@ enum Command {
     HarvestOutliers,
     /// Phase 3 — statistics and the sweep corpus manifest (DESIGN.md §6).
     Stats,
+    /// Seeded, fully downloaded corpus sample for offline sweeps
+    /// (DESIGN.md §6.6). `--root`/`--limit` are accepted (global) but
+    /// ignored by this subcommand.
+    HarvestSample {
+        /// Seed for the deterministic draw; record it with the results.
+        #[arg(long)]
+        seed: u64,
+        /// How many entries to draw from the map-bearing frame.
+        #[arg(long)]
+        count: usize,
+        /// Output directory (default `xtask/data/samples/<seed>-<count>/`).
+        #[arg(long, value_name = "DIR")]
+        out: Option<std::path::PathBuf>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -60,6 +74,7 @@ fn main() -> anyhow::Result<()> {
         Command::HarvestZips => zips::run(cli.root.as_deref(), cli.limit),
         Command::HarvestOutliers => outliers::run(cli.root.as_deref(), cli.limit),
         Command::Stats => stats::run(cli.root.as_deref(), cli.limit),
+        Command::HarvestSample { seed, count, out } => sample::run(seed, count, out),
     }
 }
 
@@ -90,8 +105,32 @@ mod tests {
                 Command::HarvestZips => "HarvestZips",
                 Command::HarvestOutliers => "HarvestOutliers",
                 Command::Stats => "Stats",
+                Command::HarvestSample { .. } => "HarvestSample",
             };
             assert_eq!(actual, expected, "subcommand `{name}`");
+        }
+    }
+
+    #[test]
+    fn harvest_sample_requires_seed_and_count_and_accepts_out() {
+        assert!(Cli::try_parse_from(["xtask", "harvest-sample"]).is_err());
+        let cli = Cli::try_parse_from([
+            "xtask",
+            "harvest-sample",
+            "--seed",
+            "42",
+            "--count",
+            "400",
+            "--out",
+            "/tmp/s",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::HarvestSample { seed, count, out } => {
+                assert_eq!((seed, count), (42, 400));
+                assert_eq!(out.as_deref(), Some(std::path::Path::new("/tmp/s")));
+            }
+            other => panic!("parsed {other:?}"),
         }
     }
 

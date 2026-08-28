@@ -9,24 +9,19 @@
 //! another machine: seed, count, the frame's row count, and a hash of the
 //! fetch list the frame was cut from.
 //!
-//! This module currently holds only the frame filter and the deterministic
-//! draw; manifest I/O, the download loop, and the CLI subcommand land in
-//! later tasks (Task A4 wires the CLI and removes the `dead_code` allow
-//! below).
+//! The module holds the frame filter and deterministic draw, manifest I/O,
+//! the download loop, and the [`run`] orchestrator that ties them together
+//! for the `harvest-sample` CLI subcommand.
 
-// Task A4 wires the CLI subcommand and calls `frame`/`draw`; until then
-// nothing in this module is reachable from `main`, so clippy's dead-code
-// lint fires on every item below.
-#![allow(dead_code)]
-
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 use crate::schema::{FetchStatus, WadRecord};
 use crate::zips::inspect::FetchFailure;
-use crate::zips::range_reader::MirrorRanges;
+use crate::zips::range_reader::{MirrorRanges, TransferCounters};
 
 /// The sampling frame: map-bearing entries only — a successful phase-2
 /// read with at least one `.wad` member. Order is the fetch list's own
@@ -114,6 +109,12 @@ pub(crate) fn write_manifest(path: &Path, manifest: &SampleManifest) -> anyhow::
 }
 
 /// Reads a prior manifest; `None` when missing or unparseable.
+///
+/// `write_manifest`'s natural read-side counterpart, exercised today only
+/// by `manifest_round_trips` below — `run` writes a fresh manifest every
+/// call and has no resume-from-manifest path yet. Kept as a reserved API
+/// surface for a future consumer rather than deleted.
+#[allow(dead_code)]
 pub(crate) fn read_manifest(path: &Path) -> Option<SampleManifest> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
@@ -162,7 +163,7 @@ where
         let status = match std::fs::metadata(&target) {
             Ok(meta) if meta.len() == rec.zip_size => "skipped_present".to_owned(),
             _ => match make_source(rec) {
-                Err(e) => format!("failed:{e}"),
+                Err(e) => format!("failed:{e:#}"),
                 Ok(mut source) => match source.download_full(rec.zip_size).await {
                     Ok(bytes) => {
                         crate::cache::atomic_write(&target, &bytes)
@@ -183,6 +184,76 @@ where
         });
     }
     Ok(entries)
+}
+
+/// `xtask/data/samples/<seed>-<count>/` — under the gitignored data root,
+/// so nothing generated is ever committed (DESIGN.md §4.7).
+pub(crate) fn default_out_dir(seed: u64, count: usize) -> PathBuf {
+    crate::phase1::data_root()
+        .join("samples")
+        .join(format!("{seed}-{count}"))
+}
+
+/// Orchestrates one sample run: read the fetch list, cut the frame, draw,
+/// download, write the manifest. Reports the outcome counts and fails
+/// (exit 1) when any entry failed, after the manifest is on disk.
+///
+/// # Errors
+/// A missing fetch list, an empty frame, a filesystem failure, or — after
+/// the manifest is written — at least one failed download.
+pub(crate) fn run(seed: u64, count: usize, out: Option<PathBuf>) -> anyhow::Result<()> {
+    let fetch_list = crate::phase1::output_dir(false).join("idgames-wads.jsonl");
+    let bytes = std::fs::read(&fetch_list).with_context(|| {
+        format!(
+            "no fetch list at {} — run `just harvest-zips` first",
+            fetch_list.display()
+        )
+    })?;
+    let records = crate::schema::read_wads_jsonl(&fetch_list)
+        .with_context(|| format!("unreadable fetch list at {}", fetch_list.display()))?;
+    let frame = frame(records);
+    anyhow::ensure!(!frame.is_empty(), "the sampling frame is empty");
+    let frame_rows = frame.len();
+    let sample = draw(&frame, seed, count);
+    let out_dir = out.unwrap_or_else(|| default_out_dir(seed, count));
+    tracing::info!(seed, count, frame_rows, out = %out_dir.display(), "drawing sample");
+
+    let client = crate::mirror::build_zips_http()?;
+    let counters = Arc::new(TransferCounters::new());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    let entries = runtime.block_on(download_all(&sample, &out_dir, |rec| {
+        MirrorRanges::new(
+            client.clone(),
+            &rec.dir,
+            &rec.filename,
+            rec.zip_size,
+            Arc::clone(&counters),
+        )
+    }))?;
+
+    let manifest = SampleManifest {
+        seed,
+        count,
+        frame_rows,
+        fetch_list_hash: fetch_list_hash(&bytes),
+        entries,
+    };
+    write_manifest(&out_dir.join("sample-manifest.json"), &manifest)?;
+    let failed = manifest
+        .entries
+        .iter()
+        .filter(|e| e.status.starts_with("failed:"))
+        .count();
+    tracing::info!(
+        downloaded = manifest.entries.len() - failed,
+        failed,
+        "sample complete"
+    );
+    anyhow::ensure!(failed == 0, "{failed} entries failed — see the manifest");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -351,5 +422,11 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(entries[0].status, "failed:bad url");
+    }
+
+    #[test]
+    fn default_out_dir_lives_under_the_data_root() {
+        let p = default_out_dir(42, 400);
+        assert!(p.ends_with("data/samples/42-400"), "{}", p.display());
     }
 }
