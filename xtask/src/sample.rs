@@ -161,7 +161,9 @@ impl SampleSource for MirrorRanges {
 /// Downloads every entry of `sample` into `out_dir` sequentially (one
 /// outstanding request at a time — the sample is small and politeness
 /// outranks throughput here), skipping an entry already present at its
-/// declared size. Never aborts on one entry's failure: the outcome is
+/// declared size (a non-regular-file already at the target path is instead
+/// refused as a `failed:` status, never treated as present or overwritten).
+/// Never aborts on one entry's failure: the outcome is
 /// recorded and the loop continues, matching the harvest's "record, don't
 /// skip" discipline. An entry (not already present at its declared size)
 /// whose `zip_size` exceeds phase 2's [`FALLBACK_PER_ENTRY_CAP`] is
@@ -190,6 +192,10 @@ where
         let status = if safe_single_segment(&rec.filename) {
             let target = out_dir.join(entry_filename(rec));
             match std::fs::metadata(&target) {
+                Ok(meta) if !meta.is_file() => format!(
+                    "failed:target {} exists and is not a regular file",
+                    target.display()
+                ),
                 Ok(meta) if meta.len() == rec.zip_size => "skipped_present".to_owned(),
                 _ if rec.zip_size > FALLBACK_PER_ENTRY_CAP => format!(
                     "failed:zip_size {} exceeds the per-entry cap {}",
@@ -507,6 +513,28 @@ mod tests {
             entries[0].status
         );
         assert!(!dir.path().join("4-f4.zip").exists());
+    }
+
+    #[tokio::test]
+    async fn download_all_refuses_a_non_file_at_the_target_path_without_a_network_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = rec(6, FetchStatus::Ok, 1);
+        let target = dir.path().join(entry_filename(&entry));
+        std::fs::create_dir(&target).unwrap();
+        let sample = vec![entry];
+
+        let entries = download_all(&sample, dir.path(), |_| -> anyhow::Result<FakeSource> {
+            panic!("must not be called");
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            entries[0].status.starts_with("failed:target"),
+            "{}",
+            entries[0].status
+        );
+        assert!(target.is_dir(), "the directory must be left untouched");
     }
 
     #[tokio::test]

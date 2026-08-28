@@ -820,6 +820,8 @@ sweep, which re-runs against the same maps every vocabulary release).
   mirror pool (`MirrorRanges::download_full` — same UA, retry/failover, and
   `Content-Length` integrity as phase 2). Files land at `<out>/<id>-<filename>`;
   an entry already present at its declared size is skipped, so a rerun resumes.
+  A non-file already at the target path (a directory, say) is recorded as a
+  `failed:` status instead of being treated as present or downloaded over.
   An entry larger than phase 2's per-entry full-download cap (§5.2, 512 MiB) is
   refused as `failed:` without contacting a mirror: the loop buffers each
   download in memory, and phase 2 already bounds that at this cap. An entry
