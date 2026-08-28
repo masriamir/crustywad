@@ -25,6 +25,8 @@ use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 use crate::schema::{FetchStatus, WadRecord};
+use crate::zips::inspect::FetchFailure;
+use crate::zips::range_reader::MirrorRanges;
 
 /// The sampling frame: map-bearing entries only — a successful phase-2
 /// read with at least one `.wad` member. Order is the fetch list's own
@@ -114,6 +116,73 @@ pub(crate) fn write_manifest(path: &Path, manifest: &SampleManifest) -> anyhow::
 /// Reads a prior manifest; `None` when missing or unparseable.
 pub(crate) fn read_manifest(path: &Path) -> Option<SampleManifest> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+/// The one network operation this module needs, abstracted so tests can
+/// serve bytes without a mirror (the same shape `zips::EntrySource` takes
+/// for the phase-2 fakes).
+#[allow(async_fn_in_trait)]
+pub(crate) trait SampleSource {
+    /// Fetch the whole archive entry.
+    ///
+    /// # Errors
+    /// [`FetchFailure`] after the source's own retries are exhausted.
+    async fn download_full(&mut self, expected_size: u64) -> Result<Vec<u8>, FetchFailure>;
+}
+
+impl SampleSource for MirrorRanges {
+    async fn download_full(&mut self, expected_size: u64) -> Result<Vec<u8>, FetchFailure> {
+        MirrorRanges::download_full(self, expected_size).await
+    }
+}
+
+/// Downloads every entry of `sample` into `out_dir` sequentially (one
+/// outstanding request at a time — the sample is small and politeness
+/// outranks throughput here), skipping an entry already present at its
+/// declared size. Never aborts on one entry's failure: the outcome is
+/// recorded and the loop continues, matching the harvest's "record, don't
+/// skip" discipline.
+///
+/// # Errors
+/// Creating `out_dir` or writing a downloaded file — filesystem failures
+/// only; network failures become `failed:` statuses.
+pub(crate) async fn download_all<S, F>(
+    sample: &[WadRecord],
+    out_dir: &Path,
+    make_source: F,
+) -> anyhow::Result<Vec<SampleEntry>>
+where
+    S: SampleSource,
+    F: Fn(&WadRecord) -> anyhow::Result<S>,
+{
+    std::fs::create_dir_all(out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
+    let mut entries = Vec::with_capacity(sample.len());
+    for rec in sample {
+        let target = out_dir.join(entry_filename(rec));
+        let status = match std::fs::metadata(&target) {
+            Ok(meta) if meta.len() == rec.zip_size => "skipped_present".to_owned(),
+            _ => match make_source(rec) {
+                Err(e) => format!("failed:{e}"),
+                Ok(mut source) => match source.download_full(rec.zip_size).await {
+                    Ok(bytes) => {
+                        crate::cache::atomic_write(&target, &bytes)
+                            .with_context(|| format!("writing {}", target.display()))?;
+                        "ok".to_owned()
+                    }
+                    Err(e) => format!("failed:{e}"),
+                },
+            },
+        };
+        tracing::info!(id = rec.id, file = %rec.filename, %status, "sample entry");
+        entries.push(SampleEntry {
+            id: rec.id,
+            dir: rec.dir.clone(),
+            filename: rec.filename.clone(),
+            zip_size: rec.zip_size,
+            status,
+        });
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -225,5 +294,62 @@ mod tests {
         write_manifest(&path, &manifest).unwrap();
         assert_eq!(read_manifest(&path), Some(manifest));
         assert_eq!(read_manifest(&dir.path().join("missing.json")), None);
+    }
+
+    struct FakeSource {
+        outcome: Result<Vec<u8>, String>,
+    }
+
+    impl SampleSource for FakeSource {
+        fn download_full(
+            &mut self,
+            _expected_size: u64,
+        ) -> impl std::future::Future<Output = Result<Vec<u8>, FetchFailure>> {
+            std::future::ready(self.outcome.clone().map_err(FetchFailure::Http))
+        }
+    }
+
+    #[tokio::test]
+    async fn download_all_writes_ok_entries_records_failures_and_skips_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut present = rec(1, FetchStatus::Ok, 1);
+        present.zip_size = 3;
+        std::fs::write(dir.path().join("1-f1.zip"), b"abc").unwrap();
+        let mut good = rec(2, FetchStatus::Ok, 1);
+        good.zip_size = 2;
+        let bad = rec(3, FetchStatus::Ok, 1);
+        let sample = vec![present, good, bad];
+
+        let entries = download_all(&sample, dir.path(), |r| {
+            Ok(FakeSource {
+                outcome: if r.id == 3 {
+                    Err("boom".into())
+                } else {
+                    Ok(b"zz".to_vec())
+                },
+            })
+        })
+        .await
+        .unwrap();
+
+        let statuses: Vec<&str> = entries.iter().map(|e| e.status.as_str()).collect();
+        assert_eq!(statuses, vec!["skipped_present", "ok", "failed:boom"]);
+        assert_eq!(std::fs::read(dir.path().join("2-f2.zip")).unwrap(), b"zz");
+        assert!(
+            !dir.path().join("3-f3.zip").exists(),
+            "a failed entry writes nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_all_records_a_source_construction_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let sample = vec![rec(9, FetchStatus::Ok, 1)];
+        let entries = download_all(&sample, dir.path(), |_| -> anyhow::Result<FakeSource> {
+            anyhow::bail!("bad url")
+        })
+        .await
+        .unwrap();
+        assert_eq!(entries[0].status, "failed:bad url");
     }
 }
