@@ -803,6 +803,51 @@ entry marked `skip = true` (#442) is recorded as `skipped_known_dead`
 without any network contact, for hosts already proven hostile by a prior
 run.
 
+### 6.6 Sample (`harvest-sample`)
+
+`cargo run -- harvest-sample --seed <u64> --count <N> [--out DIR]` draws a
+reproducible sample of the map-bearing corpus and downloads it in full, for
+offline sweeps by downstream tools (first consumer: crustygen's expressibility
+sweep, which re-runs against the same maps every vocabulary release).
+
+- **Frame:** `data/idgames-wads.jsonl` rows with `fetch_status == ok` and a
+  non-empty `wads[]`.
+- **Draw:** partial Fisher–Yates over the frame's row indices, driven by a
+  self-contained splitmix64 generator seeded from `--seed` — not `fastrand`,
+  whose stream is not a stability contract. Same seed + same fetch list ⇒ the
+  same sample, indefinitely; a unit test pins the stream.
+- **Download:** sequential, one outstanding request at a time, through the §5.1
+  mirror pool (`MirrorRanges::download_full` — same UA, retry/failover, and
+  `Content-Length` integrity as phase 2). Files land at `<out>/<id>-<filename>`;
+  an entry already present at its declared size is skipped, so a rerun resumes.
+  A non-file already at the target path (a directory, say) is recorded as a
+  `failed:` status instead of being treated as present or downloaded over.
+  An entry larger than phase 2's per-entry full-download cap (§5.2, 512 MiB) is
+  refused as `failed:` without contacting a mirror: the loop buffers each
+  download in memory, and phase 2 already bounds that at this cap. An entry
+  whose `filename` is not a single safe path segment — empty, `.` or `..`,
+  containing `/` or `\`, containing any of `: * ? " < > |` (illegal in a path
+  segment on at least one filesystem the sample may be written to),
+  containing any ASCII control character, or ending in a trailing `.` or
+  space (stripped or rejected by Win32 path APIs) — is likewise refused as
+  `failed:` before any per-entry filesystem operation (no metadata check, no
+  write) and without contacting a mirror, so the run never aborts on one
+  entry's oddball name.
+- **Manifest:** `<out>/sample-manifest.json` — `seed`, `count`, `frame_rows`,
+  `fetch_list_hash` (`blake3:` over the fetch list's bytes, so a changed list
+  is visible), and per-entry `{id, dir, filename, zip_size, status}` with
+  `status ∈ {ok, skipped_present, failed:<detail>}`.
+- **Governance:** everything lands under gitignored `data/` (§4.7). Downstream
+  reports record seed, count, frame rows, hash, and the id list — public archive
+  paths, no PII — which is enough to rebuild the sample elsewhere.
+- **Exit codes:** `0` when every entry is `ok` or `skipped_present`; `1` for
+  either a fatal error (a missing fetch list, an empty frame, or a filesystem
+  failure creating the output directory or writing a file — no manifest is
+  written) or at least one `failed:` entry (the manifest is written first and
+  records which); clap's `2` for usage errors. A rerun after a mid-run fatal
+  error resumes, since files already present at their declared size are
+  skipped.
+
 ---
 
 ## 7. Reproducibility

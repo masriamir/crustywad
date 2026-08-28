@@ -66,7 +66,7 @@ pub(crate) fn has_suffix_ignore_ascii_case(name: &str, suffix: &str) -> bool {
 /// itself. An entry over this size is refused outright
 /// (`no_range_support`), never charged against the shared budget — see
 /// [`handle_no_range_support`].
-const FALLBACK_PER_ENTRY_CAP: u64 = 512 * 1024 * 1024;
+pub(crate) const FALLBACK_PER_ENTRY_CAP: u64 = 512 * 1024 * 1024;
 
 /// Controller addition (ADR-0030 §4): total range-path bytes (tracked by
 /// [`TransferCounters`], independent of [`FallbackBudget`]) this run may

@@ -332,11 +332,12 @@ pub fn write_wads_jsonl(path: &Path, records: Vec<WadRecord>) -> anyhow::Result<
     Ok(u64::try_from(by_id.len()).expect("record count fits u64"))
 }
 
-/// Read a previous run's `idgames-wads.jsonl` (§5.6). `None` when the file
-/// is missing/unreadable; unparseable lines are skipped with a warning
-/// rather than failing the read, mirroring [`read_files_jsonl`].
-pub fn read_wads_jsonl(path: &Path) -> Option<Vec<WadRecord>> {
-    let text = std::fs::read_to_string(path).ok()?;
+/// Parse `idgames-wads.jsonl` lines already read into memory (§5.6).
+/// Unparseable lines are skipped with a warning rather than failing the
+/// parse; `path` is used only to name the file in that warning. Split out
+/// of [`read_wads_jsonl`] so a caller that also needs the raw bytes (e.g.
+/// to hash them) can read the file exactly once.
+pub fn parse_wads_jsonl(text: &str, path: &Path) -> Vec<WadRecord> {
     let mut records = Vec::new();
     let mut skipped = 0_u64;
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -348,7 +349,15 @@ pub fn read_wads_jsonl(path: &Path) -> Option<Vec<WadRecord>> {
     if skipped > 0 {
         tracing::warn!(skipped, path = %path.display(), "skipped unparseable wad lines");
     }
-    Some(records)
+    records
+}
+
+/// Read a previous run's `idgames-wads.jsonl` (§5.6). `None` when the file
+/// is missing/unreadable; unparseable lines are skipped with a warning
+/// rather than failing the read, mirroring [`read_files_jsonl`].
+pub fn read_wads_jsonl(path: &Path) -> Option<Vec<WadRecord>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(parse_wads_jsonl(&text, path))
 }
 
 /// Phase-2 run provenance and the §9.3 acceptance witnesses: byte totals
@@ -1342,6 +1351,17 @@ pub(crate) mod tests {
         // A corrupt line is skipped, not fatal.
         std::fs::write(&path, "{ not json\n").unwrap();
         assert_eq!(read_wads_jsonl(&path).map(|v| v.len()), Some(0));
+    }
+
+    #[test]
+    fn parse_wads_jsonl_skips_garbage_lines() {
+        let a = serde_json::to_string(&sample_wad_record(2)).unwrap();
+        let b = serde_json::to_string(&sample_wad_record(7)).unwrap();
+        let text = format!("{a}\nnot json\n{b}\n");
+        let path = Path::new("idgames-wads.jsonl");
+        let records = parse_wads_jsonl(&text, path);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records.iter().map(|r| r.id).collect::<Vec<_>>(), vec![2, 7]);
     }
 
     #[test]
