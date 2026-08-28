@@ -99,6 +99,18 @@ pub(crate) fn entry_filename(rec: &WadRecord) -> String {
     format!("{}-{}", rec.id, rec.filename)
 }
 
+/// Whether `name` is safe to use as a single on-disk path segment: non-empty,
+/// not `.` or `..`, and free of `/`, `\`, and NUL — so a value built from it
+/// cannot address a nested or out-of-tree path.
+fn safe_single_segment(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+}
+
 /// Writes the manifest atomically (pretty JSON).
 ///
 /// # Errors
@@ -147,7 +159,10 @@ impl SampleSource for MirrorRanges {
 /// whose `zip_size` exceeds phase 2's [`FALLBACK_PER_ENTRY_CAP`] is
 /// refused as a `failed:` status without contacting a mirror:
 /// `download_full` buffers the whole zip in memory, and that cap is
-/// phase 2's existing bound on the same buffering.
+/// phase 2's existing bound on the same buffering. An entry whose
+/// `filename` is not a single safe path segment (see
+/// [`safe_single_segment`]) is likewise refused as a `failed:` status
+/// before anything else is checked.
 ///
 /// # Errors
 /// Creating `out_dir` or writing a downloaded file — filesystem failures
@@ -164,24 +179,31 @@ where
     std::fs::create_dir_all(out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
     let mut entries = Vec::with_capacity(sample.len());
     for rec in sample {
-        let target = out_dir.join(entry_filename(rec));
-        let status = match std::fs::metadata(&target) {
-            Ok(meta) if meta.len() == rec.zip_size => "skipped_present".to_owned(),
-            _ if rec.zip_size > FALLBACK_PER_ENTRY_CAP => format!(
-                "failed:zip_size {} exceeds the per-entry cap {}",
-                rec.zip_size, FALLBACK_PER_ENTRY_CAP
-            ),
-            _ => match make_source(rec) {
-                Err(e) => format!("failed:{e:#}"),
-                Ok(mut source) => match source.download_full(rec.zip_size).await {
-                    Ok(bytes) => {
-                        crate::cache::atomic_write(&target, &bytes)
-                            .with_context(|| format!("writing {}", target.display()))?;
-                        "ok".to_owned()
-                    }
-                    Err(e) => format!("failed:{e}"),
+        let status = if safe_single_segment(&rec.filename) {
+            let target = out_dir.join(entry_filename(rec));
+            match std::fs::metadata(&target) {
+                Ok(meta) if meta.len() == rec.zip_size => "skipped_present".to_owned(),
+                _ if rec.zip_size > FALLBACK_PER_ENTRY_CAP => format!(
+                    "failed:zip_size {} exceeds the per-entry cap {}",
+                    rec.zip_size, FALLBACK_PER_ENTRY_CAP
+                ),
+                _ => match make_source(rec) {
+                    Err(e) => format!("failed:{e:#}"),
+                    Ok(mut source) => match source.download_full(rec.zip_size).await {
+                        Ok(bytes) => {
+                            crate::cache::atomic_write(&target, &bytes)
+                                .with_context(|| format!("writing {}", target.display()))?;
+                            "ok".to_owned()
+                        }
+                        Err(e) => format!("failed:{e}"),
+                    },
                 },
-            },
+            }
+        } else {
+            format!(
+                "failed:filename {:?} is not a single path segment",
+                rec.filename
+            )
         };
         tracing::info!(id = rec.id, file = %rec.filename, %status, "sample entry");
         entries.push(SampleEntry {
@@ -359,6 +381,16 @@ mod tests {
     }
 
     #[test]
+    fn safe_single_segment_accepts_a_plain_filename_and_rejects_traversal_shapes() {
+        assert!(safe_single_segment("a.zip"));
+        assert!(!safe_single_segment(""));
+        assert!(!safe_single_segment("."));
+        assert!(!safe_single_segment(".."));
+        assert!(!safe_single_segment("a/b.zip"));
+        assert!(!safe_single_segment("a\\b.zip"));
+    }
+
+    #[test]
     fn manifest_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sample-manifest.json");
@@ -456,6 +488,31 @@ mod tests {
             entries[0].status
         );
         assert!(!dir.path().join("4-f4.zip").exists());
+    }
+
+    #[tokio::test]
+    async fn download_all_refuses_a_non_single_segment_filename_without_a_network_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut traversal = rec(5, FetchStatus::Ok, 1);
+        traversal.filename = "../evil.zip".to_owned();
+        let sample = vec![traversal];
+
+        let before: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert!(before.is_empty(), "sanity: out_dir starts empty");
+
+        let entries = download_all(&sample, dir.path(), |_| -> anyhow::Result<FakeSource> {
+            panic!("must not be called");
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            entries[0].status.starts_with("failed:filename"),
+            "{}",
+            entries[0].status
+        );
+        let after: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert!(after.is_empty(), "no file was written to out_dir");
     }
 
     #[test]

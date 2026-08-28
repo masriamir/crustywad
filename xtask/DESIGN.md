@@ -822,7 +822,10 @@ sweep, which re-runs against the same maps every vocabulary release).
   an entry already present at its declared size is skipped, so a rerun resumes.
   An entry larger than phase 2's per-entry full-download cap (§5.2, 512 MiB) is
   refused as `failed:` without contacting a mirror: the loop buffers each
-  download in memory, and phase 2 already bounds that at this cap.
+  download in memory, and phase 2 already bounds that at this cap. An entry
+  whose `filename` is not a single path segment (empty, `.`/`..`, or
+  containing `/` or `\`) is likewise refused as `failed:` without touching
+  the filesystem or contacting a mirror.
 - **Manifest:** `<out>/sample-manifest.json` — `seed`, `count`, `frame_rows`,
   `fetch_list_hash` (`blake3:` over the fetch list's bytes, so a changed list
   is visible), and per-entry `{id, dir, filename, zip_size, status}` with
