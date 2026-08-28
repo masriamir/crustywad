@@ -10,6 +10,7 @@ mod lslar;
 mod mirror;
 mod outliers;
 mod phase1;
+mod sample;
 mod schema;
 mod scope;
 mod stats;
