@@ -20,6 +20,7 @@ use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 use crate::schema::{FetchStatus, WadRecord};
+use crate::zips::FALLBACK_PER_ENTRY_CAP;
 use crate::zips::inspect::FetchFailure;
 use crate::zips::range_reader::{MirrorRanges, TransferCounters};
 
@@ -142,7 +143,11 @@ impl SampleSource for MirrorRanges {
 /// outranks throughput here), skipping an entry already present at its
 /// declared size. Never aborts on one entry's failure: the outcome is
 /// recorded and the loop continues, matching the harvest's "record, don't
-/// skip" discipline.
+/// skip" discipline. An entry (not already present at its declared size)
+/// whose `zip_size` exceeds phase 2's [`FALLBACK_PER_ENTRY_CAP`] is
+/// refused as a `failed:` status without contacting a mirror:
+/// `download_full` buffers the whole zip in memory, and that cap is
+/// phase 2's existing bound on the same buffering.
 ///
 /// # Errors
 /// Creating `out_dir` or writing a downloaded file — filesystem failures
@@ -162,6 +167,10 @@ where
         let target = out_dir.join(entry_filename(rec));
         let status = match std::fs::metadata(&target) {
             Ok(meta) if meta.len() == rec.zip_size => "skipped_present".to_owned(),
+            _ if rec.zip_size > FALLBACK_PER_ENTRY_CAP => format!(
+                "failed:zip_size {} exceeds the per-entry cap {}",
+                rec.zip_size, FALLBACK_PER_ENTRY_CAP
+            ),
             _ => match make_source(rec) {
                 Err(e) => format!("failed:{e:#}"),
                 Ok(mut source) => match source.download_full(rec.zip_size).await {
@@ -203,14 +212,18 @@ pub(crate) fn default_out_dir(seed: u64, count: usize) -> PathBuf {
 /// the manifest is written — at least one failed download.
 pub(crate) fn run(seed: u64, count: usize, out: Option<PathBuf>) -> anyhow::Result<()> {
     let fetch_list = crate::phase1::output_dir(false).join("idgames-wads.jsonl");
-    let bytes = std::fs::read(&fetch_list).with_context(|| {
+    let text = std::fs::read_to_string(&fetch_list).with_context(|| {
         format!(
             "no fetch list at {} — run `just harvest-zips` first",
             fetch_list.display()
         )
     })?;
-    let records = crate::schema::read_wads_jsonl(&fetch_list)
-        .with_context(|| format!("unreadable fetch list at {}", fetch_list.display()))?;
+    // Hash and parse the same read (not two separate `fs::read`s): if the
+    // file changed between them, the recorded hash would not describe the
+    // frame actually sampled.
+    let hash = fetch_list_hash(text.as_bytes());
+    let records = crate::schema::parse_wads_jsonl(&text, &fetch_list);
+    drop(text);
     let frame = frame(records);
     anyhow::ensure!(!frame.is_empty(), "the sampling frame is empty");
     let frame_rows = frame.len();
@@ -238,7 +251,7 @@ pub(crate) fn run(seed: u64, count: usize, out: Option<PathBuf>) -> anyhow::Resu
         seed,
         count,
         frame_rows,
-        fetch_list_hash: fetch_list_hash(&bytes),
+        fetch_list_hash: hash,
         entries,
     };
     write_manifest(&out_dir.join("sample-manifest.json"), &manifest)?;
@@ -422,6 +435,27 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(entries[0].status, "failed:bad url");
+    }
+
+    #[tokio::test]
+    async fn download_all_refuses_an_entry_over_the_per_entry_cap_without_a_network_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut oversized = rec(4, FetchStatus::Ok, 1);
+        oversized.zip_size = FALLBACK_PER_ENTRY_CAP + 1;
+        let sample = vec![oversized];
+
+        let entries = download_all(&sample, dir.path(), |_| -> anyhow::Result<FakeSource> {
+            panic!("must not be called");
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            entries[0].status.starts_with("failed:zip_size"),
+            "{}",
+            entries[0].status
+        );
+        assert!(!dir.path().join("4-f4.zip").exists());
     }
 
     #[test]
