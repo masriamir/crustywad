@@ -3,49 +3,49 @@
 # then run: python3 scripts/meta_sync.py sync
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/editorconfig"
 dest = ".editorconfig"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/CODEOWNERS"
 dest = ".github/CODEOWNERS"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/rust/lefthook.yml"
 dest = "lefthook.yml"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "scripts/check-conventional-subject.py"
 dest = "scripts/check-conventional-subject.py"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "scripts/test-conventional-subject.sh"
 dest = "scripts/test-conventional-subject.sh"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "scripts/meta_sync.py"
 dest = "scripts/meta_sync.py"
 mode = "file"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/rust/rustfmt.toml"
 dest = "rustfmt.toml"
 mode = "file"
@@ -54,7 +54,7 @@ mode = "file"
 # (crusty-meta ADR-0002). Edit the canonical source upstream, not the marked region.
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/blocks/language-en-us.md"
 dest = "AGENTS.md"
 mode = "block"
@@ -62,7 +62,7 @@ marker = "language-en-us"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/blocks/commit-conventions.md"
 dest = "AGENTS.md"
 mode = "block"
@@ -70,7 +70,7 @@ marker = "commit-conventions"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/blocks/branch-naming.md"
 dest = "AGENTS.md"
 mode = "block"
@@ -78,7 +78,7 @@ marker = "branch-naming"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/blocks/copilot-review-loop.md"
 dest = "AGENTS.md"
 mode = "block"
@@ -86,7 +86,7 @@ marker = "copilot-review-loop"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/blocks/board-transitions.md"
 dest = "CLAUDE.md"
 mode = "block"
@@ -95,7 +95,7 @@ marker = "board-transitions"
 # .gitignore shared blocks (crusty-meta ADR-0002 / TODO General item 1).
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/gitignore/rust.gitignore"
 dest = ".gitignore"
 mode = "block"
@@ -103,9 +103,35 @@ marker = "gitignore-rust"
 
 [[file]]
 source = "masriamir/.github"
-ref = "08b38c9d1b7dd3c888b29f055264172698f5fadd"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
 path = "templates/gitignore/base.gitignore"
 dest = ".gitignore"
 mode = "block"
 marker = "gitignore-base"
 
+
+# Account-wide Codecov policy (masriamir/.github#13, crusty-meta#4). One canonical
+# status file adopted under both markers, so project and patch cannot drift apart.
+[[file]]
+source = "masriamir/.github"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
+path = "templates/blocks/codecov-status-default.yml"
+dest = "codecov.yml"
+mode = "block"
+marker = "codecov-project-status"
+
+[[file]]
+source = "masriamir/.github"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
+path = "templates/blocks/codecov-status-default.yml"
+dest = "codecov.yml"
+mode = "block"
+marker = "codecov-patch-status"
+
+[[file]]
+source = "masriamir/.github"
+ref = "8078029680e0e50db226cf506586bb4bdcbb545f"
+path = "templates/blocks/codecov-comment.yml"
+dest = "codecov.yml"
+mode = "block"
+marker = "codecov-comment"
