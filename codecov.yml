@@ -1,7 +1,40 @@
 coverage:
   status:
-    patch:
+    project:
+      # >>> meta:codecov-project-status
+      # One source shared by the project and patch statuses, so they cannot drift apart.
       default:
-        # Defensive overflow guards (TooManyLumps, LumpTooLarge, OffsetOverflow)
-        # require >2 GB inputs and cannot be exercised in integration tests.
         target: 90%
+        if_not_found: failure  # a missing report is a broken upload, not a pass
+        if_ci_failed: error    # a red CI run cannot yield a green coverage status
+        informational: false   # this status blocks; it does not merely report
+      # <<< meta:codecov-project-status
+    patch:
+      # Defensive overflow guards (TooManyLumps, LumpTooLarge, OffsetOverflow)
+      # require >2 GB inputs and cannot be exercised in integration tests. 90% is
+      # the shared account-wide target, which this repository already used.
+      # >>> meta:codecov-patch-status
+      # One source shared by the project and patch statuses, so they cannot drift apart.
+      default:
+        target: 90%
+        if_not_found: failure  # a missing report is a broken upload, not a pass
+        if_ci_failed: error    # a red CI run cannot yield a green coverage status
+        informational: false   # this status blocks; it does not merely report
+      # <<< meta:codecov-patch-status
+
+comment:
+  # >>> meta:codecov-comment
+  # Every key here is explicit because the shared review gate depends on it, not
+  # because it differs from Codecov's current default. The gate in
+  # copilot-review-loop.md reads "the codecov comment" on every PR, so the comment
+  # has to exist, stay singular, and show coverage on the changed lines.
+  require_changes: false  # post even when a change moves coverage by nothing
+  require_base: false     # post on a PR with no base report (a repo's first PRs)
+  behavior: default       # update the one comment rather than adding another
+  # layout and hide_project_coverage are one decision, not two: condensed_* plus
+  # hide_project_coverage reduces the comment to the git diff. This policy keeps
+  # project coverage, so both codecov/project and codecov/patch are explained when
+  # either goes red.
+  layout: "header, diff, files, footer"
+  hide_project_coverage: false
+  # <<< meta:codecov-comment

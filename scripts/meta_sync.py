@@ -21,7 +21,9 @@ Modes:
          file, and must already exist — seed them once when wiring a repo up. The
          canonical body is inserted with a trailing newline so the closing marker
          always keeps its own line (a source without a final newline still
-         converges).
+         converges), and is re-indented to the opening marker's own leading
+         whitespace, so one nesting-neutral canonical fragment serves a
+         destination at any depth.
 
 Comparison is byte-for-byte: content is fetched, read, compared, and written as
 raw bytes, with no newline translation, so a CRLF/LF divergence between a
@@ -52,6 +54,16 @@ except ModuleNotFoundError:  # Python < 3.11
 
 MANIFEST = Path(".meta-manifest.toml")
 
+# Canonical content by (source, ref, path). One logical policy is often split
+# across several entries — the same file synced into two markers, or into two
+# destinations — and without this each one would repeat the round-trip for bytes
+# already in hand. A GitHub source is keyed on its 40-char commit pin, so a hit
+# there is always that immutable commit's content. A `file:` source carries no
+# such guarantee, so for it this is only an intra-run read cache: the file could
+# change underneath a run. Nothing is cached across runs — each invocation is a
+# fresh process.
+_FETCHED: dict[tuple[str, str, str], bytes] = {}
+
 
 def entry_id(entry: dict) -> str:
     return f"{entry['source']}:{entry['path']} -> {entry['dest']}"
@@ -59,9 +71,14 @@ def entry_id(entry: dict) -> str:
 
 def fetch(entry: dict) -> bytes:
     src = entry["source"]
+    key = (src, entry.get("ref", ""), entry["path"])
+    if key in _FETCHED:
+        return _FETCHED[key]
     try:
         if src.startswith("file:"):
-            return (Path(src[len("file:"):]) / entry["path"]).read_bytes()
+            return _FETCHED.setdefault(
+                key, (Path(src[len("file:"):]) / entry["path"]).read_bytes()
+            )
         ref = entry["ref"]
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             raise SystemExit(
@@ -70,7 +87,7 @@ def fetch(entry: dict) -> bytes:
             )
         url = f"https://raw.githubusercontent.com/{src}/{ref}/{entry['path']}"
         with urllib.request.urlopen(url, timeout=30) as response:
-            return response.read()
+            return _FETCHED.setdefault(key, response.read())
     except SystemExit:
         raise
     except OSError as error:  # URLError/HTTPError/FileNotFoundError are all OSError.
@@ -102,6 +119,32 @@ def block_body(canonical: bytes) -> bytes:
     if canonical and not canonical.endswith(b"\n"):
         return canonical + b"\n"
     return canonical
+
+
+def marker_indent(marker_line: bytes) -> bytes:
+    """Leading whitespace of an opening marker line, as the block's indentation."""
+    return marker_line[: len(marker_line) - len(marker_line.lstrip())]
+
+
+def indent_body(body: bytes, prefix: bytes) -> bytes:
+    """Canonical block content re-indented to its destination's nesting depth.
+
+    Canonical fragments are stored nesting-neutral (no leading indentation), and
+    the destination supplies the depth via its own opening marker line. Baking
+    the depth into the canonical file instead would silently break any adopter
+    whose file nests differently — for YAML, into an indentation error that
+    neither `check` (byte-oriented, never parses) nor the consumer's own tooling
+    would attribute to the sync.
+
+    Blank lines are left alone rather than padded into trailing whitespace.
+    Applied identically on the check and sync paths so the two always agree.
+    """
+    if not prefix:
+        return body
+    return b"".join(
+        prefix + line if line.strip() else line
+        for line in body.splitlines(keepends=True)
+    )
 
 
 def load_manifest() -> list[dict]:
@@ -153,7 +196,8 @@ def check_entry(entry: dict, canonical: bytes) -> str | None:
                 f"'<<< meta:{marker}' not found"
             )
         actual = b"".join(lines[bounds[0] + 1 : bounds[1]])
-        expected, label = block_body(canonical), f"{dest} [block {marker}]"
+        expected = indent_body(block_body(canonical), marker_indent(lines[bounds[0]]))
+        label = f"{dest} [block {marker}]"
     if actual == expected:
         return None
     # Old file = the local destination, new file = canonical: the `+` lines are
@@ -190,7 +234,9 @@ def sync_entry(entry: dict, canonical: bytes) -> None:
             "(seed them first)"
         )
     dest.write_bytes(
-        b"".join(lines[: bounds[0] + 1]) + block_body(canonical) + b"".join(lines[bounds[1] :])
+        b"".join(lines[: bounds[0] + 1])
+        + indent_body(block_body(canonical), marker_indent(lines[bounds[0]]))
+        + b"".join(lines[bounds[1] :])
     )
 
 
