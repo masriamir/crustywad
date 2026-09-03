@@ -14,4 +14,4 @@ path = "src/lib.rs"
 
 [dependencies]
 mdbook = "=0.5.4"
-mdbook-mermaid = "=0.17.0"
+mdbook-mermaid = "=0.17.1"
