@@ -31,7 +31,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
 # Parse-only use: `xtask/outliers.toml`, the §6.4 curated modern-outliers
 # list (#407) — never written back out.
-toml = "0.9"
+toml = "1.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # `zip` major is spike-pinned to 8 (DESIGN §2/§5.2; 8.6.0 stable as of
