@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
 
       - name: Run benchmarks
         # --benches restricts execution to Criterion bench targets; without it, cargo bench
@@ -31,7 +31,7 @@ jobs:
           cargo bench --all-features --benches -- --output-format bencher 2>&1 | tee bench_output.txt
 
       - name: Upload Criterion HTML report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: criterion-html-report
           path: target/criterion/
@@ -39,7 +39,7 @@ jobs:
         if: always()
 
       - name: Store benchmark trend data
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1
         with:
           tool: cargo
           output-file-path: bench_output.txt
